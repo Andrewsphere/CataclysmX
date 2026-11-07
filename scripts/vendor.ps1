@@ -24,3 +24,5 @@ foreach ($library in $libraries) {
         Invoke-WebRequest "https://raw.githubusercontent.com/$($library.Repository)/$($library.Commit)/$file" -OutFile $destination
     }
 }
+git -C $root apply --whitespace=nowarn "$root/third_party/slotmap/const-iterator.patch"
+if ($LASTEXITCODE -ne 0) { throw 'SlotMap const iterator patch failed' }

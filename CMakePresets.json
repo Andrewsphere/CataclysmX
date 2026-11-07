@@ -25,6 +25,19 @@
     {"name": "win-msvc-release", "inherits": "win-msvc-debug", "cacheVariables": {"CMAKE_BUILD_TYPE": "Release"}},
     {"name": "win-msvc-asan", "inherits": "win-msvc-debug", "cacheVariables": {"CMAKE_BUILD_TYPE": "RelWithDebInfo", "CATACLYSMX_ENABLE_ASAN": "ON"}},
     {
+      "name": "win-vs2022", "inherits": "common",
+      "generator": "Visual Studio 17 2022", "architecture": "x64",
+      "toolset": "v143,version=14.44",
+      "environment": {
+        "VCPKG_VISUAL_STUDIO_PATH": "$penv{ProgramFiles}/Microsoft Visual Studio/2022/Community"
+      },
+      "condition": {"type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows"},
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "OFF",
+        "VCPKG_TARGET_TRIPLET": "x64-windows-cataclysmx"
+      }
+    },
+    {
       "name": "linux-clang-debug", "inherits": "common",
       "condition": {"type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux"},
       "cacheVariables": {
@@ -36,6 +49,8 @@
     {"name": "linux-gcc-debug", "inherits": "linux-clang-debug", "cacheVariables": {"CMAKE_C_COMPILER": "gcc", "CMAKE_CXX_COMPILER": "g++"}}
   ],
   "buildPresets": [
+    {"name": "win-vs2022-debug", "configurePreset": "win-vs2022", "configuration": "Debug"},
+    {"name": "win-vs2022-release", "configurePreset": "win-vs2022", "configuration": "Release"},
     {"name": "win-msvc-debug", "configurePreset": "win-msvc-debug"},
     {"name": "win-msvc-release", "configurePreset": "win-msvc-release"},
     {"name": "win-msvc-asan", "configurePreset": "win-msvc-asan"},
@@ -44,6 +59,8 @@
     {"name": "linux-gcc-debug", "configurePreset": "linux-gcc-debug"}
   ],
   "testPresets": [
+    {"name": "win-vs2022-debug", "configurePreset": "win-vs2022", "configuration": "Debug", "output": {"outputOnFailure": true}, "execution": {"noTestsAction": "error"}},
+    {"name": "win-vs2022-release", "configurePreset": "win-vs2022", "configuration": "Release", "output": {"outputOnFailure": true}, "execution": {"noTestsAction": "error"}},
     {"name": "win-msvc-debug", "configurePreset": "win-msvc-debug", "output": {"outputOnFailure": true}, "execution": {"noTestsAction": "error"}},
     {"name": "win-msvc-release", "configurePreset": "win-msvc-release", "output": {"outputOnFailure": true}, "execution": {"noTestsAction": "error"}},
     {"name": "win-msvc-asan", "configurePreset": "win-msvc-asan", "output": {"outputOnFailure": true}, "execution": {"noTestsAction": "error"}},

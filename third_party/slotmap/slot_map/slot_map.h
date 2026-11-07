@@ -1270,7 +1270,7 @@ template <typename T, typename TKeyType = slot_map_key64<T>, size_t PAGESIZE = 4
         using slot_map_ptr = std::conditional_t<IsConst, const slot_map*, slot_map*>;
         using value_ptr = std::conditional_t<IsConst, const T*, T*>;
         using storage_ref = std::conditional_t<IsConst, const ValueStorage&, ValueStorage&>;
-        using KeyValue = std::conditional_t<IsConst, std::pair<key, const reference<const T>>, std::pair<key, reference<T>>>;
+        using KeyValue = std::conditional_t<IsConst, std::pair<key, reference<const T>>, std::pair<key, reference<T>>>;
 
       private:
         void updateTmpKV() const noexcept
@@ -1284,14 +1284,7 @@ template <typename T, typename TKeyType = slot_map_key64<T>, size_t PAGESIZE = 4
             value_ptr value = reinterpret_cast<value_ptr>(&v);
             tmpKv.first = key::make(m.version, index_t(currentIndex));
 
-            if constexpr (IsConst)
-            {
-                const_cast<reference<const T>&>(tmpKv.second).set(value);
-            }
-            else
-            {
-                tmpKv.second.set(value);
-            }
+            tmpKv.second.set(value);
         }
 
       public:

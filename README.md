@@ -1,6 +1,32 @@
 # CataclysmX
 
-C++23 build skeleton and dependency integration harness for a deterministic roguelike.
+C++23 single-player roguelike foundation with a deterministic world, chunk loading,
+local authoritative server, FTXUI client, and scriptable headless client.
+
+## Play and inspect
+
+After building:
+
+```powershell
+./out/build/win-msvc-debug/cataclysmx_game.exe
+./out/build/win-msvc-debug/cataclysmx_headless.exe
+Get-Content tests/scenarios/streaming.txt | ./out/build/win-msvc-debug/cataclysmx_headless.exe --script
+```
+
+The terminal client uses **arrows/hjkl** to move, **.** to wait, **g** to pick up,
+**d** to drop, **o then a direction** to interact, and **q/Escape** to quit.
+The demo has a backpack containing a bandage, a toggleable machine, a door, and
+a wandering NPC. Successful actions spend one turn; rejected actions spend none.
+`cataclysmx_game --render` prints a snapshot without entering interactive mode.
+
+The world has 16×16 XZ chunks, typed generational handles, nested item ownership,
+resident/active load requests, and a following player reality bubble. Unloaded
+objects are destroyed; value snapshots restore their persistent IDs with fresh
+runtime handles. The backing store is currently **in-memory**, so there are no
+disk saves or bounded-memory world streaming yet. Offscreen actors freeze.
+
+See [`doc/`](doc/README.md) for the world/server API and headless command grammar.
+The dependency probes remain available separately below.
 
 ## Build on Windows
 
@@ -36,6 +62,35 @@ container-boundary annotations are disabled.
 
 VS 2026 was approved and verified for this setup; the original environment guide used
 VS 2022. The script discovers the installed toolchain rather than hardcoding a VS path.
+
+## Open a Visual Studio solution in Rider
+
+With Visual Studio 2022 Community, MSVC v143 14.44 C++ tools and a Windows SDK installed, generate a solution
+from PowerShell at the repository root:
+
+```powershell
+./scripts/bootstrap.ps1
+cmake --preset win-vs2022
+```
+
+Open `out/build/win-vs2022/CataclysmX.sln` in Rider and select the Debug or Release
+configuration. Set `cataclysmx_game` as the startup project for the terminal client.
+This generator uses MSBuild and discovers Visual Studio directly; an initialized
+developer shell is not required. Its build directory is separate from the Ninja
+presets. Regenerate with the same configure command after changing CMake files.
+The preset selects the 14.44 toolset and points vcpkg at the standard VS 2022
+Community installation so dependencies do not use a newer installed Visual Studio.
+
+To build and test the solution from the command line:
+
+```powershell
+cmake --build --preset win-vs2022-debug
+ctest --preset win-vs2022-debug
+```
+
+Use `win-vs2022-release` for Release builds/tests. Executables are placed under
+`out/build/win-vs2022/Debug/` or `Release/`. Visual Studio does not export a
+`compile_commands.json`; the Ninja wrapper scripts remain available for clangd.
 
 ## Build on Linux / WSL2
 
@@ -104,25 +159,33 @@ disable exceptions; Catch2 and its test translation unit enable them.
 The integration probes use upstream `eastl::allocator_malloc` explicitly for ordinary
 integer vectors. EASTL's default allocator requires application-provided allocation
 hooks; these probes do not establish a final game allocation policy or validate
-over-aligned EASTL allocations. No custom allocator system has been introduced.
+over-aligned EASTL allocations. Game containers use a small fatal-allocation adapter
+around it, so null allocations abort in release too. Public EASTL container headers
+use `EASTL_EXCEPTIONS_ENABLED=0` in both engine and test consumers; Catch2 itself
+retains exceptions. There is no allocator system or custom memory pool.
 
 ## Run the probes
 
 ```powershell
-./out/build/win-msvc-debug/cataclysmx_headless.exe
+./out/build/win-msvc-debug/cataclysmx_headless.exe --probe
 ./out/build/win-msvc-debug/cataclysmx_terminal_smoke.exe --render
 ./out/build/win-msvc-debug/cataclysmx_terminal_smoke.exe
 ```
 
 The headless probe prints `seed=42 checksum=3365722423` and does not link FTXUI or
 initialize a terminal. These are small dependency probes, not a gameplay implementation
-or the final Simulation API. Logging and parsing probes live in the integration engine
+or the gameplay Simulation API. Logging and parsing probes live in the integration engine
 target only to exercise the no-exceptions binary boundary.
 
 CTest covers containers/stale handles, JSON5 (including unquoted keys and single quotes),
 invalid input, repeatable checksums, console/rotating-file logging, an intentional failed
 Catch2 assertion, and a failing spdlog sink in a child process. The intentional failure
 uses CTest's `WILL_FAIL`; it is expected and does not indicate a broken test run.
+
+Gameplay tests cover ownership transfers/cycle rejection, destruction, chunk request
+overlap, resident-only freezing, nested inventory unload/reload, deterministic actor
+order/replay, command timing, visibility snapshots, and an end-to-end headless
+streaming script. Automated render checks do not verify interactive terminal behavior.
 
 Run the terminal probes in **Windows Terminal** and independently in a WSL terminal.
 The interactive probe displays a changing 120x40 grid, Cyrillic, combining and wide

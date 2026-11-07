@@ -1,0 +1,61 @@
+# Pick up a nested inventory, drop it in the next chunk, unload, and return.
+bubble 0 0
+pickup
+move s
+move s
+move e
+move e
+move e
+move e
+move e
+move e
+move e
+move e
+move e
+move e
+move e
+move e
+move e
+move e
+move e
+move e
+drop
+move e
+move e
+move e
+move e
+move e
+move e
+move e
+move e
+move e
+move e
+move e
+move e
+move e
+move e
+move e
+move e
+move w
+move w
+move w
+move w
+move w
+move w
+move w
+move w
+move w
+move w
+move w
+move w
+move w
+move w
+move w
+move w
+pickup 2
+force 5 0 0 resident
+force 6 0 0 active
+wait
+view
+inspect
+quit

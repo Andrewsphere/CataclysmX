@@ -53,32 +53,45 @@ function(cataclysmx_no_exceptions target)
     endif()
 endfunction()
 
-add_library(cataclysmx_engine STATIC src/core/integration.cpp)
+add_library(cataclysmx_engine STATIC
+    src/core/integration.cpp src/core/world.cpp src/core/simulation.cpp src/core/server.cpp
+    src/core/containers.h src/core/integration.h src/core/server.h
+    src/core/simulation.h src/core/slot_map.h src/core/world.h)
 target_include_directories(cataclysmx_engine PUBLIC src)
 target_include_directories(cataclysmx_engine SYSTEM PRIVATE
     third_party/unordered_dense/include third_party/slotmap)
-target_link_libraries(cataclysmx_engine PRIVATE EASTL spdlog::spdlog yyjson::yyjson)
+target_link_libraries(cataclysmx_engine PUBLIC EASTL PRIVATE spdlog::spdlog yyjson::yyjson)
+# Public EASTL containers must have the same inline definitions in engine and
+# exception-enabled Catch2 translation units. Catch2 itself keeps exceptions.
+target_compile_definitions(cataclysmx_engine PUBLIC EASTL_EXCEPTIONS_ENABLED=0)
 cataclysmx_no_exceptions(cataclysmx_engine)
 
+add_library(cataclysmx_client STATIC src/client/text.cpp src/client/text.h)
+target_link_libraries(cataclysmx_client PUBLIC cataclysmx_engine)
+cataclysmx_no_exceptions(cataclysmx_client)
+
 add_executable(cataclysmx_headless src/headless/main.cpp)
-target_link_libraries(cataclysmx_headless PRIVATE cataclysmx_engine)
+target_link_libraries(cataclysmx_headless PRIVATE cataclysmx_client)
 cataclysmx_no_exceptions(cataclysmx_headless)
 
 if(CATACLYSMX_BUILD_TERMINAL)
     find_package(ftxui CONFIG REQUIRED)
-    add_library(cataclysmx_terminal STATIC src/terminal/render.cpp)
+    add_library(cataclysmx_terminal STATIC src/terminal/render.cpp src/terminal/render.h)
     target_include_directories(cataclysmx_terminal PUBLIC src)
     target_link_libraries(cataclysmx_terminal PRIVATE ftxui::screen)
     cataclysmx_no_exceptions(cataclysmx_terminal)
     add_executable(cataclysmx_terminal_smoke tools/terminal_smoke/main.cpp)
     target_link_libraries(cataclysmx_terminal_smoke PRIVATE cataclysmx_terminal ftxui::component)
     cataclysmx_no_exceptions(cataclysmx_terminal_smoke)
+    add_executable(cataclysmx_game src/terminal/main.cpp)
+    target_link_libraries(cataclysmx_game PRIVATE cataclysmx_client ftxui::component)
+    cataclysmx_no_exceptions(cataclysmx_game)
 endif()
 
 if(CATACLYSMX_BUILD_TESTS)
     enable_testing()
     find_package(Catch2 3 CONFIG REQUIRED)
-    add_executable(cataclysmx_tests tests/integration_tests.cpp)
+    add_executable(cataclysmx_tests tests/integration_tests.cpp tests/world_tests.cpp tests/server_tests.cpp)
     target_link_libraries(cataclysmx_tests PRIVATE cataclysmx_engine Catch2::Catch2WithMain)
     cataclysmx_target(cataclysmx_tests)
     if(MSVC)
@@ -88,8 +101,22 @@ if(CATACLYSMX_BUILD_TESTS)
     endif()
     include(Catch)
     catch_discover_tests(cataclysmx_tests TEST_SPEC "~[.intentional-failure]")
-    add_test(NAME headless_smoke COMMAND cataclysmx_headless)
+    add_test(NAME headless_smoke COMMAND cataclysmx_headless --probe)
     set_tests_properties(headless_smoke PROPERTIES PASS_REGULAR_EXPRESSION "checksum=3365722423")
+    add_test(NAME headless_game COMMAND cataclysmx_headless)
+    set_tests_properties(headless_game PROPERTIES PASS_REGULAR_EXPRESSION "invariants=ok")
+    add_test(NAME headless_streaming_script COMMAND ${CMAKE_COMMAND}
+        "-DHEADLESS=$<TARGET_FILE:cataclysmx_headless>"
+        "-DSCENARIO=${CMAKE_CURRENT_SOURCE_DIR}/tests/scenarios/streaming.txt"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/run_headless_script.cmake")
+    add_test(NAME headless_invalid_script COMMAND ${CMAKE_COMMAND}
+        "-DHEADLESS=$<TARGET_FILE:cataclysmx_headless>"
+        "-DSCENARIO=${CMAKE_CURRENT_SOURCE_DIR}/tests/scenarios/invalid.txt"
+        -DINVALID=ON -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/run_headless_script.cmake")
+    if(CATACLYSMX_BUILD_TERMINAL)
+        add_test(NAME terminal_game_render COMMAND cataclysmx_game --render)
+        set_tests_properties(terminal_game_render PROPERTIES PASS_REGULAR_EXPRESSION "tick=0 position=0,0")
+    endif()
     # Confirm a failed REQUIRE actually returns a failure, without making CTest red.
     add_test(NAME catch2_expected_failure COMMAND cataclysmx_tests "[.intentional-failure]")
     set_tests_properties(catch2_expected_failure PROPERTIES WILL_FAIL TRUE)

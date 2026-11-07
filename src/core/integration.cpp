@@ -1,9 +1,9 @@
 #include "core/integration.h"
+#include "core/slot_map.h"
 
 #include <EASTL/vector.h>
 #include <EASTL/allocator_malloc.h>
 #include <ankerl/unordered_dense.h>
-#include <slot_map/slot_map.h>
 #include <spdlog/sinks/rotating_file_sink.h>
 #include <spdlog/sinks/stdout_sinks.h>
 #include <spdlog/spdlog.h>
