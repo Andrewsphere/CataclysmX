@@ -1,0 +1,5 @@
+/.tools/
+/out/
+/vcpkg_installed/
+/CMakeUserPresets.json
+/compile_commands.json

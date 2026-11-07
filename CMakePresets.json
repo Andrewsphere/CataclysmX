@@ -1,0 +1,54 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {"major": 3, "minor": 25, "patch": 0},
+  "configurePresets": [
+    {
+      "name": "common", "hidden": true, "generator": "Ninja",
+      "binaryDir": "${sourceDir}/out/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+        "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/cmake/triplets",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "CMAKE_CXX_STANDARD": "23",
+        "CATACLYSMX_BUILD_TESTS": "ON",
+        "CATACLYSMX_BUILD_TERMINAL": "ON"
+      }
+    },
+    {
+      "name": "win-msvc-debug", "inherits": "common",
+      "condition": {"type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows"},
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug", "CMAKE_C_COMPILER": "cl", "CMAKE_CXX_COMPILER": "cl",
+        "VCPKG_TARGET_TRIPLET": "x64-windows-cataclysmx"
+      }
+    },
+    {"name": "win-msvc-release", "inherits": "win-msvc-debug", "cacheVariables": {"CMAKE_BUILD_TYPE": "Release"}},
+    {"name": "win-msvc-asan", "inherits": "win-msvc-debug", "cacheVariables": {"CMAKE_BUILD_TYPE": "RelWithDebInfo", "CATACLYSMX_ENABLE_ASAN": "ON"}},
+    {
+      "name": "linux-clang-debug", "inherits": "common",
+      "condition": {"type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux"},
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug", "CMAKE_C_COMPILER": "clang", "CMAKE_CXX_COMPILER": "clang++",
+        "VCPKG_TARGET_TRIPLET": "x64-linux-cataclysmx"
+      }
+    },
+    {"name": "linux-clang-sanitizers", "inherits": "linux-clang-debug", "cacheVariables": {"CATACLYSMX_ENABLE_ASAN_UBSAN": "ON"}},
+    {"name": "linux-gcc-debug", "inherits": "linux-clang-debug", "cacheVariables": {"CMAKE_C_COMPILER": "gcc", "CMAKE_CXX_COMPILER": "g++"}}
+  ],
+  "buildPresets": [
+    {"name": "win-msvc-debug", "configurePreset": "win-msvc-debug"},
+    {"name": "win-msvc-release", "configurePreset": "win-msvc-release"},
+    {"name": "win-msvc-asan", "configurePreset": "win-msvc-asan"},
+    {"name": "linux-clang-debug", "configurePreset": "linux-clang-debug"},
+    {"name": "linux-clang-sanitizers", "configurePreset": "linux-clang-sanitizers"},
+    {"name": "linux-gcc-debug", "configurePreset": "linux-gcc-debug"}
+  ],
+  "testPresets": [
+    {"name": "win-msvc-debug", "configurePreset": "win-msvc-debug", "output": {"outputOnFailure": true}, "execution": {"noTestsAction": "error"}},
+    {"name": "win-msvc-release", "configurePreset": "win-msvc-release", "output": {"outputOnFailure": true}, "execution": {"noTestsAction": "error"}},
+    {"name": "win-msvc-asan", "configurePreset": "win-msvc-asan", "output": {"outputOnFailure": true}, "execution": {"noTestsAction": "error"}},
+    {"name": "linux-clang-debug", "configurePreset": "linux-clang-debug", "output": {"outputOnFailure": true}, "execution": {"noTestsAction": "error"}},
+    {"name": "linux-clang-sanitizers", "configurePreset": "linux-clang-sanitizers", "output": {"outputOnFailure": true}, "execution": {"noTestsAction": "error"}},
+    {"name": "linux-gcc-debug", "configurePreset": "linux-gcc-debug", "output": {"outputOnFailure": true}, "execution": {"noTestsAction": "error"}}
+  ]
+}
