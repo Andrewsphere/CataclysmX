@@ -35,9 +35,9 @@ struct ChunkCoord {
     int z = 0;
     bool operator==(const ChunkCoord&) const = default;
 };
-ChunkCoord chunk_of(TileCoord position);
-int tile_index(TileCoord position);
-bool valid_position(TileCoord position);
+ChunkCoord ChunkOf(TileCoord position);
+int TileIndex(TileCoord position);
+bool ValidPosition(TileCoord position);
 
 enum class Terrain : std::uint8_t { floor, wall, closed_door, open_door };
 struct Tile {
@@ -45,7 +45,7 @@ struct Tile {
     std::uint8_t damage = 0;
     bool operator==(const Tile&) const = default;
 };
-bool passable(Terrain terrain);
+bool Passable(Terrain terrain);
 
 enum class ItemKind : std::uint8_t { rock, backpack, bandage };
 const char* item_name(ItemKind kind);

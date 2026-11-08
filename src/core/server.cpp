@@ -15,40 +15,40 @@
 namespace cataclysmx {
 namespace {
 
-void require(bool condition) {
+void Require(bool condition) {
     if (!condition) {
         std::abort();
     }
 }
 
 template<class T>
-T take(WorldResult<T> result) {
-    require(result.has_value());
+T Take(WorldResult<T> result) {
+    Require(result.has_value());
     return *result;
 }
 
-bool cardinal(int dx, int dz) {
+bool Cardinal(int dx, int dz) {
     return (dz == 0 && (dx == -1 || dx == 1))
         || (dx == 0 && (dz == -1 || dz == 1));
 }
 
-bool bubble_fits(TileCoord position, int radius) {
-    if (!valid_position(position)) {
+bool BubbleFits(TileCoord position, int radius) {
+    if (!ValidPosition(position)) {
         return false;
     }
-    const ChunkCoord center = chunk_of(position);
+    const ChunkCoord center = ChunkOf(position);
     constexpr int minimum = -world_coordinate_limit / chunk_size;
     constexpr int maximum = world_coordinate_limit / chunk_size;
     return center.x >= minimum + radius && center.x <= maximum - radius
         && center.z >= minimum + radius && center.z <= maximum - radius;
 }
 
-ItemHandle select_item(const World& world, const Vector<ItemHandle>& items, PersistentId id) {
+ItemHandle SelectItem(const World& world, const Vector<ItemHandle>& items, PersistentId id) {
     ItemHandle selected{};
     PersistentId smallest = eastl::numeric_limits<PersistentId>::max();
     for (ItemHandle handle : items) {
         const Item* item = world.GetItem(handle);
-        require(item != nullptr);
+        Require(item != nullptr);
         if (id != 0 && item->id == id) {
             return handle;
         }
@@ -60,7 +60,7 @@ ItemHandle select_item(const World& world, const Vector<ItemHandle>& items, Pers
     return selected;
 }
 
-Outcome movement_failure(WorldError error) {
+Outcome MovementFailure(WorldError error) {
     switch (error) {
     case WorldError::blocked: return Outcome::blocked;
     case WorldError::occupied: return Outcome::occupied;
@@ -70,7 +70,7 @@ Outcome movement_failure(WorldError error) {
     }
 }
 
-bool line_visible(const World& world, TileCoord origin, TileCoord target) {
+bool LineVisible(const World& world, TileCoord origin, TileCoord target) {
     // Integer Bresenham ray. A blocking target is visible; cells beyond it are
     // not. Unavailable tiles also stop the ray, without loading anything.
     const int dx = std::abs(target.x - origin.x);
@@ -105,7 +105,7 @@ bool line_visible(const World& world, TileCoord origin, TileCoord target) {
 
 }
 
-const char* outcome_message(Outcome outcome) {
+const char* OutcomeMessage(Outcome outcome) {
     switch (outcome) {
     case Outcome::waited: return "You wait.";
     case Outcome::moved: return "You move.";
@@ -125,26 +125,26 @@ const char* outcome_message(Outcome outcome) {
 }
 
 Server::Server(std::uint32_t seed) : world_(seed), rng_state_(seed) {
-    active_request_ = take(world_.RequestChunks({{0, 0}, active_radius_}, LoadMode::active));
-    resident_request_ = take(world_.RequestChunks({{0, 0}, resident_radius_}, LoadMode::resident));
+    active_request_ = Take(world_.RequestChunks({{0, 0}, active_radius_}, LoadMode::active));
+    resident_request_ = Take(world_.RequestChunks({{0, 0}, resident_radius_}, LoadMode::resident));
     world_.ReconcileChunks();
     constexpr TileCoord floors[] = {{0, 0}, {1, 0}, {2, 0}, {5, 5}};
     for (TileCoord position : floors) {
-        require(world_.SetTile(position, {}).has_value());
+        Require(world_.SetTile(position, {}).has_value());
     }
-    require(world_.SetTile({3, 0}, {Terrain::closed_door, 0}).has_value());
-    require(world_.SetTile({3, 1}, {Terrain::wall, 0}).has_value());
-    player_ = take(world_.CreateActor({0, 0}, true));
-    const ItemHandle backpack = take(world_.CreateItem(ItemKind::backpack, ItemLocation::Ground({0, 0})));
-    take(world_.CreateItem(ItemKind::bandage, ItemLocation::Inside(backpack)));
-    take(world_.CreateItem(ItemKind::rock, ItemLocation::Ground({1, 0})));
-    take(world_.CreateObject({2, 0}, false));
-    take(world_.CreateActor({5, 5}));
+    Require(world_.SetTile({3, 0}, {Terrain::closed_door, 0}).has_value());
+    Require(world_.SetTile({3, 1}, {Terrain::wall, 0}).has_value());
+    player_ = Take(world_.CreateActor({0, 0}, true));
+    const ItemHandle backpack = Take(world_.CreateItem(ItemKind::backpack, ItemLocation::Ground({0, 0})));
+    Take(world_.CreateItem(ItemKind::bandage, ItemLocation::Inside(backpack)));
+    Take(world_.CreateItem(ItemKind::rock, ItemLocation::Ground({1, 0})));
+    Take(world_.CreateObject({2, 0}, false));
+    Take(world_.CreateActor({5, 5}));
 }
 
 CommandResult Server::Send(Command command) {
     const Actor* actor = world_.GetActor(player_);
-    require(actor != nullptr);
+    Require(actor != nullptr);
     const TileCoord position = actor->position;
     const auto failed = [this](Outcome outcome) { return CommandResult{outcome, false, tick_}; };
     Outcome outcome = Outcome::invalid_command;
@@ -153,57 +153,57 @@ CommandResult Server::Send(Command command) {
         outcome = Outcome::waited;
         break;
     case CommandKind::move: {
-        if (!cardinal(command.dx, command.dz)) {
+        if (!Cardinal(command.dx, command.dz)) {
             return failed(Outcome::invalid_command);
         }
         const TileCoord destination{position.x + command.dx, position.z + command.dz};
         // Validate the complete future bubble before acquiring any demand.
-        if (!bubble_fits(destination, resident_radius_)) {
+        if (!BubbleFits(destination, resident_radius_)) {
             return failed(Outcome::unavailable);
         }
         LoadRequest temporary{};
         if (!world_.GetTile(destination)) {
-            temporary = take(world_.RequestChunks({chunk_of(destination), 0}, LoadMode::resident));
+            temporary = Take(world_.RequestChunks({ChunkOf(destination), 0}, LoadMode::resident));
             world_.ReconcileChunks();
         }
         const auto moved = world_.MoveActor(player_, destination);
         if (!moved) {
             if (temporary.value != 0) {
-                require(world_.ReleaseRequest(temporary).has_value());
+                Require(world_.ReleaseRequest(temporary).has_value());
                 world_.ReconcileChunks();
             }
-            return failed(movement_failure(moved.error()));
+            return failed(MovementFailure(moved.error()));
         }
         // The player has entered the destination before any old demand can be
         // removed, preserving its runtime key even with zero-radius bubbles.
         UpdateBubble();
         if (temporary.value != 0) {
-            require(world_.ReleaseRequest(temporary).has_value());
+            Require(world_.ReleaseRequest(temporary).has_value());
             world_.ReconcileChunks();
         }
         outcome = Outcome::moved;
         break;
     }
     case CommandKind::pick_up: {
-        const ItemHandle item = select_item(world_, world_.ItemsAt(position), command.item);
+        const ItemHandle item = SelectItem(world_, world_.ItemsAt(position), command.item);
         if (item.value == 0) {
             return failed(Outcome::nothing_here);
         }
-        require(world_.TransferItem(item, ItemLocation::Carried(player_)).has_value());
+        Require(world_.TransferItem(item, ItemLocation::Carried(player_)).has_value());
         outcome = Outcome::picked_up;
         break;
     }
     case CommandKind::drop: {
-        const ItemHandle item = select_item(world_, actor->inventory, command.item);
+        const ItemHandle item = SelectItem(world_, actor->inventory, command.item);
         if (item.value == 0) {
             return failed(Outcome::not_carried);
         }
-        require(world_.TransferItem(item, ItemLocation::Ground(position)).has_value());
+        Require(world_.TransferItem(item, ItemLocation::Ground(position)).has_value());
         outcome = Outcome::dropped;
         break;
     }
     case CommandKind::interact: {
-        if (!cardinal(command.dx, command.dz)) {
+        if (!Cardinal(command.dx, command.dz)) {
             return failed(Outcome::invalid_command);
         }
         const TileCoord destination{position.x + command.dx, position.z + command.dz};
@@ -218,7 +218,7 @@ CommandResult Server::Send(Command command) {
             }
             Tile changed = *tile;
             changed.terrain = closing ? Terrain::closed_door : Terrain::open_door;
-            require(world_.SetTile(destination, changed).has_value());
+            Require(world_.SetTile(destination, changed).has_value());
             outcome = closing ? Outcome::closed : Outcome::opened;
         } else {
             const ObjectHandle object = world_.ObjectAt(destination);
@@ -226,7 +226,7 @@ CommandResult Server::Send(Command command) {
                 return failed(Outcome::nothing_here);
             }
             const bool enabled = world_.GetObject(object)->enabled;
-            require(world_.SetObjectEnabled(object, !enabled).has_value());
+            Require(world_.SetObjectEnabled(object, !enabled).has_value());
             outcome = Outcome::toggled;
         }
         break;
@@ -234,7 +234,7 @@ CommandResult Server::Send(Command command) {
     default:
         return failed(Outcome::invalid_command);
     }
-    require(tick_ != eastl::numeric_limits<std::uint64_t>::max());
+    Require(tick_ != eastl::numeric_limits<std::uint64_t>::max());
     cataclysmx::Advance(world_, player_, rng_state_);
     ++tick_;
     return {outcome, true, tick_};
@@ -245,7 +245,7 @@ WorldView Server::View(int radius) const {
     // snapshot has circular sight range; out-of-range corners stay empty.
     radius = eastl::clamp(radius, 0, 12);
     const Actor* actor = world_.GetActor(player_);
-    require(actor != nullptr);
+    Require(actor != nullptr);
     WorldView result;
     result.player_position = actor->position;
     result.origin = {actor->position.x - radius, actor->position.z - radius};
@@ -259,7 +259,7 @@ WorldView Server::View(int radius) const {
             const int dx = x - radius;
             const int dz = z - radius;
             if (dx * dx + dz * dz > radius * radius
-                || !line_visible(world_, actor->position, position)) {
+                || !LineVisible(world_, actor->position, position)) {
                 continue;
             }
             ViewCell& cell = result.cells[static_cast<std::size_t>(z * result.width + x)];
@@ -278,7 +278,7 @@ WorldView Server::View(int radius) const {
     }
     for (ItemHandle handle : actor->inventory) {
         const Item* item = world_.GetItem(handle);
-        require(item != nullptr);
+        Require(item != nullptr);
         result.inventory.push_back({item->id, item->kind, static_cast<unsigned int>(item->contents.size())});
     }
     eastl::sort(result.inventory.begin(), result.inventory.end(),
@@ -288,9 +288,9 @@ WorldView Server::View(int radius) const {
 
 WorldResult<void> Server::SetBubbleRadii(int active_radius, int resident_radius) {
     const Actor* actor = world_.GetActor(player_);
-    require(actor != nullptr);
+    Require(actor != nullptr);
     if (active_radius < 0 || resident_radius < active_radius || resident_radius > 8
-        || !bubble_fits(actor->position, resident_radius)) {
+        || !BubbleFits(actor->position, resident_radius)) {
         return eastl::unexpected(WorldError::invalid_region);
     }
     active_radius_ = active_radius;
@@ -301,10 +301,10 @@ WorldResult<void> Server::SetBubbleRadii(int active_radius, int resident_radius)
 
 void Server::UpdateBubble() {
     const Actor* actor = world_.GetActor(player_);
-    require(actor != nullptr);
-    const ChunkCoord center = chunk_of(actor->position);
-    require(world_.UpdateRequest(active_request_, {center, active_radius_}, LoadMode::active).has_value());
-    require(world_.UpdateRequest(resident_request_, {center, resident_radius_}, LoadMode::resident).has_value());
+    Require(actor != nullptr);
+    const ChunkCoord center = ChunkOf(actor->position);
+    Require(world_.UpdateRequest(active_request_, {center, active_radius_}, LoadMode::active).has_value());
+    Require(world_.UpdateRequest(resident_request_, {center, resident_radius_}, LoadMode::resident).has_value());
     world_.ReconcileChunks();
 }
 

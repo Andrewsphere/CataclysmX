@@ -46,7 +46,7 @@ void Advance(World& world, ActorHandle player, std::uint32_t& rng_state) {
         const TileCoord direction = directions[rng_state >> 30];
         const TileCoord destination{actor.position.x + direction.x, actor.position.z + direction.z};
         const Tile* tile = world.GetTile(destination);
-        if (!world.IsActive(destination) || !tile || !passable(tile->terrain)
+        if (!world.IsActive(destination) || !tile || !Passable(tile->terrain)
             || world.ActorAt(destination).value != 0) {
             continue;
         }

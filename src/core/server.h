@@ -16,7 +16,7 @@ enum class Outcome {
     waited, moved, picked_up, dropped, opened, closed, toggled,
     blocked, occupied, nothing_here, invalid_command, not_carried, unavailable
 };
-const char* outcome_message(Outcome outcome);
+const char* OutcomeMessage(Outcome outcome);
 struct CommandResult {
     Outcome outcome = Outcome::invalid_command;
     bool advanced = false;

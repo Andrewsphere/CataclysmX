@@ -59,7 +59,7 @@ int main(int argc, char** argv) {
         } else { return false; }
         interacting = false;
         const auto result = server.Send(command);
-        message = cataclysmx::outcome_message(result.outcome);
+        message = cataclysmx::OutcomeMessage(result.outcome);
         return true;
     });
     screen.Loop(component);

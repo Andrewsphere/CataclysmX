@@ -119,7 +119,7 @@ bool execute(Server& server, eastl::string_view line, bool& quit) {
     } else { return false; }
     const CommandResult result = server.Send(command);
     std::printf("tick=%llu advanced=%d %s\n", static_cast<unsigned long long>(result.tick),
-        result.advanced ? 1 : 0, outcome_message(result.outcome));
+        result.advanced ? 1 : 0, OutcomeMessage(result.outcome));
     return true;
 }
 

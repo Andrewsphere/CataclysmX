@@ -39,22 +39,22 @@ Vector<PersistentId> object_ids(const World& world) {
 }
 
 TEST_CASE("World coordinates use floor division and bounded positions", "[world][coordinates]") {
-    CHECK(chunk_of({0, 0}) == ChunkCoord{0, 0});
-    CHECK(chunk_of({15, 16}) == ChunkCoord{0, 1});
-    CHECK(chunk_of({-1, -16}) == ChunkCoord{-1, -1});
-    CHECK(chunk_of({-17, 31}) == ChunkCoord{-2, 1});
-    CHECK(tile_index({-1, -1}) == 255);
-    CHECK(tile_index({-16, -16}) == 0);
-    CHECK(tile_index({-17, 16}) == 15);
-    CHECK(tile_index({INT_MIN, INT_MAX}) == 240);
-    CHECK(valid_position({-world_coordinate_limit, world_coordinate_limit}));
-    CHECK_FALSE(valid_position({world_coordinate_limit + 1, 0}));
-    CHECK_FALSE(valid_position({0, -world_coordinate_limit - 1}));
-    CHECK_FALSE(valid_position({INT_MIN, INT_MAX}));
-    CHECK(passable(Terrain::floor));
-    CHECK(passable(Terrain::open_door));
-    CHECK_FALSE(passable(Terrain::wall));
-    CHECK_FALSE(passable(Terrain::closed_door));
+    CHECK(ChunkOf({0, 0}) == ChunkCoord{0, 0});
+    CHECK(ChunkOf({15, 16}) == ChunkCoord{0, 1});
+    CHECK(ChunkOf({-1, -16}) == ChunkCoord{-1, -1});
+    CHECK(ChunkOf({-17, 31}) == ChunkCoord{-2, 1});
+    CHECK(TileIndex({-1, -1}) == 255);
+    CHECK(TileIndex({-16, -16}) == 0);
+    CHECK(TileIndex({-17, 16}) == 15);
+    CHECK(TileIndex({INT_MIN, INT_MAX}) == 240);
+    CHECK(ValidPosition({-world_coordinate_limit, world_coordinate_limit}));
+    CHECK_FALSE(ValidPosition({world_coordinate_limit + 1, 0}));
+    CHECK_FALSE(ValidPosition({0, -world_coordinate_limit - 1}));
+    CHECK_FALSE(ValidPosition({INT_MIN, INT_MAX}));
+    CHECK(Passable(Terrain::floor));
+    CHECK(Passable(Terrain::open_door));
+    CHECK_FALSE(Passable(Terrain::wall));
+    CHECK_FALSE(Passable(Terrain::closed_door));
 
     World world;
     load(world, {{-1, -1}, 0});

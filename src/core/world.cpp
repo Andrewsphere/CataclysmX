@@ -113,22 +113,22 @@ struct Demand {
 
 }
 
-ChunkCoord chunk_of(TileCoord position) {
+ChunkCoord ChunkOf(TileCoord position) {
     return {FloorChunk(position.x), FloorChunk(position.z)};
 }
 
-int tile_index(TileCoord position) {
+int TileIndex(TileCoord position) {
     const int x = (position.x % chunk_size + chunk_size) % chunk_size;
     const int z = (position.z % chunk_size + chunk_size) % chunk_size;
     return z * chunk_size + x;
 }
 
-bool valid_position(TileCoord position) {
+bool ValidPosition(TileCoord position) {
     return position.x >= -world_coordinate_limit && position.x <= world_coordinate_limit
         && position.z >= -world_coordinate_limit && position.z <= world_coordinate_limit;
 }
 
-bool passable(Terrain terrain) {
+bool Passable(Terrain terrain) {
     return terrain == Terrain::floor || terrain == Terrain::open_door;
 }
 
@@ -199,10 +199,10 @@ public:
     }
 
     WorldResult<void> Available(TileCoord position) const {
-        if (!valid_position(position)) {
+        if (!ValidPosition(position)) {
             return eastl::unexpected(WorldError::invalid_position);
         }
-        if (!GetChunk(chunk_of(position))) {
+        if (!GetChunk(ChunkOf(position))) {
             return eastl::unexpected(WorldError::chunk_unavailable);
         }
         return {};
@@ -282,7 +282,7 @@ public:
     Vector<ItemHandle>& Collection(ItemLocation location) {
         switch (location.kind) {
         case LocationKind::ground: {
-            Chunk* owner = GetChunk(chunk_of(location.position));
+            Chunk* owner = GetChunk(ChunkOf(location.position));
             Require(owner != nullptr);
             return owner->ground_items;
         }
@@ -495,15 +495,15 @@ void World::ReconcileChunks() {
 const Chunk* World::GetChunk(ChunkCoord position) const { return impl_->GetChunk(position); }
 
 const Tile* World::GetTile(TileCoord position) const {
-    if (!valid_position(position)) {
+    if (!ValidPosition(position)) {
         return nullptr;
     }
-    const Chunk* value = GetChunk(chunk_of(position));
-    return value ? &value->tiles[tile_index(position)] : nullptr;
+    const Chunk* value = GetChunk(ChunkOf(position));
+    return value ? &value->tiles[TileIndex(position)] : nullptr;
 }
 
 bool World::IsActive(TileCoord position) const {
-    const Chunk* value = valid_position(position) ? GetChunk(chunk_of(position)) : nullptr;
+    const Chunk* value = ValidPosition(position) ? GetChunk(ChunkOf(position)) : nullptr;
     return value && value->active;
 }
 
@@ -524,7 +524,7 @@ ItemHandle World::FindItem(PersistentId id) const { return impl_->FindItem(id); 
 ObjectHandle World::FindObject(PersistentId id) const { return impl_->FindObject(id); }
 
 ActorHandle World::ActorAt(TileCoord position) const {
-    const Chunk* value = valid_position(position) ? GetChunk(chunk_of(position)) : nullptr;
+    const Chunk* value = ValidPosition(position) ? GetChunk(ChunkOf(position)) : nullptr;
     if (value) {
         for (ActorHandle handle : value->actors) {
             const Actor* candidate = GetActor(handle);
@@ -539,7 +539,7 @@ ActorHandle World::ActorAt(TileCoord position) const {
 
 Vector<ItemHandle> World::ItemsAt(TileCoord position) const {
     Vector<ItemHandle> result;
-    const Chunk* value = valid_position(position) ? GetChunk(chunk_of(position)) : nullptr;
+    const Chunk* value = ValidPosition(position) ? GetChunk(ChunkOf(position)) : nullptr;
     if (value) {
         for (ItemHandle handle : value->ground_items) {
             const Item* candidate = GetItem(handle);
@@ -556,7 +556,7 @@ Vector<ItemHandle> World::ItemsAt(TileCoord position) const {
 }
 
 ObjectHandle World::ObjectAt(TileCoord position) const {
-    const Chunk* value = valid_position(position) ? GetChunk(chunk_of(position)) : nullptr;
+    const Chunk* value = ValidPosition(position) ? GetChunk(ChunkOf(position)) : nullptr;
     if (value) {
         for (ObjectHandle handle : value->objects) {
             const InteractiveObject* candidate = GetObject(handle);
@@ -573,7 +573,7 @@ WorldResult<void> World::SetTile(TileCoord position, Tile value) {
     if (auto result = impl_->Available(position); !result) {
         return result;
     }
-    impl_->GetChunk(chunk_of(position))->tiles[tile_index(position)] = value;
+    impl_->GetChunk(ChunkOf(position))->tiles[TileIndex(position)] = value;
     return {};
 }
 
@@ -581,7 +581,7 @@ WorldResult<ActorHandle> World::CreateActor(TileCoord position, bool player) {
     if (auto result = impl_->Available(position); !result) {
         return eastl::unexpected(result.error());
     }
-    if (!passable(GetTile(position)->terrain)) {
+    if (!Passable(GetTile(position)->terrain)) {
         return eastl::unexpected(WorldError::blocked);
     }
     if (ActorAt(position).value != 0) {
@@ -589,7 +589,7 @@ WorldResult<ActorHandle> World::CreateActor(TileCoord position, bool player) {
     }
     const auto key = impl_->actors.emplace(Actor{impl_->IssueId(), position, player, 0, {}});
     const ActorHandle handle{key.raw};
-    impl_->GetChunk(chunk_of(position))->actors.push_back(handle);
+    impl_->GetChunk(ChunkOf(position))->actors.push_back(handle);
     return handle;
 }
 
@@ -604,14 +604,14 @@ WorldResult<void> World::MoveActor(ActorHandle handle, TileCoord destination) {
     if (value->position == destination) {
         return {};
     }
-    if (!passable(GetTile(destination)->terrain)) {
+    if (!Passable(GetTile(destination)->terrain)) {
         return eastl::unexpected(WorldError::blocked);
     }
     if (ActorAt(destination).value != 0) {
         return eastl::unexpected(WorldError::occupied);
     }
-    const ChunkCoord previous = chunk_of(value->position);
-    const ChunkCoord next = chunk_of(destination);
+    const ChunkCoord previous = ChunkOf(value->position);
+    const ChunkCoord next = ChunkOf(destination);
     if (previous != next) {
         EraseOne(impl_->GetChunk(previous)->actors, handle);
         impl_->GetChunk(next)->actors.push_back(handle);
@@ -631,7 +631,7 @@ WorldResult<void> World::DestroyActor(ActorHandle handle) {
         value = Live(impl_->actors, handle);
         Require(value != nullptr);
     }
-    EraseOne(impl_->GetChunk(chunk_of(position))->actors, handle);
+    EraseOne(impl_->GetChunk(ChunkOf(position))->actors, handle);
     impl_->actors.erase(dod::slot_map64<Actor>::key{handle.value});
     return {};
 }
@@ -696,7 +696,7 @@ WorldResult<ObjectHandle> World::CreateObject(TileCoord position, bool enabled) 
     }
     const auto key = impl_->objects.emplace(InteractiveObject{impl_->IssueId(), position, enabled, 0, {}});
     const ObjectHandle handle{key.raw};
-    impl_->GetChunk(chunk_of(position))->objects.push_back(handle);
+    impl_->GetChunk(ChunkOf(position))->objects.push_back(handle);
     return handle;
 }
 
@@ -711,7 +711,7 @@ WorldResult<void> World::DestroyObject(ObjectHandle handle) {
         value = Live(impl_->objects, handle);
         Require(value != nullptr);
     }
-    EraseOne(impl_->GetChunk(chunk_of(position))->objects, handle);
+    EraseOne(impl_->GetChunk(ChunkOf(position))->objects, handle);
     impl_->objects.erase(dod::slot_map64<InteractiveObject>::key{handle.value});
     return {};
 }
@@ -806,7 +806,7 @@ bool World::CheckInvariants() const {
         Vector<TileCoord> object_positions;
         for (ActorHandle handle : value.actors) {
             const Actor* actor = this->GetActor(handle);
-            if (!actor || !valid_position(actor->position) || chunk_of(actor->position) != value.position
+            if (!actor || !ValidPosition(actor->position) || ChunkOf(actor->position) != value.position
                 || Occurrences(actor_positions, actor->position) != 0) {
                 return false;
             }
@@ -815,7 +815,7 @@ bool World::CheckInvariants() const {
         }
         for (ObjectHandle handle : value.objects) {
             const InteractiveObject* object = this->GetObject(handle);
-            if (!object || !valid_position(object->position) || chunk_of(object->position) != value.position
+            if (!object || !ValidPosition(object->position) || ChunkOf(object->position) != value.position
                 || Occurrences(object_positions, object->position) != 0) {
                 return false;
             }
@@ -825,8 +825,8 @@ bool World::CheckInvariants() const {
         for (ItemHandle handle : value.ground_items) {
             const Item* item = this->GetItem(handle);
             if (!item || item->location.kind != LocationKind::ground
-                || !valid_position(item->location.position)
-                || chunk_of(item->location.position) != value.position) {
+                || !ValidPosition(item->location.position)
+                || ChunkOf(item->location.position) != value.position) {
                 return false;
             }
             owned_items.push_back(handle);
@@ -909,16 +909,16 @@ bool World::CheckInvariants() const {
         Vector<TileCoord> actor_positions;
         Vector<TileCoord> object_positions;
         for (const SavedActor& actor : saved.actors) {
-            if (!add_id(actor.id) || !valid_position(actor.position)
-                || chunk_of(actor.position) != saved.position
+            if (!add_id(actor.id) || !ValidPosition(actor.position)
+                || ChunkOf(actor.position) != saved.position
                 || Occurrences(actor_positions, actor.position) != 0) {
                 return false;
             }
             actor_positions.push_back(actor.position);
         }
         for (const SavedObject& object : saved.objects) {
-            if (!add_id(object.id) || !valid_position(object.position)
-                || chunk_of(object.position) != saved.position
+            if (!add_id(object.id) || !ValidPosition(object.position)
+                || ChunkOf(object.position) != saved.position
                 || Occurrences(object_positions, object.position) != 0) {
                 return false;
             }
@@ -931,8 +931,8 @@ bool World::CheckInvariants() const {
             }
             switch (value.location) {
             case LocationKind::ground:
-                if (value.owner != 0 || !valid_position(value.position)
-                    || chunk_of(value.position) != saved.position) {
+                if (value.owner != 0 || !ValidPosition(value.position)
+                    || ChunkOf(value.position) != saved.position) {
                     return false;
                 }
                 break;

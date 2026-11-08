@@ -40,3 +40,7 @@ Build a small, deterministic C++23 roguelike inspired by Cataclysm: Bright Night
 - A coordinating agent owns integration. Subagents may work on separate tasks, but must not edit the same files concurrently.
 - Do not commit, push, discard user changes, or perform broad destructive operations without an explicit request.
 - Use LSP queries if helpfull.
+
+## Documentation
+- Document new APIs inside `/doc` directory.
+- Include brief insides into dicision making and reasoning for API shapes.
