@@ -1,4 +1,5 @@
 #include "client/worldgen_debug.h"
+#include "client/localization.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -171,31 +172,45 @@ WorldgenDebugView BuildWorldgenDebugView(const ContentCatalog& content,
 }
 
 Vector<String> WorldgenDebugDetails(const ContentCatalog& content,
-    const RegionPlan& plan, TileCoord selection) {
+    const RegionPlan& plan, TileCoord selection, const Localization* localization) {
     CheckPlan(content, plan);
     Require(Contains(plan.bounds, selection));
     Vector<String> lines;
     char buffer[512];
     std::snprintf(buffer, sizeof(buffer), "Tile=%d,%d seed=%llu region=%d,%d (generated baseline)",
         selection.x, selection.z, static_cast<unsigned long long>(plan.seed), plan.region.x, plan.region.z);
-    lines.push_back(String(buffer));
+    lines.push_back(localization ? localization->Format("debug.details.tile", {
+        {"x", NumberText(selection.x)}, {"z", NumberText(selection.z)}, {"seed", UnsignedText(plan.seed)},
+        {"rx", NumberText(plan.region.x)}, {"rz", NumberText(plan.region.z)}}) : String(buffer));
     const auto environment = SampleEnvironment(plan.seed, selection);
     std::snprintf(buffer, sizeof(buffer), "Environment: moisture=%d temperature=%d woodland=%d biome=%s",
         environment.moisture, environment.temperature, environment.woodland,
         environment.biome == Biome::Woodland ? "Woodland" : "Meadow");
-    lines.push_back(String(buffer));
+    lines.push_back(localization ? localization->Format("debug.details.environment", {
+        {"moisture", NumberText(environment.moisture)}, {"temperature", NumberText(environment.temperature)},
+        {"woodland", NumberText(environment.woodland)}, {"biome", localization->Text(environment.biome == Biome::Woodland
+            ? "debug.woodland" : "debug.meadow")}}) : String(buffer));
     std::snprintf(buffer, sizeof(buffer), "Town: present=%s selected=%s center=%d,%d bounds=[%d,%d)-[%d,%d)",
         plan.hasTown ? "yes" : "no", plan.hasTown && Contains(plan.townBounds, selection) ? "yes" : "no",
         plan.townCenter.x, plan.townCenter.z, plan.townBounds.min.x, plan.townBounds.min.z,
         plan.townBounds.max.x, plan.townBounds.max.z);
-    lines.push_back(String(buffer));
+    lines.push_back(localization ? localization->Format("debug.details.town", {
+        {"present", localization->Text(plan.hasTown ? "game.yes" : "game.no")},
+        {"selected", localization->Text(plan.hasTown && Contains(plan.townBounds, selection) ? "game.yes" : "game.no")},
+        {"x", NumberText(plan.townCenter.x)}, {"z", NumberText(plan.townCenter.z)},
+        {"min_x", NumberText(plan.townBounds.min.x)}, {"min_z", NumberText(plan.townBounds.min.z)},
+        {"max_x", NumberText(plan.townBounds.max.x)}, {"max_z", NumberText(plan.townBounds.max.z)}}) : String(buffer));
     if (const auto* parcel = ParcelAt(plan, selection)) {
         std::snprintf(buffer, sizeof(buffer), "Parcel: owner=%d,%d:%u letter=%c bounds=[%d,%d)-[%d,%d)",
             parcel->owner.region.x, parcel->owner.region.z, static_cast<unsigned>(parcel->owner.parcel),
             OwnerGlyph(parcel->owner), parcel->bounds.min.x, parcel->bounds.min.z,
             parcel->bounds.max.x, parcel->bounds.max.z);
-        lines.push_back(String(buffer));
-    } else { lines.push_back(String("Parcel: none")); }
+        lines.push_back(localization ? localization->Format("debug.details.parcel", {
+            {"x", NumberText(parcel->owner.region.x)}, {"z", NumberText(parcel->owner.region.z)},
+            {"id", UnsignedText(parcel->owner.parcel)}, {"letter", String(1, OwnerGlyph(parcel->owner))},
+            {"min_x", NumberText(parcel->bounds.min.x)}, {"min_z", NumberText(parcel->bounds.min.z)},
+            {"max_x", NumberText(parcel->bounds.max.x)}, {"max_z", NumberText(parcel->bounds.max.z)}}) : String(buffer));
+    } else { lines.push_back(localization ? localization->Text("debug.details.no_parcel") : String("Parcel: none")); }
     if (const auto* building = BuildingAt(plan, selection)) {
         std::snprintf(buffer, sizeof(buffer), "Building: owner=%d,%d:%u letter=%c pattern=",
             building->owner.region.x, building->owner.region.z, static_cast<unsigned>(building->owner.parcel),
@@ -207,14 +222,25 @@ Vector<String> WorldgenDebugDetails(const ContentCatalog& content,
             building->bounds.max.x, building->bounds.max.z, building->entrance.x, building->entrance.z,
             building->abandoned ? "yes" : "no");
         line += buffer;
-        lines.push_back(line);
-    } else { lines.push_back(String("Building: none")); }
+        lines.push_back(localization ? localization->Format("debug.details.building", {
+            {"x", NumberText(building->owner.region.x)}, {"z", NumberText(building->owner.region.z)},
+            {"id", UnsignedText(building->owner.parcel)}, {"letter", String(1, OwnerGlyph(building->owner))},
+            {"pattern", content.GetBuildingPattern(building->pattern).id}, {"turns", UnsignedText(building->quarterTurns)},
+            {"min_x", NumberText(building->bounds.min.x)}, {"min_z", NumberText(building->bounds.min.z)},
+            {"max_x", NumberText(building->bounds.max.x)}, {"max_z", NumberText(building->bounds.max.z)},
+            {"entrance_x", NumberText(building->entrance.x)}, {"entrance_z", NumberText(building->entrance.z)},
+            {"abandoned", localization->Text(building->abandoned ? "game.yes" : "game.no")}}) : line);
+    } else { lines.push_back(localization ? localization->Text("debug.details.no_building") : String("Building: none")); }
     for (const auto& crossing : plan.boundaries) {
         Require(crossing.key.axis == BorderAxis::X || crossing.key.axis == BorderAxis::Z);
         std::snprintf(buffer, sizeof(buffer), "Crossing: axis=%c key=%d,%d position=%d,%d width=%d approach=%d",
             crossing.key.axis == BorderAxis::X ? 'X' : 'Z', crossing.key.border, crossing.key.alongRegion,
             crossing.position.x, crossing.position.z, crossing.width, crossing.approachLength);
-        lines.push_back(String(buffer));
+        lines.push_back(localization ? localization->Format("debug.details.crossing", {
+            {"axis", String(crossing.key.axis == BorderAxis::X ? "X" : "Z")},
+            {"border", NumberText(crossing.key.border)}, {"along", NumberText(crossing.key.alongRegion)},
+            {"x", NumberText(crossing.position.x)}, {"z", NumberText(crossing.position.z)},
+            {"width", NumberText(crossing.width)}, {"approach", NumberText(crossing.approachLength)}}) : String(buffer));
     }
     return lines;
 }

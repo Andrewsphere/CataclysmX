@@ -9,7 +9,7 @@
       "args": [],
       "cwd": "${workspaceFolder}",
       "stopAtEntry": false,
-      "externalConsole": true,
+      "console": "externalTerminal",
       "preLaunchTask": "Build: MSVC Debug"
     },
     {
@@ -20,7 +20,7 @@
       "args": [],
       "cwd": "${workspaceFolder}",
       "stopAtEntry": false,
-      "externalConsole": true,
+      "console": "externalTerminal",
       "preLaunchTask": "Build: MSVC Release"
     }
   ]

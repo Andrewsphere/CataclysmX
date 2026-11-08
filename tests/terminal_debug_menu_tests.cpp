@@ -233,4 +233,21 @@ TEST_CASE("Zoomed debug map keeps the selected tile visible in a small terminal"
     Has(menu, "F11 / Escape / q: close");
 }
 
+TEST_CASE("Worldgen debug menu uses configured bindings and localized presentation", "[terminal][worldgen-debug][input]") {
+    World world(TestContent(), 123);
+    Localization localization;
+    REQUIRE(localization.Load(CATACLYSMX_LOC_DIRECTORY, "en"));
+    Keymap overrides{{InputContext::Debug, InputAction::West, {{"W", false}}}};
+    const auto keys = ResolveKeymap({}, overrides);
+    REQUIRE(ValidateKeymap(keys));
+    auto menu = CreateWorldgenDebugMenu(world, {1, 2}, [] {}, &localization, &keys);
+    Has(menu, "Debug menu | World generation");
+    Has(menu, "Cursor: 1,2");
+    Key(menu, 'h');
+    Has(menu, "Cursor: 1,2");
+    Key(menu, 'W');
+    Has(menu, "Cursor: -7,2");
+    CHECK(world.LoadedChunks().empty());
+}
+
 }

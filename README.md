@@ -23,7 +23,14 @@ direct address (**Enter** accepts the edit; **Enter** again joins), **n** edits
 your name, **D** leaves a guest session, and **X** joins the entered address as
 a *new character*, replacing its saved identity after admission. A host can
 open LAN mid-game; guest input and host input both flow through authoritative
-rounds. The status shows pending actions, server receipts, players and grace.
+rounds. Status and messages show pending actions and server receipts. Press
+**i** for Inventory, select an item with arrows/jk, and **Enter** to drop it.
+**P** opens Players with connection, readiness and grace status. **F1** opens
+the complete controls reference. **a** opens Quick actions: use **Up/Down** and
+**Enter** to select and activate a command or open another window.
+These windows are hidden by default; **Escape**
+closes them. Their opening keys and navigation are configurable in Settings.
+See the [gameplay UI overview](doc/gameplay_ui.md) for layouts and modal behavior.
 
 ```powershell
 ./out/build/win-msvc-debug/cataclysmx_game.exe --host --port 24680 --name Host
@@ -52,6 +59,13 @@ actions spend none.
 During a cooldown you can queue the next action. The latest valid input replaces
 the one pending intent, which is validated when the player becomes ready.
 `cataclysmx_game --render` prints a snapshot without entering interactive mode.
+
+**F2** opens settings and keybindings. Preferences resolve from built-in defaults,
+global files, and sparse world overrides; saves within a world share its settings.
+Use `--user-dir <path>` and `--world-dir <path>` to select configuration locations.
+Player-facing terminal text comes from `data/loc/en.json5`. Ctrl bindings preserve
+letter case when the terminal supports enhanced keyboard reporting; basic mode
+reports unavailable combinations. See [settings and localization](doc/settings_api.md).
 
 Terrain definitions live in [`data/terrain.json5`](data/terrain.json5), with UTF-8
 symbols, named/RGB colors, appearance fallback, passability, sight blocking, and

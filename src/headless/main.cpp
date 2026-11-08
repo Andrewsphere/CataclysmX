@@ -2,6 +2,7 @@
 #include "core/server.h"
 #include "client/text.h"
 #include "headless/lan.h"
+#include "client/settings.h"
 
 #include <EASTL/array.h>
 #include <EASTL/unique_ptr.h>
@@ -17,6 +18,22 @@
 namespace {
 
 using namespace cataclysmx;
+
+struct HeadlessConfiguration {
+    bool enabled = false;
+    String userRoot;
+    String worldDirectory;
+    eastl::optional<SettingsStore> store;
+
+    SettingsResult<SettingsStore> LoadFor(const char* savePath, Diagnostics* diagnostics) const {
+        String directory = worldDirectory;
+        if (directory.empty() && savePath) { directory = WorldDirectoryForSave(savePath); }
+        SettingsStore candidate(userRoot, directory);
+        const auto loaded = candidate.Load(diagnostics);
+        if (!loaded) { return eastl::unexpected(loaded.error()); }
+        return candidate;
+    }
+};
 
 template<class T>
 bool Number(eastl::string_view text, T& value) {
@@ -65,7 +82,8 @@ void Inspect(const Server& server) {
 
 // Returns false for malformed syntax/failed administrative requests. Gameplay
 // rejections are valid responses, so scripts can exercise blocked actions.
-bool Execute(eastl::unique_ptr<Server>& ownedServer, eastl::string_view line, bool& quit) {
+bool Execute(eastl::unique_ptr<Server>& ownedServer, eastl::string_view line, bool& quit,
+    HeadlessConfiguration& configuration) {
     Server& server = *ownedServer;
     eastl::array<eastl::string_view, 8> words{};
     std::size_t count = 0;
@@ -84,7 +102,8 @@ bool Execute(eastl::unique_ptr<Server>& ownedServer, eastl::string_view line, bo
     const auto name = words[0];
     if (name == "quit" && count == 1) { quit = true; return true; }
     if (name == "view" && count == 1) {
-        std::fputs(render_text(server.View(), server.GetWorld().GetContent()).c_str(), stdout);
+        const int radius = configuration.store ? configuration.store->Effective().viewRadius : 8;
+        std::fputs(render_text(server.View(radius), server.GetWorld().GetContent()).c_str(), stdout);
         return true;
     }
     if (name == "inspect" && count == 1) { Inspect(server); return true; }
@@ -93,12 +112,22 @@ bool Execute(eastl::unique_ptr<Server>& ownedServer, eastl::string_view line, bo
         SaveResult<void> saved;
         if (count == 2) {
             const String path(words[1].data(), words[1].size());
+            if (configuration.enabled) {
+                auto candidate = configuration.LoadFor(path.c_str(), &diagnostics);
+                if (!candidate || !ApplySettings(server, candidate->Effective(), &diagnostics)) {
+                    std::fprintf(stderr, "Configuration failed: %s\n", FormatDiagnostics(diagnostics).c_str()); return false;
+                }
+                configuration.store = eastl::move(*candidate);
+            }
             saved = server.CreateSave(path.c_str(), &diagnostics);
         } else { saved = server.Save(&diagnostics); }
         if (!saved) {
             std::fprintf(stderr, "Save failed (error=%d): %s\n", static_cast<int>(saved.error()),
                 FormatDiagnostics(diagnostics).c_str());
             return false;
+        }
+        if (count == 2 && configuration.store && !configuration.store->Save(SettingsScope::World, &diagnostics)) {
+            std::fprintf(stderr, "World configuration save failed: %s\n", FormatDiagnostics(diagnostics).c_str()); return false;
         }
         return true;
     }
@@ -110,6 +139,13 @@ bool Execute(eastl::unique_ptr<Server>& ownedServer, eastl::string_view line, bo
             std::fprintf(stderr, "Load failed (error=%d): %s\n", static_cast<int>(loaded.error()),
                 FormatDiagnostics(diagnostics).c_str());
             return false;
+        }
+        if (configuration.enabled) {
+            auto candidate = configuration.LoadFor(path.c_str(), &diagnostics);
+            if (!candidate || !ApplySettings(**loaded, candidate->Effective(), &diagnostics)) {
+                std::fprintf(stderr, "Configuration failed: %s\n", FormatDiagnostics(diagnostics).c_str()); return false;
+            }
+            configuration.store = eastl::move(*candidate);
         }
         ownedServer = eastl::move(*loaded);
         return true;
@@ -231,6 +267,7 @@ int main(int argc, char** argv) {
     bool script = false;
     cataclysmx::headless::LanOptions lan;
     bool lanMode = false;
+    HeadlessConfiguration configuration;
     for (int i = 1; i < argc; ++i) {
         const eastl::string_view argument(argv[i]);
         if (argument == "--script") { script = true;
@@ -257,8 +294,10 @@ int main(int argc, char** argv) {
         } else if (argument == "--content" && i + 1 < argc) { contentPath = argv[++i];
         } else if (argument == "--save" && i + 1 < argc) { savePath = argv[++i];
         } else if (argument == "--load" && i + 1 < argc) { loadPath = argv[++i];
+        } else if (argument == "--user-dir" && i + 1 < argc) { configuration.userRoot = argv[++i]; configuration.enabled = true;
+        } else if (argument == "--world-dir" && i + 1 < argc) { configuration.worldDirectory = argv[++i]; configuration.enabled = true;
         } else {
-            std::fputs("Usage: cataclysmx_headless [--content path] [--save path | --load path] [--script | --host | --join address[:port] | --discover] [--port n] [--discovery-port n] [--discovery-address address] [--name name] [--profile path] [--new-character] [--run-for ms] [--command 'move e'] | --probe | --fail-log\n", stderr);
+            std::fputs("Usage: cataclysmx_headless [--content path] [--user-dir path] [--world-dir path] [--save path | --load path] [--script | --host | --join address[:port] | --discover] [--port n] [--discovery-port n] [--discovery-address address] [--name name] [--profile path] [--new-character] [--run-for ms] [--command 'move e'] | --probe | --fail-log\n", stderr);
             return 2;
         }
     }
@@ -271,6 +310,11 @@ int main(int argc, char** argv) {
         std::fputs("Guest/discovery mode does not own a host game save\n", stderr); return 2;
     }
     Diagnostics diagnostics;
+    if (configuration.enabled) {
+        auto loaded = configuration.LoadFor(loadPath ? loadPath : savePath, &diagnostics);
+        if (!loaded) { std::fprintf(stderr, "Configuration failed: %s\n", FormatDiagnostics(diagnostics).c_str()); return 1; }
+        configuration.store = eastl::move(*loaded);
+    }
     // Scripted save loads also retain a reference to this main-stack catalog.
     const auto content = LoadContentFile(contentPath, &diagnostics);
     if (!content) {
@@ -294,9 +338,14 @@ int main(int argc, char** argv) {
         }
         server = eastl::move(*loaded);
     } else {
-        server = eastl::make_unique<Server>(*content);
+        server = eastl::make_unique<Server>(*content, configuration.store ? configuration.store->Effective().seed : 42);
+    }
+    if (configuration.store && !ApplySettings(*server, configuration.store->Effective(), &diagnostics)) {
+        std::fprintf(stderr, "Configuration application failed: %s\n", FormatDiagnostics(diagnostics).c_str()); return 1;
+    }
+    if (loadPath == nullptr) {
         if (savePath != nullptr) {
-            server->SetAutosaveInterval(1000);
+            if (!configuration.enabled) { server->SetAutosaveInterval(1000); }
             diagnostics.Clear();
             const auto saved = server->CreateSave(savePath, &diagnostics);
             if (!saved) {
@@ -304,13 +353,16 @@ int main(int argc, char** argv) {
                     FormatDiagnostics(diagnostics).c_str());
                 return 1;
             }
+            if (configuration.store && !configuration.store->Save(SettingsScope::World, &diagnostics)) {
+                std::fprintf(stderr, "World configuration save failed: %s\n", FormatDiagnostics(diagnostics).c_str()); return 1;
+            }
         }
     }
     if (lanMode) { return cataclysmx::headless::RunLan(*server, *content, lan); }
     if (!script) {
         bool quit = false;
         for (const char* command : {"pickup", "move e", "interact e", "wait", "view", "inspect"}) {
-            if (!Execute(server, command, quit)) { return 1; }
+            if (!Execute(server, command, quit, configuration)) { return 1; }
         }
         return server->GetWorld().CheckInvariants() ? 0 : 1;
     }
@@ -319,7 +371,7 @@ int main(int argc, char** argv) {
     std::size_t line_number = 0;
     while (!quit && std::getline(std::cin, line)) {
         ++line_number;
-        if (!Execute(server, eastl::string_view(line.data(), line.size()), quit)) {
+        if (!Execute(server, eastl::string_view(line.data(), line.size()), quit, configuration)) {
             std::fprintf(stderr, "Invalid command/request on line %zu: %s\n", line_number, line.c_str());
             return 2;
         }

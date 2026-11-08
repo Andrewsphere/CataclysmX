@@ -1,5 +1,12 @@
 # API documentation
 
+- [Gameplay UI](gameplay_ui.md): responsive map/status layout, on-demand inventory,
+  players and controls, selected-item drops and terminal presentation API.
+- [UI navigation controls](ui_navigation.md): baseline keyboard controls, focus,
+  selection, cancellation, and modal input behavior.
+- [Settings, input, and localization](settings_api.md): sparse global/world
+  overrides, the F2 editor, case-sensitive Ctrl bindings, and text catalogs.
+6
 - [World API](world_api.md): identity, ownership, coordinates, chunk demand and
   in-memory archives. Start here for scenario setup and administrative tools.
 - [Server and simulation API](server_api.md): commands, turn advancement, views,

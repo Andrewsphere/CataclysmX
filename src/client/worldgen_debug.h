@@ -4,6 +4,8 @@
 
 namespace cataclysmx {
 
+class Localization;
+
 enum class WorldgenDebugLayer { Roads, Parcels, Ownership, Biomes, Terrain };
 
 struct WorldgenDebugView {
@@ -23,6 +25,6 @@ WorldgenDebugView BuildWorldgenDebugView(const ContentCatalog& content,
 // Selected tile, environment, owner/building information, and boundary contracts.
 // Selection must be a valid tile inside plan.bounds. Results own their strings.
 Vector<String> WorldgenDebugDetails(const ContentCatalog& content,
-    const RegionPlan& plan, TileCoord selection);
+    const RegionPlan& plan, TileCoord selection, const Localization* localization = nullptr);
 
 }

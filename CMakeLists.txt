@@ -85,8 +85,10 @@ cataclysmx_no_exceptions(cataclysmx_network)
 
 add_library(cataclysmx_client STATIC src/client/text.cpp src/client/text.h
     src/client/worldgen_debug.cpp src/client/worldgen_debug.h
-    src/client/lan_profile.cpp src/client/lan_profile.h)
-target_link_libraries(cataclysmx_client PUBLIC cataclysmx_engine)
+    src/client/lan_profile.cpp src/client/lan_profile.h
+    src/client/input.cpp src/client/input.h src/client/settings.cpp src/client/settings.h
+    src/client/localization.cpp src/client/localization.h src/content/preferences.cpp)
+target_link_libraries(cataclysmx_client PUBLIC cataclysmx_engine PRIVATE yyjson::yyjson)
 cataclysmx_no_exceptions(cataclysmx_client)
 
 add_executable(cataclysmx_headless src/headless/main.cpp src/headless/lan.cpp src/headless/lan.h)
@@ -97,7 +99,10 @@ cataclysmx_no_exceptions(cataclysmx_headless)
 if(CATACLYSMX_BUILD_TERMINAL)
     find_package(ftxui CONFIG REQUIRED)
     add_library(cataclysmx_terminal STATIC src/terminal/render.cpp src/terminal/render.h
-        src/terminal/debug_menu.cpp src/terminal/debug_menu.h)
+        src/terminal/gameplay_screen.cpp src/terminal/gameplay_screen.h
+        src/terminal/debug_menu.cpp src/terminal/debug_menu.h
+        src/terminal/keyboard.cpp src/terminal/keyboard.h
+        src/terminal/settings_menu.cpp src/terminal/settings_menu.h)
     target_include_directories(cataclysmx_terminal PUBLIC src)
     target_link_libraries(cataclysmx_terminal PUBLIC cataclysmx_client ftxui::dom ftxui::component PRIVATE ftxui::screen)
     cataclysmx_no_exceptions(cataclysmx_terminal)
@@ -106,6 +111,7 @@ if(CATACLYSMX_BUILD_TERMINAL)
     cataclysmx_no_exceptions(cataclysmx_terminal_smoke)
     add_executable(cataclysmx_game src/terminal/main.cpp)
     target_compile_definitions(cataclysmx_game PRIVATE CATACLYSMX_TERRAIN_FILE="${CMAKE_CURRENT_SOURCE_DIR}/data/terrain.json5")
+    target_compile_definitions(cataclysmx_game PRIVATE CATACLYSMX_LOC_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/data/loc")
     target_link_libraries(cataclysmx_game PRIVATE cataclysmx_client cataclysmx_network cataclysmx_terminal ftxui::component Threads::Threads)
     cataclysmx_no_exceptions(cataclysmx_game)
 endif()
@@ -119,11 +125,14 @@ if(CATACLYSMX_BUILD_TESTS)
         tests/terrain_integration_tests.cpp tests/building_pattern_tests.cpp tests/worldgen_tests.cpp
         tests/worldgen_debug_tests.cpp tests/pacing_tests.cpp tests/scheduling_tests.cpp
         tests/multiplayer_session_tests.cpp tests/player_parking_tests.cpp tests/network_tests.cpp
-        tests/lan_profile_tests.cpp)
+        tests/lan_profile_tests.cpp
+        tests/settings_tests.cpp tests/localization_tests.cpp)
     target_compile_definitions(cataclysmx_tests PRIVATE CATACLYSMX_TERRAIN_FILE="${CMAKE_CURRENT_SOURCE_DIR}/data/terrain.json5")
+    target_compile_definitions(cataclysmx_tests PRIVATE CATACLYSMX_LOC_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/data/loc")
     target_link_libraries(cataclysmx_tests PRIVATE cataclysmx_client cataclysmx_network Catch2::Catch2WithMain unofficial::sqlite3::sqlite3 Threads::Threads)
     if(CATACLYSMX_BUILD_TERMINAL)
-        target_sources(cataclysmx_tests PRIVATE tests/terminal_render_tests.cpp tests/terminal_debug_menu_tests.cpp)
+        target_sources(cataclysmx_tests PRIVATE tests/terminal_render_tests.cpp tests/terminal_debug_menu_tests.cpp
+            tests/terminal_input_tests.cpp tests/terminal_settings_tests.cpp tests/terminal_gameplay_tests.cpp)
         target_link_libraries(cataclysmx_tests PRIVATE cataclysmx_terminal)
     endif()
     cataclysmx_target(cataclysmx_tests)
@@ -167,8 +176,12 @@ if(CATACLYSMX_BUILD_TESTS)
         set_tests_properties(headless_lan_roundtrip PROPERTIES TIMEOUT 45 LABELS "network;integration")
     endif()
     if(CATACLYSMX_BUILD_TERMINAL)
-        add_test(NAME terminal_game_render COMMAND cataclysmx_game --render)
+        add_test(NAME terminal_game_render COMMAND cataclysmx_game --user-dir "${CMAKE_CURRENT_BINARY_DIR}/test-user/terminal-render" --render)
         set_tests_properties(terminal_game_render PROPERTIES PASS_REGULAR_EXPRESSION "tick=0 position=0,0")
+        add_test(NAME settings_client_roundtrip COMMAND ${CMAKE_COMMAND}
+            "-DHEADLESS=$<TARGET_FILE:cataclysmx_headless>"
+            "-DTERMINAL=$<TARGET_FILE:cataclysmx_game>"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/run_settings_script.cmake")
     endif()
     # Confirm a failed REQUIRE actually returns a failure, without making CTest red.
     add_test(NAME catch2_expected_failure COMMAND cataclysmx_tests "[.intentional-failure]")

@@ -22,12 +22,12 @@ if(NOT result EQUAL 0 OR NOT output MATCHES "inspect tick=200.*invariants=ok"
     message(FATAL_ERROR "Load script failed (${result}):\n${output}\n${errors}")
 endif()
 if(DEFINED TERMINAL)
-    execute_process(COMMAND "${TERMINAL}" --save "${directory}/terminal world.sqlite" --render
+    execute_process(COMMAND "${TERMINAL}" --user-dir "${directory}/user" --save "${directory}/terminal world.sqlite" --render
         RESULT_VARIABLE result OUTPUT_VARIABLE before ERROR_VARIABLE errors)
     if(NOT result EQUAL 0)
         message(FATAL_ERROR "Terminal save failed: ${errors}")
     endif()
-    execute_process(COMMAND "${TERMINAL}" --load "${directory}/terminal world.sqlite" --render
+    execute_process(COMMAND "${TERMINAL}" --user-dir "${directory}/user" --load "${directory}/terminal world.sqlite" --render
         RESULT_VARIABLE result OUTPUT_VARIABLE after ERROR_VARIABLE errors)
     if(NOT result EQUAL 0 OR NOT before STREQUAL after)
         message(FATAL_ERROR "Terminal load did not restore the same view: ${errors}")

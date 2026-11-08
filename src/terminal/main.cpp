@@ -2,8 +2,10 @@
 #include "client/lan_profile.h"
 #include "core/server.h"
 #include "network/network.h"
-#include "terminal/render.h"
+#include "client/localization.h"
 #include "terminal/debug_menu.h"
+#include "terminal/settings_menu.h"
+#include "terminal/gameplay_screen.h"
 
 #include <ftxui/component/component.hpp>
 #include <ftxui/component/event.hpp>
@@ -11,15 +13,25 @@
 #include <ftxui/dom/elements.hpp>
 
 #include <EASTL/unique_ptr.h>
+#include <EASTL/utility.h>
 
 #include <algorithm>
 #include <charconv>
-#include <cstdio>
 #include <chrono>
+#include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <thread>
 
 namespace {
+
+using namespace cataclysmx;
+eastl::string_view View(const String& text) { return {text.data(), text.size()}; }
+std::string Frontend(const String& text) { return {text.data(), text.size()}; }
+int Failure(const char* operation, const Diagnostics& diagnostics) {
+    std::fprintf(stderr, "%s: %s\n", operation, FormatDiagnostics(diagnostics).c_str()); return 1;
+}
+
 bool Endpoint(const std::string& input, std::string& address, std::uint16_t& port, std::uint16_t defaultPort) {
     const auto colon = input.rfind(':');
     address = input.substr(0, colon);
@@ -36,15 +48,18 @@ bool Endpoint(const std::string& input, std::string& address, std::uint16_t& por
 }
 
 int main(int argc, char** argv) {
-    std::string savePath;
-    std::string loadPath;
-    std::string contentPath = CATACLYSMX_TERRAIN_FILE;
+    String savePath;
+    String loadPath;
+    String contentPath = CATACLYSMX_TERRAIN_FILE;
+    String localizationDirectory = CATACLYSMX_LOC_DIRECTORY;
+    String userRoot = DefaultUserRoot();
+    String worldDirectory;
     bool render = false;
     bool openLan = false, browse = false;
     std::uint16_t port = 24680;
     std::string joinAddress, playerName = "Guest", profilePath = "cataclysmx-lan-profile.txt";
     for (int i = 1; i < argc; ++i) {
-        const std::string argument(argv[i]);
+        const eastl::string_view argument(argv[i]);
         if (argument == "--render") { render = true;
         } else if (argument == "--save" && i + 1 < argc) { savePath = argv[++i];
         } else if (argument == "--load" && i + 1 < argc) { loadPath = argv[++i];
@@ -58,57 +73,44 @@ int main(int argc, char** argv) {
             const std::string value(argv[++i]);
             const auto parsed = std::from_chars(value.data(), value.data() + value.size(), port);
             if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size() || port == 0) { return 2; }
+        } else if (argument == "--user-dir" && i + 1 < argc) { userRoot = argv[++i];
+        } else if (argument == "--world-dir" && i + 1 < argc) { worldDirectory = argv[++i];
+        } else if (argument == "--loc-dir" && i + 1 < argc) { localizationDirectory = argv[++i];
         } else {
-            std::fputs("Usage: cataclysmx_game [--content path] [--save path | --load path] [--render] [--host] [--port n] [--join address[:port]] [--discover] [--name name] [--profile path]\n", stderr);
+            std::fputs("Usage: cataclysmx_game [--content <path>] [--user-dir <path>] [--world-dir <path>] [--loc-dir <path>] [--render] [--save <path> | --load <path>] [--host] [--port n] [--join address[:port]] [--discover] [--name name] [--profile path]\n", stderr);
             return 2;
         }
     }
-    if (!savePath.empty() && !loadPath.empty()) {
-        std::fputs("Choose either --save or --load\n", stderr);
-        return 2;
+    if (!savePath.empty() && !loadPath.empty()) { std::fputs("Choose either --save or --load\n", stderr); return 2; }
+    if (worldDirectory.empty() && (!savePath.empty() || !loadPath.empty())) {
+        worldDirectory = WorldDirectoryForSave((savePath.empty() ? loadPath : savePath).c_str());
     }
     if ((openLan && !joinAddress.empty()) || playerName.empty() || playerName.size() > 32) { return 2; }
-    cataclysmx::Diagnostics diagnostics;
-    // Declared before the server so the referenced catalog outlives it.
-    const auto content = cataclysmx::LoadContentFile(contentPath.c_str(), &diagnostics);
-    if (!content) {
-        std::fprintf(stderr, "Content load failed (error=%d): %s\n", static_cast<int>(content.error()),
-            cataclysmx::FormatDiagnostics(diagnostics).c_str());
-        return 1;
+    Diagnostics diagnostics;
+    SettingsStore settings(userRoot, worldDirectory);
+    if (!settings.Load(&diagnostics)) { return Failure("Configuration load failed", diagnostics); }
+    Localization localization;
+    if (!localization.Load(localizationDirectory.c_str(), View(settings.Effective().language), &diagnostics)) {
+        return Failure("Localization load failed", diagnostics);
     }
-    const auto validated = cataclysmx::ValidateServerContent(*content, &diagnostics);
-    if (!validated) {
-        std::fprintf(stderr, "Content validation failed: %s\n",
-            cataclysmx::FormatDiagnostics(diagnostics).c_str());
-        return 1;
-    }
-    eastl::unique_ptr<cataclysmx::Server> ownedServer;
-    diagnostics.Clear();
+    // Content and configuration outlive the server and all terminal components.
+    const auto content = LoadContentFile(contentPath.c_str(), &diagnostics);
+    if (!content || !ValidateServerContent(*content, &diagnostics)) { return Failure("Content load/validation failed", diagnostics); }
+    eastl::unique_ptr<Server> ownedServer;
     if (!loadPath.empty()) {
-        auto loaded = cataclysmx::Server::LoadSave(*content, loadPath.c_str(), &diagnostics);
-        if (!loaded) {
-            std::fprintf(stderr, "Load failed (error=%d): %s\n", static_cast<int>(loaded.error()),
-                cataclysmx::FormatDiagnostics(diagnostics).c_str());
-            return 1;
-        }
+        auto loaded = Server::LoadSave(*content, loadPath.c_str(), &diagnostics);
+        if (!loaded) { return Failure("Load failed", diagnostics); }
         ownedServer = eastl::move(*loaded);
-    } else {
-        ownedServer = eastl::make_unique<cataclysmx::Server>(*content);
-        if (!savePath.empty()) {
-            ownedServer->SetAutosaveInterval(1000);
-            diagnostics.Clear();
-            const auto saved = ownedServer->CreateSave(savePath.c_str(), &diagnostics);
-            if (!saved) {
-                std::fprintf(stderr, "Save creation failed (error=%d): %s\n", static_cast<int>(saved.error()),
-                    cataclysmx::FormatDiagnostics(diagnostics).c_str());
-                return 1;
-            }
-        }
+    } else { ownedServer = eastl::make_unique<Server>(*content, settings.Effective().seed); }
+    Server& server = *ownedServer;
+    if (!ApplySettings(server, settings.Effective(), &diagnostics)) { return Failure("Settings application failed", diagnostics); }
+    if (!savePath.empty()) {
+        if (!server.CreateSave(savePath.c_str(), &diagnostics)) { return Failure("Save creation failed", diagnostics); }
+        if (!settings.Save(SettingsScope::World, &diagnostics)) { return Failure("World configuration creation failed", diagnostics); }
     }
-    cataclysmx::Server& server = *ownedServer;
     if (render) {
-        std::fputs(cataclysmx::render_text(server.View(), *content).c_str(), stdout);
-        return 0;
+        // Preserve the script-facing English snapshot contract.
+        std::fputs(render_text(server.View(settings.Effective().viewRadius), *content).c_str(), stdout); return 0;
     }
     auto runtime = cataclysmx::network::NetworkRuntime::Create();
     if (!runtime) { std::fprintf(stderr, "LAN runtime failed: %d\n", static_cast<int>(runtime.error())); return 1; }
@@ -117,7 +119,7 @@ int main(int argc, char** argv) {
     cataclysmx::network::LanDiscovery discovery(**runtime, *content);
     cataclysmx::client::LanProfile profile;
     bool profileUsable = true;
-    std::string message = "Pick up the backpack with g. The machine (&) is east.";
+    std::string message = Frontend(GameplayWelcome(localization, settings.Keys()));
     if (auto loaded = profile.Load(profilePath.c_str()); !loaded) {
         profileUsable = false;
         message = "LAN profile cannot be loaded; use --profile with a valid file to join. Local play and hosting are available.";
@@ -133,13 +135,13 @@ int main(int argc, char** argv) {
         std::uint16_t remotePort;
         if (!Endpoint(endpoint, address, remotePort, port)) { message = "Invalid address or port."; return; }
         const auto* saved = profile.Find(address.c_str(), remotePort);
-        cataclysmx::network::ConnectionSettings settings;
-        settings.address = address.c_str();
-        settings.port = remotePort;
-        settings.playerName = playerName.c_str();
-        settings.reconnectToken = newCharacter || !saved ? 0 : saved->token;
+        cataclysmx::network::ConnectionSettings connectionSettings;
+        connectionSettings.address = address.c_str();
+        connectionSettings.port = remotePort;
+        connectionSettings.playerName = playerName.c_str();
+        connectionSettings.reconnectToken = newCharacter || !saved ? 0 : saved->token;
         guest.Disconnect();
-        auto result = guest.Connect(settings);
+        auto result = guest.Connect(connectionSettings);
         if (!result) { message = std::string("Connect failed: ") + cataclysmx::network::NetworkErrorMessage(result.error()); return; }
         persistedToken = 0;
         connectedAddress = address;
@@ -147,15 +149,16 @@ int main(int argc, char** argv) {
         message = "Connecting to " + endpoint + "...";
     };
     if (openLan) {
-        cataclysmx::network::HostSettings settings;
-        settings.port = port;
-        settings.sessionName = playerName.c_str();
-        if (auto result = host.Open(settings); !result) {
+        cataclysmx::network::HostSettings hostSettings;
+        hostSettings.port = port;
+        hostSettings.sessionName = playerName.c_str();
+        if (auto result = host.Open(hostSettings); !result) {
             std::fprintf(stderr, "LAN host failed: %s\n", cataclysmx::network::NetworkErrorMessage(result.error())); return 1;
         }
     }
     if (!joinAddress.empty()) { Connect(joinAddress, false); }
     auto screen = ftxui::ScreenInteractive::Fullscreen();
+    TerminalKeyboard keyboard;
     bool interacting = false;
     bool debugOpen = false;
     bool lanOpen = browse;
@@ -172,70 +175,103 @@ int main(int argc, char** argv) {
     std::string pending;
     std::uint64_t pendingSequence = 0;
     std::uint64_t discoveryElapsed = 0;
-    auto lastUpdate = std::chrono::steady_clock::now();
+    bool settingsOpen = false;
     ftxui::Component debugMenu;
+    ftxui::Component settingsMenu;
+    GameplayUi gameplayUi;
+    auto CurrentView = [&] {
+        return guest.GetState() == cataclysmx::network::ConnectionState::Active && guest.HasView()
+            ? guest.View() : server.View(settings.Effective().viewRadius);
+    };
+    auto lastUpdate = std::chrono::steady_clock::now();
+    const auto exit = [&] { keyboard.Stop(); screen.ExitLoopClosure()(); };
+    auto SubmitCommand = [&](Command command) {
+        if (guest.GetState() == cataclysmx::network::ConnectionState::Connecting
+            || guest.GetState() == cataclysmx::network::ConnectionState::Joining) {
+            message = "Waiting for admission."; return false;
+        }
+        bool accepted = false;
+        const std::string actionDescription = [&] {
+            switch (command.kind) {
+            case cataclysmx::CommandKind::move: return std::string("move ") + (command.dx < 0 ? "west" : command.dx > 0 ? "east" : command.dz < 0 ? "north" : "south");
+            case cataclysmx::CommandKind::interact: return std::string("interact ") + (command.dx < 0 ? "west" : command.dx > 0 ? "east" : command.dz < 0 ? "north" : "south");
+            case cataclysmx::CommandKind::wait: return std::string("wait");
+            case cataclysmx::CommandKind::pick_up: return std::string("pick up");
+            case cataclysmx::CommandKind::drop: return std::string("drop");
+            }
+            return std::string("action");
+        }();
+        if (guest.GetState() == cataclysmx::network::ConnectionState::Active) {
+            const auto submitted = guest.Submit(command);
+            if (submitted) { accepted = true; pendingSequence = *submitted; pending = actionDescription + " #" + std::to_string(*submitted); message = "Sent; awaiting server receipt."; }
+            else { message = std::string("Input rejected: ") + cataclysmx::network::NetworkErrorMessage(submitted.error()); }
+        } else if (host.IsOpen()) {
+            const auto submitted = host.QueueLocal(command);
+            if (submitted == 0) { message = "Local input buffer is full."; }
+            else { accepted = true; pendingSequence = submitted; pending = actionDescription + " #" + std::to_string(submitted); message = "Action pending."; }
+        } else {
+            const auto result = server.Send(command);
+            accepted = result.advanced || result.outcome == Outcome::queued;
+            message = Frontend(localization.OutcomeText(result.outcome));
+            if (result.storageError) {
+                message = Frontend(localization.Text(result.advanced ? "game.autosave_failed" : "game.load_failed"))
+                    + " (error=" + std::to_string(static_cast<int>(*result.storageError)) + ")";
+                std::fprintf(stderr, "%s\n", message.c_str());
+            }
+        }
+        if (accepted) { interacting = false; }
+        return accepted;
+    };
     auto component = ftxui::Renderer([&] {
+        if (settingsOpen) { return settingsMenu->Render(); }
         if (debugOpen) { return debugMenu->Render(); }
-        ftxui::Elements rows;
-        rows.push_back(ftxui::text("CataclysmX | arrows/hjkl move | . wait | g pickup | d drop | o + direction interact | F9 LAN | [/] rate | r limit | p idle pause | S save | F11 debug | q quit"));
         const auto state = guest.GetState();
-        rows.push_back(ftxui::text(std::string("Session: ") + (state == cataclysmx::network::ConnectionState::Active ? "guest"
-            : state == cataclysmx::network::ConnectionState::Connecting || state == cataclysmx::network::ConnectionState::Joining ? "joining"
-            : host.IsOpen() ? "hosting on port " + std::to_string(host.GetPort()) : "local")
-            + (pending.empty() ? "" : " | pending: " + pending)));
-        rows.push_back(ftxui::text(interacting ? "Interact in which direction? (Escape cancels)" : message));
+        GameplayPresentation presentation;
+        const char* sessionKey = state == cataclysmx::network::ConnectionState::Active ? "game.ui.guest"
+            : state == cataclysmx::network::ConnectionState::Connecting || state == cataclysmx::network::ConnectionState::Joining
+                ? "game.ui.joining" : host.IsOpen() ? "game.ui.host" : "game.ui.local";
+        presentation.session = localization.Text(sessionKey);
+        if (host.IsOpen()) {
+            presentation.session += ' '; presentation.session += UnsignedText(host.GetPort());
+        }
+        presentation.message = message.c_str(); presentation.pending = pending.c_str();
+        presentation.interacting = interacting; presentation.enhancedKeyboard = keyboard.Enhanced();
         if (lanOpen) {
-            rows.push_back(ftxui::text("LAN: F9/Esc close | O open | C close | R refresh | j edit address (Enter accepts) | Enter join | n name | 1-9 join | D leave"));
-            rows.push_back(ftxui::text("X new character at entered address (replaces saved identity for that endpoint)"));
-            rows.push_back(ftxui::text("name=" + playerName + " address=" + directAddress + (editing ? " | editing: " + editText + "_ (Enter accepts)" : "")));
+            ftxui::Elements rows;
+            rows.push_back(ftxui::paragraph(Frontend(localization.Text("game.ui.lan_controls"))));
+            rows.push_back(ftxui::paragraph("name=" + playerName + " address=" + directAddress
+                + (editing ? " | editing: " + editText + "_ (Enter accepts, Escape cancels)" : "")));
             std::size_t index = 0;
             for (const auto& session : discovery.Sessions()) {
                 if (++index > 9) { break; }
-                rows.push_back(ftxui::text(std::to_string(index) + ". " + session.sessionName.c_str() + " "
+                rows.push_back(ftxui::paragraph(std::to_string(index) + ". " + session.sessionName.c_str() + " "
                     + session.address.c_str() + ":" + std::to_string(session.gamePort) + " "
                     + std::to_string(session.playerCount) + "/" + std::to_string(session.maxPlayers)
                     + (session.compatible ? "" : " (incompatible)")));
             }
+            presentation.lan = ftxui::vbox(std::move(rows));
         }
-        const cataclysmx::WorldView view = guest.GetState() == cataclysmx::network::ConnectionState::Active && guest.HasView()
-            ? guest.View() : server.View();
-        rows.push_back(ftxui::text("tick=" + std::to_string(view.tick) + " position="
-            + std::to_string(view.player_position.x) + "," + std::to_string(view.player_position.z)));
-        rows.push_back(ftxui::text("rate=" + std::to_string(view.pacing.ticksPerSecond) + " ticks/s limit="
-            + (view.pacing.rateLimited ? "on" : "off") + " idle-pause="
-            + (view.pacing.pauseWhenIdle ? "on" : "off") + " speed=" + std::to_string(view.speed)
-            + " delay=" + std::to_string(view.remainingTicks)
-            + " queued=" + (view.commandQueued ? "yes" : "no")));
-        for (int row = 0; row < view.height; ++row) {
-            ftxui::Elements cells;
-            for (int column = 0; column < view.width; ++column) {
-                cells.push_back(cataclysmx::RenderTerrainCell(cataclysmx::CellAppearance(
-                    view.cells[static_cast<std::size_t>(row * view.width + column)], *content)));
-            }
-            rows.push_back(ftxui::hbox(std::move(cells)));
-        }
-        std::string inventory = "Inventory:";
-        for (const cataclysmx::InventoryEntry& item : view.inventory) {
-            inventory += " " + std::to_string(item.id) + ":" + cataclysmx::item_name(item.kind);
-            if (item.contained_items != 0) {
-                inventory += "(" + std::to_string(item.contained_items) + " inside)";
-            }
-        }
-        if (view.inventory.empty()) { inventory += " empty"; }
-        rows.push_back(ftxui::text(inventory));
-        for (const auto& player : view.players) {
-            rows.push_back(ftxui::text(std::string(player.name.c_str()) + " #" + std::to_string(player.id)
-                + (player.state == cataclysmx::PlayerConnectionState::Parked ? " parked" :
-                   player.state == cataclysmx::PlayerConnectionState::Joining ? " joining" : " active")
-                + (player.graceMicroseconds ? " grace=" + std::to_string(player.graceMicroseconds / 1000000)
-                    + "." + std::to_string((player.graceMicroseconds / 100000) % 10) + "s" : "")
-                + (player.commandQueued ? " queued" : player.state == cataclysmx::PlayerConnectionState::Active
-                    && player.ready ? " waiting for input" : "")));
-        }
-        return ftxui::vbox(std::move(rows));
+        return gameplayUi.Render(CurrentView(), *content, localization, settings.Keys(), presentation);
     });
     component = ftxui::CatchEvent(component, [&](ftxui::Event event) {
         const auto now = std::chrono::steady_clock::now();
+        keyboard.Query();
+        const eastl::string_view raw(event.input().data(), event.input().size());
+        if (keyboard.HandleResponse(raw)) { return true; }
+        // Terminal replies are not keyboard input (a cursor-position reply can
+        // share bytes with a legacy modified function key).
+        if (event.is_cursor_position() || event.is_cursor_shape() || event.IsTerminalNameVersion()
+            || event.IsTerminalEmulator() || event.IsTerminalCapabilities()) { return true; }
+        const auto chord = DecodeTerminalInput(raw);
+        if (chord && chord->ctrl && chord->key == "c") { exit(); return true; }
+        auto action = chord ? ResolveAction(settings.Keys(), interacting ? InputContext::Interaction : InputContext::Gameplay, *chord)
+            : eastl::optional<InputAction>{};
+        // Local modals discard elapsed time; an open LAN host continues serving guests.
+        const bool pauseLocal = settingsOpen || debugOpen || gameplayUi.IsOpen()
+            || (!lanOpen && (gameplayUi.PausesLocal(action) || action == InputAction::Settings
+            || action == InputAction::Debug || action == InputAction::Save || action == InputAction::Cancel
+            || action == InputAction::Quit || action == InputAction::ToggleRate || action == InputAction::ToggleIdle
+            || action == InputAction::RateDown || action == InputAction::RateUp));
         const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(now - lastUpdate).count();
         lastUpdate = now;
         const auto delta = static_cast<std::uint64_t>(std::max<std::int64_t>(0, elapsed));
@@ -292,11 +328,11 @@ int main(int argc, char** argv) {
         if (guest.GetState() != cataclysmx::network::ConnectionState::Active
             && guest.GetState() != cataclysmx::network::ConnectionState::Connecting
             && guest.GetState() != cataclysmx::network::ConnectionState::Joining) {
-            if (!debugOpen || host.IsOpen()) {
+            if (!pauseLocal || host.IsOpen()) {
                 const auto update = host.Pump(delta);
                 for (const auto& result : update.commandResults) {
                     if (result.player == server.GetHostPlayerId()) {
-                        message = cataclysmx::OutcomeMessage(result.result.outcome);
+                        message = Frontend(localization.OutcomeText(result.result.outcome));
                         if (result.sequence == pendingSequence && result.result.outcome != cataclysmx::Outcome::queued) { pending.clear(); }
                     }
                 }
@@ -310,29 +346,36 @@ int main(int argc, char** argv) {
                 }
             }
         }
-        if (event == ftxui::Event::Custom) { return true; }
-        if (event == ftxui::Event::CtrlC) {
-            screen.ExitLoopClosure()();
-            return true;
+        // A changed endpoint must not reuse selected persistent IDs from another world.
+        if (stateBefore != guest.GetState() && gameplayUi.IsOpen()) {
+            gameplayUi.Close(); lastUpdate = std::chrono::steady_clock::now(); return true;
         }
-        if (event == ftxui::Event::F11) {
-            if (guest.GetState() == cataclysmx::network::ConnectionState::Active
-                || guest.GetState() == cataclysmx::network::ConnectionState::Joining
-                || guest.GetState() == cataclysmx::network::ConnectionState::Connecting) {
-                message = "Worldgen debug view is available only in the local game."; return true;
-            }
-            if (debugOpen) {
-                debugOpen = false;
-            } else {
-                interacting = false;
-                const auto position = server.GetWorld().GetActor(server.GetPlayer())->position;
-                debugMenu = cataclysmx::CreateWorldgenDebugMenu(server.GetWorld(), position,
-                    [&] { debugOpen = false; });
-                debugOpen = true;
-            }
-            return true;
+        if (gameplayUi.IsOpen()) {
+            eastl::optional<InputAction> activated;
+            gameplayUi.HandleEvent(event, CurrentView(), localization, settings.Keys(), SubmitCommand,
+                [&](InputAction selected) { activated = selected; });
+            lastUpdate = std::chrono::steady_clock::now();
+            if (!activated) { return true; }
+            // Dispatch the selected action once through the same handlers as a
+            // bound gameplay key, after the modal has consumed its Enter event.
+            action = activated;
         }
-        if (debugOpen) { return debugMenu->OnEvent(event); }
+        if (settingsOpen || debugOpen) {
+            if (event == ftxui::Event::Custom) { return true; }
+            return settingsOpen ? settingsMenu->OnEvent(event) : debugMenu->OnEvent(event);
+        }
+        if (!lanOpen && action && gameplayUi.Open(*action)) {
+            lastUpdate = now; return true;
+        }
+        if (!lanOpen && action == InputAction::Settings) {
+            interacting = false; lastUpdate = now;
+            settingsMenu = CreateSettingsMenu(settings, localization, server, keyboard, localizationDirectory.c_str(), [&] {
+                settingsOpen = false; lastUpdate = std::chrono::steady_clock::now();
+                message = Frontend(localization.Text(settings.Dirty(SettingsScope::Global) || settings.Dirty(SettingsScope::World)
+                    ? "settings.unsaved" : "settings.title"));
+            });
+            settingsOpen = true; return true;
+        }
         if (event == ftxui::Event::F9) {
             lanOpen = !lanOpen; editing = 0; interacting = false;
             if (lanOpen) { StartDiscovery(); discoveryElapsed = 0; }
@@ -368,8 +411,8 @@ int main(int argc, char** argv) {
                 if (guest.GetState() == cataclysmx::network::ConnectionState::Active
                     || guest.GetState() == cataclysmx::network::ConnectionState::Connecting
                     || guest.GetState() == cataclysmx::network::ConnectionState::Joining) { message = "Leave guest session first."; }
-                else { cataclysmx::network::HostSettings settings; settings.port = port; settings.sessionName = playerName.c_str();
-                    const auto result = host.Open(settings);
+                else { cataclysmx::network::HostSettings hostSettings; hostSettings.port = port; hostSettings.sessionName = playerName.c_str();
+                    const auto result = host.Open(hostSettings);
                     message = result ? "LAN open on port " + std::to_string(host.GetPort()) :
                         std::string("Open failed: ") + cataclysmx::network::NetworkErrorMessage(result.error()); }
                 return true;
@@ -389,73 +432,66 @@ int main(int argc, char** argv) {
             }
             return true;
         }
-        if (event == ftxui::Event::Escape && interacting) { interacting = false; return true; }
-        if (event == ftxui::Event::Escape || event == ftxui::Event::Character('q')) {
-            screen.ExitLoopClosure()();
-            return true;
-        }
-        cataclysmx::Command command;
-        bool directional = true;
-        if (event == ftxui::Event::ArrowLeft || event == ftxui::Event::Character('h')) { command.dx = -1;
-        } else if (event == ftxui::Event::ArrowRight || event == ftxui::Event::Character('l')) { command.dx = 1;
-        } else if (event == ftxui::Event::ArrowUp || event == ftxui::Event::Character('k')) { command.dz = -1;
-        } else if (event == ftxui::Event::ArrowDown || event == ftxui::Event::Character('j')) { command.dz = 1;
-        } else { directional = false; }
-        if (directional) {
-            command.kind = interacting ? cataclysmx::CommandKind::interact : cataclysmx::CommandKind::move;
-        } else if (event == ftxui::Event::Character('o')) {
-            interacting = true;
-            return true;
-        } else if (interacting) {
-            return false;
-        } else if (event == ftxui::Event::Character('S')) {
-            if (guest.GetState() == cataclysmx::network::ConnectionState::Active) { message = "Only the host can save."; return true; }
-            if (!server.GetWorld().HasSave()) {
-                message = "Use --save <path> to enable saving for this game.";
-            } else {
-                diagnostics.Clear();
-                const auto saved = server.Save(&diagnostics);
-                message = saved ? "Game saved." : "Save failed (error=" + std::to_string(static_cast<int>(saved.error()))
-                    + "): " + cataclysmx::FormatDiagnostics(diagnostics).c_str();
+        if (action == InputAction::Debug) {
+            if (guest.GetState() == cataclysmx::network::ConnectionState::Active
+                || guest.GetState() == cataclysmx::network::ConnectionState::Joining
+                || guest.GetState() == cataclysmx::network::ConnectionState::Connecting) {
+                message = "Worldgen debug view is available only in the local game."; return true;
             }
-            return true;
-        } else if (event == ftxui::Event::Character('r') || event == ftxui::Event::Character('p')
-            || event == ftxui::Event::Character('[') || event == ftxui::Event::Character(']')) {
-            if (guest.GetState() == cataclysmx::network::ConnectionState::Active) { message = "Only the host controls pacing."; return true; }
+            interacting = false; lastUpdate = now;
+            const auto position = server.GetWorld().GetActor(server.GetPlayer())->position;
+            debugMenu = CreateWorldgenDebugMenu(server.GetWorld(), position,
+                [&] { debugOpen = false; lastUpdate = std::chrono::steady_clock::now(); }, &localization, &settings.Keys());
+            debugOpen = true; return true;
+        }
+        if (action == InputAction::Quit || (action == InputAction::Cancel && !interacting)) { exit(); return true; }
+        if (action == InputAction::Cancel) { interacting = false; lastUpdate = now; return true; }
+        if (action == InputAction::Save) {
+            if (guest.GetState() == cataclysmx::network::ConnectionState::Active) {
+                message = "Only the host can save."; return true;
+            }
+            diagnostics.Clear();
+            if (!server.GetWorld().HasSave()) { message = Frontend(localization.Text("game.no_save")); }
+            else if (const auto saved = server.Save(&diagnostics); !saved) {
+                message = Frontend(localization.Text("game.save_failed")); message += ' '; message += Frontend(FormatDiagnostics(diagnostics));
+            } else { message = Frontend(localization.Text("game.saved")); }
+            lastUpdate = std::chrono::steady_clock::now(); return true;
+        }
+        if (action == InputAction::ToggleRate || action == InputAction::ToggleIdle || action == InputAction::RateDown || action == InputAction::RateUp) {
+            if (guest.GetState() == cataclysmx::network::ConnectionState::Active) {
+                message = "Only the host controls pacing."; return true;
+            }
             auto pacing = server.GetPacing();
-            if (event == ftxui::Event::Character('r')) { pacing.rateLimited = !pacing.rateLimited; }
-            else if (event == ftxui::Event::Character('p')) { pacing.pauseWhenIdle = !pacing.pauseWhenIdle; }
-            else if (event == ftxui::Event::Character('[')) { pacing.ticksPerSecond = std::max(1U, pacing.ticksPerSecond / 2); }
-            else { pacing.ticksPerSecond = std::min(1000000U, pacing.ticksPerSecond > 500000U
-                ? 1000000U : pacing.ticksPerSecond * 2); }
-            server.SetPacing(pacing);
-            return true;
-        } else if (event == ftxui::Event::Character('.')) { command.kind = cataclysmx::CommandKind::wait;
-        } else if (event == ftxui::Event::Character('g')) { command.kind = cataclysmx::CommandKind::pick_up;
-        } else if (event == ftxui::Event::Character('d')) { command.kind = cataclysmx::CommandKind::drop;
-        } else { return false; }
-        interacting = false;
-        if (guest.GetState() == cataclysmx::network::ConnectionState::Connecting
-            || guest.GetState() == cataclysmx::network::ConnectionState::Joining) { message = "Waiting for admission."; return true; }
-        const std::string action = [&] {
-            switch (command.kind) {
-            case cataclysmx::CommandKind::move: return std::string("move ") + (command.dx < 0 ? "west" : command.dx > 0 ? "east" : command.dz < 0 ? "north" : "south");
-            case cataclysmx::CommandKind::interact: return std::string("interact ") + (command.dx < 0 ? "west" : command.dx > 0 ? "east" : command.dz < 0 ? "north" : "south");
-            case cataclysmx::CommandKind::wait: return std::string("wait");
-            case cataclysmx::CommandKind::pick_up: return std::string("pick up");
-            case cataclysmx::CommandKind::drop: return std::string("drop");
-            }
-            return std::string("action");
-        }();
-        if (guest.GetState() == cataclysmx::network::ConnectionState::Active) {
-            const auto submitted = guest.Submit(command);
-            if (submitted) { pendingSequence = *submitted; pending = action + " #" + std::to_string(*submitted); message = "Sent; awaiting server receipt."; }
-            else { message = std::string("Input rejected: ") + cataclysmx::network::NetworkErrorMessage(submitted.error()); }
-        } else {
-            const auto submitted = host.QueueLocal(command);
-            if (submitted == 0) { message = "Local input buffer is full."; }
-            else { pendingSequence = submitted; pending = action + " #" + std::to_string(submitted); message = "Action pending."; }
+            if (action == InputAction::ToggleRate) { pacing.rateLimited = !pacing.rateLimited; }
+            else if (action == InputAction::ToggleIdle) { pacing.pauseWhenIdle = !pacing.pauseWhenIdle; }
+            else if (action == InputAction::RateDown) { pacing.ticksPerSecond = std::max(1U, pacing.ticksPerSecond / 2); }
+            else { pacing.ticksPerSecond = std::min(1000000U, pacing.ticksPerSecond > 500000U ? 1000000U : pacing.ticksPerSecond * 2); }
+            auto overrides = settings.Overrides(SettingsScope::World);
+            if (action == InputAction::ToggleRate) { overrides.rateLimited = pacing.rateLimited; }
+            else if (action == InputAction::ToggleIdle) { overrides.pauseWhenIdle = pacing.pauseWhenIdle; }
+            else { overrides.ticksPerSecond = pacing.ticksPerSecond; }
+            if (!settings.SetOverrides(SettingsScope::World, eastl::move(overrides), settings.KeyOverrides(SettingsScope::World))) { std::abort(); }
+            if (!server.SetPacing(pacing)) { std::abort(); }
+            lastUpdate = now; message = Frontend(localization.Text("settings.unsaved")); return true;
         }
+        if (event == ftxui::Event::Custom || !action) { return true; }
+        Command command;
+        bool directional = true;
+        switch (*action) {
+        case InputAction::West: command.dx = -1; break;
+        case InputAction::East: command.dx = 1; break;
+        case InputAction::North: command.dz = -1; break;
+        case InputAction::South: command.dz = 1; break;
+        default: directional = false; break;
+        }
+        if (directional) { command.kind = interacting ? CommandKind::interact : CommandKind::move; }
+        else if (*action == InputAction::Interact) { interacting = true; return true; }
+        else if (*action == InputAction::Wait) { command.kind = CommandKind::wait; }
+        else if (*action == InputAction::PickUp) { command.kind = CommandKind::pick_up; }
+        else if (*action == InputAction::Drop) { command.kind = CommandKind::drop; }
+        else { return true; }
+        interacting = false;
+        SubmitCommand(command);
         return true;
     });
     std::jthread timer([&screen](std::stop_token stop) {
@@ -465,6 +501,7 @@ int main(int argc, char** argv) {
         }
     });
     screen.Loop(component);
+    keyboard.Stop();
     timer.request_stop();
     timer.join();
     guest.Disconnect();
