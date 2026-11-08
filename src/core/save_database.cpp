@@ -206,7 +206,7 @@ bool ValidChunk(ChunkCoord position) {
 
 bool ValidSnapshot(const SaveSnapshot& snapshot) {
     const auto& session = snapshot.session;
-    if (snapshot.nextId == 0 || session.player >= snapshot.nextId
+    if (session.pacing.ticksPerSecond == 0 || snapshot.nextId == 0 || session.player >= snapshot.nextId
         || !ValidPosition(session.playerPosition) || session.activeRadius < 0
         || session.residentRadius < session.activeRadius || session.residentRadius > 8) {
         return false;
@@ -284,7 +284,7 @@ bool ValidateChunk(const ContentCatalog& content, const ChunkArchive& chunk,
     };
     for (std::size_t i = 0; i < chunk.actors.size(); ++i) {
         const auto& actor = chunk.actors[i];
-        if (!addId(actor.id) || !ValidPosition(actor.position)
+        if (actor.speed == 0 || !addId(actor.id) || !ValidPosition(actor.position)
             || ChunkOf(actor.position) != chunk.position) { return false; }
         for (std::size_t j = 0; j < i; ++j) {
             if (actor.position == chunk.actors[j].position) { return false; }
@@ -292,7 +292,8 @@ bool ValidateChunk(const ContentCatalog& content, const ChunkArchive& chunk,
     }
     for (std::size_t i = 0; i < chunk.objects.size(); ++i) {
         const auto& object = chunk.objects[i];
-        if (!addId(object.id) || !ValidPosition(object.position)
+        if (object.updateInterval == 0 || object.remainingTicks > object.updateInterval
+            || !addId(object.id) || !ValidPosition(object.position)
             || ChunkOf(object.position) != chunk.position) { return false; }
         for (std::size_t j = 0; j < i; ++j) {
             if (object.position == chunk.objects[j].position) { return false; }
@@ -347,6 +348,11 @@ String EncodeSnapshot(const SaveSnapshot& snapshot) {
     writer.Integer(session, "active_radius", snapshot.session.activeRadius);
     writer.Integer(session, "resident_radius", snapshot.session.residentRadius);
     writer.Counter(session, "autosave_interval", snapshot.session.autosaveInterval);
+    auto* pacing = writer.Object();
+    writer.Integer(pacing, "ticks_per_second", snapshot.session.pacing.ticksPerSecond);
+    writer.Boolean(pacing, "rate_limited", snapshot.session.pacing.rateLimited);
+    writer.Boolean(pacing, "pause_when_idle", snapshot.session.pacing.pauseWhenIdle);
+    writer.Add(session, "pacing", pacing);
     writer.Add(root, "session", session);
     return writer.Finish(root);
 }
@@ -369,8 +375,13 @@ SaveResult<SaveSnapshot> DecodeSnapshot(const char* text, std::size_t length, Di
     }
     auto* session = Get(root, "session");
     auto& state = snapshot.session;
+    auto* pacing = Get(session, "pacing");
     if (!Fields(session, {"tick", "rng_state", "player", "position", "active_radius",
-            "resident_radius", "autosave_interval"})
+            "resident_radius", "autosave_interval", "pacing"})
+        || !Fields(pacing, {"ticks_per_second", "rate_limited", "pause_when_idle"})
+        || !Unsigned32(Get(pacing, "ticks_per_second"), state.pacing.ticksPerSecond)
+        || !yyjson_is_bool(Get(pacing, "rate_limited"))
+        || !yyjson_is_bool(Get(pacing, "pause_when_idle"))
         || !Counter(Get(session, "tick"), state.tick)
         || !Unsigned32(Get(session, "rng_state"), state.rngState)
         || !Counter(Get(session, "player"), state.player)
@@ -381,6 +392,8 @@ SaveResult<SaveSnapshot> DecodeSnapshot(const char* text, std::size_t length, Di
         || !ValidSnapshot(snapshot)) {
         return Failure(SaveError::InvalidData, "Invalid session or next_id", diagnostics);
     }
+    state.pacing.rateLimited = yyjson_get_bool(Get(pacing, "rate_limited"));
+    state.pacing.pauseWhenIdle = yyjson_get_bool(Get(pacing, "pause_when_idle"));
     return snapshot;
 }
 
@@ -403,6 +416,8 @@ String EncodeChunk(const ContentCatalog& content, const ChunkArchive& chunk) {
         writer.Position(value, actor.position);
         writer.Boolean(value, "player", actor.player);
         writer.Counter(value, "turns", actor.turns);
+        writer.Integer(value, "speed", actor.speed);
+        writer.Counter(value, "remaining_ticks", actor.remainingTicks);
         auto* inventory = writer.Array();
         inventories.push_back(inventory);
         writer.Add(value, "inventory", inventory);
@@ -417,6 +432,8 @@ String EncodeChunk(const ContentCatalog& content, const ChunkArchive& chunk) {
         writer.Position(value, object.position);
         writer.Boolean(value, "enabled", object.enabled);
         writer.Counter(value, "updates", object.updates);
+        writer.Integer(value, "update_interval", object.updateInterval);
+        writer.Counter(value, "remaining_ticks", object.remainingTicks);
         auto* contents = writer.Array();
         storage.push_back(contents);
         writer.Add(value, "contents", contents);
@@ -535,7 +552,9 @@ SaveResult<ChunkArchive> DecodeChunk(const ContentCatalog& content, const char* 
     yyjson_arr_iter actorIterator = yyjson_arr_iter_with(actors);
     while (auto* value = yyjson_arr_iter_next(&actorIterator)) {
         SavedActor actor{};
-        if (!Fields(value, {"id", "position", "player", "turns", "inventory"})
+        if (!Fields(value, {"id", "position", "player", "turns", "inventory", "speed", "remaining_ticks"})
+            || !Unsigned32(Get(value, "speed"), actor.speed)
+            || !Counter(Get(value, "remaining_ticks"), actor.remainingTicks)
             || !Counter(Get(value, "id"), actor.id) || !Position(Get(value, "position"), actor.position)
             || !yyjson_is_bool(Get(value, "player")) || !Counter(Get(value, "turns"), actor.turns)) {
             return Failure(SaveError::InvalidData, "Invalid actor", diagnostics);
@@ -549,7 +568,9 @@ SaveResult<ChunkArchive> DecodeChunk(const ContentCatalog& content, const char* 
     yyjson_arr_iter objectIterator = yyjson_arr_iter_with(objects);
     while (auto* value = yyjson_arr_iter_next(&objectIterator)) {
         SavedObject object{};
-        if (!Fields(value, {"id", "position", "enabled", "updates", "contents"})
+        if (!Fields(value, {"id", "position", "enabled", "updates", "contents", "update_interval", "remaining_ticks"})
+            || !Unsigned32(Get(value, "update_interval"), object.updateInterval)
+            || !Counter(Get(value, "remaining_ticks"), object.remainingTicks)
             || !Counter(Get(value, "id"), object.id) || !Position(Get(value, "position"), object.position)
             || !yyjson_is_bool(Get(value, "enabled")) || !Counter(Get(value, "updates"), object.updates)) {
             return Failure(SaveError::InvalidData, "Invalid object", diagnostics);
@@ -888,7 +909,7 @@ SaveResult<void> SaveDatabase::Create(const char* path, Diagnostics* diagnostics
         "BEGIN IMMEDIATE;"
         "CREATE TABLE metadata(singleton INTEGER PRIMARY KEY CHECK(singleton=1),"
         "format_version INTEGER NOT NULL,game_version TEXT NOT NULL);"
-        "INSERT INTO metadata VALUES(1,2,'0.1.0');"
+        "INSERT INTO metadata VALUES(1,3,'0.1.0');"
         "CREATE TABLE world_state(singleton INTEGER PRIMARY KEY CHECK(singleton=1),payload TEXT NOT NULL);"
         "CREATE TABLE chunks(x INTEGER NOT NULL,z INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(x,z));"
         "COMMIT;", diagnostics);

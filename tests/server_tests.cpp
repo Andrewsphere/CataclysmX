@@ -40,9 +40,9 @@ void expect(Server& server, Command command, Outcome outcome, bool advances) {
     const CommandResult result = server.Send(command);
     CHECK(result.outcome == outcome);
     CHECK(result.advanced == advances);
-    CHECK(result.tick == before + (advances ? 1 : 0));
+    CHECK(result.tick == before + (advances ? 100 : 0));
     CHECK(server.GetTick() == result.tick);
-    CHECK(server.GetWorld().GetActor(server.GetPlayer())->turns == result.tick);
+    CHECK(server.GetWorld().GetActor(server.GetPlayer())->turns == result.tick / 100);
     CHECK(server.GetWorld().CheckInvariants());
 }
 
@@ -137,7 +137,7 @@ TEST_CASE("Server creates the deterministic demo and advances only successful co
     expect(server, {CommandKind::move, 1, 0}, Outcome::moved, true);
     expect(server, {CommandKind::move, 0, 1}, Outcome::blocked, false);
     expect(server, {CommandKind::interact, 0, 1}, Outcome::nothing_here, false);
-    CHECK(world.GetActor(npc)->turns == server.GetTick());
+    CHECK(world.GetActor(npc)->turns == server.GetTick() / 100);
 }
 
 TEST_CASE("Failures do not consume RNG and occupied open doors cannot close", "[server][commands][determinism]") {
@@ -257,7 +257,7 @@ TEST_CASE("Views are isolated value snapshots with bounded circular LOS and empt
     REQUIRE(carrying.inventory.size() == 1);
     expect(server, {CommandKind::drop}, Outcome::dropped, true);
     CHECK(carrying.inventory.size() == 1);
-    CHECK(carrying.tick + 1 == server.GetTick());
+    CHECK(carrying.tick + 100 == server.GetTick());
     CHECK(old.inventory.empty());
     CHECK(server.View(INT_MIN).width == 1);
     CHECK(server.View(INT_MAX).width == 25);
@@ -310,7 +310,7 @@ TEST_CASE("Bubble radii validate atomically and resident force loads never simul
     REQUIRE(server.SetBubbleRadii(0, 0));
     CHECK(server.GetPlayer() == player);
     CHECK(world.GetActor(player) != nullptr);
-    CHECK(server.GetTick() == 4);
+    CHECK(server.GetTick() == 400);
 }
 
 TEST_CASE("Zero-radius movement loads before crossing and restores frozen archived NPCs", "[server][streaming]") {

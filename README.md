@@ -14,19 +14,25 @@ Get-Content tests/scenarios/streaming.txt | ./out/build/win-msvc-debug/cataclysm
 ```
 
 The terminal client uses **arrows/hjkl** to move, **.** to wait, **g** to pick up,
-**d** to drop, **o then a direction** to interact, and **q/Escape** to quit.
+**d** to drop, **o then a direction** to interact, **[/]** to halve/double the
+runtime tick rate, **r** to toggle rate limiting, **p** to toggle pause-when-idle,
+and **q/Escape** to quit.
 Press **F11** in-game for the world-generation debug menu; arrows/hjkl move its
 cursor, **HJKL** jump by region, **1–5/Tab/Shift+Tab** change layers, **+/-** zoom,
 **Home/c** recenter, **PageUp/PageDown** browse details, and **F11/Escape/q** close.
 The demo has a backpack containing a bandage, a toggleable machine, a door, and
-a wandering NPC. Successful actions spend one turn; rejected actions spend none.
+a wandering NPC. Simulation time uses 100 ticks per in-world second; default
+actions cost 100 ticks. Successful actions spend their action cost; rejected
+actions spend none.
+During a cooldown you can queue the next action. The latest valid input replaces
+the one pending intent, which is validated when the player becomes ready.
 `cataclysmx_game --render` prints a snapshot without entering interactive mode.
 
 Terrain definitions live in [`data/terrain.json5`](data/terrain.json5), with UTF-8
 symbols, named/RGB colors, appearance fallback, passability, sight blocking, and
 door transitions. Both clients accept `--content <path>` to load another JSON5
 document. The default path points to the bundled file in this source checkout.
-See [content format and APIs](doc/content_format.md). Save V2 stores terrain
+See [content format and APIs](doc/content_format.md). Save V3 stores terrain
 string IDs and rejects older save versions; migrations are not implemented yet.
 
 The world has 16×16 XZ chunks, typed generational handles, nested item ownership,
@@ -38,6 +44,9 @@ freeze. See [save format and behavior](doc/save_format.md).
 
 See [`doc/`](doc/README.md) for the world/server API and headless command grammar.
 The dependency probes remain available separately below.
+Headless scripts can set `rate <ticks-per-second>`, `limit <on|off>`,
+`idle-pause <on|off>`, and supply deterministic elapsed time with
+`elapse <microseconds>`; `wait [base-cost]` optionally sets a positive wait cost.
 
 ## Build on Windows
 

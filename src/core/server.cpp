@@ -34,6 +34,17 @@ bool Cardinal(int dx, int dz) {
         || (dx == 0 && (dz == -1 || dz == 1));
 }
 
+bool ValidCommand(Command command) {
+    switch (command.kind) {
+    case CommandKind::wait: return command.waitCost != 0;
+    case CommandKind::move:
+    case CommandKind::interact: return Cardinal(command.dx, command.dz);
+    case CommandKind::pick_up:
+    case CommandKind::drop: return true;
+    default: return false;
+    }
+}
+
 bool BubbleFits(TileCoord position, int radius) {
     if (!ValidPosition(position)) {
         return false;
@@ -121,6 +132,8 @@ const char* OutcomeMessage(Outcome outcome) {
     case Outcome::invalid_command: return "Invalid command.";
     case Outcome::not_carried: return "You are not carrying that item.";
     case Outcome::unavailable: return "That location is unavailable.";
+    case Outcome::not_ready: return "You are still busy.";
+    case Outcome::queued: return "You queue your next action.";
     }
     std::abort();
 }
@@ -160,16 +173,40 @@ Server::Server(const ContentCatalog& content, std::uint32_t seed) : world_(conte
     Take(world_.CreateItem(ItemKind::rock, ItemLocation::Ground({1, 0})));
     Take(world_.CreateObject({2, 0}, false));
     Take(world_.CreateActor({5, 5}));
+    SynchronizePacing();
 }
 
 CommandResult Server::Send(Command command) {
+    if (!ValidCommand(command)) { return {Outcome::invalid_command, false, tick_}; }
+    const Actor* actor = world_.GetActor(player_);
+    Require(actor != nullptr);
+    if (actor->remainingTicks != 0) {
+        // Keep the latest intent, not a chain of key-repeat-generated actions.
+        // Destination, item ownership and cost are checked when it becomes due.
+        pendingCommand_ = command;
+        SynchronizePacing();
+        return {Outcome::queued, false, tick_};
+    }
+    pendingCommand_.reset();
+    CommandResult result = Execute(command);
+    if (result.advanced) {
+        const SessionUpdate update = Update(0);
+        result.tick = update.tick;
+        result.storageError = update.storageError;
+    }
+    return result;
+}
+
+CommandResult Server::Execute(Command command) {
     const Actor* actor = world_.GetActor(player_);
     Require(actor != nullptr);
     const TileCoord position = actor->position;
     const auto failed = [this](Outcome outcome) { return CommandResult{outcome, false, tick_}; };
+    if (actor->remainingTicks != 0) { return failed(Outcome::not_ready); }
     Outcome outcome = Outcome::invalid_command;
     switch (command.kind) {
     case CommandKind::wait:
+        if (command.waitCost == 0) { return failed(Outcome::invalid_command); }
         outcome = Outcome::waited;
         break;
     case CommandKind::move: {
@@ -272,16 +309,99 @@ CommandResult Server::Send(Command command) {
     default:
         return failed(Outcome::invalid_command);
     }
-    Require(tick_ != eastl::numeric_limits<std::uint64_t>::max());
-    cataclysmx::Advance(world_, player_, rng_state_);
-    ++tick_;
+    const std::uint32_t baseCost = command.kind == CommandKind::wait ? command.waitCost : ticks_per_turn;
+    const Tick cost = ActionTicks(baseCost, world_.GetActor(player_)->speed);
+    Require(world_.ScheduleActorAction(player_, baseCost).has_value());
     CommandResult result{outcome, true, tick_};
-    if (world_.HasSave() && autosaveInterval_ != 0
-        && tick_ - lastSaveTick_ >= autosaveInterval_) {
-        const auto saved = Save();
-        if (!saved) {
-            result.storageError = saved.error();
+    result.cost = cost;
+    return result;
+}
+
+void Server::SynchronizePacing() {
+    const Actor* player = world_.GetActor(player_);
+    Require(player && player->player && world_.IsActive(player->position));
+    Vector<PlayerReadiness> players;
+    players.push_back({player_, player->id, player->speed,
+        player->remainingTicks == 0, pendingCommand_.has_value()});
+    pacer_.Synchronize(players);
+}
+
+bool Server::SetPacing(PacingSettings settings) {
+    if (!pacer_.SetSettings(settings)) { return false; }
+    SynchronizePacing();
+    return true;
+}
+
+PacingSettings Server::GetPacing() const { return pacer_.GetSettings(); }
+
+eastl::optional<SaveError> Server::Autosave() {
+    if (!world_.HasSave() || autosaveInterval_ == 0) { return {}; }
+    // Keep the public autosave setting in turns, independent of action count.
+    constexpr Tick maximum = eastl::numeric_limits<Tick>::max();
+    const Tick interval = autosaveInterval_ > maximum / ticks_per_turn
+        ? maximum : autosaveInterval_ * ticks_per_turn;
+    if (tick_ - lastSaveTick_ < interval) { return {}; }
+    const auto saved = Save();
+    if (!saved) { return saved.error(); }
+    return {};
+}
+
+SessionUpdate Server::Update(std::uint64_t elapsedMicroseconds) {
+    SessionUpdate result;
+    std::uint64_t remaining = elapsedMicroseconds;
+    constexpr Tick maximum = eastl::numeric_limits<Tick>::max();
+    for (;;) {
+        SynchronizePacing();
+        if (pacer_.IsIdle()) { break; }
+
+        const Tick credit = pacer_.AvailableTicks();
+        const Tick limit = credit > maximum - tick_ ? maximum : tick_ + credit;
+        const Tick before = tick_;
+        const SimulationResult simulation = cataclysmx::AdvanceUntilInput(world_, tick_, rng_state_, limit);
+        pacer_.ConsumeTicks(tick_ - before);
+        SynchronizePacing();
+        if (pendingCommand_ && world_.GetActor(player_)->remainingTicks == 0) {
+            const Command command = *pendingCommand_;
+            pendingCommand_.reset();
+            result.commandResult = Execute(command);
+            if (result.commandResult->storageError) {
+                result.storageError = result.commandResult->storageError;
+            }
+            // A failed intent is consumed too. The next iteration establishes
+            // fresh input grace or enters idle pause against the current state.
+            continue;
         }
+        if (pacer_.IsIdle()) { break; }
+
+        const Vector<ActorHandle> expired = pacer_.ExpiredPlayers();
+        if (!expired.empty()) {
+            // This local endpoint owns one external controller. The reusable
+            // simulator and pacer expose multi-player barriers independently.
+            Require(expired.size() == 1 && expired.front() == player_);
+            Require(Execute({CommandKind::wait}).advanced);
+            Require(result.skippedActions != maximum);
+            ++result.skippedActions;
+            continue;
+        }
+        if (remaining == 0 || simulation.stop == SimulationStop::NoEvents) { break; }
+
+        std::uint64_t untilEvent = maximum;
+        if (simulation.stop == SimulationStop::LimitReached) {
+            Require(tick_ != maximum && simulation.nextEventIn != 0);
+            untilEvent = pacer_.MicrosecondsUntilTicks(simulation.nextEventIn);
+        }
+        if (const auto deadline = pacer_.NextDeadlineMicroseconds()) {
+            if (*deadline < untilEvent) { untilEvent = *deadline; }
+        }
+        const std::uint64_t step = remaining < untilEvent ? remaining : untilEvent;
+        Require(step != 0);
+        pacer_.ElapseMicroseconds(step);
+        remaining -= step;
+    }
+    result.tick = tick_;
+    result.needsInput = world_.GetActor(player_)->remainingTicks == 0;
+    if (const auto error = Autosave()) {
+        if (!result.storageError) { result.storageError = error; }
     }
     return result;
 }
@@ -298,6 +418,10 @@ WorldView Server::View(int radius) const {
     result.width = 2 * radius + 1;
     result.height = result.width;
     result.tick = tick_;
+    result.remainingTicks = actor->remainingTicks;
+    result.speed = actor->speed;
+    result.pacing = pacer_.GetSettings();
+    result.commandQueued = pendingCommand_.has_value();
     result.cells.resize(static_cast<std::size_t>(result.width * result.height));
     for (int z = 0; z < result.height; ++z) {
         for (int x = 0; x < result.width; ++x) {
@@ -371,7 +495,7 @@ SessionState Server::Checkpoint() const {
     const Actor* actor = world_.GetActor(player_);
     Require(actor != nullptr);
     return {tick_, rng_state_, actor->id, actor->position,
-        active_radius_, resident_radius_, autosaveInterval_};
+        active_radius_, resident_radius_, autosaveInterval_, pacer_.GetSettings()};
 }
 
 SaveResult<void> Server::CreateSave(const char* path, Diagnostics* diagnostics) {
@@ -430,6 +554,9 @@ SaveResult<eastl::unique_ptr<Server>> Server::LoadSave(const ContentCatalog& con
     server->rng_state_ = session.rngState;
     server->autosaveInterval_ = session.autosaveInterval;
     server->lastSaveTick_ = session.tick;
+    Require(server->pacer_.SetSettings(session.pacing));
+    server->pacer_.Reset();
+    server->SynchronizePacing();
     return eastl::move(server);
 }
 

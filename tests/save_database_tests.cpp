@@ -68,8 +68,8 @@ ChunkArchive SampleChunk(ChunkCoord position = {0, 0}) {
     chunk.position = position;
     const TileCoord tile{position.x * chunk_size, position.z * chunk_size};
     chunk.tiles[255] = {TestTerrain("closed_door"), 255};
-    chunk.actors.push_back({1, tile, true, UINT64_MAX});
-    chunk.objects.push_back({2, tile, true, UINT64_MAX - 1});
+    chunk.actors.push_back({1, tile, true, UINT64_MAX, 173, UINT64_MAX});
+    chunk.objects.push_back({2, tile, true, UINT64_MAX - 1, 217, 176});
     chunk.items.push_back({3, ItemKind::backpack, LocationKind::actor, {}, 1});
     chunk.items.push_back({4, ItemKind::backpack, LocationKind::item, {}, 3});
     chunk.items.push_back({5, ItemKind::bandage, LocationKind::item, {}, 4});
@@ -86,6 +86,7 @@ SaveSnapshot SampleSnapshot() {
     snapshot.session.tick = UINT64_MAX;
     snapshot.session.rngState = UINT32_MAX;
     snapshot.session.autosaveInterval = UINT64_MAX - 1;
+    snapshot.session.pacing = {37, true, false};
     return snapshot;
 }
 
@@ -150,7 +151,7 @@ TEST_CASE("Save terrain names survive catalog renumbering and missing content fa
     }
     {
         RawDatabase raw(file.path.c_str());
-        CHECK(raw.Text("SELECT format_version FROM metadata") == "2");
+        CHECK(raw.Text("SELECT format_version FROM metadata") == "3");
         const auto payload = raw.Text("SELECT payload FROM chunks");
         CHECK(payload.find("\"terrain\":\"moss\"") != std::string::npos);
         CHECK(payload.find("\"terrain\":\"floor\"") != std::string::npos);
@@ -272,13 +273,18 @@ TEST_CASE("Save database stores nested standard JSON and round trips full width 
     CHECK(opened->session.tick == UINT64_MAX);
     CHECK(opened->session.autosaveInterval == UINT64_MAX - 1);
     CHECK(opened->session.rngState == UINT32_MAX);
+    CHECK(opened->session.pacing == snapshot.session.pacing);
     auto loaded = database.ReadChunk({-1, -1}, opened->nextId);
     REQUIRE(loaded);
     REQUIRE(*loaded);
     CHECK((**loaded).tiles == chunk.tiles);
     REQUIRE((**loaded).actors.size() == 1);
     CHECK((**loaded).actors[0].turns == UINT64_MAX);
+    CHECK((**loaded).actors[0].speed == 173);
+    CHECK((**loaded).actors[0].remainingTicks == UINT64_MAX);
     CHECK((**loaded).objects[0].updates == UINT64_MAX - 1);
+    CHECK((**loaded).objects[0].updateInterval == 217);
+    CHECK((**loaded).objects[0].remainingTicks == 176);
     REQUIRE((**loaded).items.size() == 5);
     CHECK((**loaded).items[2].owner == 4);
     CHECK((**loaded).items[2].location == LocationKind::item);
@@ -391,7 +397,8 @@ TEST_CASE("Save database rejects unknown versions and incomplete or extended sch
     Populate(file.path.c_str());
     {
         RawDatabase raw(file.path.c_str());
-        SECTION("future version") { raw.Exec("UPDATE metadata SET format_version=3"); }
+        SECTION("future version") { raw.Exec("UPDATE metadata SET format_version=4"); }
+        SECTION("command count ticks version") { raw.Exec("UPDATE metadata SET format_version=2"); }
         SECTION("old version without migration") { raw.Exec("UPDATE metadata SET format_version=1"); }
     }
     SaveDatabase database(TestContent());
@@ -436,6 +443,19 @@ TEST_CASE("Save database strictly validates nested JSON and coordinates", "[save
         SECTION("damage overflow") { Replace(payload, "\"damage\":0", "\"damage\":256"); }
         SECTION("wrong chunk position") { Replace(payload, "\"x\":0", "\"x\":16"); }
         SECTION("position overflow") { Replace(payload, "\"x\":0", "\"x\":2147483648"); }
+        SECTION("zero actor speed") { Replace(payload, "\"speed\":173", "\"speed\":0"); }
+        SECTION("negative actor speed") { Replace(payload, "\"speed\":173", "\"speed\":-1"); }
+        SECTION("overflow actor speed") { Replace(payload, "\"speed\":173", "\"speed\":4294967296"); }
+        SECTION("missing actor speed") { Replace(payload, "\"speed\":173,", ""); }
+        SECTION("numeric actor delay") { Replace(payload, "\"remaining_ticks\":\"18446744073709551615\"", "\"remaining_ticks\":1"); }
+        SECTION("overflow actor delay") { Replace(payload, "\"remaining_ticks\":\"18446744073709551615\"", "\"remaining_ticks\":\"18446744073709551616\""); }
+        SECTION("negative actor delay") { Replace(payload, "\"remaining_ticks\":\"18446744073709551615\"", "\"remaining_ticks\":\"-1\""); }
+        SECTION("noncanonical actor delay") { Replace(payload, "\"remaining_ticks\":\"18446744073709551615\"", "\"remaining_ticks\":\"01\""); }
+        SECTION("zero object interval") { Replace(payload, "\"update_interval\":217", "\"update_interval\":0"); }
+        SECTION("overflow object interval") { Replace(payload, "\"update_interval\":217", "\"update_interval\":4294967296"); }
+        SECTION("object delay exceeds interval") { Replace(payload, "\"remaining_ticks\":\"176\"", "\"remaining_ticks\":\"218\""); }
+        SECTION("numeric object delay") { Replace(payload, "\"remaining_ticks\":\"176\"", "\"remaining_ticks\":176"); }
+        SECTION("missing object delay") { Replace(payload, "\"remaining_ticks\":\"176\",", ""); }
         SECTION("missing ground position") {
             const auto ground = payload.find("\"ground_items\"");
             REQUIRE(ground != std::string::npos);
@@ -466,6 +486,13 @@ TEST_CASE("Save database validates session, counters and generator version", "[s
         SECTION("player is an object") { Replace(payload, "\"player\":\"1\"", "\"player\":\"2\""); }
         SECTION("player position mismatch") { Replace(payload, "\"x\":0", "\"x\":1"); }
         SECTION("duplicate session key") { Replace(payload, "\"rng_state\":4294967295", "\"rng_state\":0,\"rng_state\":1"); }
+        SECTION("zero pacing rate") { Replace(payload, "\"ticks_per_second\":37", "\"ticks_per_second\":0"); }
+        SECTION("overflow pacing rate") { Replace(payload, "\"ticks_per_second\":37", "\"ticks_per_second\":4294967296"); }
+        SECTION("negative pacing rate") { Replace(payload, "\"ticks_per_second\":37", "\"ticks_per_second\":-1"); }
+        SECTION("numeric rate limited") { Replace(payload, "\"rate_limited\":true", "\"rate_limited\":1"); }
+        SECTION("numeric pause when idle") { Replace(payload, "\"pause_when_idle\":false", "\"pause_when_idle\":0"); }
+        SECTION("missing pacing field") { Replace(payload, "\"ticks_per_second\":37,", ""); }
+        SECTION("duplicate pacing field") { Replace(payload, "\"ticks_per_second\":37", "\"ticks_per_second\":37,\"ticks_per_second\":37"); }
         raw.SetText("UPDATE world_state SET payload=?1", payload);
     }
     SaveDatabase database(TestContent());
@@ -556,8 +583,23 @@ TEST_CASE("Save database validates flat archive owners before encoding", "[save]
     SECTION("unknown location") { chunk.items[0].location = static_cast<LocationKind>(255); }
     SECTION("unknown terrain") { chunk.tiles[0].terrain = TerrainId{UINT32_MAX}; }
     SECTION("invalid zero terrain") { chunk.tiles[0] = Tile{}; }
+    SECTION("zero actor speed") { chunk.actors[0].speed = 0; }
+    SECTION("zero object interval") { chunk.objects[0].updateInterval = 0; }
+    SECTION("object delay exceeds interval") { chunk.objects[0].remainingTicks = 218; }
     REQUIRE(database.Begin());
     CHECK(database.WriteChunk(chunk) == eastl::unexpected(SaveError::InvalidData));
+    CHECK(database.Commit() == eastl::unexpected(SaveError::InvalidState));
+}
+
+TEST_CASE("Save database rejects zero pacing rate before encoding", "[save][database][timing]") {
+    SaveFile file;
+    Populate(file.path.c_str());
+    SaveDatabase database(TestContent());
+    REQUIRE(database.Open(file.path.c_str()));
+    REQUIRE(database.Begin());
+    auto snapshot = SampleSnapshot();
+    snapshot.session.pacing.ticksPerSecond = 0;
+    CHECK(database.WriteSnapshot(snapshot) == eastl::unexpected(SaveError::InvalidData));
     CHECK(database.Commit() == eastl::unexpected(SaveError::InvalidState));
 }
 

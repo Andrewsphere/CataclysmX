@@ -108,7 +108,7 @@ bool ValidateArchive(const ContentCatalog& content, const Archive& saved,
     };
     Vector<TileCoord> positions;
     for (const SavedActor& actor : saved.actors) {
-        if (!addId(actor.id) || !ValidPosition(actor.position)
+        if (actor.speed == 0 || !addId(actor.id) || !ValidPosition(actor.position)
             || ChunkOf(actor.position) != saved.position || Occurrences(positions, actor.position)) {
             return false;
         }
@@ -116,7 +116,8 @@ bool ValidateArchive(const ContentCatalog& content, const Archive& saved,
     }
     positions.clear();
     for (const SavedObject& object : saved.objects) {
-        if (!addId(object.id) || !ValidPosition(object.position)
+        if (object.updateInterval == 0 || object.remainingTicks > object.updateInterval
+            || !addId(object.id) || !ValidPosition(object.position)
             || ChunkOf(object.position) != saved.position || Occurrences(positions, object.position)) {
             return false;
         }
@@ -432,7 +433,8 @@ public:
         for (ActorHandle handle : value.actors) {
             const Actor* actor = Live(actors, handle);
             Require(actor != nullptr);
-            saved.actors.push_back({actor->id, actor->position, actor->player, actor->turns});
+            saved.actors.push_back({actor->id, actor->position, actor->player, actor->turns,
+                actor->speed, actor->remainingTicks});
             for (ItemHandle item : actor->inventory) {
                 pending.push_back(item);
             }
@@ -440,7 +442,8 @@ public:
         for (ObjectHandle handle : value.objects) {
             const InteractiveObject* object = Live(objects, handle);
             Require(object != nullptr);
-            saved.objects.push_back({object->id, object->position, object->enabled, object->updates});
+            saved.objects.push_back({object->id, object->position, object->enabled, object->updates,
+                object->updateInterval, object->remainingTicks});
             for (ItemHandle item : object->contents) {
                 pending.push_back(item);
             }
@@ -489,12 +492,14 @@ public:
     void Restore(Chunk& value, const Archive& saved) {
         value.tiles = saved.tiles;
         for (const SavedActor& actor : saved.actors) {
-            const auto key = actors.emplace(Actor{actor.id, actor.position, actor.player, actor.turns, {}});
+            const auto key = actors.emplace(Actor{actor.id, actor.position, actor.player, actor.turns,
+                {}, actor.speed, actor.remainingTicks});
             value.actors.push_back({key.raw});
         }
         for (const SavedObject& object : saved.objects) {
             const auto key = objects.emplace(InteractiveObject{
-                object.id, object.position, object.enabled, object.updates, {}});
+                object.id, object.position, object.enabled, object.updates, {},
+                object.updateInterval, object.remainingTicks});
             value.objects.push_back({key.raw});
         }
         // Parents precede descendants, so every persistent owner is already live.
@@ -514,10 +519,11 @@ public:
 
     SaveResult<void> ValidateSession(const SessionState& session, SaveDatabase* source,
         Diagnostics* diagnostics) const {
-        if (!ValidPosition(session.playerPosition) || session.activeRadius < 0
+        if (session.pacing.ticksPerSecond == 0 || !ValidPosition(session.playerPosition)
+            || session.activeRadius < 0
             || session.residentRadius < session.activeRadius
             || !ValidRegion({ChunkOf(session.playerPosition), session.residentRadius})) {
-            return SaveFailure(SaveError::InvalidData, "Invalid session region", diagnostics);
+            return SaveFailure(SaveError::InvalidData, "Invalid session pacing or region", diagnostics);
         }
         if (session.player == 0) {
             return {}; // Headless/generic worlds have no authoritative player.
@@ -1068,6 +1074,65 @@ WorldResult<void> World::SetObjectEnabled(ObjectHandle handle, bool enabled) {
     return {};
 }
 
+WorldResult<void> World::SetActorSpeed(ActorHandle handle, std::uint32_t speed) {
+    Actor* value = Live(impl_->actors, handle);
+    if (!value) { return eastl::unexpected(WorldError::invalid_handle); }
+    if (speed == 0) { return eastl::unexpected(WorldError::invalid_request); }
+    value->speed = speed;
+    impl_->MarkDirty(ChunkOf(value->position));
+    return {};
+}
+
+WorldResult<void> World::ScheduleActorAction(ActorHandle handle, std::uint32_t baseCost) {
+    Actor* value = Live(impl_->actors, handle);
+    if (!value) { return eastl::unexpected(WorldError::invalid_handle); }
+    if (!IsActive(value->position)) { return eastl::unexpected(WorldError::chunk_unavailable); }
+    if (baseCost == 0 || value->remainingTicks != 0) {
+        return eastl::unexpected(WorldError::invalid_request);
+    }
+    Require(value->speed != 0);
+    Require(value->turns != eastl::numeric_limits<std::uint64_t>::max());
+    value->remainingTicks = ActionTicks(baseCost, value->speed);
+    ++value->turns;
+    impl_->MarkDirty(ChunkOf(value->position));
+    return {};
+}
+
+WorldResult<void> World::SetObjectUpdateInterval(ObjectHandle handle, std::uint32_t interval) {
+    InteractiveObject* value = Live(impl_->objects, handle);
+    if (!value) { return eastl::unexpected(WorldError::invalid_handle); }
+    if (interval == 0) { return eastl::unexpected(WorldError::invalid_request); }
+    value->updateInterval = interval;
+    value->remainingTicks = interval;
+    impl_->MarkDirty(ChunkOf(value->position));
+    return {};
+}
+
+void World::ElapseTicks(Tick elapsed) {
+    if (elapsed == 0) { return; }
+    for (const Chunk& chunk : impl_->chunks) {
+        if (!chunk.active) { continue; }
+        bool modified = false;
+        for (ActorHandle handle : chunk.actors) {
+            Actor* actor = Live(impl_->actors, handle);
+            Require(actor != nullptr);
+            if (actor->remainingTicks != 0) {
+                actor->remainingTicks -= eastl::min(actor->remainingTicks, elapsed);
+                modified = true;
+            }
+        }
+        for (ObjectHandle handle : chunk.objects) {
+            InteractiveObject* object = Live(impl_->objects, handle);
+            Require(object != nullptr);
+            if (object->enabled && object->remainingTicks != 0) {
+                object->remainingTicks -= eastl::min(object->remainingTicks, elapsed);
+                modified = true;
+            }
+        }
+        if (modified) { impl_->MarkDirty(chunk.position); }
+    }
+}
+
 Vector<ActorHandle> World::ActiveActors() const {
     Vector<ActorHandle> result;
     for (const Chunk& value : impl_->chunks) {
@@ -1123,6 +1188,7 @@ WorldResult<void> World::RecordObjectUpdate(ObjectHandle handle) {
     if (value->enabled) {
         Require(value->updates != eastl::numeric_limits<std::uint64_t>::max());
         ++value->updates;
+        value->remainingTicks = value->updateInterval;
         impl_->MarkDirty(ChunkOf(value->position));
     }
     return {};
@@ -1183,7 +1249,7 @@ bool World::CheckInvariants() const {
     for (const auto& entry : state.actors.items()) {
         const Actor& value = entry.second.get();
         const ActorHandle handle{entry.first.raw};
-        if (!add_id(value.id) || Occurrences(indexed_actors, handle) != 1) {
+        if (value.speed == 0 || !add_id(value.id) || Occurrences(indexed_actors, handle) != 1) {
             return false;
         }
         for (ItemHandle child : value.inventory) {
@@ -1197,7 +1263,8 @@ bool World::CheckInvariants() const {
     for (const auto& entry : state.objects.items()) {
         const InteractiveObject& value = entry.second.get();
         const ObjectHandle handle{entry.first.raw};
-        if (!add_id(value.id) || Occurrences(indexed_objects, handle) != 1) {
+        if (value.updateInterval == 0 || value.remainingTicks > value.updateInterval
+            || !add_id(value.id) || Occurrences(indexed_objects, handle) != 1) {
             return false;
         }
         for (ItemHandle child : value.contents) {
@@ -1260,7 +1327,7 @@ bool World::CheckInvariants() const {
         Vector<TileCoord> actor_positions;
         Vector<TileCoord> object_positions;
         for (const SavedActor& actor : saved.actors) {
-            if (!add_id(actor.id) || !ValidPosition(actor.position)
+            if (actor.speed == 0 || !add_id(actor.id) || !ValidPosition(actor.position)
                 || ChunkOf(actor.position) != saved.position
                 || Occurrences(actor_positions, actor.position) != 0) {
                 return false;
@@ -1268,7 +1335,8 @@ bool World::CheckInvariants() const {
             actor_positions.push_back(actor.position);
         }
         for (const SavedObject& object : saved.objects) {
-            if (!add_id(object.id) || !ValidPosition(object.position)
+            if (object.updateInterval == 0 || object.remainingTicks > object.updateInterval
+                || !add_id(object.id) || !ValidPosition(object.position)
                 || ChunkOf(object.position) != saved.position
                 || Occurrences(object_positions, object.position) != 0) {
                 return false;

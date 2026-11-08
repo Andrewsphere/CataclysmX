@@ -11,6 +11,8 @@ struct SavedActor {
     TileCoord position;
     bool player;
     std::uint64_t turns;
+    std::uint32_t speed = 100;
+    Tick remainingTicks = 0;
 };
 
 struct SavedObject {
@@ -18,6 +20,8 @@ struct SavedObject {
     TileCoord position;
     bool enabled;
     std::uint64_t updates;
+    std::uint32_t updateInterval = 100;
+    Tick remainingTicks = 100;
 };
 
 struct SavedItem {

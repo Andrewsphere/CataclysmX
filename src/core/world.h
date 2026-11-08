@@ -3,6 +3,7 @@
 #include "core/containers.h"
 #include "content/content.h"
 #include "core/save_result.h"
+#include "core/timing.h"
 
 #include <EASTL/array.h>
 #include <EASTL/expected.h>
@@ -47,6 +48,7 @@ struct SessionState {
     int activeRadius = 1;
     int residentRadius = 2;
     std::uint64_t autosaveInterval = 0;
+    PacingSettings pacing{};
 };
 ChunkCoord ChunkOf(TileCoord position);
 int TileIndex(TileCoord position);
@@ -82,6 +84,8 @@ struct Actor {
     bool player = false;
     std::uint64_t turns = 0;
     Vector<ItemHandle> inventory;
+    std::uint32_t speed = 100;
+    Tick remainingTicks = 0;
 };
 struct Item {
     PersistentId id = 0;
@@ -95,6 +99,8 @@ struct InteractiveObject {
     bool enabled = false;
     std::uint64_t updates = 0;
     Vector<ItemHandle> contents;
+    std::uint32_t updateInterval = 100;
+    Tick remainingTicks = 100;
 };
 struct Chunk {
     ChunkCoord position{};
@@ -131,7 +137,7 @@ struct ChunkRegion {
 class World {
 public:
     // Content must outlive the World and remain unchanged. New worlds use regional
-    // generation; version-1 saves retain legacy generation. Both require floor/wall.
+    // generation; generation-version-1 saves retain legacy generation. Both require floor/wall.
     explicit World(const ContentCatalog& content, std::uint32_t seed = 42);
     ~World();
     World(const World&) = delete;
@@ -184,6 +190,10 @@ public:
     // Object destruction drops its contents on the ground.
     WorldResult<void> DestroyObject(ObjectHandle object);
     WorldResult<void> SetObjectEnabled(ObjectHandle object, bool enabled);
+    WorldResult<void> SetObjectUpdateInterval(ObjectHandle object, std::uint32_t interval);
+    WorldResult<void> SetActorSpeed(ActorHandle actor, std::uint32_t speed);
+    WorldResult<void> ScheduleActorAction(ActorHandle actor, std::uint32_t baseCost = 100);
+    void ElapseTicks(Tick elapsed);
 
     // Snapshot lists ordered by persistent ID, independent of storage/load order.
     Vector<ActorHandle> ActiveActors() const;

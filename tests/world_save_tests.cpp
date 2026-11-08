@@ -64,6 +64,7 @@ void CheckSession(const SessionState& actual, const SessionState& expected) {
     CHECK(actual.activeRadius == expected.activeRadius);
     CHECK(actual.residentRadius == expected.residentRadius);
     CHECK(actual.autosaveInterval == expected.autosaveInterval);
+    CHECK(actual.pacing == expected.pacing);
 }
 
 TEST_CASE("World save round trips every tile and nested inventory values", "[world][save]") {
@@ -72,6 +73,7 @@ TEST_CASE("World save round trips every tile and nested inventory values", "[wor
     session.tick = 1234;
     session.rngState = 0xfedcba98U;
     session.autosaveInterval = 97;
+    session.pacing = {37, true, false};
     eastl::array<Tile, chunk_size * chunk_size> tiles;
     PersistentId actorId;
     PersistentId objectId;
@@ -108,6 +110,10 @@ TEST_CASE("World save round trips every tile and nested inventory values", "[wor
         REQUIRE(world.RecordActorTurn(actor));
         REQUIRE(world.RecordActorTurn(actor));
         REQUIRE(world.RecordObjectUpdate(object));
+        REQUIRE(world.SetActorSpeed(actor, 173));
+        REQUIRE(world.ScheduleActorAction(actor, 123));
+        REQUIRE(world.SetObjectUpdateInterval(object, 217));
+        world.ElapseTicks(41);
         REQUIRE(world.SetObjectEnabled(object, false));
         REQUIRE(world.CreateSave(files.database.c_str(), session));
         CHECK(world.HasSave());
@@ -124,11 +130,15 @@ TEST_CASE("World save round trips every tile and nested inventory values", "[wor
     REQUIRE(restored.GetActor(actor));
     REQUIRE(restored.GetObject(object));
     CHECK(restored.GetActor(actor)->player);
-    CHECK(restored.GetActor(actor)->turns == 2);
+    CHECK(restored.GetActor(actor)->turns == 3);
+    CHECK(restored.GetActor(actor)->speed == 173);
+    CHECK(restored.GetActor(actor)->remainingTicks == ActionTicks(123, 173) - 41);
     CHECK(restored.GetActor(actor)->position == TileCoord{0, 0});
     CHECK(restored.GetObject(object)->position == TileCoord{2, 2});
     CHECK_FALSE(restored.GetObject(object)->enabled);
     CHECK(restored.GetObject(object)->updates == 1);
+    CHECK(restored.GetObject(object)->updateInterval == 217);
+    CHECK(restored.GetObject(object)->remainingTicks == 176);
     Vector<ItemHandle> items;
     for (PersistentId id : itemIds) {
         const auto handle = restored.FindItem(id);
@@ -159,6 +169,79 @@ TEST_CASE("World save round trips every tile and nested inventory values", "[wor
     Load(reference, {10, -10});
     Load(restored, {10, -10});
     CHECK(restored.GetChunk({10, -10})->tiles == reference.GetChunk({10, -10})->tiles);
+}
+
+TEST_CASE("Timing mutations dirty clean chunks and disk timers stay frozen", "[world][save][timing]") {
+    SaveDirectory files;
+    World world(TestContent());
+    const auto request = Load(world);
+    const auto actor = Take(world.CreateActor({0, 0}));
+    const auto object = Take(world.CreateObject({1, 0}, true));
+    const auto actorId = world.GetActor(actor)->id;
+    const auto objectId = world.GetObject(object)->id;
+    SessionState session;
+    REQUIRE(world.CreateSave(files.database.c_str(), session));
+    REQUIRE(world.SetActorSpeed(actor, 151));
+    REQUIRE(world.SetObjectUpdateInterval(object, 309));
+    REQUIRE(world.Save(session));
+    {
+        World checkpoint(TestContent());
+        Take(checkpoint.LoadSave(files.database.c_str()));
+        Load(checkpoint);
+        CHECK(checkpoint.GetActor(checkpoint.FindActor(actorId))->speed == 151);
+        CHECK(checkpoint.GetObject(checkpoint.FindObject(objectId))->updateInterval == 309);
+        CHECK(checkpoint.GetObject(checkpoint.FindObject(objectId))->remainingTicks == 309);
+    }
+    REQUIRE(world.ScheduleActorAction(actor));
+    REQUIRE(world.Save(session));
+    {
+        World checkpoint(TestContent());
+        Take(checkpoint.LoadSave(files.database.c_str()));
+        Load(checkpoint);
+        CHECK(checkpoint.GetActor(checkpoint.FindActor(actorId))->turns == 1);
+        CHECK(checkpoint.GetActor(checkpoint.FindActor(actorId))->remainingTicks == 151);
+    }
+    world.ElapseTicks(47);
+    session.tick += 47;
+    REQUIRE(world.Save(session));
+    {
+        World checkpoint(TestContent());
+        Take(checkpoint.LoadSave(files.database.c_str()));
+        Load(checkpoint);
+        CHECK(checkpoint.GetActor(checkpoint.FindActor(actorId))->remainingTicks == 104);
+        CHECK(checkpoint.GetObject(checkpoint.FindObject(objectId))->remainingTicks == 262);
+    }
+    REQUIRE(world.ReleaseRequest(request));
+    REQUIRE(world.ReconcileChunks());
+    REQUIRE(world.Save(session)); // Evict the RAM archive to disk.
+    world.ElapseTicks(10000);
+    session.tick += 10000;
+    REQUIRE(world.Save(session));
+    const auto resident = Take(world.RequestChunks({{0, 0}, 0}, LoadMode::resident));
+    REQUIRE(world.ReconcileChunks());
+    world.ElapseTicks(10000);
+    CHECK(world.GetActor(world.FindActor(actorId))->remainingTicks == 104);
+    CHECK(world.GetObject(world.FindObject(objectId))->remainingTicks == 262);
+    REQUIRE(world.UpdateRequest(resident, {{0, 0}, 0}, LoadMode::active));
+    REQUIRE(world.ReconcileChunks());
+    world.ElapseTicks(UINT64_MAX);
+    REQUIRE(world.Save(session));
+    {
+        World checkpoint(TestContent());
+        Take(checkpoint.LoadSave(files.database.c_str()));
+        Load(checkpoint);
+        CHECK(checkpoint.GetActor(checkpoint.FindActor(actorId))->remainingTicks == 0);
+        CHECK(checkpoint.GetObject(checkpoint.FindObject(objectId))->remainingTicks == 0);
+    }
+    REQUIRE(world.RecordObjectUpdate(world.FindObject(objectId)));
+    REQUIRE(world.Save(session));
+    World checkpoint(TestContent());
+    Take(checkpoint.LoadSave(files.database.c_str()));
+    Load(checkpoint);
+    CHECK(checkpoint.GetObject(checkpoint.FindObject(objectId))->updates == 1);
+    CHECK(checkpoint.GetObject(checkpoint.FindObject(objectId))->remainingTicks == 309);
+    session.pacing.ticksPerSecond = 0;
+    CHECK(world.Save(session) == eastl::unexpected(SaveError::InvalidData));
 }
 
 TEST_CASE("World retains unloaded archives until checkpoint then reloads from disk", "[world][save]") {
@@ -212,7 +295,7 @@ TEST_CASE("World retains unloaded archives until checkpoint then reloads from di
     CHECK(world.GetActor(fresh));
 }
 
-TEST_CASE("Version one saves retain legacy generation for missing rows and subsequent checkpoints",
+TEST_CASE("Generation version one saves retain legacy terrain for missing rows and subsequent checkpoints",
           "[world][save][worldgen]") {
     SaveDirectory files;
     {

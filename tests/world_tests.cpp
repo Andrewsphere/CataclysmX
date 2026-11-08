@@ -168,6 +168,77 @@ TEST_CASE("Only active chunks accrue turns and enabled object updates", "[world]
     CHECK(world.CheckInvariants());
 }
 
+TEST_CASE("World schedules committed actor delays and freezes inactive timers", "[world][timing]") {
+    World world(TestContent());
+    const auto request = load(world);
+    const auto actor = take(world.CreateActor({0, 0}));
+    const auto object = take(world.CreateObject({1, 0}, true));
+    const auto actorId = world.GetActor(actor)->id;
+    const auto objectId = world.GetObject(object)->id;
+    CHECK(world.GetActor(actor)->speed == 100);
+    CHECK(world.GetActor(actor)->remainingTicks == 0);
+    CHECK(world.GetObject(object)->updateInterval == 100);
+    CHECK(world.GetObject(object)->remainingTicks == 100);
+    CHECK(world.SetActorSpeed({}, 100) == eastl::unexpected(WorldError::invalid_handle));
+    CHECK(world.ScheduleActorAction({}, 100) == eastl::unexpected(WorldError::invalid_handle));
+    CHECK(world.SetObjectUpdateInterval({}, 100) == eastl::unexpected(WorldError::invalid_handle));
+    CHECK(world.SetActorSpeed(actor, 0) == eastl::unexpected(WorldError::invalid_request));
+    CHECK(world.SetObjectUpdateInterval(object, 0) == eastl::unexpected(WorldError::invalid_request));
+    CHECK(world.ScheduleActorAction(actor, 0) == eastl::unexpected(WorldError::invalid_request));
+    REQUIRE(world.SetActorSpeed(actor, 33));
+    REQUIRE(world.ScheduleActorAction(actor, 101));
+    CHECK(world.GetActor(actor)->remainingTicks == 34); // Ceiling, not truncation.
+    CHECK(world.GetActor(actor)->turns == 1);
+    CHECK(world.ScheduleActorAction(actor) == eastl::unexpected(WorldError::invalid_request));
+    CHECK(world.GetActor(actor)->turns == 1);
+    REQUIRE(world.SetActorSpeed(actor, 200));
+    CHECK(world.GetActor(actor)->remainingTicks == 34); // Already committed.
+    REQUIRE(world.SetObjectUpdateInterval(object, 75));
+    world.ElapseTicks(20);
+    CHECK(world.GetActor(actor)->remainingTicks == 14);
+    CHECK(world.GetObject(object)->remainingTicks == 55);
+    REQUIRE(world.SetObjectEnabled(object, false));
+    REQUIRE(world.RecordObjectUpdate(object));
+    world.ElapseTicks(0);
+    CHECK(world.GetActor(actor)->remainingTicks == 14);
+    world.ElapseTicks(4);
+    CHECK(world.GetActor(actor)->remainingTicks == 10);
+    CHECK(world.GetObject(object)->remainingTicks == 55);
+    CHECK(world.GetObject(object)->updates == 0);
+    REQUIRE(world.UpdateRequest(request, {{0, 0}, 0}, LoadMode::resident));
+    REQUIRE(world.ReconcileChunks());
+    world.ElapseTicks(UINT64_MAX);
+    CHECK(world.GetActor(actor)->remainingTicks == 10);
+    CHECK(world.GetObject(object)->remainingTicks == 55);
+    CHECK(world.ScheduleActorAction(actor) == eastl::unexpected(WorldError::chunk_unavailable));
+    REQUIRE(world.ReleaseRequest(request));
+    REQUIRE(world.ReconcileChunks());
+    world.ElapseTicks(UINT64_MAX);
+    load(world);
+    const auto freshActor = world.FindActor(actorId);
+    const auto freshObject = world.FindObject(objectId);
+    CHECK(world.GetActor(freshActor)->speed == 200);
+    CHECK(world.GetActor(freshActor)->remainingTicks == 10);
+    CHECK(world.GetObject(freshObject)->updateInterval == 75);
+    CHECK(world.GetObject(freshObject)->remainingTicks == 55);
+    REQUIRE(world.SetObjectEnabled(freshObject, true));
+    world.ElapseTicks(UINT64_MAX);
+    CHECK(world.GetActor(freshActor)->remainingTicks == 0);
+    CHECK(world.GetObject(freshObject)->remainingTicks == 0);
+    REQUIRE(world.RecordObjectUpdate(freshObject));
+    CHECK(world.GetObject(freshObject)->updates == 1);
+    CHECK(world.GetObject(freshObject)->remainingTicks == 75);
+    world.ElapseTicks(7);
+    REQUIRE(world.SetObjectUpdateInterval(freshObject, 19));
+    CHECK(world.GetObject(freshObject)->remainingTicks == 19); // Explicit restart.
+    REQUIRE(world.SetActorSpeed(freshActor, UINT32_MAX));
+    REQUIRE(world.ScheduleActorAction(freshActor, UINT32_MAX));
+    CHECK(world.GetActor(freshActor)->remainingTicks == ActionTicks(UINT32_MAX, UINT32_MAX));
+    CHECK(world.GetActor(freshActor)->remainingTicks > UINT32_MAX);
+    CHECK(world.GetActor(freshActor)->turns == 2);
+    CHECK(world.CheckInvariants());
+}
+
 TEST_CASE("Actor movement keeps handles and inventory across chunk boundaries", "[world][actors]") {
     World world(TestContent());
     const auto origin = load(world);

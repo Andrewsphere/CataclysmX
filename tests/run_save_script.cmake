@@ -8,7 +8,7 @@ file(WRITE "${directory}/create.txt"
 execute_process(COMMAND "${HEADLESS}" --script
     WORKING_DIRECTORY "${directory}" INPUT_FILE "${directory}/create.txt"
     RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE errors)
-if(NOT result EQUAL 0 OR NOT output MATCHES "inspect tick=3.*invariants=ok")
+if(NOT result EQUAL 0 OR NOT output MATCHES "inspect tick=300.*invariants=ok")
     message(FATAL_ERROR "Save script failed (${result}):\n${output}\n${errors}")
 endif()
 file(WRITE "${directory}/load.txt"
@@ -16,8 +16,8 @@ file(WRITE "${directory}/load.txt"
 execute_process(COMMAND "${HEADLESS}" --script
     WORKING_DIRECTORY "${directory}" INPUT_FILE "${directory}/load.txt"
     RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE errors)
-if(NOT result EQUAL 0 OR NOT output MATCHES "inspect tick=2.*invariants=ok"
-    OR NOT output MATCHES "inspect tick=3.*invariants=ok"
+if(NOT result EQUAL 0 OR NOT output MATCHES "inspect tick=200.*invariants=ok"
+    OR NOT output MATCHES "inspect tick=300.*invariants=ok"
     OR NOT output MATCHES "inventory=1")
     message(FATAL_ERROR "Load script failed (${result}):\n${output}\n${errors}")
 endif()

@@ -58,6 +58,7 @@ add_library(cataclysmx_engine STATIC
     src/content/content.cpp src/content/content.h
     src/core/diagnostics.cpp src/core/diagnostics.h
     src/core/integration.cpp src/core/world.cpp src/core/simulation.cpp src/core/server.cpp
+    src/core/pacing.cpp src/core/pacing.h src/core/timing.h
     src/core/save_database.cpp src/core/save_database.h src/core/save_result.h src/core/world_archive.h
     src/worldgen/worldgen.cpp src/worldgen/worldgen.h
     src/core/containers.h src/core/integration.h src/core/server.h
@@ -83,6 +84,7 @@ cataclysmx_no_exceptions(cataclysmx_headless)
 
 if(CATACLYSMX_BUILD_TERMINAL)
     find_package(ftxui CONFIG REQUIRED)
+    find_package(Threads REQUIRED)
     add_library(cataclysmx_terminal STATIC src/terminal/render.cpp src/terminal/render.h
         src/terminal/debug_menu.cpp src/terminal/debug_menu.h)
     target_include_directories(cataclysmx_terminal PUBLIC src)
@@ -93,7 +95,7 @@ if(CATACLYSMX_BUILD_TERMINAL)
     cataclysmx_no_exceptions(cataclysmx_terminal_smoke)
     add_executable(cataclysmx_game src/terminal/main.cpp)
     target_compile_definitions(cataclysmx_game PRIVATE CATACLYSMX_TERRAIN_FILE="${CMAKE_CURRENT_SOURCE_DIR}/data/terrain.json5")
-    target_link_libraries(cataclysmx_game PRIVATE cataclysmx_client cataclysmx_terminal ftxui::component)
+    target_link_libraries(cataclysmx_game PRIVATE cataclysmx_client cataclysmx_terminal ftxui::component Threads::Threads)
     cataclysmx_no_exceptions(cataclysmx_game)
 endif()
 
@@ -104,7 +106,7 @@ if(CATACLYSMX_BUILD_TESTS)
         tests/save_database_tests.cpp tests/world_save_tests.cpp tests/server_save_tests.cpp
         tests/content_tests.cpp tests/diagnostics_tests.cpp tests/client_tests.cpp
         tests/terrain_integration_tests.cpp tests/building_pattern_tests.cpp tests/worldgen_tests.cpp
-        tests/worldgen_debug_tests.cpp)
+        tests/worldgen_debug_tests.cpp tests/pacing_tests.cpp tests/scheduling_tests.cpp)
     target_compile_definitions(cataclysmx_tests PRIVATE CATACLYSMX_TERRAIN_FILE="${CMAKE_CURRENT_SOURCE_DIR}/data/terrain.json5")
     target_link_libraries(cataclysmx_tests PRIVATE cataclysmx_client Catch2::Catch2WithMain unofficial::sqlite3::sqlite3)
     if(CATACLYSMX_BUILD_TERMINAL)
@@ -131,6 +133,10 @@ if(CATACLYSMX_BUILD_TESTS)
         "-DHEADLESS=$<TARGET_FILE:cataclysmx_headless>"
         "-DSCENARIO=${CMAKE_CURRENT_SOURCE_DIR}/tests/scenarios/invalid.txt"
         -DINVALID=ON -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/run_headless_script.cmake")
+    add_test(NAME headless_pacing_script COMMAND ${CMAKE_COMMAND}
+        "-DHEADLESS=$<TARGET_FILE:cataclysmx_headless>"
+        "-DSCENARIO=${CMAKE_CURRENT_SOURCE_DIR}/tests/scenarios/pacing.txt"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/run_pacing_script.cmake")
     set(save_client_terminal_arg)
     if(CATACLYSMX_BUILD_TERMINAL)
         set(save_client_terminal_arg "-DTERMINAL=$<TARGET_FILE:cataclysmx_game>")

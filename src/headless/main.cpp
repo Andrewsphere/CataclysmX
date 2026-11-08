@@ -41,6 +41,12 @@ void Inspect(const Server& server) {
     std::printf("inspect tick=%llu loaded=%zu active=%zu archived=%zu invariants=%s\n",
         static_cast<unsigned long long>(server.GetTick()), world.LoadedChunks().size(), active,
         world.ArchivedChunkCount(), world.CheckInvariants() ? "ok" : "BROKEN");
+    const WorldView view = server.View(0);
+    const PacingSettings pacing = server.GetPacing();
+    std::printf("pacing rate=%u limit=%s idle-pause=%s speed=%u delay=%llu queued=%s\n",
+        pacing.ticksPerSecond, pacing.rateLimited ? "on" : "off",
+        pacing.pauseWhenIdle ? "on" : "off", view.speed,
+        static_cast<unsigned long long>(view.remainingTicks), view.commandQueued ? "yes" : "no");
     for (ChunkCoord coord : world.LoadedChunks()) {
         const Chunk* chunk = world.GetChunk(coord);
         if (chunk->actors.empty() && chunk->ground_items.empty() && chunk->objects.empty()) { continue; }
@@ -113,6 +119,45 @@ bool Execute(eastl::unique_ptr<Server>& ownedServer, eastl::string_view line, bo
         server.SetAutosaveInterval(turns);
         return true;
     }
+    if (name == "rate" && count == 2) {
+        PacingSettings pacing = server.GetPacing();
+        if (!Number(words[1], pacing.ticksPerSecond) || pacing.ticksPerSecond == 0
+            || !server.SetPacing(pacing)) { return false; }
+        std::printf("rate=%u\n", pacing.ticksPerSecond);
+        return true;
+    }
+    if ((name == "limit" || name == "idle-pause") && count == 2) {
+        PacingSettings pacing = server.GetPacing();
+        const bool enabled = words[1] == "on";
+        if (!enabled && words[1] != "off") { return false; }
+        if (name == "limit") { pacing.rateLimited = enabled; }
+        else { pacing.pauseWhenIdle = enabled; }
+        if (!server.SetPacing(pacing)) { return false; }
+        std::printf("%.*s=%s\n", static_cast<int>(name.size()), name.data(), enabled ? "on" : "off");
+        return true;
+    }
+    if (name == "elapse" && count == 2) {
+        std::uint64_t microseconds = 0;
+        if (!Number(words[1], microseconds)) { return false; }
+        const SessionUpdate update = server.Update(microseconds);
+        std::printf("tick=%llu skipped=%llu needs-input=%d\n",
+            static_cast<unsigned long long>(update.tick),
+            static_cast<unsigned long long>(update.skippedActions), update.needsInput ? 1 : 0);
+        if (update.commandResult) {
+            const CommandResult& resolved = *update.commandResult;
+            std::printf("resolved tick=%llu advanced=%d %s\n",
+                static_cast<unsigned long long>(resolved.tick), resolved.advanced ? 1 : 0,
+                OutcomeMessage(resolved.outcome));
+        }
+        if (update.storageError) {
+            std::fprintf(stderr, "%s (error=%d)\n",
+                update.commandResult && update.commandResult->storageError
+                    ? "World load failed for queued action" : "Autosave failed during elapsed update",
+                static_cast<int>(*update.storageError));
+            return false;
+        }
+        return true;
+    }
     if (name == "bubble" && count == 3) {
         int active = 0;
         int resident = 0;
@@ -146,8 +191,9 @@ bool Execute(eastl::unique_ptr<Server>& ownedServer, eastl::string_view line, bo
         return true;
     }
     Command command;
-    if (name == "wait" && count == 1) {
+    if (name == "wait" && (count == 1 || count == 2)) {
         command.kind = CommandKind::wait;
+        if (count == 2 && (!Number(words[1], command.waitCost) || command.waitCost == 0)) { return false; }
     } else if ((name == "move" || name == "interact") && count == 2) {
         command.kind = name == "move" ? CommandKind::move : CommandKind::interact;
         if (!Direction(words[1], command)) { return false; }

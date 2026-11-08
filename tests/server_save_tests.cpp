@@ -72,6 +72,10 @@ void SameState(const Server& first, const Server& second) {
     CHECK(a.player_position == b.player_position);
     CHECK(a.cells == b.cells);
     CHECK(a.inventory == b.inventory);
+    CHECK(a.speed == b.speed);
+    CHECK(a.remainingTicks == b.remainingTicks);
+    CHECK(a.pacing == b.pacing);
+    CHECK(first.GetPacing() == second.GetPacing());
     const World& left = first.GetWorld();
     const World& right = second.GetWorld();
     REQUIRE(left.LoadedChunks() == right.LoadedChunks());
@@ -86,13 +90,18 @@ void SameState(const Server& first, const Server& second) {
             REQUIRE(other);
             CHECK(actor->position == other->position);
             CHECK(actor->turns == other->turns);
+            CHECK(actor->speed == other->speed);
+            CHECK(actor->remainingTicks == other->remainingTicks);
         }
+        REQUIRE(chunk->objects.size() == right.GetChunk(position)->objects.size());
         for (ObjectHandle handle : chunk->objects) {
             const auto* object = left.GetObject(handle);
             const auto* other = right.GetObject(right.FindObject(object->id));
             REQUIRE(other);
             CHECK(object->enabled == other->enabled);
             CHECK(object->updates == other->updates);
+            CHECK(object->updateInterval == other->updateInterval);
+            CHECK(object->remainingTicks == other->remainingTicks);
         }
     }
     CHECK(left.CheckInvariants());
@@ -172,31 +181,133 @@ TEST_CASE("Server manual checkpoints reset autosave cadence and rejected command
     server.SetAutosaveInterval(2);
     REQUIRE(server.Send({}).advanced); // Unattached autosave is ignored.
     REQUIRE(server.Send({}).advanced);
-    REQUIRE(server.CreateSave(file.path.c_str())); // Tick 2 starts the interval.
+    REQUIRE(server.CreateSave(file.path.c_str())); // Tick 200 starts the interval.
     REQUIRE(server.Send({}).advanced);
-    CHECK(ReadSession(file).tick == 2);
-    REQUIRE(server.Save()); // Manual checkpoint at 3 restarts it again.
+    CHECK(ReadSession(file).tick == 200);
+    REQUIRE(server.Save()); // Manual checkpoint at 300 restarts it again.
     REQUIRE(server.Send({}).advanced);
-    CHECK(ReadSession(file).tick == 3);
+    CHECK(ReadSession(file).tick == 300);
     const auto rejected = server.Send({CommandKind::move, 0, 0});
     CHECK_FALSE(rejected.advanced);
     CHECK_FALSE(rejected.storageError);
-    CHECK(ReadSession(file).tick == 3);
+    CHECK(ReadSession(file).tick == 300);
     REQUIRE(server.Send({}).advanced);
-    CHECK(ReadSession(file).tick == 5);
+    CHECK(ReadSession(file).tick == 500);
     server.SetAutosaveInterval(0);
     REQUIRE(server.Send({}).advanced);
     REQUIRE(server.Send({}).advanced);
-    CHECK(ReadSession(file).tick == 5);
+    CHECK(ReadSession(file).tick == 500);
     REQUIRE(server.Save());
     auto restored = Take(Server::LoadSave(TestContent(), file.path.c_str()));
-    CHECK(restored->GetTick() == 7);
+    CHECK(restored->GetTick() == 700);
     CHECK(restored->GetAutosaveInterval() == 0);
     restored->SetAutosaveInterval(2);
     REQUIRE(restored->Send({}).advanced);
-    CHECK(ReadSession(file).tick == 7);
+    CHECK(ReadSession(file).tick == 700);
     REQUIRE(restored->Send({}).advanced);
-    CHECK(ReadSession(file).tick == 9);
+    CHECK(ReadSession(file).tick == 900);
+}
+
+TEST_CASE("Server saves partial cooldowns object timers and pacing for deterministic continuation",
+    "[server][save][scheduling][determinism]") {
+    SaveFile file;
+    Server original(TestContent(), 918);
+    REQUIRE(original.SetBubbleRadii(1, 1));
+    REQUIRE(original.GetWorld().SetActorSpeed(original.GetPlayer(), 70));
+    const auto object = original.GetWorld().ObjectAt({2, 0});
+    const auto objectId = original.GetWorld().GetObject(object)->id;
+    REQUIRE(original.GetWorld().SetObjectEnabled(object, true));
+    REQUIRE(original.GetWorld().SetObjectUpdateInterval(object, 130));
+    const PacingSettings settings{200, true, false};
+    REQUIRE(original.SetPacing(settings));
+    original.SetAutosaveInterval(3); // Public units remain turns, not ticks.
+    Command wait;
+    wait.waitCost = 250;
+    const auto committed = original.Send(wait);
+    REQUIRE(committed.advanced);
+    CHECK(committed.cost == 175);
+    REQUIRE(original.Update(125'000).tick == 25);
+    CHECK(original.View().remainingTicks == 150);
+    CHECK(original.GetWorld().GetObject(object)->remainingTicks == 105);
+    REQUIRE(original.CreateSave(file.path.c_str()));
+    const auto session = ReadSession(file);
+    CHECK(session.tick == 25);
+    CHECK(session.pacing == settings);
+    CHECK(session.autosaveInterval == 3);
+    auto restored = Take(Server::LoadSave(TestContent(), file.path.c_str()));
+    SameState(original, *restored);
+    CHECK(restored->Update(0).tick == 25); // Loading adds no elapsed/offline time.
+    CHECK(restored->View().remainingTicks == 150);
+    REQUIRE(restored->GetWorld().GetObject(restored->GetWorld().FindObject(objectId)));
+    CHECK(restored->GetWorld().GetObject(restored->GetWorld().FindObject(objectId))->remainingTicks == 105);
+    for (std::uint64_t elapsed : {100'001ULL, 24'999ULL, 625'000ULL, 349'999ULL,
+             1ULL, 2'125'000ULL, 11'111ULL, 888'889ULL}) {
+        CAPTURE(elapsed);
+        const auto a = original.Update(elapsed);
+        const auto b = restored->Update(elapsed);
+        CHECK(a.tick == b.tick);
+        CHECK(a.needsInput == b.needsInput);
+        CHECK(a.skippedActions == b.skippedActions);
+        CHECK_FALSE(a.storageError);
+        CHECK_FALSE(b.storageError);
+        SameState(original, *restored);
+    }
+    REQUIRE(original.Save());
+    const auto uninterrupted = ReadSession(file);
+    REQUIRE(restored->Save());
+    const auto continued = ReadSession(file);
+    CHECK(continued.tick == uninterrupted.tick);
+    CHECK(continued.rngState == uninterrupted.rngState);
+    CHECK(continued.pacing == uninterrupted.pacing);
+}
+
+TEST_CASE("Autosave turn intervals measure simulation ticks across speed scaled waits",
+    "[server][save][autosave][scheduling]") {
+    SaveFile file;
+    Server server(TestContent());
+    REQUIRE(server.GetWorld().SetActorSpeed(server.GetPlayer(), 50));
+    server.SetAutosaveInterval(2);
+    REQUIRE(server.CreateSave(file.path.c_str()));
+    Command wait;
+    wait.waitCost = 250;
+    CHECK(server.Send(wait).tick == 125);
+    CHECK(ReadSession(file).tick == 0);
+    wait.waitCost = 150;
+    const auto boundary = server.Send(wait);
+    CHECK(boundary.tick == 200);
+    CHECK(boundary.cost == 75);
+    CHECK_FALSE(boundary.storageError);
+    const auto session = ReadSession(file);
+    CHECK(session.tick == 200);
+    CHECK(session.autosaveInterval == 2);
+    auto restored = Take(Server::LoadSave(TestContent(), file.path.c_str()));
+    CHECK(restored->GetAutosaveInterval() == 2);
+    SameState(server, *restored);
+}
+
+TEST_CASE("Loading a ready player starts fresh input grace without offline catchup",
+    "[server][save][scheduling][pacing]") {
+    SaveFile file;
+    Server original(TestContent());
+    REQUIRE(original.GetWorld().SetActorSpeed(original.GetPlayer(), 50));
+    REQUIRE(original.Send({}).tick == 50); // Fresh readiness with a 50-tick budget.
+    REQUIRE(original.SetPacing({200, false, false}));
+    CHECK(original.Update(200'000).skippedActions == 0); // Only 50ms grace remains.
+    REQUIRE(original.CreateSave(file.path.c_str()));
+    auto restored = Take(Server::LoadSave(TestContent(), file.path.c_str()));
+    CHECK(restored->GetPacing() == original.GetPacing());
+    CHECK(restored->Update(0).tick == 50);
+    CHECK(restored->Update(49'999).skippedActions == 0);
+    const auto oldDeadline = original.Update(50'000);
+    CHECK(oldDeadline.skippedActions == 1);
+    CHECK(oldDeadline.tick == 100);
+    // The restored player gets the full 250ms, not the saved 50ms remainder.
+    CHECK(restored->Update(200'000).skippedActions == 0);
+    CHECK(restored->GetTick() == 50);
+    const auto freshDeadline = restored->Update(1);
+    CHECK(freshDeadline.skippedActions == 1);
+    CHECK(freshDeadline.tick == 100);
+    SameState(original, *restored);
 }
 
 TEST_CASE("Failed autosave preserves successful gameplay and retries dirty state next successful turn",
@@ -213,14 +324,14 @@ TEST_CASE("Failed autosave preserves successful gameplay and retries dirty state
         const auto result = server.Send({CommandKind::pick_up});
         CHECK(result.outcome == Outcome::picked_up);
         CHECK(result.advanced);
-        CHECK(result.tick == 3);
+        CHECK(result.tick == 300);
         REQUIRE(result.storageError);
         CHECK(*result.storageError == SaveError::Busy);
         CHECK(ReadSession(file).tick == 0);
         const auto failed = server.Send({CommandKind::move, 0, 0});
         CHECK_FALSE(failed.advanced);
         CHECK_FALSE(failed.storageError);
-        // A second successful turn while locked retries immediately, not at tick 6.
+        // A second successful turn while locked retries immediately, before tick 600.
         const auto retry = server.Send({});
         CHECK(retry.advanced);
         REQUIRE(retry.storageError);
@@ -230,15 +341,15 @@ TEST_CASE("Failed autosave preserves successful gameplay and retries dirty state
     const auto retry = server.Send({});
     CHECK(retry.advanced);
     CHECK_FALSE(retry.storageError);
-    CHECK(ReadSession(file).tick == 5);
+    CHECK(ReadSession(file).tick == 500);
     auto restored = Take(Server::LoadSave(TestContent(), file.path.c_str()));
     SameState(server, *restored);
     CHECK(restored->View().inventory.size() == 1);
     REQUIRE(server.Send({}).advanced);
     REQUIRE(server.Send({}).advanced);
-    CHECK(ReadSession(file).tick == 5);
+    CHECK(ReadSession(file).tick == 500);
     REQUIRE(server.Send({}).advanced);
-    CHECK(ReadSession(file).tick == 8);
+    CHECK(ReadSession(file).tick == 800);
 }
 
 TEST_CASE("Streaming movement preflights the full future bubble before moving or unloading",
@@ -301,6 +412,68 @@ TEST_CASE("Streaming movement preflights the full future bubble before moving or
     CHECK(world.GetChunk({-1, 0}) == nullptr);
     CHECK(world.IsActive({16, 0}));
     CHECK_FALSE(world.IsActive({15, 0}));
+    CHECK(world.CheckInvariants());
+}
+
+TEST_CASE("Buffered intent is transient while its active cooldown survives loading",
+    "[server][save][buffering]") {
+    SaveFile file;
+    Server server(TestContent());
+    REQUIRE(server.SetPacing({100, true, true}));
+    REQUIRE(server.Send({}).advanced);
+    REQUIRE(server.Send({CommandKind::move, 1, 0}).outcome == Outcome::queued);
+    CHECK(server.Update(250'000).tick == 25);
+    REQUIRE(server.CreateSave(file.path.c_str()));
+    auto restored = Take(Server::LoadSave(TestContent(), file.path.c_str()));
+    CHECK(server.View().commandQueued);
+    CHECK_FALSE(restored->View().commandQueued);
+    CHECK(restored->View().remainingTicks == 75);
+    const auto loaded = restored->Update(750'000);
+    CHECK(loaded.tick == 100);
+    CHECK(loaded.needsInput);
+    CHECK_FALSE(loaded.commandResult);
+    CHECK(restored->View().player_position == TileCoord{0, 0});
+    const auto original = server.Update(750'000);
+    REQUIRE(original.commandResult);
+    CHECK(original.commandResult->outcome == Outcome::moved);
+    CHECK(server.View().player_position == TileCoord{1, 0});
+}
+
+TEST_CASE("Buffered movement reports storage failures at execution and clears the intent",
+    "[server][save][buffering]") {
+    SaveFile file;
+    Server server(TestContent());
+    REQUIRE(server.SetBubbleRadii(0, 1));
+    World& world = server.GetWorld();
+    REQUIRE(world.MoveActor(server.GetPlayer(), {15, 0}));
+    REQUIRE(world.SetTile({16, 0}, {TestTerrain("floor"), 0}));
+    REQUIRE(server.SetPacing({100, true, true}));
+    REQUIRE(server.Send({}).advanced);
+    REQUIRE(server.CreateSave(file.path.c_str()));
+    {
+        RawDatabase raw(file.path.c_str());
+        raw.Exec("UPDATE chunks SET payload='{}' WHERE x=2 AND z=0");
+    }
+    const auto before = world.LoadedChunks();
+    const auto accepted = server.Send({CommandKind::move, 1, 0});
+    CHECK(accepted.outcome == Outcome::queued);
+    CHECK_FALSE(accepted.storageError);
+    CHECK(accepted.tick == 0);
+    const auto update = server.Update(1'000'000);
+    REQUIRE(update.commandResult);
+    CHECK(update.commandResult->outcome == Outcome::unavailable);
+    CHECK_FALSE(update.commandResult->advanced);
+    CHECK(update.commandResult->tick == 100);
+    REQUIRE(update.storageError);
+    REQUIRE(update.commandResult->storageError);
+    CHECK(*update.storageError == SaveError::InvalidData);
+    CHECK(*update.commandResult->storageError == SaveError::InvalidData);
+    CHECK(update.needsInput);
+    CHECK_FALSE(server.View().commandQueued);
+    CHECK(server.View().player_position == TileCoord{15, 0});
+    CHECK(world.LoadedChunks() == before);
+    CHECK(world.GetActor(server.GetPlayer())->turns == 1);
+    CHECK_FALSE(server.Update(0).commandResult);
     CHECK(world.CheckInvariants());
 }
 

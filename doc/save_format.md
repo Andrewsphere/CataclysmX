@@ -1,10 +1,10 @@
 # Save format
 
-CataclysmX saves are SQLite database files. The strict v2 format is governed by
-one authoritative `metadata.format_version = 2` for both SQL and JSON. The
+CataclysmX saves are SQLite database files. The strict v3 format is governed by
+one authoritative `metadata.format_version = 3` for both SQL and JSON. The
 `metadata` columns are `singleton INTEGER PRIMARY KEY CHECK(singleton=1)`,
 `format_version INTEGER NOT NULL`, and `game_version TEXT NOT NULL`; its single
-row is `(1, 2, "0.1.0")`. The other tables are
+row is `(1, 3, "0.1.0")`. The other tables are
 `world_state(singleton INTEGER PRIMARY KEY CHECK(singleton=1), payload TEXT NOT
 NULL)` and `chunks(x INTEGER NOT NULL, z INTEGER NOT NULL, payload TEXT NOT NULL,
 PRIMARY KEY(x,z))`. Extra application tables/schema objects are rejected.
@@ -14,7 +14,9 @@ PRIMARY KEY(x,z))`. Extra application tables/schema objects are rejected.
 The single `world_state.payload` object has exactly `seed`,
 `generation_version`, `next_id`, and `session`. The session object has exactly
 `tick`, `rng_state`, `player`, `position` (`x`, `z`), `active_radius`,
-`resident_radius`, and `autosave_interval`. Seed, generation version and RNG
+`resident_radius`, `autosave_interval`, and `pacing`. The nested `pacing` object
+has exactly `ticks_per_second` (positive uint32 JSON integer), `rate_limited`
+(boolean), and `pause_when_idle` (boolean). Seed, generation version and RNG
 state are unsigned 32-bit JSON integers; coordinates and radii are JSON
 integers. `tick`, `next_id`, player ID and autosave interval are canonical
 unsigned 64-bit **decimal strings** (digits only, no leading zeroes except
@@ -30,9 +32,11 @@ The root object has exactly `tiles`, `actors`, `objects`, and `ground_items`:
   `TerrainId` numeric values are never persisted. Every tile must resolve in that
   catalog; unknown strings, embedded NULs and numeric terrain values are invalid.
 - `actors`: `{ "id": decimal-string, "position": {"x": int, "z": int},
-  "player": boolean, "turns": decimal-string, "inventory": [...] }`.
+  "player": boolean, "turns": decimal-string, "inventory": [...],
+  "speed": positive-uint32, "remaining_ticks": decimal-string }`.
 - `objects`: `{ "id": decimal-string, "position": {"x": int, "z": int},
-  "enabled": boolean, "updates": decimal-string, "contents": [...] }`.
+  "enabled": boolean, "updates": decimal-string, "contents": [...],
+  "update_interval": positive-uint32, "remaining_ticks": decimal-string }`.
 - `ground_items` and nested `inventory`/`contents` arrays use items with `id`
   (decimal string), `kind` (`rock`, `backpack`, or `bandage`), and recursive
   `contents`. Ground items also have `position`; contained items do not. Only
@@ -45,9 +49,24 @@ ownership, chunks and session player identity/position are validated. Generic
 `generation_version` accepts 1 (legacy) and 2 (current); other values fail with
 `SaveError::UnsupportedVersion`. New worlds use generation version 2. Version 1
 continues to generate unexplored chunks byte-for-byte as before, while version 2
-uses the region planner. The SQL/JSON save schema remains version 2: save format
-v1 and all other schema versions are rejected, with no migrations or backup
-files. Content's own format version is independent of both versions.
+uses the region planner. The SQL/JSON save schema is version 3: save formats
+v1, v2 and all other schema versions are rejected, with no migrations or backup
+files. In particular, v2 command-count ticks are not silently reinterpreted as
+simulation ticks. Content's own format version is independent of both versions.
+
+`session.tick` counts global simulation ticks (100 per standard turn), while
+`pacing.ticks_per_second` only maps simulation ticks to real time.
+`autosave_interval` remains measured in turns of 100 ticks; zero disables it.
+Actor and object `remaining_ticks` use canonical unsigned 64-bit decimal strings, including
+zero when ready/due. Actor delays may exceed uint32; object delays must be no
+greater than `update_interval`. Speeds, intervals, and pacing rates reject zero,
+negative values, nonintegers, and uint32 overflow. Delay parsing rejects negative,
+noncanonical, numeric JSON, and uint64-overflow values.
+
+Timers are relative remaining delays, not absolute deadlines. Resident and
+archived chunks and disabled objects retain frozen delays without catch-up on
+reactivation, even when session time has advanced elsewhere. Persisting the
+relative values keeps that rule identical across RAM archives and disk reloads.
 
 ## Checkpoints and API
 

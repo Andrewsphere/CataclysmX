@@ -1,0 +1,28 @@
+limit on
+wait 200
+elapse 500000
+inspect
+rate 200
+elapse 250000
+inspect
+elapse 500000
+inspect
+limit off
+idle-pause on
+elapse 1000000
+inspect
+idle-pause off
+elapse 1000000
+inspect
+idle-pause on
+limit on
+wait
+move e
+move s
+inspect
+elapse 500000
+view
+inspect
+elapse 500000
+inspect
+quit

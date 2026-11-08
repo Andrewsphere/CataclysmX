@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/world.h"
+#include "core/pacing.h"
 
 #include <EASTL/optional.h>
 
@@ -13,10 +14,12 @@ struct Command {
     int dz = 0;
     // Zero picks the first ground/inventory item in persistent-ID order.
     PersistentId item = 0;
+    // Only wait uses this field. Other action costs are authoritative constants.
+    std::uint32_t waitCost = ticks_per_turn;
 };
 enum class Outcome {
     waited, moved, picked_up, dropped, opened, closed, toggled,
-    blocked, occupied, nothing_here, invalid_command, not_carried, unavailable
+    blocked, occupied, nothing_here, invalid_command, not_carried, unavailable, not_ready, queued
 };
 const char* OutcomeMessage(Outcome outcome);
 // The demo requires floor, wall, and closed_door; floor must be passable.
@@ -25,9 +28,20 @@ ContentResult<void> ValidateServerContent(const ContentCatalog& content,
     Diagnostics* diagnostics = nullptr);
 struct CommandResult {
     Outcome outcome = Outcome::invalid_command;
+    // An action was committed; under a rate cap, tick may still be unchanged.
     bool advanced = false;
     std::uint64_t tick = 0;
     eastl::optional<SaveError> storageError = {};
+    Tick cost = 0;
+};
+
+struct SessionUpdate {
+    Tick tick = 0;
+    std::uint64_t skippedActions = 0;
+    bool needsInput = true;
+    eastl::optional<SaveError> storageError = {};
+    // Resolution of the one buffered intent, with its execution tick and cost.
+    eastl::optional<CommandResult> commandResult = {};
 };
 
 struct ViewCell {
@@ -54,13 +68,22 @@ struct WorldView {
     std::uint64_t tick = 0;
     Vector<ViewCell> cells; // Row major. Hidden cells contain no world information.
     Vector<InventoryEntry> inventory;
+    Tick remainingTicks = 0;
+    std::uint32_t speed = 100;
+    PacingSettings pacing{};
+    bool commandQueued = false;
 };
 
-// Single-player authoritative local endpoint. No transport or wall-clock logic.
+// Single-player authoritative local endpoint. No transport or clock access.
 class Server {
 public:
     explicit Server(const ContentCatalog& content, std::uint32_t seed = 42);
+    // While busy, retain one intent; the latest valid command replaces it.
     CommandResult Send(Command command);
+    // Real elapsed time is supplied by the application; no clock is read here.
+    SessionUpdate Update(std::uint64_t elapsedMicroseconds);
+    bool SetPacing(PacingSettings settings);
+    PacingSettings GetPacing() const;
     WorldView View(int radius = 8) const;
     WorldResult<void> SetBubbleRadii(int active_radius, int resident_radius,
         Diagnostics* diagnostics = nullptr);
@@ -91,7 +114,12 @@ private:
     ChunkCoord bubbleCenter_{};
     std::uint64_t autosaveInterval_ = 0;
     std::uint64_t lastSaveTick_ = 0;
+    TickPacer pacer_;
+    eastl::optional<Command> pendingCommand_;
 
+    CommandResult Execute(Command command);
+    void SynchronizePacing();
+    eastl::optional<SaveError> Autosave();
     SessionState Checkpoint() const;
     SaveResult<void> UpdateBubble(int activeRadius, int residentRadius,
         Diagnostics* diagnostics = nullptr);

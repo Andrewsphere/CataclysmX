@@ -1,4 +1,5 @@
 #include <cstdlib>
+#include <limits>
 
 #include "core/simulation.h"
 
@@ -15,46 +16,97 @@ void Require(bool condition) {
     }
 }
 
-struct ActorSnapshot {
-    ActorHandle handle;
-    TileCoord position;
-};
+void ActNpc(World& world, ActorHandle handle, std::uint32_t& rngState) {
+    const Actor* actor = world.GetActor(handle);
+    Require(actor != nullptr);
+    const TileCoord position = actor->position;
+    Require(world.ScheduleActorAction(handle).has_value());
+    // Unsigned overflow is the specified, portable modulo-2^32 LCG. Even a
+    // blocked action consumes its one draw and its full scheduling cost.
+    rngState = rngState * 1'664'525U + 1'013'904'223U;
+    constexpr TileCoord directions[] = {{1, 0}, {0, 1}, {-1, 0}, {0, -1}};
+    const TileCoord direction = directions[rngState >> 30];
+    const TileCoord destination{position.x + direction.x, position.z + direction.z};
+    const Tile* tile = world.GetTile(destination);
+    if (!world.IsActive(destination) || !tile || !Passable(world.GetContent(), tile->terrain)
+        || world.ActorAt(destination).value != 0) {
+        return;
+    }
+    Require(world.MoveActor(handle, destination).has_value());
+}
 
+}
+
+SimulationResult AdvanceUntilInput(World& world, Tick& tick,
+    std::uint32_t& rngState, Tick limitTick) {
+    Require(limitTick >= tick);
+    for (;;) {
+        // Completed timed effects precede the input barrier. Their next delay
+        // is committed immediately, so resuming this same tick cannot repeat it.
+        for (ObjectHandle handle : world.ActiveObjects()) {
+            const InteractiveObject* object = world.GetObject(handle);
+            if (object && object->enabled && object->remainingTicks == 0) {
+                Require(world.RecordObjectUpdate(handle).has_value());
+            }
+        }
+
+        SimulationResult result;
+        const Vector<ActorHandle> actors = world.ActiveActors();
+        for (ActorHandle handle : actors) {
+            const Actor* actor = world.GetActor(handle);
+            if (actor && actor->player && actor->remainingTicks == 0) {
+                result.readyPlayers.push_back(handle);
+            }
+        }
+        if (!result.readyPlayers.empty()) {
+            result.stop = SimulationStop::InputRequired;
+            return result;
+        }
+
+        for (ActorHandle handle : actors) {
+            const Actor* actor = world.GetActor(handle);
+            if (actor && !actor->player && actor->remainingTicks == 0) {
+                ActNpc(world, handle, rngState);
+            }
+        }
+
+        Tick next = std::numeric_limits<Tick>::max();
+        bool hasEvents = false;
+        for (ActorHandle handle : world.ActiveActors()) {
+            const Actor* actor = world.GetActor(handle);
+            if (!actor) { continue; }
+            Require(actor->remainingTicks != 0);
+            if (actor->remainingTicks < next) { next = actor->remainingTicks; }
+            hasEvents = true;
+        }
+        for (ObjectHandle handle : world.ActiveObjects()) {
+            const InteractiveObject* object = world.GetObject(handle);
+            if (!object || !object->enabled) { continue; }
+            Require(object->remainingTicks != 0);
+            if (object->remainingTicks < next) { next = object->remainingTicks; }
+            hasEvents = true;
+        }
+        if (!hasEvents) { return result; }
+        result.nextEventIn = next;
+        if (tick == limitTick) {
+            result.stop = SimulationStop::LimitReached;
+            return result;
+        }
+        const Tick room = limitTick - tick;
+        const Tick elapsed = next < room ? next : room;
+        world.ElapseTicks(elapsed);
+        tick += elapsed;
+    }
 }
 
 void Advance(World& world, ActorHandle player, std::uint32_t& rng_state) {
     const Actor* controlled = world.GetActor(player);
-    Require(controlled != nullptr);
-    Require(controlled->player && world.IsActive(controlled->position));
-
-    Vector<ActorSnapshot> actors;
-    for (ActorHandle handle : world.ActiveActors()) {
-        const Actor* actor = world.GetActor(handle);
-        Require(actor != nullptr);
-        actors.push_back({handle, actor->position});
-    }
-    const Vector<ObjectHandle> objects = world.ActiveObjects();
-
-    constexpr TileCoord directions[] = {{1, 0}, {0, 1}, {-1, 0}, {0, -1}};
-    for (const ActorSnapshot& actor : actors) {
-        Require(world.RecordActorTurn(actor.handle).has_value());
-        if (actor.handle == player) {
-            continue;
-        }
-        // Unsigned overflow is the specified, portable modulo-2^32 LCG.
-        rng_state = rng_state * 1'664'525U + 1'013'904'223U;
-        const TileCoord direction = directions[rng_state >> 30];
-        const TileCoord destination{actor.position.x + direction.x, actor.position.z + direction.z};
-        const Tile* tile = world.GetTile(destination);
-        if (!world.IsActive(destination) || !tile || !Passable(world.GetContent(), tile->terrain)
-            || world.ActorAt(destination).value != 0) {
-            continue;
-        }
-        Require(world.MoveActor(actor.handle, destination).has_value());
-    }
-    for (ObjectHandle handle : objects) {
-        Require(world.RecordObjectUpdate(handle).has_value());
-    }
+    Require(controlled && controlled->player && world.IsActive(controlled->position));
+    Require(world.ScheduleActorAction(player).has_value());
+    Tick tick = 0;
+    const SimulationResult result = cataclysmx::AdvanceUntilInput(world, tick, rng_state,
+        std::numeric_limits<Tick>::max());
+    Require(result.stop == SimulationStop::InputRequired);
 }
 
 }

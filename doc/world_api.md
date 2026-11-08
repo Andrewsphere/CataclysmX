@@ -133,6 +133,43 @@ an object drops its contents there. Nested item trees remain intact. Destroying
 an item instead destroys its entire descendant tree. Reusing retired handles
 returns `invalid_handle` from mutations and `nullptr` from entity lookups.
 
+## Relative timing
+
+`core/timing.h` defines `Tick` as unsigned 64-bit simulation time, with 100 ticks
+per standard turn. `Actor` appends `speed` (positive uint32, default 100) and
+`remainingTicks` (default zero, ready). `InteractiveObject` appends
+`updateInterval` (positive uint32, default 100) and `remainingTicks` (default 100).
+These are world-owned values exposed only through read-only borrows.
+
+- `SetActorSpeed(handle, speed)` rejects zero with `invalid_request`; it does not
+  change an already committed delay. Lower speed values mean shorter actions.
+- `ScheduleActorAction(handle, baseCost = 100)` requires a live, active, ready
+  actor and positive cost. It sets the delay to `ActionTicks(baseCost, speed)`
+  (ceiling of cost × speed / 100), increments `turns` exactly once, and marks the
+  chunk dirty. Inactive actors return `chunk_unavailable`; a non-ready actor or
+  zero cost returns `invalid_request`. Counter overflow is a fatal invariant.
+  `RecordActorTurn` remains an explicit administrative counter operation; it
+  neither checks readiness nor schedules a delay.
+- `ElapseTicks(elapsed)` saturates delays at zero for active actors and active,
+  enabled objects, marking changed chunks dirty. It does not record turns,
+  trigger updates, or modify session time. Resident, archived, and disabled
+  object timers remain frozen, including across unload/reload.
+- `SetObjectUpdateInterval(handle, interval)` rejects zero and explicitly
+  restarts the timer at that interval, even when disabled or resident.
+  `SetObjectEnabled` preserves the current delay. `RecordObjectUpdate` requires
+  an active object; if enabled it increments `updates` and resets the delay to
+  `updateInterval`, otherwise it changes neither. The scheduler calls it only
+  when due; World permits explicit administrative updates before then.
+
+Invalid entity handles return `invalid_handle`. Relative delays avoid absolute
+deadline rebasing and inactive-chunk catch-up, and actor delays may exceed uint32.
+All these mutations preserve the existing borrow rules.
+
+`SessionState::tick` is global simulation ticks. Its appended `pacing` settings
+(`ticksPerSecond = 100`, `rateLimited = false`, `pauseWhenIdle = true`) control
+real-time pacing rather than simulation units. The rate must be positive. Session
+settings, speeds, intervals, and relative delays all survive checkpoints.
+
 ## Generation, archives and brief implementation notes
 
 New terrain uses the deterministic region planner documented in the
