@@ -28,13 +28,10 @@
       "name": "win-vs2022", "inherits": "common",
       "generator": "Visual Studio 17 2022", "architecture": "x64",
       "toolset": "v143,version=14.44",
-      "environment": {
-        "VCPKG_VISUAL_STUDIO_PATH": "$penv{ProgramFiles}/Microsoft Visual Studio/2022/Community"
-      },
       "condition": {"type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows"},
       "cacheVariables": {
         "CMAKE_EXPORT_COMPILE_COMMANDS": "OFF",
-        "VCPKG_TARGET_TRIPLET": "x64-windows-cataclysmx"
+        "VCPKG_TARGET_TRIPLET": "x64-windows-v143-cataclysmx"
       }
     },
     {

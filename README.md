@@ -79,8 +79,23 @@ configuration. Set `cataclysmx_game` as the startup project for the terminal cli
 This generator uses MSBuild and discovers Visual Studio directly; an initialized
 developer shell is not required. Its build directory is separate from the Ninja
 presets. Regenerate with the same configure command after changing CMake files.
-The preset selects the 14.44 toolset and points vcpkg at the standard VS 2022
-Community installation so dependencies do not use a newer installed Visual Studio.
+The preset selects the 14.44 toolset for the project and the dedicated
+`x64-windows-v143-cataclysmx` vcpkg triplet for dependencies. The triplet pins
+v143/14.44 even during IDE-triggered CMake regeneration, which does not inherit
+the configure preset's environment. The Ninja presets use their own toolset selection.
+
+If an existing solution reports unresolved `__std_*` symbols from Catch2, refresh
+its CMake cache and dependency selection once, then reload the solution in Rider:
+
+```powershell
+./scripts/bootstrap.ps1
+cmake --fresh --preset win-vs2022
+cmake --build --preset win-vs2022-debug
+ctest --preset win-vs2022-debug
+```
+
+This replaces dependency binaries built with a newer MSVC toolset; editing linker
+library paths or installing a redistributable does not fix that build-time mismatch.
 
 To build and test the solution from the command line:
 
