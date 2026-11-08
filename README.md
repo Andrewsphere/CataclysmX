@@ -47,7 +47,8 @@ From the repository root, in PowerShell 7:
 ./scripts/build.ps1
 ```
 
-The script initializes the latest installed x64 Visual Studio C++ developer environment,
+The script initializes the latest installed stable x64 Visual Studio C++ developer environment
+(falling back to an Insiders/preview installation when needed),
 bootstraps a pinned vcpkg checkout in `.tools/vcpkg` when `VCPKG_ROOT` is unset,
 installs manifest dependencies, configures CMake, builds with Ninja, and runs CTest.
 An existing `VCPKG_ROOT` is reused without changing its checkout. No environment-variable
@@ -77,8 +78,9 @@ VS 2022. The script discovers the installed toolchain rather than hardcoding a V
 ## Build and run in VS Code
 
 Open the repository folder in VS Code and install the recommended Microsoft C/C++
-extension (`ms-vscode.cpptools`). The Windows build prerequisites above apply,
-including PowerShell 7 (`pwsh`) on PATH. No developer shell is required.
+extension (`ms-vscode.cpptools`). The Windows build prerequisites above apply.
+Tasks use built-in Windows PowerShell (`powershell`) on PATH; PowerShell 7 is
+optional. No developer shell is required.
 
 - **Ctrl+Shift+B** builds MSVC Debug. Use **Tasks: Run Build Task** to select
   `Build: MSVC Release` instead.
