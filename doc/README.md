@@ -5,7 +5,9 @@
 - [Server and simulation API](server_api.md): commands, turn advancement, views,
   player bubbles and client integration. Start here for a game client.
 - [Content format and catalog](content_format.md): JSON5 terrain definitions, IDs,
-  appearance inheritance, and loading APIs.
+  building patterns, appearance inheritance, and loading APIs.
+- [World generation](worldgen_api.md): deterministic region plans, boundary
+  crossings, parcels/buildings, terrain materialization and debug inspection.
 - [Diagnostics](diagnostics.md): structured error causes and contextual frames.
 - [Terrain rendering](terrain_rendering.md): UTF-8 symbols, colors, and frontend behavior.
 - [Save format](save_format.md): SQLite v2, snapshots, validation and checkpoints.

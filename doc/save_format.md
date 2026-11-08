@@ -42,10 +42,12 @@ The root object has exactly `tiles`, `actors`, `objects`, and `ground_items`:
 IDs must be unique across all chunks and less than `next_id`; entity positions,
 ownership, chunks and session player identity/position are validated. Generic
 `World` saves allow session player ID zero; `Server` requires a nonzero player.
-`generation_version` must currently equal 1; other values fail with
-`SaveError::UnsupportedVersion`. Only save format v2 is accepted: v1 and all
-other versions are rejected, with no migrations or backup files. Content's own
-format version is independent of the save format version.
+`generation_version` accepts 1 (legacy) and 2 (current); other values fail with
+`SaveError::UnsupportedVersion`. New worlds use generation version 2. Version 1
+continues to generate unexplored chunks byte-for-byte as before, while version 2
+uses the region planner. The SQL/JSON save schema remains version 2: save format
+v1 and all other schema versions are rejected, with no migrations or backup
+files. Content's own format version is independent of both versions.
 
 ## Checkpoints and API
 
@@ -74,6 +76,10 @@ validate every saved tile against that catalog, including nonresident chunks;
 chunk writes also reject invalid runtime IDs (zero included). Stable strings
 allow a save to reload against a catalog with different numeric ID ordering.
 Missing definitions cause an error rather than substituting a default tile.
+Regeneration requires the current immutable content catalog; the save does not
+pin a content fingerprint. Consequently, catalog changes can affect unexplored
+chunks when they are generated, while already saved chunk snapshots retain their
+stored terrain IDs.
 This API keeps content ownership outside persistence while making resolution
 explicit and preventing runtime numbering from becoming a persistence contract.
 

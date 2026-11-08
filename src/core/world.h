@@ -130,8 +130,8 @@ struct ChunkRegion {
 // reacquire after mutation, and never retain them across unloading/deletion.
 class World {
 public:
-    // Content must outlive the World and remain unchanged. The current generator
-    // requires definitions named floor and wall.
+    // Content must outlive the World and remain unchanged. New worlds use regional
+    // generation; version-1 saves retain legacy generation. Both require floor/wall.
     explicit World(const ContentCatalog& content, std::uint32_t seed = 42);
     ~World();
     World(const World&) = delete;
@@ -153,6 +153,8 @@ public:
     SaveResult<void> Save(const SessionState& session, Diagnostics* diagnostics = nullptr);
     bool HasSave() const;
     const ContentCatalog& GetContent() const;
+    std::uint32_t GetSeed() const;
+    std::uint32_t GetGenerationVersion() const;
 
     const Chunk* GetChunk(ChunkCoord position) const;
     const Tile* GetTile(TileCoord position) const;

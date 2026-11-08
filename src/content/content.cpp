@@ -61,6 +61,17 @@ void AddTerrainContext(const Context& context, eastl::string_view id) {
     context.Fail(View(message));
 }
 
+void AddPatternContext(const Context& context, eastl::string_view id) {
+    if (!context.diagnostics) { return; }
+    String message = "while loading building pattern";
+    if (!id.empty()) {
+        message += " '";
+        message.append(id.data(), id.size());
+        message += '\'';
+    } else { message += " definition"; }
+    context.Fail(View(message));
+}
+
 bool CheckObject(yyjson_val* object, std::initializer_list<eastl::string_view> allowed,
                  const Context& context) {
     if (!yyjson_is_obj(object)) { return context.Fail("expected an object"); }
@@ -243,6 +254,110 @@ bool ParseTerrain(yyjson_val* object, PendingTerrain& terrain) {
     return true;
 }
 
+struct PaletteEntry {
+    char glyph = 0;
+    String terrain;
+    TerrainId resolved;
+};
+
+struct PendingPattern {
+    BuildingPattern definition;
+    Vector<String> rows;
+    Vector<PaletteEntry> palette;
+    std::size_t inputOrder = 0;
+    Context context;
+};
+
+bool PrintableAscii(eastl::string_view text) {
+    for (unsigned char ch : text) {
+        if (ch < 0x20 || ch > 0x7e) { return false; }
+    }
+    return true;
+}
+
+Context ArrayElement(const Context& context, std::size_t index) {
+    Context element = context;
+    if (context.diagnostics) {
+        char suffix[32];
+        std::snprintf(suffix, sizeof(suffix), "[%zu]", index);
+        element.path += suffix;
+    }
+    return element;
+}
+
+bool ReadBoundedInteger(yyjson_val* value, std::uint32_t minimum, std::uint32_t maximum,
+                        std::uint32_t& output, const Context& context) {
+    if (!yyjson_is_uint(value) || yyjson_get_uint(value) < minimum || yyjson_get_uint(value) > maximum) {
+        return context.Fail("expected an integer in the allowed range");
+    }
+    output = static_cast<std::uint32_t>(yyjson_get_uint(value));
+    return true;
+}
+
+bool ParsePattern(yyjson_val* object, PendingPattern& pattern) {
+    const auto& context = pattern.context;
+    auto& definition = pattern.definition;
+    if (!CheckObject(object, {"type", "id", "rows", "palette", "entrance", "weight"}, context)
+        || !ReadId(yyjson_obj_get(object, "id"), definition.id, context.Child("id"))) { return false; }
+    auto* rows = yyjson_obj_get(object, "rows");
+    const auto rowsContext = context.Child("rows");
+    if (!yyjson_is_arr(rows) || yyjson_arr_size(rows) == 0 || yyjson_arr_size(rows) > 64) {
+        return rowsContext.Fail("expected between 1 and 64 rows");
+    }
+    std::size_t index, count;
+    yyjson_val* row;
+    yyjson_arr_foreach(rows, index, count, row) {
+        String text;
+        const auto rowContext = ArrayElement(rowsContext, index);
+        if (!ReadString(row, text, rowContext)) { return false; }
+        if (text.size() > 64 || !PrintableAscii(View(text))) {
+            return rowContext.Fail("expected between 1 and 64 printable ASCII glyphs");
+        }
+        if (index == 0) { definition.width = static_cast<int>(text.size()); }
+        if (text.size() != static_cast<std::size_t>(definition.width)) {
+            return rowContext.Fail("rows must have equal widths");
+        }
+        pattern.rows.push_back(eastl::move(text));
+    }
+    definition.height = static_cast<int>(pattern.rows.size());
+    auto* palette = yyjson_obj_get(object, "palette");
+    const auto paletteContext = context.Child("palette");
+    if (!yyjson_is_obj(palette)) { return paletteContext.Fail("expected an object"); }
+    yyjson_val* key;
+    yyjson_val* value;
+    yyjson_obj_foreach(palette, index, count, key, value) {
+        const auto glyph = JsonString(key);
+        const auto entryContext = paletteContext.Child(glyph);
+        if (glyph.size() != 1 || !PrintableAscii(glyph)) {
+            return entryContext.Fail("expected a single printable ASCII palette key");
+        }
+        for (const auto& entry : pattern.palette) {
+            if (entry.glyph == glyph[0]) { return entryContext.Fail("duplicate field"); }
+        }
+        PaletteEntry entry;
+        entry.glyph = glyph[0];
+        if (!ReadId(value, entry.terrain, entryContext)) { return false; }
+        pattern.palette.push_back(eastl::move(entry));
+    }
+    auto* entrance = yyjson_obj_get(object, "entrance");
+    const auto entranceContext = context.Child("entrance");
+    if (!CheckObject(entrance, {"x", "z"}, entranceContext)) { return false; }
+    std::uint32_t x = 0, z = 0;
+    if (!ReadBoundedInteger(yyjson_obj_get(entrance, "x"), 0, definition.width - 1, x,
+                            entranceContext.Child("x"))
+        || !ReadBoundedInteger(yyjson_obj_get(entrance, "z"), 0, definition.height - 1, z,
+                               entranceContext.Child("z"))) { return false; }
+    definition.entrance = {static_cast<int>(x), static_cast<int>(z)};
+    if (x != 0 && z != 0 && x != static_cast<std::uint32_t>(definition.width - 1)
+        && z != static_cast<std::uint32_t>(definition.height - 1)) {
+        return entranceContext.Fail("entrance must lie on the boundary");
+    }
+    if (auto* weight = yyjson_obj_get(object, "weight")) {
+        if (!ReadBoundedInteger(weight, 1, 1000000, definition.weight, context.Child("weight"))) { return false; }
+    }
+    return true;
+}
+
 void* JsonMalloc(void*, std::size_t size) {
     void* memory = std::malloc(size);
     if (!memory) { std::abort(); }
@@ -261,7 +376,7 @@ struct Document {
 };
 
 ContentResult<bool> ParseSource(const ContentSource& source, Vector<PendingTerrain>& pending,
-                               Diagnostics* diagnostics) {
+                                Vector<PendingPattern>& patterns, Diagnostics* diagnostics) {
     Context context{diagnostics, source.name, {}};
     yyjson_alc allocator{JsonMalloc, JsonRealloc, JsonFree, nullptr};
     yyjson_read_err error{};
@@ -311,8 +426,8 @@ ContentResult<bool> ParseSource(const ContentSource& source, Vector<PendingTerra
             definitionContext.path = path;
         }
         PendingTerrain terrain;
-        terrain.context = eastl::move(definitionContext);
-        terrain.inputOrder = pending.size();
+        terrain.context = definitionContext;
+        terrain.inputOrder = pending.size() + patterns.size();
         bool parsed = false;
         // Dispatch definition kinds at the document boundary; individual parsers own their schemas.
         if (!yyjson_is_obj(value)) {
@@ -323,11 +438,22 @@ ContentResult<bool> ParseSource(const ContentSource& source, Vector<PendingTerra
                 terrain.context.Child("type").Fail("expected a definition type string");
             } else if (JsonString(type) == "terrain") {
                 parsed = ParseTerrain(value, terrain);
+            } else if (JsonString(type) == "building_pattern") {
+                PendingPattern pattern;
+                pattern.context = definitionContext;
+                pattern.inputOrder = terrain.inputOrder;
+                if (!ParsePattern(value, pattern)) {
+                    auto* id = yyjson_obj_get(value, "id");
+                    AddPatternContext(pattern.context, yyjson_is_str(id) ? JsonString(id) : eastl::string_view{});
+                    return eastl::unexpected(ContentError::InvalidData);
+                }
+                patterns.push_back(eastl::move(pattern));
+                continue;
             } else if (diagnostics) {
                 String message = "unsupported definition type '";
                 const auto typeName = JsonString(type);
                 message.append(typeName.data(), typeName.size());
-                message += "' (expected terrain)";
+                message += "' (expected terrain or building_pattern)";
                 terrain.context.Child("type").Fail(View(message));
             }
         }
@@ -417,6 +543,85 @@ bool Resolve(Vector<PendingTerrain>& pending) {
     return true;
 }
 
+bool ResolvePattern(PendingPattern& pattern, const ContentCatalog& catalog) {
+    for (auto& entry : pattern.palette) {
+        entry.resolved = catalog.FindTerrain(View(entry.terrain));
+        if (entry.resolved == TerrainId{}) {
+            if (pattern.context.diagnostics) {
+                String message = "unknown terrain reference '";
+                message += entry.terrain;
+                message += "' from building pattern '";
+                message += pattern.definition.id;
+                message += '\'';
+                pattern.context.Child("palette").Child({&entry.glyph, 1}).Fail(View(message));
+            }
+            return false;
+        }
+    }
+    auto& definition = pattern.definition;
+    definition.tiles.reserve(static_cast<std::size_t>(definition.width * definition.height));
+    for (std::size_t z = 0; z < pattern.rows.size(); ++z) {
+        for (char glyph : pattern.rows[z]) {
+            TerrainId terrain;
+            for (const auto& entry : pattern.palette) {
+                if (entry.glyph == glyph) { terrain = entry.resolved; break; }
+            }
+            if (terrain == TerrainId{}) {
+                return ArrayElement(pattern.context.Child("rows"), z).Fail("row glyph is absent from palette");
+            }
+            definition.tiles.push_back(terrain);
+        }
+    }
+    const auto entranceIndex = static_cast<std::size_t>(definition.entrance.z * definition.width
+                                                       + definition.entrance.x);
+    const auto& entrance = catalog.GetTerrain(definition.tiles[entranceIndex]);
+    const auto* opened = catalog.TryGetTerrain(entrance.opensTo);
+    if (!entrance.passable && (!opened || !opened->passable)) {
+        return pattern.context.Child("entrance").Fail("entrance terrain must be passable or open to passable terrain");
+    }
+    return true;
+}
+
+struct DefinitionIdentity {
+    eastl::string_view id;
+    const Context* context = nullptr;
+    std::size_t inputOrder = 0;
+    bool pattern = false;
+};
+
+bool CheckDefinitionIds(const Vector<PendingTerrain>& terrains, const Vector<PendingPattern>& patterns,
+                        Diagnostics* diagnostics) {
+    Vector<DefinitionIdentity> identities;
+    identities.reserve(terrains.size() + patterns.size());
+    for (const auto& terrain : terrains) {
+        identities.push_back({View(terrain.definition.id), &terrain.context, terrain.inputOrder, false});
+    }
+    for (const auto& pattern : patterns) {
+        identities.push_back({View(pattern.definition.id), &pattern.context, pattern.inputOrder, true});
+    }
+    eastl::sort(identities.begin(), identities.end(), [](const DefinitionIdentity& left, const DefinitionIdentity& right) {
+        if (left.id == right.id) { return left.inputOrder < right.inputOrder; }
+        return left.id < right.id;
+    });
+    for (std::size_t i = 1; i < identities.size(); ++i) {
+        const auto& current = identities[i];
+        const auto& previous = identities[i - 1];
+        if (previous.id != current.id) { continue; }
+        if (diagnostics) {
+            String message = current.pattern ? "duplicate building pattern definition '" : "duplicate terrain definition '";
+            message.append(current.id.data(), current.id.size());
+            message += '\'';
+            current.context->Child("id").Fail(View(message));
+            previous.context->Child("id").Fail("previous definition is here");
+            if (current.pattern) { AddPatternContext(*current.context, current.id); }
+            else { AddTerrainContext(*current.context, current.id); }
+            Context{diagnostics, {}, {}}.Fail("could not load content catalog");
+        }
+        return false;
+    }
+    return true;
+}
+
 struct File {
     std::FILE* value = nullptr;
     ~File() { if (value) { std::fclose(value); } }
@@ -459,17 +664,43 @@ const TerrainDefinition& ContentCatalog::GetTerrain(TerrainId id) const {
 
 std::size_t ContentCatalog::TerrainCount() const { return definitions_.size(); }
 
+BuildingPatternId ContentCatalog::FindBuildingPattern(eastl::string_view id) const {
+    std::size_t begin = 0, end = patterns_.size();
+    while (begin < end) {
+        const std::size_t middle = begin + (end - begin) / 2;
+        if (View(patterns_[middle].id) < id) { begin = middle + 1; }
+        else { end = middle; }
+    }
+    if (begin == patterns_.size() || View(patterns_[begin].id) != id) { return {}; }
+    return {static_cast<std::uint32_t>(begin + 1)};
+}
+
+const BuildingPattern* ContentCatalog::TryGetBuildingPattern(BuildingPatternId id) const {
+    if (id.value == 0 || id.value > patterns_.size()) { return nullptr; }
+    return &patterns_[id.value - 1];
+}
+
+const BuildingPattern& ContentCatalog::GetBuildingPattern(BuildingPatternId id) const {
+    const auto* pattern = TryGetBuildingPattern(id);
+    if (!pattern) { std::abort(); }
+    return *pattern;
+}
+
+std::size_t ContentCatalog::BuildingPatternCount() const { return patterns_.size(); }
+
 ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sources, Diagnostics* diagnostics) {
     Vector<PendingTerrain> pending;
+    Vector<PendingPattern> patterns;
     for (const auto& source : sources) {
-        auto result = ParseSource(source, pending, diagnostics);
+        auto result = ParseSource(source, pending, patterns, diagnostics);
         if (!result) {
             Context{diagnostics, source.name, {}}.Fail("could not load content source");
             return eastl::unexpected(result.error());
         }
     }
-    if (pending.size() > std::numeric_limits<std::uint32_t>::max()) {
-        Context{diagnostics, {}, {}}.Fail("too many terrain definitions");
+    if (pending.size() > std::numeric_limits<std::uint32_t>::max()
+        || patterns.size() > std::numeric_limits<std::uint32_t>::max()) {
+        Context{diagnostics, {}, {}}.Fail("too many content definitions");
         Context{diagnostics, {}, {}}.Fail("could not load content catalog");
         return eastl::unexpected(ContentError::InvalidData);
     }
@@ -478,20 +709,7 @@ ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sourc
         if (left.definition.id == right.definition.id) { return left.inputOrder < right.inputOrder; }
         return left.definition.id < right.definition.id;
     });
-    for (std::size_t i = 1; i < pending.size(); ++i) {
-        if (pending[i - 1].definition.id == pending[i].definition.id) {
-            if (diagnostics) {
-                String message = "duplicate terrain definition '";
-                message += pending[i].definition.id;
-                message += '\'';
-                pending[i].context.Child("id").Fail(View(message));
-                pending[i - 1].context.Child("id").Fail("previous definition is here");
-                AddTerrainContext(pending[i].context, View(pending[i].definition.id));
-                Context{diagnostics, {}, {}}.Fail("could not load content catalog");
-            }
-            return eastl::unexpected(ContentError::InvalidData);
-        }
-    }
+    if (!CheckDefinitionIds(pending, patterns, diagnostics)) { return eastl::unexpected(ContentError::InvalidData); }
     if (!Resolve(pending)) {
         Context{diagnostics, {}, {}}.Fail("could not load content catalog");
         return eastl::unexpected(ContentError::InvalidData);
@@ -499,6 +717,18 @@ ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sourc
     ContentCatalog catalog;
     catalog.definitions_.reserve(pending.size());
     for (auto& terrain : pending) { catalog.definitions_.push_back(eastl::move(terrain.definition)); }
+    eastl::sort(patterns.begin(), patterns.end(), [](const PendingPattern& left, const PendingPattern& right) {
+        return left.definition.id < right.definition.id;
+    });
+    catalog.patterns_.reserve(patterns.size());
+    for (auto& pattern : patterns) {
+        if (!ResolvePattern(pattern, catalog)) {
+            AddPatternContext(pattern.context, View(pattern.definition.id));
+            Context{diagnostics, {}, {}}.Fail("could not load content catalog");
+            return eastl::unexpected(ContentError::InvalidData);
+        }
+        catalog.patterns_.push_back(eastl::move(pattern.definition));
+    }
     return catalog;
 }
 

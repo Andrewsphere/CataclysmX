@@ -169,6 +169,18 @@ interaction first. `cataclysmx_game --render` prints a snapshot without terminal
 initialization. Both clients render the same value-only view through
 [`client/text.h`](../src/client/text.h).
 
+During play, F11 opens the terminal client's world-generation debug menu. Its
+arrows/hjkl cursor moves by scale; uppercase HJKL jump one region (256 tiles).
+Keys 1–5 or Tab/Shift+Tab select Roads, Parcels, Ownership, Biomes, or Terrain;
+plus/minus zoom by powers of two within 1–16. Home/c recenters on the menu-entry
+position, PageUp/PageDown browses details, and F11/Escape/q closes it. The view
+uses the world's actual seed and generation version and shows generated baseline
+content, excluding live edits and entities. Generation version 1 saves display
+an unavailable notice. Opening or using the menu does not load chunks, tick, or
+mutate the world. Its data API is frontend-independent; the menu factory is
+FTXUI-specific and confined to the terminal target (see
+[world-generation debug inspection](worldgen_api.md)).
+
 `cataclysmx_headless --probe` retains the earlier checksum-probe invocation;
 the default invocation is the game demo. Build/run setup belongs in the
 [project README](../README.md).

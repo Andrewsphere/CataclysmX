@@ -15,6 +15,9 @@ Get-Content tests/scenarios/streaming.txt | ./out/build/win-msvc-debug/cataclysm
 
 The terminal client uses **arrows/hjkl** to move, **.** to wait, **g** to pick up,
 **d** to drop, **o then a direction** to interact, and **q/Escape** to quit.
+Press **F11** in-game for the world-generation debug menu; arrows/hjkl move its
+cursor, **HJKL** jump by region, **1–5/Tab/Shift+Tab** change layers, **+/-** zoom,
+**Home/c** recenter, **PageUp/PageDown** browse details, and **F11/Escape/q** close.
 The demo has a backpack containing a bandage, a toggleable machine, a door, and
 a wandering NPC. Successful actions spend one turn; rejected actions spend none.
 `cataclysmx_game --render` prints a snapshot without entering interactive mode.

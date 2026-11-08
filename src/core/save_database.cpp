@@ -1,5 +1,6 @@
 #include "core/save_database.h"
 #include "content/content.h"
+#include "worldgen/worldgen.h"
 
 #include <EASTL/algorithm.h>
 #include <EASTL/sort.h>
@@ -363,7 +364,7 @@ SaveResult<SaveSnapshot> DecodeSnapshot(const char* text, std::size_t length, Di
         || !Counter(Get(root, "next_id"), snapshot.nextId)) {
         return Failure(SaveError::InvalidData, "Invalid world_state fields", diagnostics);
     }
-    if (snapshot.generationVersion != 1) {
+    if (snapshot.generationVersion != 1 && snapshot.generationVersion != world_generation_version) {
         return Failure(SaveError::UnsupportedVersion, "Unsupported generation version", diagnostics);
     }
     auto* session = Get(root, "session");
@@ -1009,9 +1010,11 @@ SaveResult<void> SaveDatabase::WriteChunk(const ChunkArchive& chunk, Diagnostics
 SaveResult<void> SaveDatabase::WriteSnapshot(const SaveSnapshot& snapshot, Diagnostics* diagnostics) {
     if (!impl_) { return Failure(SaveError::NotOpen, "Database is not open", diagnostics); }
     if (!impl_->transaction) { return Failure(SaveError::InvalidState, "No active transaction", diagnostics); }
-    if (snapshot.generationVersion != 1 || !ValidSnapshot(snapshot)) {
+    const bool supported = snapshot.generationVersion == 1
+        || snapshot.generationVersion == world_generation_version;
+    if (!supported || !ValidSnapshot(snapshot)) {
         impl_->Rollback();
-        return Failure(snapshot.generationVersion != 1 ? SaveError::UnsupportedVersion : SaveError::InvalidData,
+        return Failure(!supported ? SaveError::UnsupportedVersion : SaveError::InvalidData,
             "Invalid snapshot or unsupported generation version", diagnostics);
     }
     const String payload = EncodeSnapshot(snapshot);

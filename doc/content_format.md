@@ -1,8 +1,10 @@
-# Terrain content, format version 1
+# Content format, version 1
 
 `content/content.h` provides an immutable, owning `ContentCatalog`. The loader
 accepts JSON5, including comments, unquoted keys, single-quoted strings, and trailing
-commas. `data/terrain.json5` is the bundled four-terrain catalog.
+commas. `data/terrain.json5` bundles eight terrains and three house patterns. Content may define
+terrain and building patterns in the same catalog; terrain-only catalogs remain
+valid and generate terrain/roads without buildings.
 
 ```json5
 {
@@ -35,7 +37,8 @@ commas. `data/terrain.json5` is the bundled four-terrain catalog.
 
 The root has exactly `format_version` and `definitions`, both required. Version
 must be an integer; an unsigned integer other than 1 returns `UnsupportedVersion`.
-Definitions is an array (possibly empty). Every definition requires:
+Definitions is an array (possibly empty). Each definition requires `type` and
+`id`; types are `terrain` and `building_pattern`. Terrain definitions require:
 
 | Field | Value |
 | --- | --- |
@@ -48,7 +51,7 @@ Definitions is an array (possibly empty). Every definition requires:
 Optional fields are `appearance`, `looks_like`, `opens_to`, and `closes_to`.
 Unknown fields and duplicate keys are errors at every object level, even when
 duplicate values agree. Unknown definition types and duplicate IDs across any
-input sources are errors. `movement.cost` is intentionally unsupported until its
+input sources and definition types are errors. `movement.cost` is intentionally unsupported until its
 gameplay meaning is defined. No ID prefixes are reserved or required.
 
 ### Appearance inheritance
@@ -104,6 +107,43 @@ references are resolved directly to runtime `TerrainId`s, without traversing
 their graph. Reciprocal closed/open doors and self-references are legal; they
 are transitions, not inheritance. Absence becomes the invalid ID zero. The
 loader does not impose extra gameplay rules on target passability or appearance.
+
+## Building patterns
+
+A `building_pattern` definition has exactly these fields (unknown and duplicate
+keys are errors):
+
+```json5
+{
+  type: 'building_pattern',
+  id: 'small_shop',
+  rows: ['#####', '#...#', '#...#', '##D##'],
+  palette: {'#': 'wall', '.': 'floor', 'D': 'closed_door'},
+  entrance: {x: 2, z: 3},
+  weight: 3,
+}
+```
+
+`id` uses the same nonempty ASCII identifier syntax as terrain IDs. `rows` is a
+nonempty rectangular array of 1–64 rows, each 1–64 printable ASCII characters;
+all rows have equal width. `palette` maps each single printable ASCII glyph
+used by the rows to a terrain ID. Every referenced terrain must exist across
+all input sources. Unused palette entries are allowed, but their terrain references
+must also resolve. `entrance` requires
+integer `x` and `z` coordinates within the pattern, on its boundary. The
+resolved entrance terrain must be passable or open to passable terrain. Optional
+`weight` is an integer from 1 to 1,000,000 (default 1). Pattern IDs, like terrain IDs, are
+sorted independently into stable catalog-local numeric IDs; duplicate strings
+are prohibited across both types.
+
+`FindBuildingPattern(string_view)` returns a typed `BuildingPatternId`, zero
+when absent. `TryGetBuildingPattern(id)` returns null for zero/out-of-range;
+`GetBuildingPattern(id)` aborts on invalid IDs. `BuildingPatternCount()` counts
+patterns. `BuildingPattern` owns its stable string ID, integer width/height,
+row-major resolved `Vector<TerrainId>`, `PatternPoint` entrance, and weight.
+These are authored coordinates; placement rotations belong to world generation.
+Pattern lookup borrows have the same catalog lifetime and catalog-local ID
+restrictions as terrain lookup.
 
 ## API, ownership, and errors
 

@@ -457,7 +457,7 @@ TEST_CASE("Save database validates session, counters and generator version", "[s
         RawDatabase raw(file.path.c_str());
         auto payload = raw.Text("SELECT payload FROM world_state");
         SECTION("unknown generator") {
-            Replace(payload, "\"generation_version\":1", "\"generation_version\":2");
+            Replace(payload, "\"generation_version\":1", "\"generation_version\":3");
             expected = SaveError::UnsupportedVersion;
         }
         SECTION("numeric counter") { Replace(payload, "\"tick\":\"18446744073709551615\"", "\"tick\":1"); }

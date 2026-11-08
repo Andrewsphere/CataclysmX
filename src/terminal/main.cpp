@@ -1,6 +1,7 @@
 #include "client/text.h"
 #include "core/server.h"
 #include "terminal/render.h"
+#include "terminal/debug_menu.h"
 
 #include <ftxui/component/component.hpp>
 #include <ftxui/component/event.hpp>
@@ -76,10 +77,13 @@ int main(int argc, char** argv) {
     }
     auto screen = ftxui::ScreenInteractive::Fullscreen();
     bool interacting = false;
+    bool debugOpen = false;
+    ftxui::Component debugMenu;
     std::string message = "Pick up the backpack with g. The machine (&) is east.";
     auto component = ftxui::Renderer([&] {
+        if (debugOpen) { return debugMenu->Render(); }
         ftxui::Elements rows;
-        rows.push_back(ftxui::text("CataclysmX | arrows/hjkl move | . wait | g pickup | d drop | o + direction interact | S save | q quit"));
+        rows.push_back(ftxui::text("CataclysmX | arrows/hjkl move | . wait | g pickup | d drop | o + direction interact | S save | F11 debug | q quit"));
         rows.push_back(ftxui::text(interacting ? "Interact in which direction? (Escape cancels)" : message));
         const cataclysmx::WorldView view = server.View();
         rows.push_back(ftxui::text("tick=" + std::to_string(view.tick) + " position="
@@ -104,8 +108,25 @@ int main(int argc, char** argv) {
         return ftxui::vbox(std::move(rows));
     });
     component = ftxui::CatchEvent(component, [&](ftxui::Event event) {
+        if (event == ftxui::Event::CtrlC) {
+            screen.ExitLoopClosure()();
+            return true;
+        }
+        if (event == ftxui::Event::F11) {
+            if (debugOpen) {
+                debugOpen = false;
+            } else {
+                interacting = false;
+                const auto position = server.GetWorld().GetActor(server.GetPlayer())->position;
+                debugMenu = cataclysmx::CreateWorldgenDebugMenu(server.GetWorld(), position,
+                    [&] { debugOpen = false; });
+                debugOpen = true;
+            }
+            return true;
+        }
+        if (debugOpen) { return debugMenu->OnEvent(event); }
         if (event == ftxui::Event::Escape && interacting) { interacting = false; return true; }
-        if (event == ftxui::Event::Escape || event == ftxui::Event::CtrlC || event == ftxui::Event::Character('q')) {
+        if (event == ftxui::Event::Escape || event == ftxui::Event::Character('q')) {
             screen.ExitLoopClosure()();
             return true;
         }

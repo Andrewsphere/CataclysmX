@@ -41,6 +41,26 @@ struct TerrainDefinition {
     TerrainId closesTo{};
 };
 
+struct BuildingPatternId {
+    std::uint32_t value = 0;
+    bool operator==(const BuildingPatternId&) const = default;
+};
+
+struct PatternPoint {
+    int x = 0;
+    int z = 0;
+    bool operator==(const PatternPoint&) const = default;
+};
+
+struct BuildingPattern {
+    String id;
+    int width = 0;
+    int height = 0;
+    Vector<TerrainId> tiles; // Row-major: z * width + x; all terrain references are resolved.
+    PatternPoint entrance;
+    std::uint32_t weight = 1;
+};
+
 enum class ContentError { Io, InvalidData, UnsupportedVersion };
 
 template<class T>
@@ -57,9 +77,14 @@ public:
     const TerrainDefinition* TryGetTerrain(TerrainId id) const;
     const TerrainDefinition& GetTerrain(TerrainId id) const;
     std::size_t TerrainCount() const;
+    BuildingPatternId FindBuildingPattern(eastl::string_view id) const;
+    const BuildingPattern* TryGetBuildingPattern(BuildingPatternId id) const;
+    const BuildingPattern& GetBuildingPattern(BuildingPatternId id) const;
+    std::size_t BuildingPatternCount() const;
 
 private:
     Vector<TerrainDefinition> definitions_;
+    Vector<BuildingPattern> patterns_;
     friend ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource>, Diagnostics*);
 };
 

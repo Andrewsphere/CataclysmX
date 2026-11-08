@@ -59,6 +59,7 @@ add_library(cataclysmx_engine STATIC
     src/core/diagnostics.cpp src/core/diagnostics.h
     src/core/integration.cpp src/core/world.cpp src/core/simulation.cpp src/core/server.cpp
     src/core/save_database.cpp src/core/save_database.h src/core/save_result.h src/core/world_archive.h
+    src/worldgen/worldgen.cpp src/worldgen/worldgen.h
     src/core/containers.h src/core/integration.h src/core/server.h
     src/core/simulation.h src/core/slot_map.h src/core/world.h)
 target_include_directories(cataclysmx_engine PUBLIC src)
@@ -70,7 +71,8 @@ target_link_libraries(cataclysmx_engine PUBLIC EASTL PRIVATE spdlog::spdlog yyjs
 target_compile_definitions(cataclysmx_engine PUBLIC EASTL_EXCEPTIONS_ENABLED=0)
 cataclysmx_no_exceptions(cataclysmx_engine)
 
-add_library(cataclysmx_client STATIC src/client/text.cpp src/client/text.h)
+add_library(cataclysmx_client STATIC src/client/text.cpp src/client/text.h
+    src/client/worldgen_debug.cpp src/client/worldgen_debug.h)
 target_link_libraries(cataclysmx_client PUBLIC cataclysmx_engine)
 cataclysmx_no_exceptions(cataclysmx_client)
 
@@ -81,9 +83,10 @@ cataclysmx_no_exceptions(cataclysmx_headless)
 
 if(CATACLYSMX_BUILD_TERMINAL)
     find_package(ftxui CONFIG REQUIRED)
-    add_library(cataclysmx_terminal STATIC src/terminal/render.cpp src/terminal/render.h)
+    add_library(cataclysmx_terminal STATIC src/terminal/render.cpp src/terminal/render.h
+        src/terminal/debug_menu.cpp src/terminal/debug_menu.h)
     target_include_directories(cataclysmx_terminal PUBLIC src)
-    target_link_libraries(cataclysmx_terminal PUBLIC cataclysmx_engine ftxui::dom PRIVATE ftxui::screen)
+    target_link_libraries(cataclysmx_terminal PUBLIC cataclysmx_client ftxui::dom ftxui::component PRIVATE ftxui::screen)
     cataclysmx_no_exceptions(cataclysmx_terminal)
     add_executable(cataclysmx_terminal_smoke tools/terminal_smoke/main.cpp)
     target_link_libraries(cataclysmx_terminal_smoke PRIVATE cataclysmx_terminal ftxui::component)
@@ -100,11 +103,12 @@ if(CATACLYSMX_BUILD_TESTS)
     add_executable(cataclysmx_tests tests/integration_tests.cpp tests/world_tests.cpp tests/server_tests.cpp
         tests/save_database_tests.cpp tests/world_save_tests.cpp tests/server_save_tests.cpp
         tests/content_tests.cpp tests/diagnostics_tests.cpp tests/client_tests.cpp
-        tests/terrain_integration_tests.cpp)
+        tests/terrain_integration_tests.cpp tests/building_pattern_tests.cpp tests/worldgen_tests.cpp
+        tests/worldgen_debug_tests.cpp)
     target_compile_definitions(cataclysmx_tests PRIVATE CATACLYSMX_TERRAIN_FILE="${CMAKE_CURRENT_SOURCE_DIR}/data/terrain.json5")
     target_link_libraries(cataclysmx_tests PRIVATE cataclysmx_client Catch2::Catch2WithMain unofficial::sqlite3::sqlite3)
     if(CATACLYSMX_BUILD_TERMINAL)
-        target_sources(cataclysmx_tests PRIVATE tests/terminal_render_tests.cpp)
+        target_sources(cataclysmx_tests PRIVATE tests/terminal_render_tests.cpp tests/terminal_debug_menu_tests.cpp)
         target_link_libraries(cataclysmx_tests PRIVATE cataclysmx_terminal)
     endif()
     cataclysmx_target(cataclysmx_tests)

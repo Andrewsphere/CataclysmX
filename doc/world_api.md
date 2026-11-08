@@ -3,10 +3,15 @@
 [`World`](../src/core/world.h) owns terrain, actors, items, interactive objects
 and load requests. Constructing `World(content, seed)` (default seed `42`) loads no chunks.
 The immutable `ContentCatalog` must outlive the world and must not be moved from
-or replaced while borrowed. The generator requires `floor` and `wall` definitions.
+or replaced while borrowed. The generator requires `floor` and `wall` definitions;
+applications call `ValidateWorldgenContent` to check generation-role passability.
 `GetContent()` exposes this read-only catalog. Terrain properties are indexed by
 compact, catalog-local `TerrainId` values; zero is invalid, including in `Tile{}`.
 Supply an explicit terrain when calling `SetTile`.
+`GetSeed()` and `GetGenerationVersion()` expose the world's immutable generation
+metadata as read-only values. In particular, these report the actual seed and
+version loaded from a save, rather than an application's defaults; the in-game
+world-generation debug menu uses them for its generated-baseline preview.
 Mutations return `WorldResult<T>`, an alias for `eastl::expected<T, WorldError>`.
 Expected failures are values; broken invariants and allocation failure are fatal.
 Engine code runs without exceptions.
@@ -130,11 +135,14 @@ returns `invalid_handle` from mutations and `nullptr` from entity lookups.
 
 ## Generation, archives and brief implementation notes
 
-New terrain is a deterministic function of seed and tile coordinates, independent
-of load order or simulation RNG. The central `[-32, 32]` square on both tile axes
-is floor; outside it generation mixes floor and walls. Generation creates no
-actors, items or objects and consumes no persistent IDs. The server separately
-constructs the demo scene.
+New terrain uses the deterministic region planner documented in the
+[world-generation API](worldgen_api.md), independent of load order or simulation
+RNG. Regions are 256×256 tiles; their plans provide roads, parcels, and eligible
+pattern buildings as well as integer environment samples. Terrain-only catalogs
+are supported: they produce no buildings and use the documented terrain
+fallbacks. The central `[-32, 32]` square on both tile axes remains floor.
+Generation creates no actors, items or objects and consumes no persistent IDs.
+The server separately constructs the demo scene.
 
 Unloading captures tiles (including damage), entity values/counters and complete
 item ownership trees as values linked by persistent IDs, then retires runtime

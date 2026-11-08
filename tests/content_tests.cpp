@@ -354,7 +354,7 @@ TEST_CASE("Content dispatch reports unsupported types at the type field", "[cont
     REQUIRE_FALSE(result.has_value());
     CHECK(result.error() == ContentError::InvalidData);
     REQUIRE(diagnostics.Frames().size() == 3);
-    CHECK(diagnostics.Frames()[0].message == "unsupported definition type 'item' (expected terrain)");
+    CHECK(diagnostics.Frames()[0].message == "unsupported definition type 'item' (expected terrain or building_pattern)");
     REQUIRE(diagnostics.Frames()[0].location.has_value());
     CHECK(diagnostics.Frames()[0].location->path == "definitions[0].type");
     CHECK(diagnostics.Frames()[1].message == "while loading content definition");
@@ -408,11 +408,15 @@ TEST_CASE("Bundled terrain content loads from stdio with door transitions", "[co
     path.resize(separator);
     path += "/../data/terrain.json5";
     const auto catalog = Take(LoadContentFile(path.c_str()));
-    CHECK(catalog.TerrainCount() == 4);
+    CHECK(catalog.TerrainCount() == 8);
     CHECK(catalog.FindTerrain("closed_door") == TerrainId{1});
     CHECK(catalog.FindTerrain("floor") == TerrainId{2});
-    CHECK(catalog.FindTerrain("open_door") == TerrainId{3});
-    CHECK(catalog.FindTerrain("wall") == TerrainId{4});
+    CHECK(catalog.FindTerrain("grass") == TerrainId{3});
+    CHECK(catalog.FindTerrain("open_door") == TerrainId{4});
+    CHECK(catalog.FindTerrain("road") == TerrainId{5});
+    CHECK(catalog.FindTerrain("rubble") == TerrainId{6});
+    CHECK(catalog.FindTerrain("tree") == TerrainId{7});
+    CHECK(catalog.FindTerrain("wall") == TerrainId{8});
     CHECK(Get(catalog, "floor").appearance.symbol == ".");
     CHECK(Get(catalog, "wall").appearance.symbol == "#");
     CHECK(Get(catalog, "closed_door").appearance.symbol == "+");

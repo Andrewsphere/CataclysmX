@@ -3,6 +3,7 @@
 #include "core/server.h"
 
 #include "core/simulation.h"
+#include "worldgen/worldgen.h"
 
 #include <EASTL/algorithm.h>
 #include <EASTL/numeric_limits.h>
@@ -139,7 +140,7 @@ ContentResult<void> ValidateServerContent(const ContentCatalog& content, Diagnos
         if (diagnostics) { diagnostics->Add("Demo terrain 'floor' must be passable"); }
         return eastl::unexpected(ContentError::InvalidData);
     }
-    return {};
+    return ValidateWorldgenContent(content, diagnostics);
 }
 
 Server::Server(const ContentCatalog& content, std::uint32_t seed) : world_(content, seed), rng_state_(seed) {

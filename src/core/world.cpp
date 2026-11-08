@@ -3,9 +3,11 @@
 #include "core/world.h"
 #include "core/slot_map.h"
 #include "core/save_database.h"
+#include "worldgen/worldgen.h"
 
 #include <EASTL/algorithm.h>
 #include <EASTL/numeric_limits.h>
+#include <EASTL/optional.h>
 #include <EASTL/sort.h>
 #include <EASTL/utility.h>
 
@@ -232,6 +234,9 @@ public:
     TerrainId floor;
     TerrainId wall;
     std::uint32_t seed;
+    std::uint32_t generationVersion = world_generation_version;
+    // A bounded, disposable planning cache; never part of authoritative state.
+    eastl::optional<RegionPlan> generationPlan;
     PersistentId next_id = 1;
     dod::slot_map64<Actor> actors;
     dod::slot_map64<Item> items;
@@ -392,7 +397,17 @@ public:
         std::abort();
     }
 
-    void Generate(Chunk& value) const {
+    void Generate(Chunk& value) {
+        if (generationVersion == world_generation_version) {
+            const auto region = RegionOf({value.position.x * chunk_size, value.position.z * chunk_size});
+            if (!generationPlan || generationPlan->region != region) {
+                generationPlan = GenerateRegionPlan(content, seed, region);
+            }
+            value.tiles = GenerateChunk(content, seed, *generationPlan, value.position);
+            return;
+        }
+        Require(generationVersion == 1);
+        // Keep version 1 byte-for-byte for unexplored chunks in existing saves.
         for (int z = 0; z < chunk_size; ++z) {
             for (int x = 0; x < chunk_size; ++x) {
                 const int global_x = value.position.x * chunk_size + x;
@@ -576,7 +591,7 @@ public:
                 return result;
             }
         }
-        if (auto result = target.WriteSnapshot({seed, 1, next_id, session}, diagnostics); !result) {
+        if (auto result = target.WriteSnapshot({seed, generationVersion, next_id, session}, diagnostics); !result) {
             target.Rollback();
             return result;
         }
@@ -768,8 +783,10 @@ SaveResult<SessionState> World::LoadSave(const char* path, Diagnostics* diagnost
         if (diagnostics) { diagnostics->Add("Loading world save"); }
         return eastl::unexpected(snapshot.error());
     }
-    if (snapshot->generationVersion != 1 || snapshot->nextId == 0) {
-        const SaveError error = snapshot->generationVersion != 1
+    const bool supported = snapshot->generationVersion == 1
+        || snapshot->generationVersion == world_generation_version;
+    if (!supported || snapshot->nextId == 0) {
+        const SaveError error = !supported
             ? SaveError::UnsupportedVersion : SaveError::InvalidData;
         SaveFailure(error, "Invalid world generation version or next persistent ID", diagnostics);
         return eastl::unexpected(error);
@@ -781,6 +798,8 @@ SaveResult<SessionState> World::LoadSave(const char* path, Diagnostics* diagnost
         return eastl::unexpected(result.error());
     }
     impl_->seed = snapshot->seed;
+    impl_->generationVersion = snapshot->generationVersion;
+    impl_->generationPlan.reset();
     impl_->next_id = snapshot->nextId;
     impl_->database = eastl::move(database);
     return snapshot->session;
@@ -798,6 +817,8 @@ SaveResult<void> World::Save(const SessionState& session, Diagnostics* diagnosti
 
 bool World::HasSave() const { return impl_->database != nullptr; }
 const ContentCatalog& World::GetContent() const { return impl_->content; }
+std::uint32_t World::GetSeed() const { return impl_->seed; }
+std::uint32_t World::GetGenerationVersion() const { return impl_->generationVersion; }
 
 const Chunk* World::GetChunk(ChunkCoord position) const { return impl_->GetChunk(position); }
 

@@ -1,5 +1,6 @@
 #include "core/world.h"
 #include "core/save_database.h"
+#include "worldgen/worldgen.h"
 #include "content_fixture.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -209,6 +210,87 @@ TEST_CASE("World retains unloaded archives until checkpoint then reloads from di
     CHECK(*world.GetTile({3, 3}) == Tile{TestTerrain("closed_door"), 219});
     REQUIRE(world.Save(session)); // Clean disk-restored chunks need no rewrite.
     CHECK(world.GetActor(fresh));
+}
+
+TEST_CASE("Version one saves retain legacy generation for missing rows and subsequent checkpoints",
+          "[world][save][worldgen]") {
+    SaveDirectory files;
+    {
+        SaveDatabase database(TestContent());
+        REQUIRE(database.Create(files.database.c_str()));
+        REQUIRE(database.Begin());
+        SaveSnapshot snapshot;
+        snapshot.seed = 123;
+        snapshot.generationVersion = 1;
+        REQUIRE(database.WriteSnapshot(snapshot));
+        REQUIRE(database.Commit());
+    }
+    {
+        World world(TestContent(), 999);
+        const auto session = Take(world.LoadSave(files.database.c_str()));
+        Load(world, {21, -13});
+        std::uint32_t checksum = 2166136261U;
+        for (const auto tile : world.GetChunk({21, -13})->tiles) {
+            REQUIRE((tile.terrain == TestTerrain("wall") || tile.terrain == TestTerrain("floor")));
+            CHECK(tile.damage == 0);
+            checksum = (checksum ^ (tile.terrain == TestTerrain("wall") ? 1U : 0U)) * 16777619U;
+        }
+        // Frozen output of generator 1, independent of catalog-local numeric IDs.
+        CHECK(checksum == 3129975097U);
+        REQUIRE(world.Save(session));
+    }
+    SaveDatabase database(TestContent());
+    CHECK(Take(database.Open(files.database.c_str())).generationVersion == 1);
+    World resumed(TestContent(), 999);
+    Take(resumed.LoadSave(files.database.c_str()));
+    Load(resumed, {22, -13});
+    std::uint32_t checksum = 2166136261U;
+    for (const auto tile : resumed.GetChunk({22, -13})->tiles) {
+        REQUIRE((tile.terrain == TestTerrain("wall") || tile.terrain == TestTerrain("floor")));
+        CHECK(tile.damage == 0);
+        checksum = (checksum ^ (tile.terrain == TestTerrain("wall") ? 1U : 0U)) * 16777619U;
+    }
+    CHECK(checksum == 353137884U);
+}
+
+TEST_CASE("Regional generation saves preserve edits and regenerate neighboring building slices",
+          "[world][save][worldgen]") {
+    SaveDirectory files;
+    constexpr std::uint32_t seed = 42;
+    const auto plan = GenerateRegionPlan(TestContent(), seed, {1, -1});
+    REQUIRE_FALSE(plan.buildings.empty());
+    const auto building = plan.buildings.front();
+    const auto first = ChunkOf(building.bounds.min);
+    const auto last = ChunkOf({building.bounds.max.x - 1, building.bounds.max.z - 1});
+    const Tile edit{TestTerrain("rubble"), 193};
+    {
+        World world(TestContent(), seed);
+        const auto request = Load(world, first);
+        CHECK(world.GetChunk(first)->tiles == GenerateChunk(TestContent(), seed, plan, first));
+        REQUIRE(world.SetTile(building.bounds.min, edit));
+        REQUIRE(world.CreateSave(files.database.c_str(), {}));
+        REQUIRE(world.ReleaseRequest(request));
+        REQUIRE(world.ReconcileChunks());
+        REQUIRE(world.Save({}));
+        CHECK(world.ArchivedChunkCount() == 0);
+    }
+    {
+        SaveDatabase database(TestContent());
+        CHECK(Take(database.Open(files.database.c_str())).generationVersion == world_generation_version);
+    }
+    World restored(TestContent(), 999);
+    Take(restored.LoadSave(files.database.c_str()));
+    // Request untouched slices first; they must use the saved seed and generator.
+    for (int z = last.z; z >= first.z; --z) {
+        for (int x = last.x; x >= first.x; --x) {
+            const ChunkCoord chunk{x, z};
+            Load(restored, chunk);
+            auto expected = GenerateChunk(TestContent(), seed, plan, chunk);
+            if (chunk == first) { expected[TileIndex(building.bounds.min)] = edit; }
+            CHECK(restored.GetChunk(chunk)->tiles == expected);
+        }
+    }
+    CHECK(*restored.GetTile(building.bounds.min) == edit);
 }
 
 TEST_CASE("World checkpoints both sides of cross chunk moves and ownership changes", "[world][save]") {
