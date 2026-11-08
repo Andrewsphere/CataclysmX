@@ -235,7 +235,7 @@ CommandResult Server::Send(Command command) {
         return failed(Outcome::invalid_command);
     }
     require(tick_ != eastl::numeric_limits<std::uint64_t>::max());
-    cataclysmx::advance(world_, player_, rng_state_);
+    cataclysmx::Advance(world_, player_, rng_state_);
     ++tick_;
     return {outcome, true, tick_};
 }

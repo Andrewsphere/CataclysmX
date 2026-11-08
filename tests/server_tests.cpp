@@ -428,7 +428,7 @@ TEST_CASE("Simulation snapshots actors once and uses explicit RNG in persistent 
     const auto enabled = take(world.CreateObject({2, 2}, true));
     const auto disabled = take(world.CreateObject({3, 2}, false));
     std::uint32_t rng = 0;
-    cataclysmx::advance(world, player, rng);
+    cataclysmx::Advance(world, player, rng);
     CHECK(rng == 1'196'435'762U);
     CHECK(world.GetActor(first)->position == TileCoord{18, 5});
     CHECK(world.GetActor(second)->position == TileCoord{15, 6});
@@ -445,7 +445,7 @@ TEST_CASE("Simulation snapshots actors once and uses explicit RNG in persistent 
     // Remove the older NPC so the boundary-crossing NPC gets the east draw.
     REQUIRE(world.DestroyActor(first));
     REQUIRE(world.MoveActor(second, {15, 5}));
-    cataclysmx::advance(world, player, rng);
+    cataclysmx::Advance(world, player, rng);
     CHECK(world.GetActor(second)->position == TileCoord{16, 5});
     CHECK(world.GetActor(second)->turns == 2);
     CHECK(world.GetActor(newcomer)->turns == 1);
@@ -462,7 +462,7 @@ TEST_CASE("Simulation never moves NPCs into resident-only or unavailable tiles",
     const auto sleeping = take(world.CreateActor({17, 2}));
     const auto object = take(world.CreateObject({18, 2}, true));
     std::uint32_t rng = 0;
-    cataclysmx::advance(world, player, rng);
+    cataclysmx::Advance(world, player, rng);
     CHECK(rng == 1'013'904'223U);
     CHECK(world.GetActor(npc)->position == TileCoord{15, 2});
     CHECK(world.GetActor(npc)->turns == 1);
@@ -472,7 +472,7 @@ TEST_CASE("Simulation never moves NPCs into resident-only or unavailable tiles",
     world.ReconcileChunks();
     rng = 0;
     const auto chunks = world.LoadedChunks();
-    cataclysmx::advance(world, player, rng);
+    cataclysmx::Advance(world, player, rng);
     CHECK(world.LoadedChunks() == chunks);
     CHECK(world.GetTile({16, 2}) == nullptr);
     CHECK(world.GetActor(npc)->position == TileCoord{15, 2});
@@ -483,12 +483,12 @@ TEST_CASE("Simulation never moves NPCs into resident-only or unavailable tiles",
     REQUIRE(world.MoveActor(npc, {14, 2}));
     REQUIRE(world.SetTile({15, 2}, {Terrain::wall, 0}));
     rng = 0;
-    cataclysmx::advance(world, player, rng);
+    cataclysmx::Advance(world, player, rng);
     CHECK(world.GetActor(npc)->position == TileCoord{14, 2});
     REQUIRE(world.SetTile({15, 2}, {}));
     REQUIRE(world.MoveActor(player, {15, 2}));
     rng = 0;
-    cataclysmx::advance(world, player, rng);
+    cataclysmx::Advance(world, player, rng);
     CHECK(world.GetActor(npc)->position == TileCoord{14, 2});
     CHECK(world.GetActor(player)->position == TileCoord{15, 2});
     CHECK(world.CheckInvariants());
@@ -523,8 +523,8 @@ TEST_CASE("Simulation replay is independent of arbitrary chunk reload order", "[
     std::uint32_t first_rng = 0x12345678U;
     std::uint32_t second_rng = first_rng;
     for (int turn = 0; turn < 80; ++turn) {
-        cataclysmx::advance(first, first.FindActor(player_id), first_rng);
-        cataclysmx::advance(second, second.FindActor(player_id), second_rng);
+        cataclysmx::Advance(first, first.FindActor(player_id), first_rng);
+        cataclysmx::Advance(second, second.FindActor(player_id), second_rng);
         CHECK(first_rng == second_rng);
         CHECK(actors(first) == actors(second));
         const auto first_objects = first.ActiveObjects();
