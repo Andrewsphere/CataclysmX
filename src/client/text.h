@@ -1,10 +1,11 @@
 #pragma once
 
 #include "core/server.h"
+#include "content/content.h"
 
 namespace cataclysmx {
 
-char cell_glyph(const ViewCell& cell);
-String render_text(const WorldView& view);
+TerminalAppearance CellAppearance(const ViewCell& cell, const ContentCatalog& content);
+String render_text(const WorldView& view, const ContentCatalog& content);
 
 }

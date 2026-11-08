@@ -1,5 +1,6 @@
 #include "core/server.h"
 #include "core/simulation.h"
+#include "content_fixture.h"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -77,7 +78,7 @@ void same_view(const WorldView& a, const WorldView& b) {
 }
 
 TEST_CASE("Server creates the deterministic demo and advances only successful commands", "[server][commands]") {
-    Server server(73);
+    Server server(TestContent(), 73);
     World& world = server.GetWorld();
     REQUIRE(world.GetActor(server.GetPlayer()) != nullptr);
     CHECK(world.GetActor(server.GetPlayer())->position == TileCoord{0, 0});
@@ -96,14 +97,14 @@ TEST_CASE("Server creates the deterministic demo and advances only successful co
     const ObjectHandle object = world.ObjectAt({2, 0});
     REQUIRE(world.GetObject(object) != nullptr);
     CHECK_FALSE(world.GetObject(object)->enabled);
-    CHECK(world.GetTile({3, 0})->terrain == Terrain::closed_door);
-    CHECK(world.GetTile({3, 1})->terrain == Terrain::wall);
+    CHECK(world.GetTile({3, 0})->terrain == TestTerrain("closed_door"));
+    CHECK(world.GetTile({3, 1})->terrain == TestTerrain("wall"));
     const ActorHandle npc = world.ActorAt({5, 5});
     REQUIRE(world.GetActor(npc) != nullptr);
     CHECK_FALSE(world.GetActor(npc)->player);
     // Keep command outcome checks independent of the NPC's chosen route.
     for (TileCoord position : {TileCoord{4, 5}, TileCoord{6, 5}, TileCoord{5, 4}, TileCoord{5, 6}}) {
-        REQUIRE(world.SetTile(position, {Terrain::wall, 0}));
+        REQUIRE(world.SetTile(position, {TestTerrain("wall"), 0}));
     }
 
     expect(server, {CommandKind::move, 0, 0}, Outcome::invalid_command, false);
@@ -140,15 +141,15 @@ TEST_CASE("Server creates the deterministic demo and advances only successful co
 }
 
 TEST_CASE("Failures do not consume RNG and occupied open doors cannot close", "[server][commands][determinism]") {
-    Server subject(918);
-    Server reference(918);
+    Server subject(TestContent(), 918);
+    Server reference(TestContent(), 918);
     const auto blocker = take(subject.GetWorld().CreateActor({-1, 0}));
     const auto other = take(reference.GetWorld().CreateActor({-1, 0}));
     expect(subject, {CommandKind::move, -1, 0}, Outcome::occupied, false);
     REQUIRE(subject.GetWorld().DestroyActor(blocker));
     REQUIRE(reference.GetWorld().DestroyActor(other));
-    REQUIRE(subject.GetWorld().SetTile({1, 0}, {Terrain::closed_door, 9}));
-    REQUIRE(reference.GetWorld().SetTile({1, 0}, {Terrain::closed_door, 9}));
+    REQUIRE(subject.GetWorld().SetTile({1, 0}, {TestTerrain("closed_door"), 9}));
+    REQUIRE(reference.GetWorld().SetTile({1, 0}, {TestTerrain("closed_door"), 9}));
     expect(subject, {CommandKind::move, 1, 0}, Outcome::blocked, false);
     expect(subject, {CommandKind::drop, 0, 0, UINT64_MAX}, Outcome::not_carried, false);
     expect(subject, {static_cast<CommandKind>(-1)}, Outcome::invalid_command, false);
@@ -160,15 +161,15 @@ TEST_CASE("Failures do not consume RNG and occupied open doors cannot close", "[
         CHECK(actors(subject.GetWorld()) == actors(reference.GetWorld()));
     }
 
-    Server door;
-    REQUIRE(door.GetWorld().SetTile({1, 0}, {Terrain::open_door, 17}));
+    Server door(TestContent());
+    REQUIRE(door.GetWorld().SetTile({1, 0}, {TestTerrain("open_door"), 17}));
     take(door.GetWorld().CreateActor({1, 0}));
     expect(door, {CommandKind::interact, 1, 0}, Outcome::occupied, false);
-    CHECK(*door.GetWorld().GetTile({1, 0}) == Tile{Terrain::open_door, 17});
+    CHECK(*door.GetWorld().GetTile({1, 0}) == Tile{TestTerrain("open_door"), 17});
 }
 
 TEST_CASE("Pickup and drop use direct ownership and persistent IDs while preserving nested items", "[server][inventory]") {
-    Server server;
+    Server server(TestContent());
     World& world = server.GetWorld();
     const ItemHandle bag = world.ItemsAt({0, 0})[0];
     const ItemHandle bandage = world.GetItem(bag)->contents[0];
@@ -208,16 +209,16 @@ TEST_CASE("Pickup and drop use direct ownership and persistent IDs while preserv
 }
 
 TEST_CASE("Views are isolated value snapshots with bounded circular LOS and empty hidden cells", "[server][view]") {
-    Server server;
+    Server server(TestContent());
     World& world = server.GetWorld();
-    REQUIRE(world.SetTile({1, 0}, {Terrain::wall, 23}));
-    REQUIRE(world.SetTile({2, 0}, {Terrain::floor, 71}));
+    REQUIRE(world.SetTile({1, 0}, {TestTerrain("wall"), 23}));
+    REQUIRE(world.SetTile({2, 0}, {TestTerrain("floor"), 71}));
     const auto hidden_actor = take(world.CreateActor({2, 0}));
     take(world.CreateItem(ItemKind::rock, ItemLocation::Ground({2, 0})));
     const auto object = world.ObjectAt({2, 0});
     REQUIRE(world.SetObjectEnabled(object, true));
-    REQUIRE(world.SetTile({0, 1}, {Terrain::closed_door, 8}));
-    REQUIRE(world.SetTile({0, 2}, {Terrain::open_door, 93}));
+    REQUIRE(world.SetTile({0, 1}, {TestTerrain("closed_door"), 8}));
+    REQUIRE(world.SetTile({0, 2}, {TestTerrain("open_door"), 93}));
     const auto before_observation = actors(world);
     const auto chunks_before_observation = world.LoadedChunks();
     const auto tick_before_observation = server.GetTick();
@@ -233,23 +234,23 @@ TEST_CASE("Views are isolated value snapshots with bounded circular LOS and empt
     CHECK(cell_at(old, {0, 0}).player);
     CHECK(cell_at(old, {0, 0}).actor == world.GetActor(server.GetPlayer())->id);
     CHECK(cell_at(old, {1, 0}).visible);
-    CHECK(cell_at(old, {1, 0}).tile == Tile{Terrain::wall, 23});
+    CHECK(cell_at(old, {1, 0}).tile == Tile{TestTerrain("wall"), 23});
     CHECK(cell_at(old, {2, 0}) == ViewCell{});
     CHECK(cell_at(old, {0, 1}).visible);
-    CHECK(cell_at(old, {0, 1}).tile.terrain == Terrain::closed_door);
+    CHECK(cell_at(old, {0, 1}).tile.terrain == TestTerrain("closed_door"));
     CHECK(cell_at(old, {0, 2}) == ViewCell{});
     CHECK(cell_at(old, {-4, -4}) == ViewCell{});
 
-    REQUIRE(world.SetTile({1, 0}, {Terrain::open_door, 12}));
+    REQUIRE(world.SetTile({1, 0}, {TestTerrain("open_door"), 12}));
     const WorldView revealed = server.View(4);
     CHECK(cell_at(revealed, {2, 0}).visible);
     CHECK(cell_at(revealed, {2, 0}).actor == world.GetActor(hidden_actor)->id);
     CHECK(cell_at(revealed, {2, 0}).ground_items == 1);
     CHECK(cell_at(revealed, {2, 0}).object == world.GetObject(object)->id);
     CHECK(cell_at(revealed, {2, 0}).object_enabled);
-    CHECK(cell_at(revealed, {2, 0}).tile == Tile{Terrain::floor, 71});
+    CHECK(cell_at(revealed, {2, 0}).tile == Tile{TestTerrain("floor"), 71});
     CHECK(cell_at(old, {2, 0}) == ViewCell{});
-    CHECK(cell_at(old, {1, 0}).tile == Tile{Terrain::wall, 23});
+    CHECK(cell_at(old, {1, 0}).tile == Tile{TestTerrain("wall"), 23});
 
     expect(server, {CommandKind::pick_up}, Outcome::picked_up, true);
     const WorldView carrying = server.View(0);
@@ -271,7 +272,7 @@ TEST_CASE("Views are isolated value snapshots with bounded circular LOS and empt
 }
 
 TEST_CASE("Bubble radii validate atomically and resident force loads never simulate", "[server][streaming]") {
-    Server server;
+    Server server(TestContent());
     World& world = server.GetWorld();
     const ActorHandle player = server.GetPlayer();
     const auto before = world.LoadedChunks();
@@ -286,7 +287,7 @@ TEST_CASE("Bubble radii validate atomically and resident force loads never simul
     REQUIRE(server.SetBubbleRadii(0, 1));
     CHECK(server.GetPlayer() == player);
     CHECK(world.GetActor(player) != nullptr);
-    REQUIRE(world.SetTile({17, 1}, {}));
+    REQUIRE(world.SetTile({17, 1}, {TestTerrain("floor"), 0}));
     const ActorHandle npc = take(world.CreateActor({17, 1}));
     const ObjectHandle object = take(world.CreateObject({18, 1}, true));
     expect(server, {}, Outcome::waited, true);
@@ -313,14 +314,14 @@ TEST_CASE("Bubble radii validate atomically and resident force loads never simul
 }
 
 TEST_CASE("Zero-radius movement loads before crossing and restores frozen archived NPCs", "[server][streaming]") {
-    Server server;
+    Server server(TestContent());
     World& world = server.GetWorld();
     const ActorHandle player = server.GetPlayer();
     const ActorHandle old_npc = world.ActorAt({5, 5});
     const PersistentId npc_id = world.GetActor(old_npc)->id;
     // Box the NPC so its chunk membership remains fixed for the freeze test.
     for (TileCoord position : {TileCoord{4, 5}, TileCoord{6, 5}, TileCoord{5, 4}, TileCoord{5, 6}}) {
-        REQUIRE(world.SetTile(position, {Terrain::wall, 0}));
+        REQUIRE(world.SetTile(position, {TestTerrain("wall"), 0}));
     }
     const ObjectHandle old_object = world.ObjectAt({2, 0});
     const PersistentId object_id = world.GetObject(old_object)->id;
@@ -370,10 +371,10 @@ TEST_CASE("Zero-radius movement loads before crossing and restores frozen archiv
 }
 
 TEST_CASE("Failed temporary loads preserve the original bubble and the player key", "[server][streaming]") {
-    Server server;
+    Server server(TestContent());
     World& world = server.GetWorld();
     const ActorHandle player = server.GetPlayer();
-    REQUIRE(world.SetTile({16, 0}, {Terrain::wall, 64}));
+    REQUIRE(world.SetTile({16, 0}, {TestTerrain("wall"), 64}));
     REQUIRE(world.MoveActor(player, {15, 0}));
     REQUIRE(server.SetBubbleRadii(0, 0));
     const auto before = actors(world);
@@ -388,9 +389,9 @@ TEST_CASE("Failed temporary loads preserve the original bubble and the player ke
     // The failed destination retains its archived values, and resident demand
     // cannot accidentally inherit the temporary request after failure.
     const auto inspect = load(world, {{1, 0}, 0}, LoadMode::resident);
-    CHECK(*world.GetTile({16, 0}) == Tile{Terrain::wall, 64});
+    CHECK(*world.GetTile({16, 0}) == Tile{TestTerrain("wall"), 64});
     CHECK_FALSE(world.IsActive({16, 0}));
-    REQUIRE(world.SetTile({16, 0}, {}));
+    REQUIRE(world.SetTile({16, 0}, {TestTerrain("floor"), 0}));
     take(world.CreateActor({16, 0}));
     REQUIRE(world.ReleaseRequest(inspect));
     world.ReconcileChunks();
@@ -401,11 +402,11 @@ TEST_CASE("Failed temporary loads preserve the original bubble and the player ke
 }
 
 TEST_CASE("Boundary coordinates are rejected before loading or changing radius requests", "[server][streaming]") {
-    Server server;
+    Server server(TestContent());
     World& world = server.GetWorld();
     REQUIRE(server.SetBubbleRadii(0, 0));
     load(world, {{world_coordinate_limit / chunk_size, 0}, 0}, LoadMode::resident);
-    REQUIRE(world.SetTile({world_coordinate_limit, 0}, {}));
+    REQUIRE(world.SetTile({world_coordinate_limit, 0}, {TestTerrain("floor"), 0}));
     REQUIRE(world.MoveActor(server.GetPlayer(), {world_coordinate_limit, 0}));
     REQUIRE(server.SetBubbleRadii(0, 0));
     const auto before = world.LoadedChunks();
@@ -419,7 +420,7 @@ TEST_CASE("Boundary coordinates are rejected before loading or changing radius r
 }
 
 TEST_CASE("Simulation snapshots actors once and uses explicit RNG in persistent ID order", "[simulation][determinism]") {
-    World world;
+    World world(TestContent());
     load(world, {{0, 0}, 1});
     // The oldest actor is in the later chunk; the second crosses into it.
     const auto first = take(world.CreateActor({17, 5}));
@@ -454,7 +455,7 @@ TEST_CASE("Simulation snapshots actors once and uses explicit RNG in persistent 
 }
 
 TEST_CASE("Simulation never moves NPCs into resident-only or unavailable tiles", "[simulation][activity]") {
-    World world;
+    World world(TestContent());
     load(world, {{0, 0}, 0});
     const auto resident = load(world, {{1, 0}, 0}, LoadMode::resident);
     const auto npc = take(world.CreateActor({15, 2}));
@@ -481,11 +482,11 @@ TEST_CASE("Simulation never moves NPCs into resident-only or unavailable tiles",
     // A wall and then an occupied active target also consume only the NPC's
     // draw, without changing positions or loading chunks.
     REQUIRE(world.MoveActor(npc, {14, 2}));
-    REQUIRE(world.SetTile({15, 2}, {Terrain::wall, 0}));
+    REQUIRE(world.SetTile({15, 2}, {TestTerrain("wall"), 0}));
     rng = 0;
     cataclysmx::Advance(world, player, rng);
     CHECK(world.GetActor(npc)->position == TileCoord{14, 2});
-    REQUIRE(world.SetTile({15, 2}, {}));
+    REQUIRE(world.SetTile({15, 2}, {TestTerrain("floor"), 0}));
     REQUIRE(world.MoveActor(player, {15, 2}));
     rng = 0;
     cataclysmx::Advance(world, player, rng);
@@ -495,8 +496,8 @@ TEST_CASE("Simulation never moves NPCs into resident-only or unavailable tiles",
 }
 
 TEST_CASE("Simulation replay is independent of arbitrary chunk reload order", "[simulation][streaming][determinism]") {
-    World first(128);
-    World second(128);
+    World first(TestContent(), 128);
+    World second(TestContent(), 128);
     const auto left_first = load(first, {{0, 0}, 0});
     const auto right_first = load(first, {{1, 0}, 0});
     const auto left_second = load(second, {{0, 0}, 0});
@@ -543,8 +544,8 @@ TEST_CASE("Simulation replay is independent of arbitrary chunk reload order", "[
 }
 
 TEST_CASE("Local server command replay returns identical outcomes and snapshots", "[server][determinism]") {
-    Server first(4321);
-    Server second(4321);
+    Server first(TestContent(), 4321);
+    Server second(TestContent(), 4321);
     const Command commands[] = {
         {CommandKind::pick_up}, {CommandKind::wait}, {CommandKind::move, 1, 0},
         {CommandKind::pick_up}, {CommandKind::interact, 1, 0}, {CommandKind::move, 1, 0},

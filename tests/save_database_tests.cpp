@@ -1,6 +1,9 @@
 #include "core/save_database.h"
+#include "content_fixture.h"
 
+#include <catch2/catch_message.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <EASTL/utility.h>
 #include <sqlite3.h>
 
 #include <atomic>
@@ -61,9 +64,10 @@ struct RawDatabase {
 
 ChunkArchive SampleChunk(ChunkCoord position = {0, 0}) {
     ChunkArchive chunk{};
+    chunk.tiles.fill(Tile{TestTerrain("floor"), 0});
     chunk.position = position;
     const TileCoord tile{position.x * chunk_size, position.z * chunk_size};
-    chunk.tiles[255] = {Terrain::closed_door, 255};
+    chunk.tiles[255] = {TestTerrain("closed_door"), 255};
     chunk.actors.push_back({1, tile, true, UINT64_MAX});
     chunk.objects.push_back({2, tile, true, UINT64_MAX - 1});
     chunk.items.push_back({3, ItemKind::backpack, LocationKind::actor, {}, 1});
@@ -86,7 +90,7 @@ SaveSnapshot SampleSnapshot() {
 }
 
 void Populate(const char* path) {
-    SaveDatabase database;
+    SaveDatabase database(TestContent());
     REQUIRE(database.Create(path));
     REQUIRE(database.Begin());
     REQUIRE(database.WriteChunk(SampleChunk()));
@@ -100,9 +104,125 @@ void Replace(std::string& text, const char* before, const char* after) {
     text.replace(position, std::char_traits<char>::length(before), after);
 }
 
+ContentCatalog SaveTestCatalog(eastl::span<const ContentSource> sources) {
+    Diagnostics diagnostics;
+    auto loaded = LoadContent(sources, &diagnostics);
+    INFO(FormatDiagnostics(diagnostics).c_str());
+    REQUIRE(loaded);
+    return eastl::move(*loaded);
+}
+
+TEST_CASE("Save terrain names survive catalog renumbering and missing content fails with context", "[save][database][content]") {
+    const ContentSource sources[] = {
+        {"floor.json5", R"({format_version:1, definitions:[{
+            type:'terrain', id:'floor', name:'floor', movement:{passable:true}, blocks_sight:false,
+            appearance:{symbol:'.', foreground:'white'}
+        }]})"},
+        {"moss.json5", R"({format_version:1, definitions:[{
+            type:'terrain', id:'moss', name:'soft moss', movement:{passable:true}, blocks_sight:false,
+            appearance:{symbol:',', foreground:'green'}
+        }]})"},
+        {"ash.json5", R"({format_version:1, definitions:[{
+            type:'terrain', id:'ash', name:'ash', movement:{passable:true}, blocks_sight:false,
+            appearance:{symbol:'.', foreground:'dark_gray'}
+        }]})"}
+    };
+    const auto originalContent = SaveTestCatalog({sources, 2});
+    const auto reorderedContent = SaveTestCatalog({sources, 3});
+    const auto moss = originalContent.FindTerrain("moss");
+    const auto reorderedMoss = reorderedContent.FindTerrain("moss");
+    REQUIRE(moss != TerrainId{});
+    REQUIRE(reorderedMoss != TerrainId{});
+    REQUIRE(moss != reorderedMoss); // Adding an earlier sorted ID changes runtime numbering.
+    REQUIRE(originalContent.FindTerrain("floor") != reorderedContent.FindTerrain("floor"));
+    SaveFile file;
+    ChunkArchive chunk{};
+    chunk.position = {-3, 2};
+    chunk.tiles.fill(Tile{originalContent.FindTerrain("floor"), 0});
+    chunk.tiles[37] = {moss, 23};
+    {
+        SaveDatabase database(originalContent);
+        REQUIRE(database.Create(file.path.c_str()));
+        REQUIRE(database.Begin());
+        REQUIRE(database.WriteChunk(chunk));
+        REQUIRE(database.WriteSnapshot(SaveSnapshot{}));
+        REQUIRE(database.Commit());
+    }
+    {
+        RawDatabase raw(file.path.c_str());
+        CHECK(raw.Text("SELECT format_version FROM metadata") == "2");
+        const auto payload = raw.Text("SELECT payload FROM chunks");
+        CHECK(payload.find("\"terrain\":\"moss\"") != std::string::npos);
+        CHECK(payload.find("\"terrain\":\"floor\"") != std::string::npos);
+    }
+    SECTION("reload resolves every tile using the supplied catalog") {
+        SaveDatabase database(reorderedContent);
+        const auto snapshot = database.Open(file.path.c_str());
+        REQUIRE(snapshot);
+        const auto loaded = database.ReadChunk(chunk.position, snapshot->nextId);
+        REQUIRE(loaded);
+        REQUIRE(*loaded);
+        for (std::size_t index = 0; index < chunk.tiles.size(); ++index) {
+            CHECK((**loaded).tiles[index].terrain == (index == 37
+                ? reorderedMoss : reorderedContent.FindTerrain("floor")));
+            CHECK((**loaded).tiles[index].damage == chunk.tiles[index].damage);
+        }
+        REQUIRE(database.Begin());
+        REQUIRE(database.WriteChunk(**loaded));
+        REQUIRE(database.Commit());
+    }
+    SECTION("missing terrain preserves the diagnostic and identifies chunk and tile") {
+        const auto missingContent = SaveTestCatalog({sources, 1});
+        SaveDatabase database(missingContent);
+        Diagnostics diagnostics;
+        diagnostics.Add("Existing caller context");
+        CHECK(database.Open(file.path.c_str(), &diagnostics) == eastl::unexpected(SaveError::InvalidData));
+        REQUIRE(diagnostics.Frames().size() >= 3);
+        CHECK(diagnostics.Frames()[0].message == "Existing caller context");
+        const auto& terrainFrame = diagnostics.Frames()[1];
+        CHECK(terrainFrame.message.find("moss") != String::npos);
+        REQUIRE(terrainFrame.location);
+        CHECK(terrainFrame.location->path == "chunks[-3,2].tiles[37].terrain");
+        CHECK(diagnostics.Frames().back().message == "Opening save: validating saved world");
+        CHECK(database.Begin() == eastl::unexpected(SaveError::NotOpen));
+    }
+}
+
+TEST_CASE("Save database validates terrain again on chunk reads and checkpoint commits", "[save][database][content]") {
+    SaveFile file;
+    Populate(file.path.c_str());
+    SaveDatabase database(TestContent());
+    REQUIRE(database.Open(file.path.c_str()));
+    {
+        RawDatabase raw(file.path.c_str());
+        auto payload = raw.Text("SELECT payload FROM chunks");
+        Replace(payload, "\"terrain\":\"floor\"", "\"terrain\":\"removed_terrain\"");
+        raw.SetText("UPDATE chunks SET payload=?1", payload);
+    }
+    Diagnostics diagnostics;
+    SECTION("reading a previously valid row") {
+        CHECK(database.ReadChunk({0, 0}, 8, &diagnostics) == eastl::unexpected(SaveError::InvalidData));
+    }
+    SECTION("committing scans unchanged chunks") {
+        REQUIRE(database.Begin());
+        auto snapshot = SampleSnapshot();
+        snapshot.session.tick = 12;
+        REQUIRE(database.WriteSnapshot(snapshot));
+        CHECK(database.Commit(&diagnostics) == eastl::unexpected(SaveError::InvalidData));
+        CHECK(database.Commit() == eastl::unexpected(SaveError::InvalidState));
+        RawDatabase raw(file.path.c_str());
+        CHECK(raw.Text("SELECT payload FROM world_state").find("\"tick\":\"18446744073709551615\"")
+            != std::string::npos);
+    }
+    REQUIRE_FALSE(diagnostics.Empty());
+    CHECK(diagnostics.Frames()[0].message.find("removed_terrain") != String::npos);
+    REQUIRE(diagnostics.Frames()[0].location);
+    CHECK(diagnostics.Frames()[0].location->path == "chunks[0,0].tiles[0].terrain");
+}
+
 TEST_CASE("Save database refuses existing files and never creates on Open", "[save][database]") {
     SaveFile file;
-    SaveDatabase database;
+    SaveDatabase database(TestContent());
     CHECK(database.Open(file.path.c_str()) == eastl::unexpected(SaveError::Io));
     CHECK_FALSE(std::filesystem::exists(file.path));
     {
@@ -126,7 +246,7 @@ TEST_CASE("Save database stores nested standard JSON and round trips full width 
     snapshot.nextId = UINT64_MAX;
     snapshot.session.playerPosition = {-16, -16};
     {
-        SaveDatabase database;
+        SaveDatabase database(TestContent());
         REQUIRE(database.Create(file.path.c_str()));
         CHECK(database.WriteChunk(chunk) == eastl::unexpected(SaveError::InvalidState));
         REQUIRE(database.Begin());
@@ -144,7 +264,7 @@ TEST_CASE("Save database stores nested standard JSON and round trips full width 
         CHECK(payload.find("\"owner\"") == std::string::npos);
         raw.Exec("UPDATE metadata SET game_version='future informational label'");
     }
-    SaveDatabase database;
+    SaveDatabase database(TestContent());
     auto opened = database.Open(file.path.c_str());
     REQUIRE(opened);
     CHECK(opened->seed == UINT32_MAX);
@@ -171,7 +291,7 @@ TEST_CASE("Save database stores nested standard JSON and round trips full width 
 TEST_CASE("Save database rolls back failed checkpoints including previously written chunks", "[save][database]") {
     SaveFile file;
     Populate(file.path.c_str());
-    SaveDatabase database;
+    SaveDatabase database(TestContent());
     REQUIRE(database.Open(file.path.c_str()));
     auto chunk = SampleChunk();
     chunk.tiles[0].damage = 41;
@@ -203,7 +323,7 @@ TEST_CASE("Save database rolls back failed checkpoints including previously writ
     REQUIRE(database.WriteChunk(chunk));
     database.Rollback();
     database.Rollback();
-    SaveDatabase observer;
+    SaveDatabase observer(TestContent());
     REQUIRE(observer.Open(file.path.c_str()));
     original = observer.ReadChunk({0, 0}, 8);
     REQUIRE(original);
@@ -214,7 +334,7 @@ TEST_CASE("Save database rolls back failed checkpoints including previously writ
 TEST_CASE("Save database reports writer and commit contention as busy", "[save][database]") {
     SaveFile file;
     Populate(file.path.c_str());
-    SaveDatabase database;
+    SaveDatabase database(TestContent());
     REQUIRE(database.Open(file.path.c_str()));
     RawDatabase lock(file.path.c_str());
     lock.Exec("BEGIN IMMEDIATE");
@@ -237,7 +357,7 @@ TEST_CASE("Save database reports writer and commit contention as busy", "[save][
 TEST_CASE("Save database rolls back earlier SQL writes after a SQLite failure", "[save][database]") {
     SaveFile file;
     Populate(file.path.c_str());
-    SaveDatabase database;
+    SaveDatabase database(TestContent());
     REQUIRE(database.Open(file.path.c_str()));
     {
         RawDatabase raw(file.path.c_str());
@@ -260,7 +380,7 @@ TEST_CASE("Save database rolls back earlier SQL writes after a SQLite failure", 
         RawDatabase raw(file.path.c_str());
         raw.Exec("DROP TRIGGER fail_snapshot");
     }
-    SaveDatabase observer;
+    SaveDatabase observer(TestContent());
     auto snapshot = observer.Open(file.path.c_str());
     REQUIRE(snapshot);
     CHECK(snapshot->session.tick == UINT64_MAX);
@@ -271,10 +391,10 @@ TEST_CASE("Save database rejects unknown versions and incomplete or extended sch
     Populate(file.path.c_str());
     {
         RawDatabase raw(file.path.c_str());
-        SECTION("future version") { raw.Exec("UPDATE metadata SET format_version=2"); }
-        SECTION("old version") { raw.Exec("UPDATE metadata SET format_version=0"); }
+        SECTION("future version") { raw.Exec("UPDATE metadata SET format_version=3"); }
+        SECTION("old version without migration") { raw.Exec("UPDATE metadata SET format_version=1"); }
     }
-    SaveDatabase database;
+    SaveDatabase database(TestContent());
     CHECK(database.Open(file.path.c_str()) == eastl::unexpected(SaveError::UnsupportedVersion));
 }
 
@@ -289,7 +409,7 @@ TEST_CASE("Save database rejects damaged metadata and schemas", "[save][database
         SECTION("unknown tables") { raw.Exec("CREATE TABLE future(value TEXT)"); }
         SECTION("malformed chunk") { raw.Exec("UPDATE chunks SET payload='{}'"); }
     }
-    SaveDatabase database;
+    SaveDatabase database(TestContent());
     CHECK(database.Open(file.path.c_str()) == eastl::unexpected(SaveError::InvalidData));
 }
 
@@ -310,6 +430,8 @@ TEST_CASE("Save database strictly validates nested JSON and coordinates", "[save
         SECTION("unknown item") { Replace(payload, "\"kind\":\"bandage\"", "\"kind\":\"unknown\""); }
         SECTION("noncontainer children") { Replace(payload, "\"kind\":\"backpack\"", "\"kind\":\"rock\""); }
         SECTION("unknown terrain") { Replace(payload, "\"terrain\":\"floor\"", "\"terrain\":\"water\""); }
+        SECTION("embedded NUL terrain") { Replace(payload, "\"terrain\":\"floor\"", "\"terrain\":\"floor\\u0000wall\""); }
+        SECTION("numeric terrain") { Replace(payload, "\"terrain\":\"floor\"", "\"terrain\":1"); }
         SECTION("tile count") { Replace(payload, "{\"terrain\":\"floor\",\"damage\":0},", ""); }
         SECTION("damage overflow") { Replace(payload, "\"damage\":0", "\"damage\":256"); }
         SECTION("wrong chunk position") { Replace(payload, "\"x\":0", "\"x\":16"); }
@@ -323,7 +445,7 @@ TEST_CASE("Save database strictly validates nested JSON and coordinates", "[save
         }
         raw.SetText("UPDATE chunks SET payload=?1", payload);
     }
-    SaveDatabase database;
+    SaveDatabase database(TestContent());
     CHECK(database.Open(file.path.c_str()) == eastl::unexpected(SaveError::InvalidData));
 }
 
@@ -346,7 +468,7 @@ TEST_CASE("Save database validates session, counters and generator version", "[s
         SECTION("duplicate session key") { Replace(payload, "\"rng_state\":4294967295", "\"rng_state\":0,\"rng_state\":1"); }
         raw.SetText("UPDATE world_state SET payload=?1", payload);
     }
-    SaveDatabase database;
+    SaveDatabase database(TestContent());
     CHECK(database.Open(file.path.c_str()) == eastl::unexpected(expected));
 }
 
@@ -354,7 +476,7 @@ TEST_CASE("Save database rejects cross chunk duplicate IDs on Open and Commit", 
     SaveFile file;
     Populate(file.path.c_str());
     SECTION("commit scans all chunks") {
-        SaveDatabase database;
+        SaveDatabase database(TestContent());
         REQUIRE(database.Open(file.path.c_str()));
         REQUIRE(database.Begin());
         REQUIRE(database.WriteChunk(SampleChunk({1, 0})));
@@ -375,16 +497,17 @@ TEST_CASE("Save database rejects cross chunk duplicate IDs on Open and Commit", 
             }
             raw.SetText("INSERT INTO chunks(x,z,payload) VALUES(1,0,?1)", payload);
         }
-        SaveDatabase database;
+        SaveDatabase database(TestContent());
         CHECK(database.Open(file.path.c_str()) == eastl::unexpected(SaveError::InvalidData));
     }
 }
 
 TEST_CASE("Save database bounds containment depth on encode and decode", "[save][database]") {
     SaveFile file;
-    SaveDatabase database;
+    SaveDatabase database(TestContent());
     REQUIRE(database.Create(file.path.c_str()));
     ChunkArchive chunk{};
+    chunk.tiles.fill(Tile{TestTerrain("floor"), 0});
     for (PersistentId id = 1; id <= 64; ++id) {
         chunk.items.push_back({id, ItemKind::backpack,
             id == 1 ? LocationKind::ground : LocationKind::item, {}, id - 1});
@@ -410,14 +533,14 @@ TEST_CASE("Save database bounds containment depth on encode and decode", "[save]
         raw.SetText("UPDATE chunks SET payload=?1", payload);
     }
     CHECK(database.ReadChunk({0, 0}, 100) == eastl::unexpected(SaveError::InvalidData));
-    SaveDatabase reopened;
+    SaveDatabase reopened(TestContent());
     CHECK(reopened.Open(file.path.c_str()) == eastl::unexpected(SaveError::InvalidData));
 }
 
 TEST_CASE("Save database validates flat archive owners before encoding", "[save][database]") {
     SaveFile file;
     Populate(file.path.c_str());
-    SaveDatabase database;
+    SaveDatabase database(TestContent());
     REQUIRE(database.Open(file.path.c_str()));
     auto chunk = SampleChunk();
     SECTION("missing owner") { chunk.items[0].owner = 100; }
@@ -431,7 +554,8 @@ TEST_CASE("Save database validates flat archive owners before encoding", "[save]
     SECTION("ground wrong chunk") { chunk.items.back().position = {16, 0}; }
     SECTION("unknown item kind") { chunk.items[0].kind = static_cast<ItemKind>(255); }
     SECTION("unknown location") { chunk.items[0].location = static_cast<LocationKind>(255); }
-    SECTION("unknown terrain") { chunk.tiles[0].terrain = static_cast<Terrain>(255); }
+    SECTION("unknown terrain") { chunk.tiles[0].terrain = TerrainId{UINT32_MAX}; }
+    SECTION("invalid zero terrain") { chunk.tiles[0] = Tile{}; }
     REQUIRE(database.Begin());
     CHECK(database.WriteChunk(chunk) == eastl::unexpected(SaveError::InvalidData));
     CHECK(database.Commit() == eastl::unexpected(SaveError::InvalidState));
@@ -440,7 +564,7 @@ TEST_CASE("Save database validates flat archive owners before encoding", "[save]
 TEST_CASE("Save database distinguishes absent chunks from corrupt payloads after opening", "[save][database]") {
     SaveFile file;
     Populate(file.path.c_str());
-    SaveDatabase database;
+    SaveDatabase database(TestContent());
     REQUIRE(database.Open(file.path.c_str()));
     {
         RawDatabase raw(file.path.c_str());
@@ -455,7 +579,7 @@ TEST_CASE("Save database distinguishes absent chunks from corrupt payloads after
 TEST_CASE("Save database creation leaves snapshot initialization to the first checkpoint", "[save][database]") {
     SaveFile file;
     {
-        SaveDatabase database;
+        SaveDatabase database(TestContent());
         REQUIRE(database.Create(file.path.c_str()));
         REQUIRE(database.Begin());
         CHECK(database.Commit() == eastl::unexpected(SaveError::InvalidData));
@@ -468,7 +592,7 @@ TEST_CASE("Save database creation leaves snapshot initialization to the first ch
         REQUIRE(database.WriteSnapshot(changed));
         // Destruction rolls back the unfinished checkpoint.
     }
-    SaveDatabase reopened;
+    SaveDatabase reopened(TestContent());
     auto snapshot = reopened.Open(file.path.c_str());
     REQUIRE(snapshot);
     CHECK(snapshot->seed == 42);
@@ -477,10 +601,10 @@ TEST_CASE("Save database creation leaves snapshot initialization to the first ch
 TEST_CASE("Save database removes abandoned creation and permits same path retry", "[save][database]") {
     SaveFile file;
     {
-        SaveDatabase database;
+        SaveDatabase database(TestContent());
         REQUIRE(database.Create(file.path.c_str()));
         REQUIRE(std::filesystem::exists(file.path));
-        SaveDatabase observer;
+        SaveDatabase observer(TestContent());
         CHECK(observer.Open(file.path.c_str()) == eastl::unexpected(SaveError::InvalidData));
         CHECK(std::filesystem::exists(file.path));
         SECTION("schema only") {}
@@ -498,14 +622,14 @@ TEST_CASE("Save database removes abandoned creation and permits same path retry"
     CHECK_FALSE(std::filesystem::exists(file.path));
     CHECK_FALSE(std::filesystem::exists(file.path + "-journal"));
     Populate(file.path.c_str());
-    SaveDatabase reopened;
+    SaveDatabase reopened(TestContent());
     REQUIRE(reopened.Open(file.path.c_str()));
 }
 
 TEST_CASE("Save database removes creation after a failed first write", "[save][database]") {
     SaveFile file;
     {
-        SaveDatabase database;
+        SaveDatabase database(TestContent());
         REQUIRE(database.Create(file.path.c_str()));
         REQUIRE(database.Begin());
         REQUIRE(database.WriteChunk(SampleChunk()));
@@ -525,7 +649,7 @@ TEST_CASE("Save database removes creation after a failed first write", "[save][d
 TEST_CASE("Save database retains its first committed checkpoint after later failures", "[save][database]") {
     SaveFile file;
     {
-        SaveDatabase database;
+        SaveDatabase database(TestContent());
         REQUIRE(database.Create(file.path.c_str()));
         REQUIRE(database.Begin());
         REQUIRE(database.WriteChunk(SampleChunk()));
@@ -547,7 +671,7 @@ TEST_CASE("Save database retains its first committed checkpoint after later fail
         }
     }
     REQUIRE(std::filesystem::exists(file.path));
-    SaveDatabase reopened;
+    SaveDatabase reopened(TestContent());
     auto snapshot = reopened.Open(file.path.c_str());
     REQUIRE(snapshot);
     CHECK(snapshot->nextId == 8);
@@ -563,14 +687,14 @@ TEST_CASE("Save database cleans up UTF-8 creation paths", "[save][database]") {
     const auto utf8Path = nativePath.u8string();
     const std::string path(reinterpret_cast<const char*>(utf8Path.data()), utf8Path.size());
     {
-        SaveDatabase database;
+        SaveDatabase database(TestContent());
         REQUIRE(database.Create(path.c_str()));
         REQUIRE(std::filesystem::exists(nativePath));
     }
     CHECK_FALSE(std::filesystem::exists(nativePath));
     Populate(path.c_str());
     CHECK(std::filesystem::exists(nativePath));
-    SaveDatabase reopened;
+    SaveDatabase reopened(TestContent());
     REQUIRE(reopened.Open(path.c_str()));
 }
 
@@ -584,7 +708,7 @@ TEST_CASE("Save database never removes a preexisting file after failed creation 
         REQUIRE(existing.good());
     }
     {
-        SaveDatabase database;
+        SaveDatabase database(TestContent());
         CHECK(database.Create(file.path.c_str()) == eastl::unexpected(SaveError::AlreadyExists));
         CHECK(database.Open(file.path.c_str()) == eastl::unexpected(SaveError::InvalidData));
     }

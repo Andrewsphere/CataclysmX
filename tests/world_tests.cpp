@@ -1,4 +1,5 @@
 #include "core/world.h"
+#include "content_fixture.h"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -51,15 +52,15 @@ TEST_CASE("World coordinates use floor division and bounded positions", "[world]
     CHECK_FALSE(ValidPosition({world_coordinate_limit + 1, 0}));
     CHECK_FALSE(ValidPosition({0, -world_coordinate_limit - 1}));
     CHECK_FALSE(ValidPosition({INT_MIN, INT_MAX}));
-    CHECK(Passable(Terrain::floor));
-    CHECK(Passable(Terrain::open_door));
-    CHECK_FALSE(Passable(Terrain::wall));
-    CHECK_FALSE(Passable(Terrain::closed_door));
+    CHECK(Passable(TestContent(), TestTerrain("floor")));
+    CHECK(Passable(TestContent(), TestTerrain("open_door")));
+    CHECK_FALSE(Passable(TestContent(), TestTerrain("wall")));
+    CHECK_FALSE(Passable(TestContent(), TestTerrain("closed_door")));
 
-    World world;
+    World world(TestContent());
     load(world, {{-1, -1}, 0});
-    REQUIRE(world.SetTile({-1, -1}, {Terrain::open_door, 7}));
-    CHECK(world.GetChunk({-1, -1})->tiles[255] == Tile{Terrain::open_door, 7});
+    REQUIRE(world.SetTile({-1, -1}, {TestTerrain("open_door"), 7}));
+    CHECK(world.GetChunk({-1, -1})->tiles[255] == Tile{TestTerrain("open_door"), 7});
     CHECK(world.GetTile({0, 0}) == nullptr);
     CHECK(world.SetTile({0, 0}, {}) == eastl::unexpected(WorldError::chunk_unavailable));
     CHECK(world.CreateActor({INT_MAX, 0}) == eastl::unexpected(WorldError::invalid_position));
@@ -70,13 +71,13 @@ TEST_CASE("World coordinates use floor division and bounded positions", "[world]
     load(world, {{62'500, -62'500}, 0});
     REQUIRE(world.GetTile({world_coordinate_limit, -world_coordinate_limit}) != nullptr);
     CHECK(world.GetTile({world_coordinate_limit + 1, -world_coordinate_limit}) == nullptr);
-    REQUIRE(world.SetTile({world_coordinate_limit, -world_coordinate_limit}, {}));
+    REQUIRE(world.SetTile({world_coordinate_limit, -world_coordinate_limit}, {TestTerrain("floor"), 0}));
     take(world.CreateActor({world_coordinate_limit, -world_coordinate_limit}));
     CHECK(world.CheckInvariants());
 }
 
 TEST_CASE("Chunk requests combine demand and reject invalid updates atomically", "[world][streaming]") {
-    World world;
+    World world(TestContent());
     CHECK(world.RequestChunks({{0, 0}, -1}, LoadMode::active)
         == eastl::unexpected(WorldError::invalid_region));
     CHECK(world.RequestChunks({{0, 0}, 9}, LoadMode::active)
@@ -139,7 +140,7 @@ TEST_CASE("Chunk requests combine demand and reject invalid updates atomically",
 }
 
 TEST_CASE("Only active chunks accrue turns and enabled object updates", "[world][activity]") {
-    World world;
+    World world(TestContent());
     const auto request = load(world, {{0, 0}, 0}, LoadMode::resident);
     const auto actor = take(world.CreateActor({0, 0}, true));
     const auto object = take(world.CreateObject({1, 0}, true));
@@ -168,7 +169,7 @@ TEST_CASE("Only active chunks accrue turns and enabled object updates", "[world]
 }
 
 TEST_CASE("Actor movement keeps handles and inventory across chunk boundaries", "[world][actors]") {
-    World world;
+    World world(TestContent());
     const auto origin = load(world);
     load(world, {{1, 0}, 0}, LoadMode::resident);
     const auto actor = take(world.CreateActor({15, 1}, true));
@@ -188,7 +189,7 @@ TEST_CASE("Actor movement keeps handles and inventory across chunk boundaries", 
     const auto other = take(world.CreateActor({17, 1}));
     CHECK(world.MoveActor(actor, {17, 1}) == eastl::unexpected(WorldError::occupied));
     CHECK(world.CreateActor({17, 1}) == eastl::unexpected(WorldError::occupied));
-    REQUIRE(world.SetTile({18, 1}, {Terrain::closed_door, 0}));
+    REQUIRE(world.SetTile({18, 1}, {TestTerrain("closed_door"), 0}));
     CHECK(world.MoveActor(actor, {18, 1}) == eastl::unexpected(WorldError::blocked));
     CHECK(world.MoveActor(actor, {32, 1}) == eastl::unexpected(WorldError::chunk_unavailable));
     CHECK(world.MoveActor(actor, {INT_MAX, 1}) == eastl::unexpected(WorldError::invalid_position));
@@ -204,7 +205,7 @@ TEST_CASE("Actor movement keeps handles and inventory across chunk boundaries", 
 }
 
 TEST_CASE("Item transfers validate destinations and cycles before changing ownership", "[world][items]") {
-    World world;
+    World world(TestContent());
     load(world);
     load(world, {{1, 0}, 0}, LoadMode::resident);
     const auto actor = take(world.CreateActor({1, 1}));
@@ -258,7 +259,7 @@ TEST_CASE("Item transfers validate destinations and cycles before changing owner
 }
 
 TEST_CASE("Chunk archives preserve values and nested ownership with fresh runtime keys", "[world][streaming][items]") {
-    World world(123);
+    World world(TestContent(), 123);
     const auto origin = load(world);
     load(world, {{2, 0}, 0}, LoadMode::resident);
     const auto actor = take(world.CreateActor({1, 1}, true));
@@ -287,7 +288,7 @@ TEST_CASE("Chunk archives preserve values and nested ownership with fresh runtim
     REQUIRE(world.RecordActorTurn(actor));
     REQUIRE(world.RecordObjectUpdate(object));
     REQUIRE(world.SetObjectEnabled(object, false));
-    REQUIRE(world.SetTile({3, 3}, {Terrain::closed_door, 19}));
+    REQUIRE(world.SetTile({3, 3}, {TestTerrain("closed_door"), 19}));
     CHECK(world.CheckInvariants());
     REQUIRE(world.ReleaseRequest(origin));
     world.ReconcileChunks();
@@ -328,7 +329,7 @@ TEST_CASE("Chunk archives preserve values and nested ownership with fresh runtim
     CHECK(world.GetActor(fresh_actor)->position == TileCoord{1, 1});
     CHECK_FALSE(world.GetObject(fresh_object)->enabled);
     CHECK(world.GetObject(fresh_object)->updates == 1);
-    CHECK(*world.GetTile({3, 3}) == Tile{Terrain::closed_door, 19});
+    CHECK(*world.GetTile({3, 3}) == Tile{TestTerrain("closed_door"), 19});
     Vector<ItemHandle> fresh;
     for (std::size_t index = 0; index < old_items.size(); ++index) {
         const auto handle = world.FindItem(item_ids[index]);
@@ -371,7 +372,7 @@ TEST_CASE("Chunk archives preserve values and nested ownership with fresh runtim
 }
 
 TEST_CASE("Actor and object destruction drop trees while item destruction removes descendants", "[world][destruction]") {
-    World world;
+    World world(TestContent());
     const auto request = load(world);
     const auto actor = take(world.CreateActor({1, 1}));
     const auto object = take(world.CreateObject({2, 2}));
@@ -413,7 +414,7 @@ TEST_CASE("Actor and object destruction drop trees while item destruction remove
 }
 
 TEST_CASE("Active lists retain persistent ID order across different chunk reload orders", "[world][determinism]") {
-    World world;
+    World world(TestContent());
     const auto left = load(world);
     const auto right = load(world, {{1, 0}, 0});
     take(world.CreateActor({17, 1}));
@@ -440,7 +441,7 @@ TEST_CASE("Active lists retain persistent ID order across different chunk reload
 }
 
 TEST_CASE("Full unload preserves moved item roots and never resets entity slot maps", "[world][streaming]") {
-    World world;
+    World world(TestContent());
     const auto request = load(world, {{0, 0}, 1});
     const auto actor = take(world.CreateActor({1, 1}));
     const auto object = take(world.CreateObject({17, 1}));
@@ -483,8 +484,8 @@ TEST_CASE("Full unload preserves moved item roots and never resets entity slot m
 }
 
 TEST_CASE("Terrain generation depends only on seed and position and never issues entity IDs", "[world][determinism]") {
-    World first(91);
-    World second(91);
+    World first(TestContent(), 91);
+    World second(TestContent(), 91);
     const auto remote = load(first, {{10, -10}, 0});
     const auto terrain = first.GetChunk({10, -10})->tiles;
     load(first);

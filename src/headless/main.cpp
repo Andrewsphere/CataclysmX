@@ -77,7 +77,7 @@ bool Execute(eastl::unique_ptr<Server>& ownedServer, eastl::string_view line, bo
     const auto name = words[0];
     if (name == "quit" && count == 1) { quit = true; return true; }
     if (name == "view" && count == 1) {
-        std::fputs(render_text(server.View()).c_str(), stdout);
+        std::fputs(render_text(server.View(), server.GetWorld().GetContent()).c_str(), stdout);
         return true;
     }
     if (name == "inspect" && count == 1) { Inspect(server); return true; }
@@ -88,14 +88,22 @@ bool Execute(eastl::unique_ptr<Server>& ownedServer, eastl::string_view line, bo
             const String path(words[1].data(), words[1].size());
             saved = server.CreateSave(path.c_str(), &diagnostics);
         } else { saved = server.Save(&diagnostics); }
-        if (!saved) { std::fprintf(stderr, "Save failed: %s\n", diagnostics.message.c_str()); return false; }
+        if (!saved) {
+            std::fprintf(stderr, "Save failed (error=%d): %s\n", static_cast<int>(saved.error()),
+                FormatDiagnostics(diagnostics).c_str());
+            return false;
+        }
         return true;
     }
     if (name == "load" && count == 2) {
         Diagnostics diagnostics;
         const String path(words[1].data(), words[1].size());
-        auto loaded = Server::LoadSave(path.c_str(), &diagnostics);
-        if (!loaded) { std::fprintf(stderr, "Load failed: %s\n", diagnostics.message.c_str()); return false; }
+        auto loaded = Server::LoadSave(server.GetWorld().GetContent(), path.c_str(), &diagnostics);
+        if (!loaded) {
+            std::fprintf(stderr, "Load failed (error=%d): %s\n", static_cast<int>(loaded.error()),
+                FormatDiagnostics(diagnostics).c_str());
+            return false;
+        }
         ownedServer = eastl::move(*loaded);
         return true;
     }
@@ -151,7 +159,9 @@ bool Execute(eastl::unique_ptr<Server>& ownedServer, eastl::string_view line, bo
     std::printf("tick=%llu advanced=%d %s\n", static_cast<unsigned long long>(result.tick),
         result.advanced ? 1 : 0, OutcomeMessage(result.outcome));
     if (result.storageError) {
-        std::fputs(result.advanced ? "Autosave failed after completed turn\n" : "World load failed\n", stderr);
+        std::fprintf(stderr, "%s (error=%d)\n",
+            result.advanced ? "Autosave failed after completed turn" : "World load failed",
+            static_cast<int>(*result.storageError));
         return false;
     }
     return true;
@@ -168,17 +178,67 @@ int main(int argc, char** argv) {
         std::printf("seed=42 checksum=%u\n", cataclysmx::headless_checksum(42));
         return 0;
     }
-    eastl::unique_ptr<Server> server = eastl::make_unique<Server>();
-    if (argc == 1) {
+    const char* contentPath = CATACLYSMX_TERRAIN_FILE;
+    const char* savePath = nullptr;
+    const char* loadPath = nullptr;
+    bool script = false;
+    for (int i = 1; i < argc; ++i) {
+        const eastl::string_view argument(argv[i]);
+        if (argument == "--script") { script = true;
+        } else if (argument == "--content" && i + 1 < argc) { contentPath = argv[++i];
+        } else if (argument == "--save" && i + 1 < argc) { savePath = argv[++i];
+        } else if (argument == "--load" && i + 1 < argc) { loadPath = argv[++i];
+        } else {
+            std::fputs("Usage: cataclysmx_headless [--content <path>] [--script] [--save <path> | --load <path>] | --probe | --fail-log\n", stderr);
+            return 2;
+        }
+    }
+    if (savePath != nullptr && loadPath != nullptr) {
+        std::fputs("Choose either --save or --load\n", stderr);
+        return 2;
+    }
+    Diagnostics diagnostics;
+    // Scripted save loads also retain a reference to this main-stack catalog.
+    const auto content = LoadContentFile(contentPath, &diagnostics);
+    if (!content) {
+        std::fprintf(stderr, "Content load failed (error=%d): %s\n", static_cast<int>(content.error()),
+            FormatDiagnostics(diagnostics).c_str());
+        return 1;
+    }
+    const auto validated = ValidateServerContent(*content, &diagnostics);
+    if (!validated) {
+        std::fprintf(stderr, "Content validation failed: %s\n", FormatDiagnostics(diagnostics).c_str());
+        return 1;
+    }
+    eastl::unique_ptr<Server> server;
+    diagnostics.Clear();
+    if (loadPath != nullptr) {
+        auto loaded = Server::LoadSave(*content, loadPath, &diagnostics);
+        if (!loaded) {
+            std::fprintf(stderr, "Load failed (error=%d): %s\n", static_cast<int>(loaded.error()),
+                FormatDiagnostics(diagnostics).c_str());
+            return 1;
+        }
+        server = eastl::move(*loaded);
+    } else {
+        server = eastl::make_unique<Server>(*content);
+        if (savePath != nullptr) {
+            server->SetAutosaveInterval(1000);
+            diagnostics.Clear();
+            const auto saved = server->CreateSave(savePath, &diagnostics);
+            if (!saved) {
+                std::fprintf(stderr, "Save creation failed (error=%d): %s\n", static_cast<int>(saved.error()),
+                    FormatDiagnostics(diagnostics).c_str());
+                return 1;
+            }
+        }
+    }
+    if (!script) {
         bool quit = false;
         for (const char* command : {"pickup", "move e", "interact e", "wait", "view", "inspect"}) {
             if (!Execute(server, command, quit)) { return 1; }
         }
         return server->GetWorld().CheckInvariants() ? 0 : 1;
-    }
-    if (argc != 2 || std::strcmp(argv[1], "--script") != 0) {
-        std::fputs("Usage: cataclysmx_headless [--script | --probe | --fail-log]\n", stderr);
-        return 2;
     }
     bool quit = false;
     std::string line;

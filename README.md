@@ -19,6 +19,13 @@ The demo has a backpack containing a bandage, a toggleable machine, a door, and
 a wandering NPC. Successful actions spend one turn; rejected actions spend none.
 `cataclysmx_game --render` prints a snapshot without entering interactive mode.
 
+Terrain definitions live in [`data/terrain.json5`](data/terrain.json5), with UTF-8
+symbols, named/RGB colors, appearance fallback, passability, sight blocking, and
+door transitions. Both clients accept `--content <path>` to load another JSON5
+document. The default path points to the bundled file in this source checkout.
+See [content format and APIs](doc/content_format.md). Save V2 stores terrain
+string IDs and rejects older save versions; migrations are not implemented yet.
+
 The world has 16×16 XZ chunks, typed generational handles, nested item ownership,
 resident/active load requests, and a following player reality bubble. Unloaded
 objects are destroyed; value snapshots restore their persistent IDs with fresh

@@ -4,7 +4,11 @@
   in-memory archives. Start here for scenario setup and administrative tools.
 - [Server and simulation API](server_api.md): commands, turn advancement, views,
   player bubbles and client integration. Start here for a game client.
-- [Save format](save_format.md): SQLite v1, snapshots, validation and checkpoints.
+- [Content format and catalog](content_format.md): JSON5 terrain definitions, IDs,
+  appearance inheritance, and loading APIs.
+- [Diagnostics](diagnostics.md): structured error causes and contextual frames.
+- [Terrain rendering](terrain_rendering.md): UTF-8 symbols, colors, and frontend behavior.
+- [Save format](save_format.md): SQLite v2, snapshots, validation and checkpoints.
 - [Project README](../README.md): build instructions and dependencies.
 
 The public interfaces are [`world.h`](../src/core/world.h),

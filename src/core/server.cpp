@@ -88,8 +88,7 @@ bool LineVisible(const World& world, TileCoord origin, TileCoord target) {
         if (cursor == target) {
             return true;
         }
-        if (cursor != origin && (tile->terrain == Terrain::wall
-                || tile->terrain == Terrain::closed_door)) {
+        if (cursor != origin && world.GetContent().GetTerrain(tile->terrain).blocksSight) {
             return false;
         }
         const int twice = 2 * error;
@@ -125,16 +124,35 @@ const char* OutcomeMessage(Outcome outcome) {
     std::abort();
 }
 
-Server::Server(std::uint32_t seed) : world_(seed), rng_state_(seed) {
+ContentResult<void> ValidateServerContent(const ContentCatalog& content, Diagnostics* diagnostics) {
+    for (const char* id : {"floor", "wall", "closed_door"}) {
+        if (content.FindTerrain(id).value == 0) {
+            if (diagnostics) {
+                String message = "Missing terrain required by the demo: ";
+                message += id;
+                diagnostics->Add(eastl::string_view(message.data(), message.size()));
+            }
+            return eastl::unexpected(ContentError::InvalidData);
+        }
+    }
+    if (!content.GetTerrain(content.FindTerrain("floor")).passable) {
+        if (diagnostics) { diagnostics->Add("Demo terrain 'floor' must be passable"); }
+        return eastl::unexpected(ContentError::InvalidData);
+    }
+    return {};
+}
+
+Server::Server(const ContentCatalog& content, std::uint32_t seed) : world_(content, seed), rng_state_(seed) {
+    Require(ValidateServerContent(content).has_value());
     active_request_ = Take(world_.RequestChunks({{0, 0}, active_radius_}, LoadMode::active));
     resident_request_ = Take(world_.RequestChunks({{0, 0}, resident_radius_}, LoadMode::resident));
     Require(world_.ReconcileChunks().has_value());
     constexpr TileCoord floors[] = {{0, 0}, {1, 0}, {2, 0}, {5, 5}};
     for (TileCoord position : floors) {
-        Require(world_.SetTile(position, {}).has_value());
+        Require(world_.SetTile(position, {content.FindTerrain("floor"), 0}).has_value());
     }
-    Require(world_.SetTile({3, 0}, {Terrain::closed_door, 0}).has_value());
-    Require(world_.SetTile({3, 1}, {Terrain::wall, 0}).has_value());
+    Require(world_.SetTile({3, 0}, {content.FindTerrain("closed_door"), 0}).has_value());
+    Require(world_.SetTile({3, 1}, {content.FindTerrain("wall"), 0}).has_value());
     player_ = Take(world_.CreateActor({0, 0}, true));
     const ItemHandle backpack = Take(world_.CreateItem(ItemKind::backpack, ItemLocation::Ground({0, 0})));
     Take(world_.CreateItem(ItemKind::bandage, ItemLocation::Inside(backpack)));
@@ -229,13 +247,14 @@ CommandResult Server::Send(Command command) {
         if (!tile) {
             return failed(Outcome::unavailable);
         }
-        if (tile->terrain == Terrain::closed_door || tile->terrain == Terrain::open_door) {
-            const bool closing = tile->terrain == Terrain::open_door;
+        const TerrainDefinition& terrain = world_.GetContent().GetTerrain(tile->terrain);
+        if (terrain.opensTo.value != 0 || terrain.closesTo.value != 0) {
+            const bool closing = terrain.closesTo.value != 0;
             if (closing && world_.ActorAt(destination).value != 0) {
                 return failed(Outcome::occupied);
             }
             Tile changed = *tile;
-            changed.terrain = closing ? Terrain::closed_door : Terrain::open_door;
+            changed.terrain = closing ? terrain.closesTo : terrain.opensTo;
             Require(world_.SetTile(destination, changed).has_value());
             outcome = closing ? Outcome::closed : Outcome::opened;
         } else {
@@ -345,7 +364,7 @@ SaveResult<void> Server::UpdateBubble(int activeRadius, int residentRadius,
     return {};
 }
 
-Server::Server(EmptyTag) {}
+Server::Server(const ContentCatalog& content, EmptyTag) : world_(content) {}
 
 SessionState Server::Checkpoint() const {
     const Actor* actor = world_.GetActor(player_);
@@ -370,10 +389,12 @@ SaveResult<void> Server::Save(Diagnostics* diagnostics) {
     return result;
 }
 
-SaveResult<eastl::unique_ptr<Server>> Server::LoadSave(const char* path, Diagnostics* diagnostics) {
-    eastl::unique_ptr<Server> server(new Server(EmptyTag{}));
+SaveResult<eastl::unique_ptr<Server>> Server::LoadSave(const ContentCatalog& content,
+    const char* path, Diagnostics* diagnostics) {
+    eastl::unique_ptr<Server> server(new Server(content, EmptyTag{}));
     const auto loaded = server->world_.LoadSave(path, diagnostics);
     if (!loaded) {
+        if (diagnostics) { diagnostics->Add("Loading server world"); }
         return eastl::unexpected(loaded.error());
     }
     const SessionState& session = *loaded;
@@ -381,7 +402,7 @@ SaveResult<eastl::unique_ptr<Server>> Server::LoadSave(const char* path, Diagnos
         || session.residentRadius < session.activeRadius || session.residentRadius > 8
         || !BubbleFits(session.playerPosition, session.residentRadius)) {
         if (diagnostics) {
-            diagnostics->message = "Invalid server session";
+            diagnostics->Add("Invalid server session");
         }
         return eastl::unexpected(SaveError::InvalidData);
     }
@@ -400,7 +421,7 @@ SaveResult<eastl::unique_ptr<Server>> Server::LoadSave(const char* path, Diagnos
     const Actor* actor = server->world_.GetActor(server->player_);
     if (!actor || !actor->player || actor->position != session.playerPosition) {
         if (diagnostics) {
-            diagnostics->message = "Saved player does not match server session";
+            diagnostics->Add("Saved player does not match server session");
         }
         return eastl::unexpected(SaveError::InvalidData);
     }

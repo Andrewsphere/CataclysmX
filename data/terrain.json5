@@ -1,0 +1,28 @@
+// Terrain IDs are stable content names; numeric runtime IDs are assigned after sorting.
+{
+  format_version: 1,
+  definitions: [
+    {
+      type: 'terrain', id: 'floor', name: 'floor',
+      movement: {passable: true}, blocks_sight: false,
+      appearance: {symbol: '.', foreground: 'light_gray', background: 'black'},
+    },
+    {
+      type: 'terrain', id: 'wall', name: 'wall',
+      movement: {passable: false}, blocks_sight: true,
+      appearance: {symbol: '#', foreground: 'light_gray', background: 'black'},
+    },
+    {
+      type: 'terrain', id: 'closed_door', name: 'closed door',
+      movement: {passable: false}, blocks_sight: true,
+      appearance: {symbol: '+', foreground: 'light_gray', background: 'black'},
+      opens_to: 'open_door',
+    },
+    {
+      type: 'terrain', id: 'open_door', name: 'open door',
+      movement: {passable: true}, blocks_sight: false,
+      appearance: {symbol: '/', foreground: 'light_gray', background: 'black'},
+      closes_to: 'closed_door',
+    },
+  ],
+}

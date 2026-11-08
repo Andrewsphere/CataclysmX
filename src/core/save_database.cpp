@@ -1,4 +1,5 @@
 #include "core/save_database.h"
+#include "content/content.h"
 
 #include <EASTL/algorithm.h>
 #include <EASTL/sort.h>
@@ -35,7 +36,7 @@ namespace {
 constexpr unsigned maxItemDepth = 64;
 
 eastl::unexpected<SaveError> Failure(SaveError error, const char* message, Diagnostics* diagnostics) {
-    if (diagnostics) { diagnostics->message = message; }
+    if (diagnostics) { diagnostics->Add(message); }
     return eastl::unexpected(error);
 }
 
@@ -216,14 +217,30 @@ bool ValidSnapshot(const SaveSnapshot& snapshot) {
         && center.z >= -limit + radius && center.z <= limit - radius;
 }
 
-const char* TerrainName(Terrain terrain) {
-    switch (terrain) {
-    case Terrain::floor: return "floor";
-    case Terrain::wall: return "wall";
-    case Terrain::closed_door: return "closed_door";
-    case Terrain::open_door: return "open_door";
-    }
-    return nullptr;
+void ChunkContext(Diagnostics* diagnostics, ChunkCoord position, const char* operation) {
+    if (!diagnostics) { return; }
+    DiagnosticFrame frame;
+    frame.message = operation;
+    DiagnosticLocation location;
+    char path[128];
+    std::snprintf(path, sizeof(path), "chunks[%d,%d]", position.x, position.z);
+    location.path = path;
+    frame.location = eastl::move(location);
+    diagnostics->Add(eastl::move(frame));
+}
+
+void TerrainDiagnostic(Diagnostics* diagnostics, ChunkCoord position, std::size_t index,
+    eastl::string_view id) {
+    if (!diagnostics) { return; }
+    DiagnosticFrame frame;
+    frame.message = "Unknown terrain: ";
+    frame.message.append(id.data(), id.size());
+    DiagnosticLocation location;
+    char path[128];
+    std::snprintf(path, sizeof(path), "chunks[%d,%d].tiles[%zu].terrain", position.x, position.z, index);
+    location.path = path;
+    frame.location = eastl::move(location);
+    diagnostics->Add(eastl::move(frame));
 }
 const char* KindName(ItemKind kind) {
     switch (kind) {
@@ -239,9 +256,25 @@ bool Unique(Vector<PersistentId>& ids) {
     return eastl::adjacent_find(ids.begin(), ids.end()) == ids.end();
 }
 
-bool ValidateChunk(const ChunkArchive& chunk, PersistentId nextId, Vector<PersistentId>& ids) {
+bool ValidateChunk(const ContentCatalog& content, const ChunkArchive& chunk,
+    PersistentId nextId, Vector<PersistentId>& ids, Diagnostics* diagnostics) {
     if (!ValidChunk(chunk.position) || nextId == 0) { return false; }
-    for (Tile tile : chunk.tiles) { if (!TerrainName(tile.terrain)) { return false; } }
+    for (std::size_t index = 0; index < chunk.tiles.size(); ++index) {
+        if (!content.TryGetTerrain(chunk.tiles[index].terrain)) {
+            if (diagnostics) {
+                DiagnosticFrame frame;
+                frame.message = "Invalid runtime terrain ID";
+                DiagnosticLocation location;
+                char path[128];
+                std::snprintf(path, sizeof(path), "chunks[%d,%d].tiles[%zu].terrain",
+                    chunk.position.x, chunk.position.z, index);
+                location.path = path;
+                frame.location = eastl::move(location);
+                diagnostics->Add(eastl::move(frame));
+            }
+            return false;
+        }
+    }
     Vector<PersistentId> localIds;
     const auto addId = [&localIds, nextId](PersistentId id) {
         if (id == 0 || id >= nextId) { return false; }
@@ -350,13 +383,13 @@ SaveResult<SaveSnapshot> DecodeSnapshot(const char* text, std::size_t length, Di
     return snapshot;
 }
 
-String EncodeChunk(const ChunkArchive& chunk) {
+String EncodeChunk(const ContentCatalog& content, const ChunkArchive& chunk) {
     JsonWriter writer;
     auto* root = writer.Object();
     auto* tiles = writer.Array();
     for (Tile tile : chunk.tiles) {
         auto* value = writer.Object();
-        writer.Text(value, "terrain", TerrainName(tile.terrain));
+        writer.Text(value, "terrain", content.GetTerrain(tile.terrain).id.c_str());
         writer.Integer(value, "damage", tile.damage);
         writer.Append(tiles, value);
     }
@@ -455,7 +488,7 @@ bool DecodeItems(yyjson_val* array, LocationKind location, PersistentId owner,
     return true;
 }
 
-SaveResult<ChunkArchive> DecodeChunk(const char* text, std::size_t length,
+SaveResult<ChunkArchive> DecodeChunk(const ContentCatalog& content, const char* text, std::size_t length,
     ChunkCoord position, PersistentId nextId, Diagnostics* diagnostics) {
     Document document;
     if (!document.Parse(text, length)) {
@@ -481,11 +514,15 @@ SaveResult<ChunkArchive> DecodeChunk(const char* text, std::size_t length,
             return Failure(SaveError::InvalidData, "Invalid tile", diagnostics);
         }
         auto* terrain = Get(value, "terrain");
-        if (yyjson_equals_str(terrain, "floor")) { tile.terrain = Terrain::floor; }
-        else if (yyjson_equals_str(terrain, "wall")) { tile.terrain = Terrain::wall; }
-        else if (yyjson_equals_str(terrain, "closed_door")) { tile.terrain = Terrain::closed_door; }
-        else if (yyjson_equals_str(terrain, "open_door")) { tile.terrain = Terrain::open_door; }
-        else { return Failure(SaveError::InvalidData, "Unknown terrain", diagnostics); }
+        if (!yyjson_is_str(terrain)) {
+            return Failure(SaveError::InvalidData, "Tile terrain must be a string", diagnostics);
+        }
+        const eastl::string_view id(yyjson_get_str(terrain), yyjson_get_len(terrain));
+        tile.terrain = content.FindTerrain(id);
+        if (tile.terrain == TerrainId{}) {
+            TerrainDiagnostic(diagnostics, position, index, id);
+            return eastl::unexpected(SaveError::InvalidData);
+        }
         tile.damage = static_cast<std::uint8_t>(damage);
         chunk.tiles[index++] = tile;
     }
@@ -524,7 +561,7 @@ SaveResult<ChunkArchive> DecodeChunk(const char* text, std::size_t length,
     }
     Vector<PersistentId> ids;
     if (!DecodeItems(Get(root, "ground_items"), LocationKind::ground, 0, 1, chunk)
-        || !ValidateChunk(chunk, nextId, ids)) {
+        || !ValidateChunk(content, chunk, nextId, ids, diagnostics)) {
         return Failure(SaveError::InvalidData, "Invalid chunk ownership, IDs, positions or item depth", diagnostics);
     }
     return chunk;
@@ -644,7 +681,7 @@ SaveResult<void> ReservePath(const char* path, CreatedFile& createdFile, Diagnos
 }
 
 // Inspect column names/types as well as version, so a foreign/extended schema
-// cannot accidentally be treated as version one merely by supplying metadata.
+// cannot accidentally be treated as the current version merely by supplying metadata.
 SaveResult<void> CheckTable(sqlite3* db, const char* pragma,
     std::initializer_list<const char*> names, std::initializer_list<const char*> types,
     std::initializer_list<int> required, std::initializer_list<int> primaryKeys,
@@ -750,7 +787,8 @@ SaveResult<SaveSnapshot> ReadSnapshot(sqlite3* db, Diagnostics* diagnostics) {
     return snapshot;
 }
 
-SaveResult<void> ValidateDatabase(sqlite3* db, const SaveSnapshot& snapshot, Diagnostics* diagnostics) {
+SaveResult<void> ValidateDatabase(const ContentCatalog& content, sqlite3* db,
+    const SaveSnapshot& snapshot, Diagnostics* diagnostics) {
     Statement statement;
     int code = statement.Prepare(db, "SELECT x,z,payload FROM chunks ORDER BY x,z");
     if (code != SQLITE_OK) { return Failure(SqlError(code), sqlite3_errmsg(db), diagnostics); }
@@ -780,8 +818,11 @@ SaveResult<void> ValidateDatabase(sqlite3* db, const SaveSnapshot& snapshot, Dia
         if (!TextColumn(statement.value, 2, text, length)) {
             return Failure(SaveError::InvalidData, "Chunk payload must be text", diagnostics);
         }
-        auto chunk = DecodeChunk(text, length, position, snapshot.nextId, diagnostics);
-        if (!chunk) { return eastl::unexpected(chunk.error()); }
+        auto chunk = DecodeChunk(content, text, length, position, snapshot.nextId, diagnostics);
+        if (!chunk) {
+            ChunkContext(diagnostics, position, "Validating saved chunk");
+            return eastl::unexpected(chunk.error());
+        }
         for (const auto& actor : chunk->actors) {
             ids.push_back(actor.id);
             if (actor.id == snapshot.session.player && actor.player
@@ -826,26 +867,33 @@ public:
     }
 };
 
-SaveDatabase::SaveDatabase() = default;
+SaveDatabase::SaveDatabase(const ContentCatalog& content) : content_(content) {}
 SaveDatabase::~SaveDatabase() = default;
 
 SaveResult<void> SaveDatabase::Create(const char* path, Diagnostics* diagnostics) {
     if (impl_) { return Failure(SaveError::InvalidState, "Database is already open", diagnostics); }
     auto candidate = eastl::make_unique<Impl>();
     auto reserved = ReservePath(path, candidate->createdFile, diagnostics);
-    if (!reserved) { return reserved; }
+    if (!reserved) {
+        if (diagnostics) { diagnostics->Add("Creating save: reserving path"); }
+        return reserved;
+    }
     auto connected = Connect(candidate->connection, path, diagnostics);
-    if (!connected) { return connected; }
+    if (!connected) {
+        if (diagnostics) { diagnostics->Add("Creating save: opening database"); }
+        return connected;
+    }
     auto created = Execute(candidate->connection.value,
         "BEGIN IMMEDIATE;"
         "CREATE TABLE metadata(singleton INTEGER PRIMARY KEY CHECK(singleton=1),"
         "format_version INTEGER NOT NULL,game_version TEXT NOT NULL);"
-        "INSERT INTO metadata VALUES(1,1,'0.1.0');"
+        "INSERT INTO metadata VALUES(1,2,'0.1.0');"
         "CREATE TABLE world_state(singleton INTEGER PRIMARY KEY CHECK(singleton=1),payload TEXT NOT NULL);"
         "CREATE TABLE chunks(x INTEGER NOT NULL,z INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(x,z));"
         "COMMIT;", diagnostics);
     if (!created) {
         (void)Execute(candidate->connection.value, "ROLLBACK", nullptr);
+        if (diagnostics) { diagnostics->Add("Creating save: initializing schema"); }
         return created;
     }
     impl_ = eastl::move(candidate);
@@ -856,18 +904,36 @@ SaveResult<SaveSnapshot> SaveDatabase::Open(const char* path, Diagnostics* diagn
     if (impl_) { return Failure(SaveError::InvalidState, "Database is already open", diagnostics); }
     auto candidate = eastl::make_unique<Impl>();
     auto connected = Connect(candidate->connection, path, diagnostics);
-    if (!connected) { return eastl::unexpected(connected.error()); }
+    if (!connected) {
+        if (diagnostics) { diagnostics->Add("Opening save database"); }
+        return eastl::unexpected(connected.error());
+    }
     auto begun = Execute(candidate->connection.value, "BEGIN", diagnostics);
-    if (!begun) { return eastl::unexpected(begun.error()); }
+    if (!begun) {
+        if (diagnostics) { diagnostics->Add("Opening save: starting validation transaction"); }
+        return eastl::unexpected(begun.error());
+    }
     candidate->transaction = true;
     auto schema = CheckSchema(candidate->connection.value, diagnostics);
-    if (!schema) { return eastl::unexpected(schema.error()); }
+    if (!schema) {
+        if (diagnostics) { diagnostics->Add("Opening save: validating schema"); }
+        return eastl::unexpected(schema.error());
+    }
     auto snapshot = ReadSnapshot(candidate->connection.value, diagnostics);
-    if (!snapshot) { return snapshot; }
-    auto valid = ValidateDatabase(candidate->connection.value, *snapshot, diagnostics);
-    if (!valid) { return eastl::unexpected(valid.error()); }
+    if (!snapshot) {
+        if (diagnostics) { diagnostics->Add("Opening save: reading world state"); }
+        return snapshot;
+    }
+    auto valid = ValidateDatabase(content_, candidate->connection.value, *snapshot, diagnostics);
+    if (!valid) {
+        if (diagnostics) { diagnostics->Add("Opening save: validating saved world"); }
+        return eastl::unexpected(valid.error());
+    }
     auto committed = Execute(candidate->connection.value, "COMMIT", diagnostics);
-    if (!committed) { return eastl::unexpected(committed.error()); }
+    if (!committed) {
+        if (diagnostics) { diagnostics->Add("Opening save: completing validation transaction"); }
+        return eastl::unexpected(committed.error());
+    }
     candidate->transaction = false;
     impl_ = eastl::move(candidate);
     return snapshot;
@@ -893,8 +959,11 @@ SaveResult<eastl::optional<ChunkArchive>> SaveDatabase::ReadChunk(ChunkCoord pos
     if (!TextColumn(statement.value, 0, text, length)) {
         return Failure(SaveError::InvalidData, "Chunk payload must be text", diagnostics);
     }
-    auto chunk = DecodeChunk(text, length, position, nextId, diagnostics);
-    if (!chunk) { return eastl::unexpected(chunk.error()); }
+    auto chunk = DecodeChunk(content_, text, length, position, nextId, diagnostics);
+    if (!chunk) {
+        ChunkContext(diagnostics, position, "Reading saved chunk");
+        return eastl::unexpected(chunk.error());
+    }
     code = sqlite3_step(statement.value);
     if (code != SQLITE_DONE) {
         return Failure(code == SQLITE_ROW ? SaveError::InvalidData : SqlError(code),
@@ -908,6 +977,7 @@ SaveResult<void> SaveDatabase::Begin(Diagnostics* diagnostics) {
     if (impl_->transaction) { return Failure(SaveError::InvalidState, "Transaction already active", diagnostics); }
     auto result = Execute(impl_->connection.value, "BEGIN IMMEDIATE", diagnostics);
     if (result) { impl_->transaction = true; }
+    else if (diagnostics) { diagnostics->Add("Beginning save checkpoint"); }
     return result;
 }
 
@@ -915,11 +985,14 @@ SaveResult<void> SaveDatabase::WriteChunk(const ChunkArchive& chunk, Diagnostics
     if (!impl_) { return Failure(SaveError::NotOpen, "Database is not open", diagnostics); }
     if (!impl_->transaction) { return Failure(SaveError::InvalidState, "No active transaction", diagnostics); }
     Vector<PersistentId> ids;
-    if (!ValidateChunk(chunk, UINT64_MAX, ids)) {
+    if (!ValidateChunk(content_, chunk, UINT64_MAX, ids, diagnostics)) {
         impl_->Rollback();
-        return Failure(SaveError::InvalidData, "Invalid chunk, ownership, IDs or excessive item depth", diagnostics);
+        auto error = Failure(SaveError::InvalidData,
+            "Invalid chunk, ownership, IDs or excessive item depth", diagnostics);
+        ChunkContext(diagnostics, chunk.position, "Writing saved chunk");
+        return error;
     }
-    const String payload = EncodeChunk(chunk);
+    const String payload = EncodeChunk(content_, chunk);
     auto* db = impl_->connection.value;
     Statement statement;
     int code = statement.Prepare(db,
@@ -959,12 +1032,21 @@ SaveResult<void> SaveDatabase::Commit(Diagnostics* diagnostics) {
     auto snapshot = ReadSnapshot(impl_->connection.value, diagnostics);
     if (!snapshot) {
         impl_->Rollback();
+        if (diagnostics) { diagnostics->Add("Committing save: reading world state"); }
         return eastl::unexpected(snapshot.error());
     }
-    auto valid = ValidateDatabase(impl_->connection.value, *snapshot, diagnostics);
-    if (!valid) { impl_->Rollback(); return valid; }
+    auto valid = ValidateDatabase(content_, impl_->connection.value, *snapshot, diagnostics);
+    if (!valid) {
+        impl_->Rollback();
+        if (diagnostics) { diagnostics->Add("Committing save: validating saved world"); }
+        return valid;
+    }
     auto result = Execute(impl_->connection.value, "COMMIT", diagnostics);
-    if (!result) { impl_->Rollback(); return result; }
+    if (!result) {
+        impl_->Rollback();
+        if (diagnostics) { diagnostics->Add("Committing save checkpoint"); }
+        return result;
+    }
     impl_->transaction = false;
     impl_->createdFile.Keep();
     return {};

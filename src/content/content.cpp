@@ -1,0 +1,553 @@
+#include "content/content.h"
+
+#include <EASTL/optional.h>
+#include <EASTL/sort.h>
+#include <EASTL/utility.h>
+#include <yyjson.h>
+
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <initializer_list>
+#include <limits>
+
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+#error Engine must compile without exceptions
+#endif
+
+namespace cataclysmx {
+namespace {
+
+eastl::string_view View(const String& text) { return {text.data(), text.size()}; }
+eastl::string_view JsonString(yyjson_val* value) {
+    return {yyjson_get_str(value), yyjson_get_len(value)};
+}
+
+struct Context {
+    Diagnostics* diagnostics;
+    eastl::string_view file;
+    String path;
+
+    Context Child(eastl::string_view field) const {
+        Context child{diagnostics, file, {}};
+        if (diagnostics) {
+            child.path = path;
+            if (!child.path.empty()) { child.path += '.'; }
+            child.path.append(field.data(), field.size());
+        }
+        return child;
+    }
+    bool Fail(eastl::string_view message) const {
+        if (diagnostics) {
+            DiagnosticFrame frame;
+            frame.message.assign(message.data(), message.size());
+            frame.location = DiagnosticLocation{String(file.empty() ? "" : file.data(), file.size()), path, {}, {}};
+            diagnostics->Add(eastl::move(frame));
+        }
+        return false;
+    }
+};
+
+void AddTerrainContext(const Context& context, eastl::string_view id) {
+    if (!context.diagnostics) { return; }
+    String message = "while loading terrain";
+    if (!id.empty()) {
+        message += " '";
+        message.append(id.data(), id.size());
+        message += '\'';
+    } else {
+        message += " definition";
+    }
+    context.Fail(View(message));
+}
+
+bool CheckObject(yyjson_val* object, std::initializer_list<eastl::string_view> allowed,
+                 const Context& context) {
+    if (!yyjson_is_obj(object)) { return context.Fail("expected an object"); }
+    // The schemas are small closed sets. Comparing earlier keys avoids a hash table.
+    std::size_t index, count;
+    yyjson_val* key;
+    yyjson_val* value;
+    yyjson_obj_foreach(object, index, count, key, value) {
+        (void)value;
+        const auto name = JsonString(key);
+        bool known = false;
+        for (auto candidate : allowed) { if (name == candidate) { known = true; break; } }
+        if (!known) { return context.Child(name).Fail("unknown field"); }
+        std::size_t previousIndex, previousCount;
+        yyjson_val* previousKey;
+        yyjson_val* previousValue;
+        yyjson_obj_foreach(object, previousIndex, previousCount, previousKey, previousValue) {
+            (void)previousValue;
+            if (previousIndex == index) { break; }
+            if (JsonString(previousKey) == name) { return context.Child(name).Fail("duplicate field"); }
+        }
+    }
+    return true;
+}
+
+bool ReadString(yyjson_val* value, String& output, const Context& context) {
+    if (!yyjson_is_str(value) || yyjson_get_len(value) == 0) {
+        return context.Fail("expected a nonempty string");
+    }
+    const auto text = JsonString(value);
+    if (std::memchr(text.data(), 0, text.size())) { return context.Fail("embedded NUL is not allowed"); }
+    output.assign(text.data(), text.size());
+    return true;
+}
+
+bool ValidId(eastl::string_view id) {
+    if (id.empty() || id[0] < 'a' || id[0] > 'z') { return false; }
+    for (char ch : id) {
+        if ((ch < 'a' || ch > 'z') && (ch < '0' || ch > '9') && ch != '_') { return false; }
+    }
+    return true;
+}
+
+bool ReadId(yyjson_val* value, String& output, const Context& context) {
+    if (!ReadString(value, output, context)) { return false; }
+    return ValidId(View(output)) || context.Fail("expected an id matching [a-z][a-z0-9_]*");
+}
+
+bool ReadBool(yyjson_val* value, bool& output, const Context& context) {
+    if (!yyjson_is_bool(value)) { return context.Fail("expected a boolean"); }
+    output = yyjson_get_bool(value);
+    return true;
+}
+
+bool ValidSymbol(eastl::string_view text) {
+    if (text.empty()) { return false; }
+    const auto first = static_cast<unsigned char>(text[0]);
+    std::size_t length = 0;
+    std::uint32_t scalar = 0;
+    std::uint32_t minimum = 0;
+    if (first < 0x80) { length = 1; scalar = first; }
+    else if (first >= 0xc2 && first <= 0xdf) { length = 2; scalar = first & 0x1f; minimum = 0x80; }
+    else if (first >= 0xe0 && first <= 0xef) { length = 3; scalar = first & 0x0f; minimum = 0x800; }
+    else if (first >= 0xf0 && first <= 0xf4) { length = 4; scalar = first & 7; minimum = 0x10000; }
+    else { return false; }
+    if (text.size() != length) { return false; }
+    for (std::size_t i = 1; i < length; ++i) {
+        const auto byte = static_cast<unsigned char>(text[i]);
+        if ((byte & 0xc0) != 0x80) { return false; }
+        scalar = (scalar << 6) | (byte & 0x3f);
+    }
+    return scalar >= minimum && scalar <= 0x10ffff && !(scalar >= 0xd800 && scalar <= 0xdfff)
+        && scalar >= 0x20 && !(scalar >= 0x7f && scalar <= 0x9f);
+}
+
+int HexDigit(char ch) {
+    if (ch >= '0' && ch <= '9') { return ch - '0'; }
+    if (ch >= 'a' && ch <= 'f') { return ch - 'a' + 10; }
+    if (ch >= 'A' && ch <= 'F') { return ch - 'A' + 10; }
+    return -1;
+}
+
+bool ReadColor(yyjson_val* value, RgbColor& output, const Context& context) {
+    if (!yyjson_is_str(value)) { return context.Fail("expected a color name or #RRGGBB"); }
+    const auto text = JsonString(value);
+    struct NamedColor { eastl::string_view name; RgbColor color; };
+    static constexpr NamedColor colors[] = {
+        {"black", {0, 0, 0}}, {"red", {128, 0, 0}}, {"green", {0, 128, 0}},
+        {"yellow", {128, 128, 0}}, {"blue", {0, 0, 128}}, {"magenta", {128, 0, 128}},
+        {"brown", {128, 128, 0}},
+        {"cyan", {0, 128, 128}}, {"light_gray", {192, 192, 192}},
+        {"dark_gray", {128, 128, 128}}, {"light_red", {255, 0, 0}},
+        {"light_green", {0, 255, 0}}, {"light_yellow", {255, 255, 0}},
+        {"light_blue", {0, 0, 255}}, {"light_magenta", {255, 0, 255}},
+        {"light_cyan", {0, 255, 255}}, {"white", {255, 255, 255}},
+    };
+    for (const auto& color : colors) { if (text == color.name) { output = color.color; return true; } }
+    if (text.size() == 7 && text[0] == '#') {
+        std::uint8_t channels[3]{};
+        for (std::size_t i = 0; i < 3; ++i) {
+            const int high = HexDigit(text[1 + 2 * i]);
+            const int low = HexDigit(text[2 + 2 * i]);
+            if (high < 0 || low < 0) { return context.Fail("invalid hexadecimal color"); }
+            channels[i] = static_cast<std::uint8_t>(high * 16 + low);
+        }
+        output = {channels[0], channels[1], channels[2]};
+        return true;
+    }
+    return context.Fail("unknown color; expected a documented name or #RRGGBB");
+}
+
+struct PendingTerrain {
+    TerrainDefinition definition;
+    String looksLike, opensTo, closesTo;
+    bool hasSymbol = false, hasForeground = false, hasBackground = false;
+    std::size_t parent = 0;
+    std::size_t inputOrder = 0;
+    std::uint8_t state = 0;
+    Context context;
+};
+
+bool MissingReference(const PendingTerrain& terrain, eastl::string_view field,
+                      const String& target) {
+    if (terrain.context.diagnostics) {
+        String message = "unknown terrain reference '";
+        message += target;
+        message += "' from terrain '";
+        message += terrain.definition.id;
+        message += '\'';
+        terrain.context.Child(field).Fail(View(message));
+        AddTerrainContext(terrain.context, View(terrain.definition.id));
+    }
+    return false;
+}
+
+bool ParseTerrain(yyjson_val* object, PendingTerrain& terrain) {
+    const auto& context = terrain.context;
+    if (!CheckObject(object, {"type", "id", "name", "movement", "blocks_sight", "appearance",
+                               "looks_like", "opens_to", "closes_to"}, context)) { return false; }
+    if (!ReadId(yyjson_obj_get(object, "id"), terrain.definition.id, context.Child("id"))
+        || !ReadString(yyjson_obj_get(object, "name"), terrain.definition.name, context.Child("name"))) {
+        return false;
+    }
+    auto* movement = yyjson_obj_get(object, "movement");
+    if (!CheckObject(movement, {"passable"}, context.Child("movement"))
+        || !ReadBool(yyjson_obj_get(movement, "passable"), terrain.definition.passable,
+                     context.Child("movement").Child("passable"))
+        || !ReadBool(yyjson_obj_get(object, "blocks_sight"), terrain.definition.blocksSight,
+                     context.Child("blocks_sight"))) { return false; }
+    auto* looksLike = yyjson_obj_get(object, "looks_like");
+    auto* opensTo = yyjson_obj_get(object, "opens_to");
+    auto* closesTo = yyjson_obj_get(object, "closes_to");
+    if (opensTo && closesTo) { return context.Fail("opens_to and closes_to are mutually exclusive"); }
+    if ((looksLike && !ReadId(looksLike, terrain.looksLike, context.Child("looks_like")))
+        || (opensTo && !ReadId(opensTo, terrain.opensTo, context.Child("opens_to")))
+        || (closesTo && !ReadId(closesTo, terrain.closesTo, context.Child("closes_to")))) { return false; }
+    if (auto* appearance = yyjson_obj_get(object, "appearance")) {
+        const auto appearanceContext = context.Child("appearance");
+        if (!CheckObject(appearance, {"symbol", "foreground", "background"}, appearanceContext)) { return false; }
+        if (auto* symbol = yyjson_obj_get(appearance, "symbol")) {
+            if (!ReadString(symbol, terrain.definition.appearance.symbol, appearanceContext.Child("symbol"))) {
+                return false;
+            }
+            if (!ValidSymbol(View(terrain.definition.appearance.symbol))) {
+                return appearanceContext.Child("symbol").Fail("expected exactly one non-control Unicode scalar");
+            }
+            terrain.hasSymbol = true;
+        }
+        if (auto* foreground = yyjson_obj_get(appearance, "foreground")) {
+            if (!ReadColor(foreground, terrain.definition.appearance.foreground,
+                           appearanceContext.Child("foreground"))) { return false; }
+            terrain.hasForeground = true;
+        }
+        if (auto* background = yyjson_obj_get(appearance, "background")) {
+            if (!ReadColor(background, terrain.definition.appearance.background,
+                           appearanceContext.Child("background"))) { return false; }
+            terrain.hasBackground = true;
+        }
+    }
+    return true;
+}
+
+void* JsonMalloc(void*, std::size_t size) {
+    void* memory = std::malloc(size);
+    if (!memory) { std::abort(); }
+    return memory;
+}
+void* JsonRealloc(void*, void* memory, std::size_t, std::size_t size) {
+    void* result = std::realloc(memory, size);
+    if (!result) { std::abort(); }
+    return result;
+}
+void JsonFree(void*, void* memory) { std::free(memory); }
+
+struct Document {
+    yyjson_doc* value = nullptr;
+    ~Document() { yyjson_doc_free(value); }
+};
+
+ContentResult<bool> ParseSource(const ContentSource& source, Vector<PendingTerrain>& pending,
+                               Diagnostics* diagnostics) {
+    Context context{diagnostics, source.name, {}};
+    yyjson_alc allocator{JsonMalloc, JsonRealloc, JsonFree, nullptr};
+    yyjson_read_err error{};
+    Document document;
+    document.value = yyjson_read_opts(const_cast<char*>(source.text.data()), source.text.size(),
+                                     YYJSON_READ_JSON5, &allocator, &error);
+    if (!document.value) {
+        if (error.code == YYJSON_READ_ERROR_MEMORY_ALLOCATION) { std::abort(); }
+        if (diagnostics) {
+            std::uint64_t line = 1, column = 1;
+            for (std::size_t i = 0; i < error.pos && i < source.text.size(); ++i) {
+                if (source.text[i] == '\n') { ++line; column = 1; } else { ++column; }
+            }
+            DiagnosticFrame frame;
+            frame.message = error.msg ? error.msg : "invalid JSON5";
+            frame.location = DiagnosticLocation{
+                String(source.name.empty() ? "" : source.name.data(), source.name.size()), {}, line, column};
+            diagnostics->Add(eastl::move(frame));
+        }
+        return eastl::unexpected(ContentError::InvalidData);
+    }
+    auto* root = yyjson_doc_get_root(document.value);
+    if (!CheckObject(root, {"format_version", "definitions"}, context)) {
+        return eastl::unexpected(ContentError::InvalidData);
+    }
+    auto* version = yyjson_obj_get(root, "format_version");
+    if (!yyjson_is_uint(version)) {
+        context.Child("format_version").Fail("expected a positive integer format version");
+        return eastl::unexpected(ContentError::InvalidData);
+    }
+    if (yyjson_get_uint(version) != 1) {
+        context.Child("format_version").Fail("unsupported content format version");
+        return eastl::unexpected(ContentError::UnsupportedVersion);
+    }
+    auto* definitions = yyjson_obj_get(root, "definitions");
+    if (!yyjson_is_arr(definitions)) {
+        context.Child("definitions").Fail("expected an array");
+        return eastl::unexpected(ContentError::InvalidData);
+    }
+    std::size_t index, count;
+    yyjson_val* value;
+    yyjson_arr_foreach(definitions, index, count, value) {
+        Context definitionContext{diagnostics, source.name, {}};
+        if (diagnostics) {
+            char path[64];
+            std::snprintf(path, sizeof(path), "definitions[%zu]", index);
+            definitionContext.path = path;
+        }
+        PendingTerrain terrain;
+        terrain.context = eastl::move(definitionContext);
+        terrain.inputOrder = pending.size();
+        bool parsed = false;
+        // Dispatch definition kinds at the document boundary; individual parsers own their schemas.
+        if (!yyjson_is_obj(value)) {
+            terrain.context.Fail("expected a definition object");
+        } else {
+            auto* type = yyjson_obj_get(value, "type");
+            if (!yyjson_is_str(type)) {
+                terrain.context.Child("type").Fail("expected a definition type string");
+            } else if (JsonString(type) == "terrain") {
+                parsed = ParseTerrain(value, terrain);
+            } else if (diagnostics) {
+                String message = "unsupported definition type '";
+                const auto typeName = JsonString(type);
+                message.append(typeName.data(), typeName.size());
+                message += "' (expected terrain)";
+                terrain.context.Child("type").Fail(View(message));
+            }
+        }
+        if (!parsed) {
+            if (diagnostics) {
+                auto* type = yyjson_is_obj(value) ? yyjson_obj_get(value, "type") : nullptr;
+                if (yyjson_is_str(type) && JsonString(type) == "terrain") {
+                    auto* id = yyjson_obj_get(value, "id");
+                    AddTerrainContext(terrain.context, yyjson_is_str(id) ? JsonString(id) : eastl::string_view{});
+                } else {
+                    terrain.context.Fail("while loading content definition");
+                }
+            }
+            return eastl::unexpected(ContentError::InvalidData);
+        }
+        pending.push_back(eastl::move(terrain));
+    }
+    return true;
+}
+
+std::size_t FindPending(const Vector<PendingTerrain>& pending, eastl::string_view id) {
+    std::size_t begin = 0, end = pending.size();
+    while (begin < end) {
+        const std::size_t middle = begin + (end - begin) / 2;
+        if (View(pending[middle].definition.id) < id) { begin = middle + 1; }
+        else { end = middle; }
+    }
+    return begin < pending.size() && View(pending[begin].definition.id) == id ? begin : pending.size();
+}
+
+bool Resolve(Vector<PendingTerrain>& pending) {
+    const std::size_t absent = pending.size();
+    for (auto& terrain : pending) {
+        terrain.parent = absent;
+        if (!terrain.looksLike.empty()) {
+            terrain.parent = FindPending(pending, View(terrain.looksLike));
+            if (terrain.parent == absent) { return MissingReference(terrain, "looks_like", terrain.looksLike); }
+        }
+        if (!terrain.opensTo.empty()) {
+            const std::size_t target = FindPending(pending, View(terrain.opensTo));
+            if (target == absent) { return MissingReference(terrain, "opens_to", terrain.opensTo); }
+            terrain.definition.opensTo = {static_cast<std::uint32_t>(target + 1)};
+        }
+        if (!terrain.closesTo.empty()) {
+            const std::size_t target = FindPending(pending, View(terrain.closesTo));
+            if (target == absent) { return MissingReference(terrain, "closes_to", terrain.closesTo); }
+            terrain.definition.closesTo = {static_cast<std::uint32_t>(target + 1)};
+        }
+    }
+    Vector<std::size_t> chain;
+    for (std::size_t start = 0; start < pending.size(); ++start) {
+        std::size_t current = start;
+        while (current != absent && pending[current].state != 2) {
+            auto& terrain = pending[current];
+            if (terrain.state == 1) {
+                if (terrain.context.diagnostics) {
+                    String message = "appearance inheritance cycle involving terrain '";
+                    message += terrain.definition.id;
+                    message += '\'';
+                    terrain.context.Child("looks_like").Fail(View(message));
+                    AddTerrainContext(terrain.context, View(terrain.definition.id));
+                }
+                return false;
+            }
+            terrain.state = 1;
+            chain.push_back(current);
+            current = terrain.parent;
+        }
+        while (!chain.empty()) {
+            auto& terrain = pending[chain.back()];
+            chain.pop_back();
+            auto& appearance = terrain.definition.appearance;
+            if (terrain.parent != absent) {
+                const auto& parent = pending[terrain.parent];
+                if (!terrain.hasSymbol) { appearance.symbol = parent.definition.appearance.symbol; }
+                if (!terrain.hasForeground) { appearance.foreground = parent.definition.appearance.foreground; }
+                if (!terrain.hasBackground) { appearance.background = parent.definition.appearance.background; }
+            } else if (!terrain.hasSymbol || !terrain.hasForeground) {
+                terrain.context.Child("appearance").Fail("resolved appearance requires symbol and foreground");
+                AddTerrainContext(terrain.context, View(terrain.definition.id));
+                return false;
+            }
+            // Unspecified root background is value-initialized black. Only now may it be inherited.
+            terrain.state = 2;
+        }
+    }
+    return true;
+}
+
+struct File {
+    std::FILE* value = nullptr;
+    ~File() { if (value) { std::fclose(value); } }
+    bool Close() {
+        std::FILE* closing = value;
+        value = nullptr;
+        return std::fclose(closing) == 0;
+    }
+};
+
+eastl::unexpected<ContentError> FileFailure(const Context& context, eastl::string_view message) {
+    context.Fail(message);
+    Context{context.diagnostics, context.file, {}}.Fail("while loading content files");
+    return eastl::unexpected(ContentError::Io);
+}
+
+}
+
+TerrainId ContentCatalog::FindTerrain(eastl::string_view id) const {
+    std::size_t begin = 0, end = definitions_.size();
+    while (begin < end) {
+        const std::size_t middle = begin + (end - begin) / 2;
+        if (View(definitions_[middle].id) < id) { begin = middle + 1; }
+        else { end = middle; }
+    }
+    if (begin == definitions_.size() || View(definitions_[begin].id) != id) { return {}; }
+    return {static_cast<std::uint32_t>(begin + 1)};
+}
+
+const TerrainDefinition* ContentCatalog::TryGetTerrain(TerrainId id) const {
+    if (id.value == 0 || id.value > definitions_.size()) { return nullptr; }
+    return &definitions_[id.value - 1];
+}
+
+const TerrainDefinition& ContentCatalog::GetTerrain(TerrainId id) const {
+    const auto* definition = TryGetTerrain(id);
+    if (!definition) { std::abort(); }
+    return *definition;
+}
+
+std::size_t ContentCatalog::TerrainCount() const { return definitions_.size(); }
+
+ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sources, Diagnostics* diagnostics) {
+    Vector<PendingTerrain> pending;
+    for (const auto& source : sources) {
+        auto result = ParseSource(source, pending, diagnostics);
+        if (!result) {
+            Context{diagnostics, source.name, {}}.Fail("could not load content source");
+            return eastl::unexpected(result.error());
+        }
+    }
+    if (pending.size() > std::numeric_limits<std::uint32_t>::max()) {
+        Context{diagnostics, {}, {}}.Fail("too many terrain definitions");
+        Context{diagnostics, {}, {}}.Fail("could not load content catalog");
+        return eastl::unexpected(ContentError::InvalidData);
+    }
+    eastl::sort(pending.begin(), pending.end(), [](const PendingTerrain& left, const PendingTerrain& right) {
+        // Retain input order for equal IDs so duplicate diagnostics identify the prior source reliably.
+        if (left.definition.id == right.definition.id) { return left.inputOrder < right.inputOrder; }
+        return left.definition.id < right.definition.id;
+    });
+    for (std::size_t i = 1; i < pending.size(); ++i) {
+        if (pending[i - 1].definition.id == pending[i].definition.id) {
+            if (diagnostics) {
+                String message = "duplicate terrain definition '";
+                message += pending[i].definition.id;
+                message += '\'';
+                pending[i].context.Child("id").Fail(View(message));
+                pending[i - 1].context.Child("id").Fail("previous definition is here");
+                AddTerrainContext(pending[i].context, View(pending[i].definition.id));
+                Context{diagnostics, {}, {}}.Fail("could not load content catalog");
+            }
+            return eastl::unexpected(ContentError::InvalidData);
+        }
+    }
+    if (!Resolve(pending)) {
+        Context{diagnostics, {}, {}}.Fail("could not load content catalog");
+        return eastl::unexpected(ContentError::InvalidData);
+    }
+    ContentCatalog catalog;
+    catalog.definitions_.reserve(pending.size());
+    for (auto& terrain : pending) { catalog.definitions_.push_back(eastl::move(terrain.definition)); }
+    return catalog;
+}
+
+ContentResult<ContentCatalog> LoadContentFiles(eastl::span<const eastl::string_view> paths,
+                                             Diagnostics* diagnostics) {
+    Vector<String> texts;
+    texts.reserve(paths.size());
+    for (auto path : paths) {
+        Context context{diagnostics, path, {}};
+        if (path.empty() || std::memchr(path.data(), 0, path.size())) {
+            return FileFailure(context, "invalid content file path");
+        }
+        const String terminatedPath(path.data(), path.size());
+        File file;
+#ifdef _MSC_VER
+        fopen_s(&file.value, terminatedPath.c_str(), "rb");
+#else
+        file.value = std::fopen(terminatedPath.c_str(), "rb");
+#endif
+        if (!file.value) {
+            return FileFailure(context, "could not open content file");
+        }
+        String text;
+        char buffer[8192];
+        for (;;) {
+            const std::size_t count = std::fread(buffer, 1, sizeof(buffer), file.value);
+            text.append(buffer, count);
+            if (std::ferror(file.value)) {
+                return FileFailure(context, "could not read content file");
+            }
+            if (std::feof(file.value)) { break; }
+            if (count == 0) {
+                return FileFailure(context, "content file read made no progress");
+            }
+        }
+        if (!file.Close()) {
+            return FileFailure(context, "could not close content file");
+        }
+        texts.push_back(eastl::move(text));
+    }
+    Vector<ContentSource> sources;
+    sources.reserve(paths.size());
+    for (std::size_t i = 0; i < paths.size(); ++i) { sources.push_back({paths[i], View(texts[i])}); }
+    return LoadContent({sources.data(), sources.size()}, diagnostics);
+}
+
+ContentResult<ContentCatalog> LoadContentFile(const char* path, Diagnostics* diagnostics) {
+    const eastl::string_view view = path ? eastl::string_view(path) : eastl::string_view{};
+    return LoadContentFiles({&view, 1}, diagnostics);
+}
+
+}

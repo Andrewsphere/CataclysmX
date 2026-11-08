@@ -1,5 +1,6 @@
 #include "core/world.h"
 #include "core/save_database.h"
+#include "content_fixture.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <EASTL/numeric_limits.h>
@@ -75,10 +76,12 @@ TEST_CASE("World save round trips every tile and nested inventory values", "[wor
     PersistentId objectId;
     Vector<PersistentId> itemIds;
     {
-        World world(0xf0123456U);
+        World world(TestContent(), 0xf0123456U);
         Load(world);
+        const TerrainId terrains[] = {TestTerrain("floor"), TestTerrain("wall"),
+            TestTerrain("closed_door"), TestTerrain("open_door")};
         for (int index = 0; index < chunk_size * chunk_size; ++index) {
-            tiles[index] = {static_cast<Terrain>(index % 4), static_cast<std::uint8_t>(index)};
+            tiles[index] = {terrains[index % 4], static_cast<std::uint8_t>(index)};
             REQUIRE(world.SetTile({index % chunk_size, index / chunk_size}, tiles[index]));
         }
         const auto actor = Take(world.CreateActor({0, 0}, true));
@@ -110,7 +113,7 @@ TEST_CASE("World save round trips every tile and nested inventory values", "[wor
         CHECK(world.GetActor(actor)->id == actorId); // Checkpoint keeps live keys.
         CHECK(world.GetItem(child)->id == itemIds[2]);
     }
-    World restored(999);
+    World restored(TestContent(), 999);
     CheckSession(Take(restored.LoadSave(files.database.c_str())), session);
     CHECK(restored.LoadedChunks().empty());
     Load(restored);
@@ -151,7 +154,7 @@ TEST_CASE("World save round trips every tile and nested inventory values", "[wor
     CHECK(restored.GetItem(next)->id > itemIds.back());
 
     // Missing rows generate from the installed seed, rather than the constructor seed.
-    World reference(0xf0123456U);
+    World reference(TestContent(), 0xf0123456U);
     Load(reference, {10, -10});
     Load(restored, {10, -10});
     CHECK(restored.GetChunk({10, -10})->tiles == reference.GetChunk({10, -10})->tiles);
@@ -159,7 +162,7 @@ TEST_CASE("World save round trips every tile and nested inventory values", "[wor
 
 TEST_CASE("World retains unloaded archives until checkpoint then reloads from disk", "[world][save]") {
     SaveDirectory files;
-    World world;
+    World world(TestContent());
     const auto request = Load(world);
     const auto actor = Take(world.CreateActor({1, 1}, true));
     const auto bag = Take(world.CreateItem(ItemKind::backpack, ItemLocation::Carried(actor)));
@@ -170,7 +173,7 @@ TEST_CASE("World retains unloaded archives until checkpoint then reloads from di
     session.player = actorId;
     session.playerPosition = {1, 1};
     REQUIRE(world.CreateSave(files.database.c_str(), session));
-    REQUIRE(world.SetTile({3, 3}, {Terrain::closed_door, 219}));
+    REQUIRE(world.SetTile({3, 3}, {TestTerrain("closed_door"), 219}));
     REQUIRE(world.RecordActorTurn(actor));
     REQUIRE(world.ReleaseRequest(request));
     REQUIRE(world.ReconcileChunks());
@@ -182,7 +185,7 @@ TEST_CASE("World retains unloaded archives until checkpoint then reloads from di
     CHECK(world.Save(invalid) == eastl::unexpected(SaveError::InvalidData));
     CHECK(world.ArchivedChunkCount() == 1);
     {
-        SaveDatabase competing;
+        SaveDatabase competing(TestContent());
         const auto snapshot = Take(competing.Open(files.database.c_str()));
         REQUIRE(competing.Begin());
         REQUIRE(competing.WriteSnapshot(snapshot)); // Hold an actual SQLite writer lock.
@@ -203,7 +206,7 @@ TEST_CASE("World retains unloaded archives until checkpoint then reloads from di
     CHECK(world.GetActor(fresh)->turns == 1);
     REQUIRE(world.GetItem(world.FindItem(childId)));
     CHECK(world.FindItem(childId) != child);
-    CHECK(*world.GetTile({3, 3}) == Tile{Terrain::closed_door, 219});
+    CHECK(*world.GetTile({3, 3}) == Tile{TestTerrain("closed_door"), 219});
     REQUIRE(world.Save(session)); // Clean disk-restored chunks need no rewrite.
     CHECK(world.GetActor(fresh));
 }
@@ -215,7 +218,7 @@ TEST_CASE("World checkpoints both sides of cross chunk moves and ownership chang
     PersistentId bagId;
     PersistentId childId;
     {
-        World world;
+        World world(TestContent());
         const auto origin = Load(world);
         Load(world, {1, 0});
         const auto actor = Take(world.CreateActor({15, 1}));
@@ -243,7 +246,7 @@ TEST_CASE("World checkpoints both sides of cross chunk moves and ownership chang
         CHECK(world.ArchivedChunkCount() == 0);
         CHECK(world.GetActor(actor));
     }
-    World world;
+    World world(TestContent());
     Take(world.LoadSave(files.database.c_str()));
     Load(world);
     Load(world, {1, 0});
@@ -269,7 +272,7 @@ TEST_CASE("World checkpoints both sides of cross chunk moves and ownership chang
 
 TEST_CASE("World save rejects invalid attachment state and session without mutation", "[world][save]") {
     SaveDirectory files;
-    World world;
+    World world(TestContent());
     CHECK(world.Save({}) == eastl::unexpected(SaveError::NotOpen));
     const auto request = Load(world);
     const auto actor = Take(world.CreateActor({0, 0}, true));
@@ -284,17 +287,17 @@ TEST_CASE("World save rejects invalid attachment state and session without mutat
     CHECK(world.CreateSave(files.database.c_str(), session) == eastl::unexpected(SaveError::InvalidState));
     CHECK(world.LoadSave(files.database.c_str()) == eastl::unexpected(SaveError::InvalidState));
     CHECK(world.GetActor(actor)->id == id);
-    World requested;
+    World requested(TestContent());
     Take(requested.RequestChunks({{0, 0}, 0}, LoadMode::active));
     CHECK(requested.LoadSave(files.database.c_str()) == eastl::unexpected(SaveError::InvalidState));
     CHECK_FALSE(requested.HasSave());
-    World pristine;
+    World pristine(TestContent());
     CHECK_FALSE(pristine.LoadSave((files.directory / "missing.sqlite").string().c_str()));
     CHECK_FALSE(pristine.HasSave());
     CheckSession(Take(pristine.LoadSave(files.database.c_str())), session);
-    CHECK(world.SetTile({0, 0}, {static_cast<Terrain>(255), 0})
+    CHECK(world.SetTile({0, 0}, {TerrainId{UINT32_MAX}, 0})
         == eastl::unexpected(WorldError::invalid_request));
-    CHECK(*world.GetTile({0, 0}) == Tile{});
+    CHECK(*world.GetTile({0, 0}) == Tile{TestTerrain("floor"), 0});
     REQUIRE(world.ReleaseRequest(request));
     REQUIRE(world.ReconcileChunks());
     REQUIRE(world.Save(session)); // Player may be archived or already evicted to disk.
@@ -307,7 +310,7 @@ TEST_CASE("Dirty live chunks persist edits and deletion after a clean checkpoint
     PersistentId objectId;
     PersistentId itemId;
     {
-        World world;
+        World world(TestContent());
         Load(world);
         Load(world, {1, 0});
         const auto actor = Take(world.CreateActor({1, 1}));
@@ -317,21 +320,21 @@ TEST_CASE("Dirty live chunks persist edits and deletion after a clean checkpoint
         objectId = world.GetObject(object)->id;
         itemId = world.GetItem(item)->id;
         REQUIRE(world.CreateSave(files.database.c_str(), {}));
-        REQUIRE(world.SetTile({2, 2}, {Terrain::open_door, 37}));
+        REQUIRE(world.SetTile({2, 2}, {TestTerrain("open_door"), 37}));
         REQUIRE(world.DestroyItem(item));
         REQUIRE(world.Save({}));
         // Inspect through a separate World so failure to mark either chunk is visible.
-        World checkpoint;
+        World checkpoint(TestContent());
         Take(checkpoint.LoadSave(files.database.c_str()));
         Load(checkpoint);
         Load(checkpoint, {1, 0});
-        CHECK(*checkpoint.GetTile({2, 2}) == Tile{Terrain::open_door, 37});
+        CHECK(*checkpoint.GetTile({2, 2}) == Tile{TestTerrain("open_door"), 37});
         CHECK(checkpoint.FindItem(itemId) == ItemHandle{});
         REQUIRE(world.DestroyActor(actor));
         REQUIRE(world.DestroyObject(object));
         REQUIRE(world.Save({}));
     }
-    World restored;
+    World restored(TestContent());
     Take(restored.LoadSave(files.database.c_str()));
     Load(restored);
     Load(restored, {1, 0});
@@ -344,7 +347,7 @@ TEST_CASE("Dirty live chunks persist edits and deletion after a clean checkpoint
 // Fixtures must pass global checkpoint validation. Corruption is injected only
 // after opening, to exercise streaming's own validation of incoming disk data.
 void WriteFixture(const char* path, const Vector<ChunkArchive>& chunks, PersistentId nextId = 10) {
-    SaveDatabase database;
+    SaveDatabase database(TestContent());
     REQUIRE(database.Create(path));
     REQUIRE(database.Begin());
     for (const auto& chunk : chunks) {
@@ -366,6 +369,7 @@ void Corrupt(const char* path, const char* sql) {
 
 ChunkArchive ActorChunk(ChunkCoord position, PersistentId id) {
     ChunkArchive chunk{};
+    chunk.tiles.fill(Tile{TestTerrain("floor"), 0});
     chunk.position = position;
     chunk.actors.push_back({id, {position.x * chunk_size, position.z * chunk_size}, false, 0});
     return chunk;
@@ -374,7 +378,7 @@ ChunkArchive ActorChunk(ChunkCoord position, PersistentId id) {
 TEST_CASE("Failed reconciliation preserves live keys activity and loaded set", "[world][save][streaming]") {
     SaveDirectory files;
     WriteFixture(files.database.c_str(), {ActorChunk({0, 0}, 1), ActorChunk({1, 0}, 2)});
-    World world;
+    World world(TestContent());
     Take(world.LoadSave(files.database.c_str()));
     Corrupt(files.database.c_str(),
         "UPDATE chunks SET payload=replace(payload,'\"id\":\"2\"','\"id\":\"1\"') WHERE x=1 AND z=0");
@@ -384,7 +388,7 @@ TEST_CASE("Failed reconciliation preserves live keys activity and loaded set", "
     REQUIRE(world.UpdateRequest(request, {{1, 0}, 0}, LoadMode::resident));
     Diagnostics diagnostics;
     CHECK(world.ReconcileChunks(&diagnostics) == eastl::unexpected(SaveError::InvalidData));
-    CHECK_FALSE(diagnostics.message.empty());
+    CHECK_FALSE(diagnostics.Empty());
     CHECK(world.LoadedChunks() == Vector<ChunkCoord>{{0, 0}});
     CHECK(world.IsActive({0, 0}));
     CHECK(world.GetActor(actor));
@@ -403,7 +407,7 @@ TEST_CASE("Reconciliation validates all staged disk chunks before activity chang
     SaveDirectory files;
     WriteFixture(files.database.c_str(), {ActorChunk({0, 0}, 1),
         ActorChunk({1, 0}, 2), ActorChunk({2, 0}, 3)});
-    World world;
+    World world(TestContent());
     Take(world.LoadSave(files.database.c_str()));
     Corrupt(files.database.c_str(),
         "UPDATE chunks SET payload=replace(payload,'\"id\":\"3\"','\"id\":\"2\"') WHERE x=2 AND z=0");
@@ -424,7 +428,7 @@ TEST_CASE("Reconciliation validates all staged disk chunks before activity chang
 TEST_CASE("Incoming disk chunks cannot alias IDs in pending RAM archives", "[world][save][streaming]") {
     SaveDirectory files;
     WriteFixture(files.database.c_str(), {ActorChunk({0, 0}, 1), ActorChunk({1, 0}, 2)});
-    World world;
+    World world(TestContent());
     Take(world.LoadSave(files.database.c_str()));
     Corrupt(files.database.c_str(),
         "UPDATE chunks SET payload=replace(payload,'\"id\":\"2\"','\"id\":\"1\"') WHERE x=1 AND z=0");
@@ -445,7 +449,7 @@ TEST_CASE("World saves preserve unsigned persistent IDs up to exhaustion", "[wor
     WriteFixture(files.database.c_str(), {ActorChunk({0, 0}, maximum - 2)}, maximum - 1);
     PersistentId issued;
     {
-        World world;
+        World world(TestContent());
         Take(world.LoadSave(files.database.c_str()));
         Load(world);
         REQUIRE(world.GetActor(world.FindActor(maximum - 2)));
@@ -455,7 +459,7 @@ TEST_CASE("World saves preserve unsigned persistent IDs up to exhaustion", "[wor
         REQUIRE(world.Save({}));
         CHECK(world.CheckInvariants());
     }
-    World restored;
+    World restored(TestContent());
     Take(restored.LoadSave(files.database.c_str()));
     Load(restored);
     REQUIRE(restored.GetItem(restored.FindItem(issued)));

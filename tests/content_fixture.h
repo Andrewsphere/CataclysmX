@@ -1,0 +1,24 @@
+#pragma once
+
+#include "content/content.h"
+
+#include <catch2/catch_test_macros.hpp>
+#include <EASTL/utility.h>
+
+// Immutable test fixture; production loads content explicitly at startup.
+inline const cataclysmx::ContentCatalog& TestContent() {
+    static const cataclysmx::ContentCatalog content = [] {
+        cataclysmx::Diagnostics diagnostics;
+        auto result = cataclysmx::LoadContentFile(CATACLYSMX_TERRAIN_FILE, &diagnostics);
+        INFO(cataclysmx::FormatDiagnostics(diagnostics).c_str());
+        REQUIRE(result.has_value());
+        return eastl::move(*result);
+    }();
+    return content;
+}
+
+inline cataclysmx::TerrainId TestTerrain(eastl::string_view id) {
+    const auto result = TestContent().FindTerrain(id);
+    REQUIRE(result.value != 0);
+    return result;
+}

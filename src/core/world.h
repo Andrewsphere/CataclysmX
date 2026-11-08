@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/containers.h"
+#include "content/content.h"
 #include "core/save_result.h"
 
 #include <EASTL/array.h>
@@ -51,13 +52,12 @@ ChunkCoord ChunkOf(TileCoord position);
 int TileIndex(TileCoord position);
 bool ValidPosition(TileCoord position);
 
-enum class Terrain : std::uint8_t { floor, wall, closed_door, open_door };
 struct Tile {
-    Terrain terrain = Terrain::floor;
+    TerrainId terrain{};
     std::uint8_t damage = 0;
     bool operator==(const Tile&) const = default;
 };
-bool Passable(Terrain terrain);
+bool Passable(const ContentCatalog& content, TerrainId terrain);
 
 enum class ItemKind : std::uint8_t { rock, backpack, bandage };
 const char* item_name(ItemKind kind);
@@ -130,7 +130,9 @@ struct ChunkRegion {
 // reacquire after mutation, and never retain them across unloading/deletion.
 class World {
 public:
-    explicit World(std::uint32_t seed = 42);
+    // Content must outlive the World and remain unchanged. The current generator
+    // requires definitions named floor and wall.
+    explicit World(const ContentCatalog& content, std::uint32_t seed = 42);
     ~World();
     World(const World&) = delete;
     World& operator=(const World&) = delete;
@@ -150,6 +152,7 @@ public:
     SaveResult<SessionState> LoadSave(const char* path, Diagnostics* diagnostics = nullptr);
     SaveResult<void> Save(const SessionState& session, Diagnostics* diagnostics = nullptr);
     bool HasSave() const;
+    const ContentCatalog& GetContent() const;
 
     const Chunk* GetChunk(ChunkCoord position) const;
     const Tile* GetTile(TileCoord position) const;

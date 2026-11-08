@@ -5,13 +5,16 @@
 
 namespace cataclysmx {
 
-inline constexpr int save_format_version = 1;
+class ContentCatalog;
+
+inline constexpr int save_format_version = 2;
 
 // SQLite and JSON remain private to this subsystem. A connection is exclusively
 // owned by one World; transactions are synchronous simulation-boundary calls.
 class SaveDatabase {
 public:
-    SaveDatabase();
+    // The catalog must outlive this database and its owning World.
+    explicit SaveDatabase(const ContentCatalog& content);
     ~SaveDatabase();
     SaveDatabase(const SaveDatabase&) = delete;
     SaveDatabase& operator=(const SaveDatabase&) = delete;
@@ -27,6 +30,7 @@ public:
     void Rollback();
 
 private:
+    const ContentCatalog& content_;
     class Impl;
     eastl::unique_ptr<Impl> impl_;
 };

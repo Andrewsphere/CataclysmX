@@ -1,7 +1,12 @@
 # World API
 
 [`World`](../src/core/world.h) owns terrain, actors, items, interactive objects
-and load requests. Constructing `World(seed)` (default seed `42`) loads nothing.
+and load requests. Constructing `World(content, seed)` (default seed `42`) loads no chunks.
+The immutable `ContentCatalog` must outlive the world and must not be moved from
+or replaced while borrowed. The generator requires `floor` and `wall` definitions.
+`GetContent()` exposes this read-only catalog. Terrain properties are indexed by
+compact, catalog-local `TerrainId` values; zero is invalid, including in `Tile{}`.
+Supply an explicit terrain when calling `SetTile`.
 Mutations return `WorldResult<T>`, an alias for `eastl::expected<T, WorldError>`.
 Expected failures are values; broken invariants and allocation failure are fatal.
 Engine code runs without exceptions.
@@ -43,7 +48,8 @@ not ownership or lifetime guarantees.
   destination returns `chunk_unavailable`; an out-of-bounds tile returns
   `invalid_position`. Queries and mutations do not implicitly load chunks.
 
-Floor and open doors are passable; walls and closed doors are not. Actor creation
+Passability comes from each terrain definition (in bundled content, floor and
+open doors are passable; walls and closed doors are not). Actor creation
 and movement reject impassable or actor-occupied destinations. World-level
 `MoveActor` accepts any valid loaded destination, without enforcing adjacency
 or spending a turn. Interactive objects have a separate occupancy index and do

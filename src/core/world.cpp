@@ -80,24 +80,20 @@ using Archive = ChunkArchive;
 
 SaveResult<void> SaveFailure(SaveError error, const char* message, Diagnostics* diagnostics) {
     if (diagnostics) {
-        diagnostics->message = message;
+        diagnostics->Add(message);
     }
     return eastl::unexpected(error);
 }
 
-bool ValidTerrain(Terrain terrain) {
-    return terrain == Terrain::floor || terrain == Terrain::wall
-        || terrain == Terrain::closed_door || terrain == Terrain::open_door;
-}
-
 // Validate before Restore: it must never discover a bad owner after creating keys.
 // Append IDs to a shared list so the caller can also reject cross-chunk aliases.
-bool ValidateArchive(const Archive& saved, PersistentId nextId, Vector<PersistentId>& ids) {
+bool ValidateArchive(const ContentCatalog& content, const Archive& saved,
+    PersistentId nextId, Vector<PersistentId>& ids) {
     if (!ValidRegion({saved.position, 0})) {
         return false;
     }
     for (Tile tile : saved.tiles) {
-        if (!ValidTerrain(tile.terrain)) {
+        if (!content.TryGetTerrain(tile.terrain)) {
             return false;
         }
     }
@@ -190,8 +186,8 @@ bool ValidPosition(TileCoord position) {
         && position.z >= -world_coordinate_limit && position.z <= world_coordinate_limit;
 }
 
-bool Passable(Terrain terrain) {
-    return terrain == Terrain::floor || terrain == Terrain::open_door;
+bool Passable(const ContentCatalog& content, TerrainId terrain) {
+    return content.GetTerrain(terrain).passable;
 }
 
 const char* item_name(ItemKind kind) {
@@ -232,6 +228,9 @@ ItemLocation ItemLocation::Stored(ObjectHandle object) {
 
 class World::Impl {
 public:
+    const ContentCatalog& content;
+    TerrainId floor;
+    TerrainId wall;
     std::uint32_t seed;
     PersistentId next_id = 1;
     dod::slot_map64<Actor> actors;
@@ -243,7 +242,11 @@ public:
     Vector<ChunkCoord> dirtyChunks; // Sorted, includes pending unloaded archives.
     eastl::unique_ptr<SaveDatabase> database;
 
-    explicit Impl(std::uint32_t value) : seed(value) {}
+    explicit Impl(const ContentCatalog& catalog, std::uint32_t value)
+        : content(catalog), floor(catalog.FindTerrain("floor")),
+          wall(catalog.FindTerrain("wall")), seed(value) {
+        Require(floor.value != 0 && wall.value != 0);
+    }
 
     PersistentId IssueId() {
         Require(next_id != eastl::numeric_limits<PersistentId>::max());
@@ -403,7 +406,7 @@ public:
                 const bool demo = global_x >= -32 && global_x <= 32
                     && global_z >= -32 && global_z <= 32;
                 value.tiles[z * chunk_size + x] = {
-                    !demo && hash % 13U == 0 ? Terrain::wall : Terrain::floor, 0};
+                    !demo && hash % 13U == 0 ? wall : floor, 0};
             }
         }
     }
@@ -531,11 +534,12 @@ public:
         if (!GetChunk(position) && source) {
             auto saved = source->ReadChunk(position, next_id, diagnostics);
             if (!saved) {
+                if (diagnostics) { diagnostics->Add("Validating session player"); }
                 return eastl::unexpected(saved.error());
             }
             if (*saved) {
                 Vector<PersistentId> ids;
-                if ((**saved).position == position && ValidateArchive(**saved, next_id, ids)
+                if ((**saved).position == position && ValidateArchive(content, **saved, next_id, ids)
                     && UniqueIds(ids) && matches(**saved)) {
                     return {};
                 }
@@ -587,7 +591,8 @@ public:
     }
 };
 
-World::World(std::uint32_t seed) : impl_(eastl::make_unique<Impl>(seed)) {}
+World::World(const ContentCatalog& content, std::uint32_t seed)
+    : impl_(eastl::make_unique<Impl>(content, seed)) {}
 World::~World() = default;
 
 WorldResult<LoadRequest> World::RequestChunks(ChunkRegion region, LoadMode mode) {
@@ -658,7 +663,7 @@ SaveResult<void> World::ReconcileChunks(Diagnostics* diagnostics) {
         ids.push_back(object.id);
     }
     for (const Archive& archive : impl_->archives) {
-        if (!ValidateArchive(archive, impl_->next_id, ids)) {
+        if (!ValidateArchive(impl_->content, archive, impl_->next_id, ids)) {
             return SaveFailure(SaveError::InvalidData, "Invalid RAM chunk archive", diagnostics);
         }
     }
@@ -671,11 +676,12 @@ SaveResult<void> World::ReconcileChunks(Diagnostics* diagnostics) {
             }
             auto saved = impl_->database->ReadChunk(entry.position, impl_->next_id, diagnostics);
             if (!saved) {
+                if (diagnostics) { diagnostics->Add("Reconciling world chunks"); }
                 return eastl::unexpected(saved.error());
             }
             if (*saved) {
                 if ((**saved).position != entry.position
-                    || !ValidateArchive(**saved, impl_->next_id, ids)) {
+                    || !ValidateArchive(impl_->content, **saved, impl_->next_id, ids)) {
                     return SaveFailure(SaveError::InvalidData, "Invalid disk chunk archive", diagnostics);
                 }
                 staged.push_back(eastl::move(**saved));
@@ -738,7 +744,7 @@ SaveResult<void> World::CreateSave(const char* path, const SessionState& session
     if (auto result = impl_->ValidateSession(session, nullptr, diagnostics); !result) {
         return result;
     }
-    auto database = eastl::make_unique<SaveDatabase>();
+    auto database = eastl::make_unique<SaveDatabase>(impl_->content);
     if (auto result = database->Create(path, diagnostics); !result) {
         return result;
     }
@@ -756,9 +762,10 @@ SaveResult<SessionState> World::LoadSave(const char* path, Diagnostics* diagnost
         SaveFailure(SaveError::InvalidState, "Loading requires a pristine world", diagnostics);
         return eastl::unexpected(SaveError::InvalidState);
     }
-    auto database = eastl::make_unique<SaveDatabase>();
+    auto database = eastl::make_unique<SaveDatabase>(impl_->content);
     auto snapshot = database->Open(path, diagnostics);
     if (!snapshot) {
+        if (diagnostics) { diagnostics->Add("Loading world save"); }
         return eastl::unexpected(snapshot.error());
     }
     if (snapshot->generationVersion != 1 || snapshot->nextId == 0) {
@@ -768,7 +775,7 @@ SaveResult<SessionState> World::LoadSave(const char* path, Diagnostics* diagnost
         return eastl::unexpected(error);
     }
     // Validate on temporary state; even seed/ID installation waits for success.
-    Impl candidate(snapshot->seed);
+    Impl candidate(impl_->content, snapshot->seed);
     candidate.next_id = snapshot->nextId;
     if (auto result = candidate.ValidateSession(snapshot->session, database.get(), diagnostics); !result) {
         return eastl::unexpected(result.error());
@@ -790,6 +797,7 @@ SaveResult<void> World::Save(const SessionState& session, Diagnostics* diagnosti
 }
 
 bool World::HasSave() const { return impl_->database != nullptr; }
+const ContentCatalog& World::GetContent() const { return impl_->content; }
 
 const Chunk* World::GetChunk(ChunkCoord position) const { return impl_->GetChunk(position); }
 
@@ -872,7 +880,7 @@ WorldResult<void> World::SetTile(TileCoord position, Tile value) {
     if (auto result = impl_->Available(position); !result) {
         return result;
     }
-    if (!ValidTerrain(value.terrain)) {
+    if (!impl_->content.TryGetTerrain(value.terrain)) {
         return eastl::unexpected(WorldError::invalid_request);
     }
     impl_->GetChunk(ChunkOf(position))->tiles[TileIndex(position)] = value;
@@ -884,7 +892,7 @@ WorldResult<ActorHandle> World::CreateActor(TileCoord position, bool player) {
     if (auto result = impl_->Available(position); !result) {
         return eastl::unexpected(result.error());
     }
-    if (!Passable(GetTile(position)->terrain)) {
+    if (!Passable(impl_->content, GetTile(position)->terrain)) {
         return eastl::unexpected(WorldError::blocked);
     }
     if (ActorAt(position).value != 0) {
@@ -908,7 +916,7 @@ WorldResult<void> World::MoveActor(ActorHandle handle, TileCoord destination) {
     if (value->position == destination) {
         return {};
     }
-    if (!Passable(GetTile(destination)->terrain)) {
+    if (!Passable(impl_->content, GetTile(destination)->terrain)) {
         return eastl::unexpected(WorldError::blocked);
     }
     if (ActorAt(destination).value != 0) {
@@ -1118,6 +1126,9 @@ bool World::CheckInvariants() const {
             || (index != 0 && !ChunkLess(state.chunks[index - 1].position, value.position))) {
             return false;
         }
+        for (const Tile& tile : value.tiles) {
+            if (!state.content.TryGetTerrain(tile.terrain)) { return false; }
+        }
         Vector<TileCoord> actor_positions;
         Vector<TileCoord> object_positions;
         for (ActorHandle handle : value.actors) {
@@ -1222,6 +1233,9 @@ bool World::CheckInvariants() const {
             return false;
         }
         archived_positions.push_back(saved.position);
+        for (const Tile& tile : saved.tiles) {
+            if (!state.content.TryGetTerrain(tile.terrain)) { return false; }
+        }
         Vector<TileCoord> actor_positions;
         Vector<TileCoord> object_positions;
         for (const SavedActor& actor : saved.actors) {

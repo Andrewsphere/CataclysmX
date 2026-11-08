@@ -19,6 +19,10 @@ enum class Outcome {
     blocked, occupied, nothing_here, invalid_command, not_carried, unavailable
 };
 const char* OutcomeMessage(Outcome outcome);
+// The demo requires floor, wall, and closed_door; floor must be passable.
+// Call at the application boundary before constructing a Server.
+ContentResult<void> ValidateServerContent(const ContentCatalog& content,
+    Diagnostics* diagnostics = nullptr);
 struct CommandResult {
     Outcome outcome = Outcome::invalid_command;
     bool advanced = false;
@@ -55,14 +59,14 @@ struct WorldView {
 // Single-player authoritative local endpoint. No transport or wall-clock logic.
 class Server {
 public:
-    explicit Server(std::uint32_t seed = 42);
+    explicit Server(const ContentCatalog& content, std::uint32_t seed = 42);
     CommandResult Send(Command command);
     WorldView View(int radius = 8) const;
     WorldResult<void> SetBubbleRadii(int active_radius, int resident_radius,
         Diagnostics* diagnostics = nullptr);
     SaveResult<void> CreateSave(const char* path, Diagnostics* diagnostics = nullptr);
     SaveResult<void> Save(Diagnostics* diagnostics = nullptr);
-    static SaveResult<eastl::unique_ptr<Server>> LoadSave(const char* path,
+    static SaveResult<eastl::unique_ptr<Server>> LoadSave(const ContentCatalog& content, const char* path,
         Diagnostics* diagnostics = nullptr);
     void SetAutosaveInterval(std::uint64_t turns);
     std::uint64_t GetAutosaveInterval() const;
@@ -75,7 +79,7 @@ public:
 
 private:
     struct EmptyTag {};
-    explicit Server(EmptyTag);
+    explicit Server(const ContentCatalog& content, EmptyTag);
     World world_;
     ActorHandle player_{};
     LoadRequest active_request_{};

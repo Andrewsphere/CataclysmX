@@ -1,10 +1,10 @@
 # Save format
 
-CataclysmX saves are SQLite database files. The strict v1 format is governed by
-one authoritative `metadata.format_version = 1` for both SQL and JSON. The
+CataclysmX saves are SQLite database files. The strict v2 format is governed by
+one authoritative `metadata.format_version = 2` for both SQL and JSON. The
 `metadata` columns are `singleton INTEGER PRIMARY KEY CHECK(singleton=1)`,
 `format_version INTEGER NOT NULL`, and `game_version TEXT NOT NULL`; its single
-row is `(1, 1, "0.1.0")`. The other tables are
+row is `(1, 2, "0.1.0")`. The other tables are
 `world_state(singleton INTEGER PRIMARY KEY CHECK(singleton=1), payload TEXT NOT
 NULL)` and `chunks(x INTEGER NOT NULL, z INTEGER NOT NULL, payload TEXT NOT NULL,
 PRIMARY KEY(x,z))`. Extra application tables/schema objects are rejected.
@@ -25,8 +25,10 @@ Every row in `chunks` stores a complete snapshot of one 16×16 chunk, not a delt
 The root object has exactly `tiles`, `actors`, `objects`, and `ground_items`:
 
 - `tiles`: exactly 256 row-major `{ "terrain": string, "damage": integer }`
-  entries. Terrain is `floor`, `wall`, `closed_door`, or `open_door`; damage is
-  0–255.
+  entries. Terrain is the stable string `TerrainDefinition::id` from the supplied
+  content catalog (including custom terrain); damage is 0–255. Runtime
+  `TerrainId` numeric values are never persisted. Every tile must resolve in that
+  catalog; unknown strings, embedded NULs and numeric terrain values are invalid.
 - `actors`: `{ "id": decimal-string, "position": {"x": int, "z": int},
   "player": boolean, "turns": decimal-string, "inventory": [...] }`.
 - `objects`: `{ "id": decimal-string, "position": {"x": int, "z": int},
@@ -41,9 +43,9 @@ IDs must be unique across all chunks and less than `next_id`; entity positions,
 ownership, chunks and session player identity/position are validated. Generic
 `World` saves allow session player ID zero; `Server` requires a nonzero player.
 `generation_version` must currently equal 1; other values fail with
-`unsupported_version`. There are no implemented migrations or backup files.
-Explicit transactional migration and a recoverable backup strategy are future
-design considerations, not current behavior.
+`SaveError::UnsupportedVersion`. Only save format v2 is accepted: v1 and all
+other versions are rejected, with no migrations or backup files. Content's own
+format version is independent of the save format version.
 
 ## Checkpoints and API
 
@@ -59,8 +61,21 @@ retaining dirty memory for retry.
 `ReconcileChunks` returns `SaveResult<void>` because storage-backed loads can
 fail. It stages chunk changes and leaves live world state unchanged on failure.
 Save operations similarly return typed `SaveResult<T>` errors; optional
-`Diagnostics*` supplies a human-readable explanation. SQLite and JSON internals
-are not public simulation APIs.
+`Diagnostics*` appends structured diagnostic frames; `FormatDiagnostics` renders
+them for display. Caller context is retained and outer boundary contexts are
+appended as failures propagate. Unknown terrain diagnostics include the missing
+string and a location path such as `chunks[-3,2].tiles[37].terrain`. SQLite and
+JSON internals are not public simulation APIs.
+
+`SaveDatabase(const ContentCatalog&)` retains a nonowning catalog reference;
+the catalog must outlive the database and the world that owns it. `World` and
+`Server` likewise receive the catalog explicitly. Both opening and committing
+validate every saved tile against that catalog, including nonresident chunks;
+chunk writes also reject invalid runtime IDs (zero included). Stable strings
+allow a save to reload against a catalog with different numeric ID ordering.
+Missing definitions cause an error rather than substituting a default tile.
+This API keeps content ownership outside persistence while making resolution
+explicit and preventing runtime numbering from becoming a persistence contract.
 
 Opening and committing scan all saved chunks to validate global ID uniqueness
 and other data. Validation decodes at most one payload at a time, plus retains
@@ -69,12 +84,15 @@ memory are O(total saved data).
 
 ```cpp
 #include "core/server.h"
+#include "content/content.h"
 
-cataclysmx::Server server(42);
+auto content = cataclysmx::LoadContentFile("data/terrain.json5");
+if (!content || !cataclysmx::ValidateServerContent(*content)) { return; }
+cataclysmx::Server server(*content, 42);
 auto created = server.CreateSave("run.sqlite"); // first save; refuses existing path
 if (!created) { /* inspect created.error() */ }
 auto saved = server.Save();
-auto loaded = cataclysmx::Server::LoadSave("run.sqlite");
+auto loaded = cataclysmx::Server::LoadSave(*content, "run.sqlite");
 if (loaded) {
     // *loaded is eastl::unique_ptr<cataclysmx::Server>.
 }

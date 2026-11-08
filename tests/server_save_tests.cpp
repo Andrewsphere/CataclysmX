@@ -1,5 +1,6 @@
 #include "core/server.h"
 #include "core/save_database.h"
+#include "content_fixture.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <EASTL/utility.h>
@@ -59,7 +60,7 @@ struct RawDatabase {
 };
 
 SessionState ReadSession(const SaveFile& file) {
-    SaveDatabase database;
+    SaveDatabase database(TestContent());
     return Take(database.Open(file.path.c_str())).session;
 }
 
@@ -101,7 +102,7 @@ void SameState(const Server& first, const Server& second) {
 TEST_CASE("Server checkpoint reopens tick RNG bubble and nested inventory for deterministic continuation",
     "[server][save][determinism]") {
     SaveFile file;
-    Server original(918);
+    Server original(TestContent(), 918);
     REQUIRE(original.SetBubbleRadii(1, 1));
     REQUIRE(original.Send({CommandKind::pick_up}).advanced);
     World& world = original.GetWorld();
@@ -125,7 +126,7 @@ TEST_CASE("Server checkpoint reopens tick RNG bubble and nested inventory for de
     CHECK(session.player == playerId);
     CHECK(session.activeRadius == 1);
     CHECK(session.residentRadius == 1);
-    auto restored = Take(Server::LoadSave(file.path.c_str()));
+    auto restored = Take(Server::LoadSave(TestContent(), file.path.c_str()));
     CHECK(restored->GetAutosaveInterval() == 1000);
     CHECK(restored->GetWorld().GetChunk({10, 10}) == nullptr);
     REQUIRE(world.ReleaseRequest(admin));
@@ -166,7 +167,7 @@ TEST_CASE("Server checkpoint reopens tick RNG bubble and nested inventory for de
 TEST_CASE("Server manual checkpoints reset autosave cadence and rejected commands never save",
     "[server][save][autosave]") {
     SaveFile file;
-    Server server;
+    Server server(TestContent());
     CHECK(server.Save() == eastl::unexpected(SaveError::NotOpen));
     server.SetAutosaveInterval(2);
     REQUIRE(server.Send({}).advanced); // Unattached autosave is ignored.
@@ -188,7 +189,7 @@ TEST_CASE("Server manual checkpoints reset autosave cadence and rejected command
     REQUIRE(server.Send({}).advanced);
     CHECK(ReadSession(file).tick == 5);
     REQUIRE(server.Save());
-    auto restored = Take(Server::LoadSave(file.path.c_str()));
+    auto restored = Take(Server::LoadSave(TestContent(), file.path.c_str()));
     CHECK(restored->GetTick() == 7);
     CHECK(restored->GetAutosaveInterval() == 0);
     restored->SetAutosaveInterval(2);
@@ -201,7 +202,7 @@ TEST_CASE("Server manual checkpoints reset autosave cadence and rejected command
 TEST_CASE("Failed autosave preserves successful gameplay and retries dirty state next successful turn",
     "[server][save][autosave]") {
     SaveFile file;
-    Server server;
+    Server server(TestContent());
     server.SetAutosaveInterval(3);
     REQUIRE(server.CreateSave(file.path.c_str()));
     REQUIRE(server.Send({}).advanced);
@@ -230,7 +231,7 @@ TEST_CASE("Failed autosave preserves successful gameplay and retries dirty state
     CHECK(retry.advanced);
     CHECK_FALSE(retry.storageError);
     CHECK(ReadSession(file).tick == 5);
-    auto restored = Take(Server::LoadSave(file.path.c_str()));
+    auto restored = Take(Server::LoadSave(TestContent(), file.path.c_str()));
     SameState(server, *restored);
     CHECK(restored->View().inventory.size() == 1);
     REQUIRE(server.Send({}).advanced);
@@ -243,11 +244,11 @@ TEST_CASE("Failed autosave preserves successful gameplay and retries dirty state
 TEST_CASE("Streaming movement preflights the full future bubble before moving or unloading",
     "[server][save][streaming]") {
     SaveFile file;
-    Server server;
+    Server server(TestContent());
     REQUIRE(server.SetBubbleRadii(0, 1));
     World& world = server.GetWorld();
     REQUIRE(world.MoveActor(server.GetPlayer(), {15, 0}));
-    REQUIRE(world.SetTile({16, 0}, {}));
+    REQUIRE(world.SetTile({16, 0}, {TestTerrain("floor"), 0}));
     REQUIRE(server.CreateSave(file.path.c_str()));
     const auto checkpoint = ReadSession(file);
     {
@@ -275,7 +276,7 @@ TEST_CASE("Streaming movement preflights the full future bubble before moving or
     Diagnostics diagnostics;
     CHECK(server.SetBubbleRadii(1, 2, &diagnostics)
         == eastl::unexpected(WorldError::storage_failure));
-    CHECK_FALSE(diagnostics.message.empty());
+    CHECK_FALSE(diagnostics.Empty());
     CHECK(world.LoadedChunks() == before);
     // Failed movement released temporary demand; failed resize restored both requests.
     REQUIRE(world.ReconcileChunks());
@@ -307,37 +308,37 @@ TEST_CASE("Server load rejects unsupported schema and invalid or missing session
     "[server][save]") {
     SaveFile file;
     {
-        Server server;
+        Server server(TestContent());
         REQUIRE(server.CreateSave(file.path.c_str()));
     }
     SECTION("Unsupported schema") {
         RawDatabase raw(file.path.c_str());
         raw.Exec("UPDATE metadata SET format_version=999");
         Diagnostics diagnostics;
-        const auto result = Server::LoadSave(file.path.c_str(), &diagnostics);
+        const auto result = Server::LoadSave(TestContent(), file.path.c_str(), &diagnostics);
         REQUIRE_FALSE(result);
         CHECK(result.error() == SaveError::UnsupportedVersion);
-        CHECK_FALSE(diagnostics.message.empty());
+        CHECK_FALSE(diagnostics.Empty());
     }
     SECTION("Malformed session") {
         RawDatabase raw(file.path.c_str());
         raw.Exec("UPDATE world_state SET payload='{}'");
-        const auto result = Server::LoadSave(file.path.c_str());
+        const auto result = Server::LoadSave(TestContent(), file.path.c_str());
         REQUIRE_FALSE(result);
         CHECK(result.error() == SaveError::InvalidData);
     }
     SECTION("Valid World checkpoint without a session player") {
-        SaveDatabase database;
+        SaveDatabase database(TestContent());
         auto snapshot = Take(database.Open(file.path.c_str()));
         snapshot.session.player = 0;
         REQUIRE(database.Begin());
         REQUIRE(database.WriteSnapshot(snapshot));
         REQUIRE(database.Commit());
         Diagnostics diagnostics;
-        const auto result = Server::LoadSave(file.path.c_str(), &diagnostics);
+        const auto result = Server::LoadSave(TestContent(), file.path.c_str(), &diagnostics);
         REQUIRE_FALSE(result);
         CHECK(result.error() == SaveError::InvalidData);
-        CHECK_FALSE(diagnostics.message.empty());
+        CHECK_FALSE(diagnostics.Empty());
     }
 }
 
