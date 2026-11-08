@@ -1,0 +1,27 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "CataclysmX: MSVC Debug",
+      "type": "cppvsdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/out/build/win-msvc-debug/cataclysmx_game.exe",
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "stopAtEntry": false,
+      "externalConsole": true,
+      "preLaunchTask": "Build: MSVC Debug"
+    },
+    {
+      "name": "CataclysmX: MSVC Release",
+      "type": "cppvsdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/out/build/win-msvc-release/cataclysmx_game.exe",
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "stopAtEntry": false,
+      "externalConsole": true,
+      "preLaunchTask": "Build: MSVC Release"
+    }
+  ]
+}

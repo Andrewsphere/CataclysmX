@@ -74,6 +74,28 @@ container-boundary annotations are disabled.
 VS 2026 was approved and verified for this setup; the original environment guide used
 VS 2022. The script discovers the installed toolchain rather than hardcoding a VS path.
 
+## Build and run in VS Code
+
+Open the repository folder in VS Code and install the recommended Microsoft C/C++
+extension (`ms-vscode.cpptools`). The Windows build prerequisites above apply,
+including PowerShell 7 (`pwsh`) on PATH. No developer shell is required.
+
+- **Ctrl+Shift+B** builds MSVC Debug. Use **Tasks: Run Build Task** to select
+  `Build: MSVC Release` instead.
+- In **Run and Debug**, select `CataclysmX: MSVC Debug` or
+  `CataclysmX: MSVC Release`. **F5** builds and launches with the Visual Studio
+  debugger; **Ctrl+F5** builds and runs without debugging. The game opens in a
+  separate console for interactive terminal input. Release uses optimized code,
+  so use Debug for breakpoints and variable inspection.
+- **Tasks: Run Task** offers `Run: MSVC Debug` and `Run: MSVC Release` to build
+  and play directly in VS Code's integrated terminal.
+
+Each build calls `scripts/build.ps1` with the matching `win-msvc-*` preset and
+`-SkipTests`, reusing the existing MSVC/vcpkg setup. Tests remain available through
+the normal build script without `-SkipTests`. Launches use the repository root as
+the working directory; add optional game arguments to `args` in
+`.vscode/launch.json`.
+
 ## Open a Visual Studio solution in Rider
 
 With Visual Studio 2022 Community, MSVC v143 14.44 C++ tools and a Windows SDK installed, generate a solution
