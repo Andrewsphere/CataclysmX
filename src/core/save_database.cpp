@@ -44,14 +44,14 @@ SaveError SqlError(int code) {
     switch (code & 255) {
     case SQLITE_NOMEM: std::abort();
     case SQLITE_BUSY:
-    case SQLITE_LOCKED: return SaveError::busy;
+    case SQLITE_LOCKED: return SaveError::Busy;
     case SQLITE_CORRUPT:
     case SQLITE_NOTADB:
     case SQLITE_SCHEMA:
     case SQLITE_ERROR:
     case SQLITE_CONSTRAINT:
-    case SQLITE_MISMATCH: return SaveError::invalid_data;
-    default: return SaveError::io;
+    case SQLITE_MISMATCH: return SaveError::InvalidData;
+    default: return SaveError::Io;
     }
 }
 
@@ -321,17 +321,17 @@ SaveResult<SaveSnapshot> DecodeSnapshot(const char* text, std::size_t length, Di
     Document document;
     SaveSnapshot snapshot;
     if (!document.Parse(text, length)) {
-        return Failure(SaveError::invalid_data, "Invalid world_state JSON", diagnostics);
+        return Failure(SaveError::InvalidData, "Invalid world_state JSON", diagnostics);
     }
     auto* root = yyjson_doc_get_root(document.value);
     if (!Fields(root, {"seed", "generation_version", "next_id", "session"})
         || !Unsigned32(Get(root, "seed"), snapshot.seed)
         || !Unsigned32(Get(root, "generation_version"), snapshot.generationVersion)
         || !Counter(Get(root, "next_id"), snapshot.nextId)) {
-        return Failure(SaveError::invalid_data, "Invalid world_state fields", diagnostics);
+        return Failure(SaveError::InvalidData, "Invalid world_state fields", diagnostics);
     }
     if (snapshot.generationVersion != 1) {
-        return Failure(SaveError::unsupported_version, "Unsupported generation version", diagnostics);
+        return Failure(SaveError::UnsupportedVersion, "Unsupported generation version", diagnostics);
     }
     auto* session = Get(root, "session");
     auto& state = snapshot.session;
@@ -345,7 +345,7 @@ SaveResult<SaveSnapshot> DecodeSnapshot(const char* text, std::size_t length, Di
         || !Integer(Get(session, "resident_radius"), state.residentRadius)
         || !Counter(Get(session, "autosave_interval"), state.autosaveInterval)
         || !ValidSnapshot(snapshot)) {
-        return Failure(SaveError::invalid_data, "Invalid session or next_id", diagnostics);
+        return Failure(SaveError::InvalidData, "Invalid session or next_id", diagnostics);
     }
     return snapshot;
 }
@@ -459,17 +459,17 @@ SaveResult<ChunkArchive> DecodeChunk(const char* text, std::size_t length,
     ChunkCoord position, PersistentId nextId, Diagnostics* diagnostics) {
     Document document;
     if (!document.Parse(text, length)) {
-        return Failure(SaveError::invalid_data, "Invalid chunk JSON", diagnostics);
+        return Failure(SaveError::InvalidData, "Invalid chunk JSON", diagnostics);
     }
     auto* root = yyjson_doc_get_root(document.value);
     if (!Fields(root, {"tiles", "actors", "objects", "ground_items"})) {
-        return Failure(SaveError::invalid_data, "Invalid chunk fields", diagnostics);
+        return Failure(SaveError::InvalidData, "Invalid chunk fields", diagnostics);
     }
     ChunkArchive chunk{};
     chunk.position = position;
     auto* tiles = Get(root, "tiles");
     if (!yyjson_is_arr(tiles) || yyjson_arr_size(tiles) != chunk.tiles.size()) {
-        return Failure(SaveError::invalid_data, "Chunk must have exactly 256 tiles", diagnostics);
+        return Failure(SaveError::InvalidData, "Chunk must have exactly 256 tiles", diagnostics);
     }
     yyjson_arr_iter tileIterator = yyjson_arr_iter_with(tiles);
     std::size_t index = 0;
@@ -478,21 +478,21 @@ SaveResult<ChunkArchive> DecodeChunk(const char* text, std::size_t length,
         int damage = 0;
         if (!Fields(value, {"terrain", "damage"}) || !Integer(Get(value, "damage"), damage)
             || damage < 0 || damage > 255) {
-            return Failure(SaveError::invalid_data, "Invalid tile", diagnostics);
+            return Failure(SaveError::InvalidData, "Invalid tile", diagnostics);
         }
         auto* terrain = Get(value, "terrain");
         if (yyjson_equals_str(terrain, "floor")) { tile.terrain = Terrain::floor; }
         else if (yyjson_equals_str(terrain, "wall")) { tile.terrain = Terrain::wall; }
         else if (yyjson_equals_str(terrain, "closed_door")) { tile.terrain = Terrain::closed_door; }
         else if (yyjson_equals_str(terrain, "open_door")) { tile.terrain = Terrain::open_door; }
-        else { return Failure(SaveError::invalid_data, "Unknown terrain", diagnostics); }
+        else { return Failure(SaveError::InvalidData, "Unknown terrain", diagnostics); }
         tile.damage = static_cast<std::uint8_t>(damage);
         chunk.tiles[index++] = tile;
     }
     auto* actors = Get(root, "actors");
     auto* objects = Get(root, "objects");
     if (!yyjson_is_arr(actors) || !yyjson_is_arr(objects)) {
-        return Failure(SaveError::invalid_data, "Invalid entity arrays", diagnostics);
+        return Failure(SaveError::InvalidData, "Invalid entity arrays", diagnostics);
     }
     yyjson_arr_iter actorIterator = yyjson_arr_iter_with(actors);
     while (auto* value = yyjson_arr_iter_next(&actorIterator)) {
@@ -500,12 +500,12 @@ SaveResult<ChunkArchive> DecodeChunk(const char* text, std::size_t length,
         if (!Fields(value, {"id", "position", "player", "turns", "inventory"})
             || !Counter(Get(value, "id"), actor.id) || !Position(Get(value, "position"), actor.position)
             || !yyjson_is_bool(Get(value, "player")) || !Counter(Get(value, "turns"), actor.turns)) {
-            return Failure(SaveError::invalid_data, "Invalid actor", diagnostics);
+            return Failure(SaveError::InvalidData, "Invalid actor", diagnostics);
         }
         actor.player = yyjson_get_bool(Get(value, "player"));
         chunk.actors.push_back(actor);
         if (!DecodeItems(Get(value, "inventory"), LocationKind::actor, actor.id, 1, chunk)) {
-            return Failure(SaveError::invalid_data, "Invalid inventory or excessive item depth", diagnostics);
+            return Failure(SaveError::InvalidData, "Invalid inventory or excessive item depth", diagnostics);
         }
     }
     yyjson_arr_iter objectIterator = yyjson_arr_iter_with(objects);
@@ -514,18 +514,18 @@ SaveResult<ChunkArchive> DecodeChunk(const char* text, std::size_t length,
         if (!Fields(value, {"id", "position", "enabled", "updates", "contents"})
             || !Counter(Get(value, "id"), object.id) || !Position(Get(value, "position"), object.position)
             || !yyjson_is_bool(Get(value, "enabled")) || !Counter(Get(value, "updates"), object.updates)) {
-            return Failure(SaveError::invalid_data, "Invalid object", diagnostics);
+            return Failure(SaveError::InvalidData, "Invalid object", diagnostics);
         }
         object.enabled = yyjson_get_bool(Get(value, "enabled"));
         chunk.objects.push_back(object);
         if (!DecodeItems(Get(value, "contents"), LocationKind::object, object.id, 1, chunk)) {
-            return Failure(SaveError::invalid_data, "Invalid object contents or excessive item depth", diagnostics);
+            return Failure(SaveError::InvalidData, "Invalid object contents or excessive item depth", diagnostics);
         }
     }
     Vector<PersistentId> ids;
     if (!DecodeItems(Get(root, "ground_items"), LocationKind::ground, 0, 1, chunk)
         || !ValidateChunk(chunk, nextId, ids)) {
-        return Failure(SaveError::invalid_data, "Invalid chunk ownership, IDs, positions or item depth", diagnostics);
+        return Failure(SaveError::InvalidData, "Invalid chunk ownership, IDs, positions or item depth", diagnostics);
     }
     return chunk;
 }
@@ -547,7 +547,7 @@ SaveResult<void> Execute(sqlite3* db, const char* sql, Diagnostics* diagnostics)
 SaveResult<void> Connect(Connection& connection, const char* path, Diagnostics* diagnostics) {
     // Never allow SQLite's special temporary/in-memory filenames or URI handling.
     if (!path || !*path || std::strcmp(path, ":memory:") == 0) {
-        return Failure(SaveError::io, "A filesystem save path is required", diagnostics);
+        return Failure(SaveError::Io, "A filesystem save path is required", diagnostics);
     }
     const int code = sqlite3_open_v2(path, &connection.value, SQLITE_OPEN_READWRITE, nullptr);
     if (code != SQLITE_OK) { return Failure(SqlError(code), "Cannot open save database", diagnostics); }
@@ -597,17 +597,17 @@ struct CreatedFile {
 
 SaveResult<void> ReservePath(const char* path, CreatedFile& createdFile, Diagnostics* diagnostics) {
     if (!path || !*path || std::strcmp(path, ":memory:") == 0) {
-        return Failure(SaveError::io, "A filesystem save path is required", diagnostics);
+        return Failure(SaveError::Io, "A filesystem save path is required", diagnostics);
     }
     // Exclusive OS creation refuses existing paths, including empty files and
     // symlinks. SQLite subsequently opens this reserved file without CREATE.
 #ifdef _WIN32
     // sqlite3_open_v2 takes UTF-8; use the same path interpretation for reservation.
     const int length = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path, -1, nullptr, 0);
-    if (length == 0) { return Failure(SaveError::io, "Invalid UTF-8 save path", diagnostics); }
+    if (length == 0) { return Failure(SaveError::Io, "Invalid UTF-8 save path", diagnostics); }
     Vector<wchar_t> widePath(static_cast<std::size_t>(length));
     if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path, -1, widePath.data(), length) == 0) {
-        return Failure(SaveError::io, "Invalid UTF-8 save path", diagnostics);
+        return Failure(SaveError::Io, "Invalid UTF-8 save path", diagnostics);
     }
     const HANDLE file = CreateFileW(widePath.data(), GENERIC_READ | GENERIC_WRITE | DELETE,
         FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -615,27 +615,27 @@ SaveResult<void> ReservePath(const char* path, CreatedFile& createdFile, Diagnos
         const DWORD error = GetLastError();
         const bool exists = error == ERROR_FILE_EXISTS || error == ERROR_ALREADY_EXISTS
             || (error == ERROR_ACCESS_DENIED && GetFileAttributesW(widePath.data()) != INVALID_FILE_ATTRIBUTES);
-        return Failure(exists ? SaveError::already_exists : SaveError::io,
+        return Failure(exists ? SaveError::AlreadyExists : SaveError::Io,
             "Cannot exclusively create save path", diagnostics);
     }
     if (!GetFileInformationByHandle(file, &createdFile.identity)) {
         FILE_DISPOSITION_INFO disposition{TRUE};
         SetFileInformationByHandle(file, FileDispositionInfo, &disposition, sizeof(disposition));
         CloseHandle(file);
-        return Failure(SaveError::io, "Cannot identify newly created save file", diagnostics);
+        return Failure(SaveError::Io, "Cannot identify newly created save file", diagnostics);
     }
     createdFile.path = eastl::move(widePath);
     CloseHandle(file);
 #else
     const int descriptor = ::open(path, O_CREAT | O_EXCL | O_RDWR, 0600);
     if (descriptor < 0) {
-        return Failure(errno == EEXIST ? SaveError::already_exists : SaveError::io,
+        return Failure(errno == EEXIST ? SaveError::AlreadyExists : SaveError::Io,
             "Cannot exclusively create save path", diagnostics);
     }
     if (::fstat(descriptor, &createdFile.identity) != 0) {
         ::close(descriptor);
         ::unlink(path);
-        return Failure(SaveError::io, "Cannot identify newly created save file", diagnostics);
+        return Failure(SaveError::Io, "Cannot identify newly created save file", diagnostics);
     }
     createdFile.path = path;
     ::close(descriptor);
@@ -658,7 +658,7 @@ SaveResult<void> CheckTable(sqlite3* db, const char* pragma,
     for (const char* name : names) {
         code = sqlite3_step(statement.value);
         if (code != SQLITE_ROW) {
-            return Failure(code == SQLITE_DONE ? SaveError::invalid_data : SqlError(code),
+            return Failure(code == SQLITE_DONE ? SaveError::InvalidData : SqlError(code),
                 "Missing save schema column", diagnostics);
         }
         const char* columnName = reinterpret_cast<const char*>(sqlite3_column_text(statement.value, 1));
@@ -667,12 +667,12 @@ SaveResult<void> CheckTable(sqlite3* db, const char* pragma,
             || std::strcmp(columnType, *type++) != 0
             || sqlite3_column_int(statement.value, 3) != *notNull++
             || sqlite3_column_int(statement.value, 5) != *primaryKey++) {
-            return Failure(SaveError::invalid_data, "Unknown save schema", diagnostics);
+            return Failure(SaveError::InvalidData, "Unknown save schema", diagnostics);
         }
     }
     code = sqlite3_step(statement.value);
     if (code != SQLITE_DONE) {
-        return Failure(code == SQLITE_ROW ? SaveError::invalid_data : SqlError(code),
+        return Failure(code == SQLITE_ROW ? SaveError::InvalidData : SqlError(code),
             "Unexpected save schema column", diagnostics);
     }
     return {};
@@ -688,21 +688,21 @@ SaveResult<void> CheckSchema(sqlite3* db, Diagnostics* diagnostics) {
     if (code != SQLITE_OK) { return Failure(SqlError(code), sqlite3_errmsg(db), diagnostics); }
     code = sqlite3_step(metadata.value);
     if (code != SQLITE_ROW) {
-        return Failure(code == SQLITE_DONE ? SaveError::invalid_data : SqlError(code),
+        return Failure(code == SQLITE_DONE ? SaveError::InvalidData : SqlError(code),
             "Missing save metadata", diagnostics);
     }
     if (sqlite3_column_type(metadata.value, 0) != SQLITE_INTEGER
         || sqlite3_column_int64(metadata.value, 0) != 1
         || sqlite3_column_type(metadata.value, 1) != SQLITE_INTEGER
         || sqlite3_column_type(metadata.value, 2) != SQLITE_TEXT) {
-        return Failure(SaveError::invalid_data, "Invalid save metadata", diagnostics);
+        return Failure(SaveError::InvalidData, "Invalid save metadata", diagnostics);
     }
     if (sqlite3_column_int64(metadata.value, 1) != save_format_version) {
-        return Failure(SaveError::unsupported_version, "Unsupported save format version", diagnostics);
+        return Failure(SaveError::UnsupportedVersion, "Unsupported save format version", diagnostics);
     }
     code = sqlite3_step(metadata.value);
     if (code != SQLITE_DONE) {
-        return Failure(code == SQLITE_ROW ? SaveError::invalid_data : SqlError(code),
+        return Failure(code == SQLITE_ROW ? SaveError::InvalidData : SqlError(code),
             "Metadata must contain one singleton", diagnostics);
     }
     result = CheckTable(db, "PRAGMA table_info(world_state)",
@@ -719,7 +719,7 @@ SaveResult<void> CheckSchema(sqlite3* db, Diagnostics* diagnostics) {
     code = sqlite3_step(tables.value);
     if (code != SQLITE_ROW) { return Failure(SqlError(code), sqlite3_errmsg(db), diagnostics); }
     if (sqlite3_column_int64(tables.value, 0) != 0) {
-        return Failure(SaveError::invalid_data, "Unknown save schema objects", diagnostics);
+        return Failure(SaveError::InvalidData, "Unknown save schema objects", diagnostics);
     }
     return {};
 }
@@ -730,7 +730,7 @@ SaveResult<SaveSnapshot> ReadSnapshot(sqlite3* db, Diagnostics* diagnostics) {
     if (code != SQLITE_OK) { return Failure(SqlError(code), sqlite3_errmsg(db), diagnostics); }
     code = sqlite3_step(statement.value);
     if (code != SQLITE_ROW) {
-        return Failure(code == SQLITE_DONE ? SaveError::invalid_data : SqlError(code),
+        return Failure(code == SQLITE_DONE ? SaveError::InvalidData : SqlError(code),
             "Missing world_state", diagnostics);
     }
     const char* text = nullptr;
@@ -738,13 +738,13 @@ SaveResult<SaveSnapshot> ReadSnapshot(sqlite3* db, Diagnostics* diagnostics) {
     if (sqlite3_column_type(statement.value, 0) != SQLITE_INTEGER
         || sqlite3_column_int64(statement.value, 0) != 1
         || !TextColumn(statement.value, 1, text, length)) {
-        return Failure(SaveError::invalid_data, "Invalid world_state row", diagnostics);
+        return Failure(SaveError::InvalidData, "Invalid world_state row", diagnostics);
     }
     auto snapshot = DecodeSnapshot(text, length, diagnostics);
     if (!snapshot) { return snapshot; }
     code = sqlite3_step(statement.value);
     if (code != SQLITE_DONE) {
-        return Failure(code == SQLITE_ROW ? SaveError::invalid_data : SqlError(code),
+        return Failure(code == SQLITE_ROW ? SaveError::InvalidData : SqlError(code),
             "world_state must contain one singleton", diagnostics);
     }
     return snapshot;
@@ -761,24 +761,24 @@ SaveResult<void> ValidateDatabase(sqlite3* db, const SaveSnapshot& snapshot, Dia
     while ((code = sqlite3_step(statement.value)) == SQLITE_ROW) {
         if (sqlite3_column_type(statement.value, 0) != SQLITE_INTEGER
             || sqlite3_column_type(statement.value, 1) != SQLITE_INTEGER) {
-            return Failure(SaveError::invalid_data, "Invalid chunk coordinates", diagnostics);
+            return Failure(SaveError::InvalidData, "Invalid chunk coordinates", diagnostics);
         }
         const auto x = sqlite3_column_int64(statement.value, 0);
         const auto z = sqlite3_column_int64(statement.value, 1);
         constexpr int limit = world_coordinate_limit / chunk_size;
         if (x < -limit || x > limit || z < -limit || z > limit) {
-            return Failure(SaveError::invalid_data, "Chunk coordinates out of range", diagnostics);
+            return Failure(SaveError::InvalidData, "Chunk coordinates out of range", diagnostics);
         }
         const ChunkCoord position{static_cast<int>(x), static_cast<int>(z)};
         if (havePrevious && previous == position) {
-            return Failure(SaveError::invalid_data, "Duplicate chunk coordinates", diagnostics);
+            return Failure(SaveError::InvalidData, "Duplicate chunk coordinates", diagnostics);
         }
         previous = position;
         havePrevious = true;
         const char* text = nullptr;
         std::size_t length = 0;
         if (!TextColumn(statement.value, 2, text, length)) {
-            return Failure(SaveError::invalid_data, "Chunk payload must be text", diagnostics);
+            return Failure(SaveError::InvalidData, "Chunk payload must be text", diagnostics);
         }
         auto chunk = DecodeChunk(text, length, position, snapshot.nextId, diagnostics);
         if (!chunk) { return eastl::unexpected(chunk.error()); }
@@ -792,7 +792,7 @@ SaveResult<void> ValidateDatabase(sqlite3* db, const SaveSnapshot& snapshot, Dia
     }
     if (code != SQLITE_DONE) { return Failure(SqlError(code), sqlite3_errmsg(db), diagnostics); }
     if (!Unique(ids) || !playerFound) {
-        return Failure(SaveError::invalid_data, "Duplicate persistent ID or missing session player", diagnostics);
+        return Failure(SaveError::InvalidData, "Duplicate persistent ID or missing session player", diagnostics);
     }
     return {};
 }
@@ -830,7 +830,7 @@ SaveDatabase::SaveDatabase() = default;
 SaveDatabase::~SaveDatabase() = default;
 
 SaveResult<void> SaveDatabase::Create(const char* path, Diagnostics* diagnostics) {
-    if (impl_) { return Failure(SaveError::invalid_state, "Database is already open", diagnostics); }
+    if (impl_) { return Failure(SaveError::InvalidState, "Database is already open", diagnostics); }
     auto candidate = eastl::make_unique<Impl>();
     auto reserved = ReservePath(path, candidate->createdFile, diagnostics);
     if (!reserved) { return reserved; }
@@ -853,7 +853,7 @@ SaveResult<void> SaveDatabase::Create(const char* path, Diagnostics* diagnostics
 }
 
 SaveResult<SaveSnapshot> SaveDatabase::Open(const char* path, Diagnostics* diagnostics) {
-    if (impl_) { return Failure(SaveError::invalid_state, "Database is already open", diagnostics); }
+    if (impl_) { return Failure(SaveError::InvalidState, "Database is already open", diagnostics); }
     auto candidate = eastl::make_unique<Impl>();
     auto connected = Connect(candidate->connection, path, diagnostics);
     if (!connected) { return eastl::unexpected(connected.error()); }
@@ -875,9 +875,9 @@ SaveResult<SaveSnapshot> SaveDatabase::Open(const char* path, Diagnostics* diagn
 
 SaveResult<eastl::optional<ChunkArchive>> SaveDatabase::ReadChunk(ChunkCoord position,
     PersistentId nextId, Diagnostics* diagnostics) {
-    if (!impl_) { return Failure(SaveError::not_open, "Database is not open", diagnostics); }
+    if (!impl_) { return Failure(SaveError::NotOpen, "Database is not open", diagnostics); }
     if (!ValidChunk(position) || nextId == 0) {
-        return Failure(SaveError::invalid_data, "Invalid chunk position or next_id", diagnostics);
+        return Failure(SaveError::InvalidData, "Invalid chunk position or next_id", diagnostics);
     }
     auto* db = impl_->connection.value;
     Statement statement;
@@ -891,33 +891,33 @@ SaveResult<eastl::optional<ChunkArchive>> SaveDatabase::ReadChunk(ChunkCoord pos
     const char* text = nullptr;
     std::size_t length = 0;
     if (!TextColumn(statement.value, 0, text, length)) {
-        return Failure(SaveError::invalid_data, "Chunk payload must be text", diagnostics);
+        return Failure(SaveError::InvalidData, "Chunk payload must be text", diagnostics);
     }
     auto chunk = DecodeChunk(text, length, position, nextId, diagnostics);
     if (!chunk) { return eastl::unexpected(chunk.error()); }
     code = sqlite3_step(statement.value);
     if (code != SQLITE_DONE) {
-        return Failure(code == SQLITE_ROW ? SaveError::invalid_data : SqlError(code),
+        return Failure(code == SQLITE_ROW ? SaveError::InvalidData : SqlError(code),
             "Duplicate chunk row or read error", diagnostics);
     }
     return eastl::optional<ChunkArchive>(eastl::move(*chunk));
 }
 
 SaveResult<void> SaveDatabase::Begin(Diagnostics* diagnostics) {
-    if (!impl_) { return Failure(SaveError::not_open, "Database is not open", diagnostics); }
-    if (impl_->transaction) { return Failure(SaveError::invalid_state, "Transaction already active", diagnostics); }
+    if (!impl_) { return Failure(SaveError::NotOpen, "Database is not open", diagnostics); }
+    if (impl_->transaction) { return Failure(SaveError::InvalidState, "Transaction already active", diagnostics); }
     auto result = Execute(impl_->connection.value, "BEGIN IMMEDIATE", diagnostics);
     if (result) { impl_->transaction = true; }
     return result;
 }
 
 SaveResult<void> SaveDatabase::WriteChunk(const ChunkArchive& chunk, Diagnostics* diagnostics) {
-    if (!impl_) { return Failure(SaveError::not_open, "Database is not open", diagnostics); }
-    if (!impl_->transaction) { return Failure(SaveError::invalid_state, "No active transaction", diagnostics); }
+    if (!impl_) { return Failure(SaveError::NotOpen, "Database is not open", diagnostics); }
+    if (!impl_->transaction) { return Failure(SaveError::InvalidState, "No active transaction", diagnostics); }
     Vector<PersistentId> ids;
     if (!ValidateChunk(chunk, UINT64_MAX, ids)) {
         impl_->Rollback();
-        return Failure(SaveError::invalid_data, "Invalid chunk, ownership, IDs or excessive item depth", diagnostics);
+        return Failure(SaveError::InvalidData, "Invalid chunk, ownership, IDs or excessive item depth", diagnostics);
     }
     const String payload = EncodeChunk(chunk);
     auto* db = impl_->connection.value;
@@ -934,11 +934,11 @@ SaveResult<void> SaveDatabase::WriteChunk(const ChunkArchive& chunk, Diagnostics
 }
 
 SaveResult<void> SaveDatabase::WriteSnapshot(const SaveSnapshot& snapshot, Diagnostics* diagnostics) {
-    if (!impl_) { return Failure(SaveError::not_open, "Database is not open", diagnostics); }
-    if (!impl_->transaction) { return Failure(SaveError::invalid_state, "No active transaction", diagnostics); }
+    if (!impl_) { return Failure(SaveError::NotOpen, "Database is not open", diagnostics); }
+    if (!impl_->transaction) { return Failure(SaveError::InvalidState, "No active transaction", diagnostics); }
     if (snapshot.generationVersion != 1 || !ValidSnapshot(snapshot)) {
         impl_->Rollback();
-        return Failure(snapshot.generationVersion != 1 ? SaveError::unsupported_version : SaveError::invalid_data,
+        return Failure(snapshot.generationVersion != 1 ? SaveError::UnsupportedVersion : SaveError::InvalidData,
             "Invalid snapshot or unsupported generation version", diagnostics);
     }
     const String payload = EncodeSnapshot(snapshot);
@@ -954,8 +954,8 @@ SaveResult<void> SaveDatabase::WriteSnapshot(const SaveSnapshot& snapshot, Diagn
 }
 
 SaveResult<void> SaveDatabase::Commit(Diagnostics* diagnostics) {
-    if (!impl_) { return Failure(SaveError::not_open, "Database is not open", diagnostics); }
-    if (!impl_->transaction) { return Failure(SaveError::invalid_state, "No active transaction", diagnostics); }
+    if (!impl_) { return Failure(SaveError::NotOpen, "Database is not open", diagnostics); }
+    if (!impl_->transaction) { return Failure(SaveError::InvalidState, "No active transaction", diagnostics); }
     auto snapshot = ReadSnapshot(impl_->connection.value, diagnostics);
     if (!snapshot) {
         impl_->Rollback();

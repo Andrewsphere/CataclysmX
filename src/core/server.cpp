@@ -383,7 +383,7 @@ SaveResult<eastl::unique_ptr<Server>> Server::LoadSave(const char* path, Diagnos
         if (diagnostics) {
             diagnostics->message = "Invalid server session";
         }
-        return eastl::unexpected(SaveError::invalid_data);
+        return eastl::unexpected(SaveError::InvalidData);
     }
     server->bubbleCenter_ = ChunkOf(session.playerPosition);
     server->active_radius_ = session.activeRadius;
@@ -402,7 +402,7 @@ SaveResult<eastl::unique_ptr<Server>> Server::LoadSave(const char* path, Diagnos
         if (diagnostics) {
             diagnostics->message = "Saved player does not match server session";
         }
-        return eastl::unexpected(SaveError::invalid_data);
+        return eastl::unexpected(SaveError::InvalidData);
     }
     server->tick_ = session.tick;
     server->rng_state_ = session.rngState;

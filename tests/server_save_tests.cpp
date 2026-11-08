@@ -167,7 +167,7 @@ TEST_CASE("Server manual checkpoints reset autosave cadence and rejected command
     "[server][save][autosave]") {
     SaveFile file;
     Server server;
-    CHECK(server.Save() == eastl::unexpected(SaveError::not_open));
+    CHECK(server.Save() == eastl::unexpected(SaveError::NotOpen));
     server.SetAutosaveInterval(2);
     REQUIRE(server.Send({}).advanced); // Unattached autosave is ignored.
     REQUIRE(server.Send({}).advanced);
@@ -214,7 +214,7 @@ TEST_CASE("Failed autosave preserves successful gameplay and retries dirty state
         CHECK(result.advanced);
         CHECK(result.tick == 3);
         REQUIRE(result.storageError);
-        CHECK(*result.storageError == SaveError::busy);
+        CHECK(*result.storageError == SaveError::Busy);
         CHECK(ReadSession(file).tick == 0);
         const auto failed = server.Send({CommandKind::move, 0, 0});
         CHECK_FALSE(failed.advanced);
@@ -223,7 +223,7 @@ TEST_CASE("Failed autosave preserves successful gameplay and retries dirty state
         const auto retry = server.Send({});
         CHECK(retry.advanced);
         REQUIRE(retry.storageError);
-        CHECK(*retry.storageError == SaveError::busy);
+        CHECK(*retry.storageError == SaveError::Busy);
         lock.Exec("ROLLBACK");
     }
     const auto retry = server.Send({});
@@ -263,7 +263,7 @@ TEST_CASE("Streaming movement preflights the full future bubble before moving or
     CHECK_FALSE(result.advanced);
     CHECK(result.tick == 0);
     REQUIRE(result.storageError);
-    CHECK(*result.storageError == SaveError::invalid_data);
+    CHECK(*result.storageError == SaveError::InvalidData);
     CHECK(server.GetPlayer() == player);
     CHECK(world.GetActor(player)->position == TileCoord{15, 0});
     CHECK(world.GetActor(player)->turns == 0);
@@ -316,7 +316,7 @@ TEST_CASE("Server load rejects unsupported schema and invalid or missing session
         Diagnostics diagnostics;
         const auto result = Server::LoadSave(file.path.c_str(), &diagnostics);
         REQUIRE_FALSE(result);
-        CHECK(result.error() == SaveError::unsupported_version);
+        CHECK(result.error() == SaveError::UnsupportedVersion);
         CHECK_FALSE(diagnostics.message.empty());
     }
     SECTION("Malformed session") {
@@ -324,7 +324,7 @@ TEST_CASE("Server load rejects unsupported schema and invalid or missing session
         raw.Exec("UPDATE world_state SET payload='{}'");
         const auto result = Server::LoadSave(file.path.c_str());
         REQUIRE_FALSE(result);
-        CHECK(result.error() == SaveError::invalid_data);
+        CHECK(result.error() == SaveError::InvalidData);
     }
     SECTION("Valid World checkpoint without a session player") {
         SaveDatabase database;
@@ -336,7 +336,7 @@ TEST_CASE("Server load rejects unsupported schema and invalid or missing session
         Diagnostics diagnostics;
         const auto result = Server::LoadSave(file.path.c_str(), &diagnostics);
         REQUIRE_FALSE(result);
-        CHECK(result.error() == SaveError::invalid_data);
+        CHECK(result.error() == SaveError::InvalidData);
         CHECK_FALSE(diagnostics.message.empty());
     }
 }

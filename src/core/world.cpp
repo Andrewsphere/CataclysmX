@@ -499,19 +499,19 @@ public:
         if (!ValidPosition(session.playerPosition) || session.activeRadius < 0
             || session.residentRadius < session.activeRadius
             || !ValidRegion({ChunkOf(session.playerPosition), session.residentRadius})) {
-            return SaveFailure(SaveError::invalid_data, "Invalid session region", diagnostics);
+            return SaveFailure(SaveError::InvalidData, "Invalid session region", diagnostics);
         }
         if (session.player == 0) {
             return {}; // Headless/generic worlds have no authoritative player.
         }
         if (session.player >= next_id) {
-            return SaveFailure(SaveError::invalid_data, "Invalid session player ID", diagnostics);
+            return SaveFailure(SaveError::InvalidData, "Invalid session player ID", diagnostics);
         }
         if (const Actor* player = Live(actors, FindActor(session.player))) {
             if (player->player && player->position == session.playerPosition) {
                 return {};
             }
-            return SaveFailure(SaveError::invalid_data, "Session player does not match world", diagnostics);
+            return SaveFailure(SaveError::InvalidData, "Session player does not match world", diagnostics);
         }
         const ChunkCoord position = ChunkOf(session.playerPosition);
         const auto matches = [&session](const Archive& archive) {
@@ -524,7 +524,7 @@ public:
         for (const Archive& archive : archives) {
             if (archive.position == position) {
                 return matches(archive) ? SaveResult<void>{}
-                    : SaveFailure(SaveError::invalid_data, "Session player missing from archive", diagnostics);
+                    : SaveFailure(SaveError::InvalidData, "Session player missing from archive", diagnostics);
             }
         }
         // A loaded chunk is authoritative even if the previous disk row has a player.
@@ -541,7 +541,7 @@ public:
                 }
             }
         }
-        return SaveFailure(SaveError::invalid_data, "Session player missing from world", diagnostics);
+        return SaveFailure(SaveError::InvalidData, "Session player missing from world", diagnostics);
     }
 
     SaveResult<void> Checkpoint(SaveDatabase& target, const SessionState& session,
@@ -659,7 +659,7 @@ SaveResult<void> World::ReconcileChunks(Diagnostics* diagnostics) {
     }
     for (const Archive& archive : impl_->archives) {
         if (!ValidateArchive(archive, impl_->next_id, ids)) {
-            return SaveFailure(SaveError::invalid_data, "Invalid RAM chunk archive", diagnostics);
+            return SaveFailure(SaveError::InvalidData, "Invalid RAM chunk archive", diagnostics);
         }
     }
     if (impl_->database) {
@@ -676,14 +676,14 @@ SaveResult<void> World::ReconcileChunks(Diagnostics* diagnostics) {
             if (*saved) {
                 if ((**saved).position != entry.position
                     || !ValidateArchive(**saved, impl_->next_id, ids)) {
-                    return SaveFailure(SaveError::invalid_data, "Invalid disk chunk archive", diagnostics);
+                    return SaveFailure(SaveError::InvalidData, "Invalid disk chunk archive", diagnostics);
                 }
                 staged.push_back(eastl::move(**saved));
             }
         }
     }
     if (!UniqueIds(ids)) {
-        return SaveFailure(SaveError::invalid_data, "Duplicate persistent ID in incoming chunks", diagnostics);
+        return SaveFailure(SaveError::InvalidData, "Duplicate persistent ID in incoming chunks", diagnostics);
     }
     // No live state, activity flags, archives, or keys change before this point.
     for (auto current = impl_->chunks.begin(); current != impl_->chunks.end();) {
@@ -730,10 +730,10 @@ SaveResult<void> World::ReconcileChunks(Diagnostics* diagnostics) {
 SaveResult<void> World::CreateSave(const char* path, const SessionState& session,
     Diagnostics* diagnostics) {
     if (impl_->database) {
-        return SaveFailure(SaveError::invalid_state, "World already has an attached save", diagnostics);
+        return SaveFailure(SaveError::InvalidState, "World already has an attached save", diagnostics);
     }
     if (!CheckInvariants()) {
-        return SaveFailure(SaveError::invalid_data, "Invalid world state", diagnostics);
+        return SaveFailure(SaveError::InvalidData, "Invalid world state", diagnostics);
     }
     if (auto result = impl_->ValidateSession(session, nullptr, diagnostics); !result) {
         return result;
@@ -753,8 +753,8 @@ SaveResult<SessionState> World::LoadSave(const char* path, Diagnostics* diagnost
     if (impl_->database || !impl_->requests.empty() || !impl_->actors.empty()
         || !impl_->items.empty() || !impl_->objects.empty() || !impl_->chunks.empty()
         || !impl_->archives.empty() || !impl_->dirtyChunks.empty() || impl_->next_id != 1) {
-        SaveFailure(SaveError::invalid_state, "Loading requires a pristine world", diagnostics);
-        return eastl::unexpected(SaveError::invalid_state);
+        SaveFailure(SaveError::InvalidState, "Loading requires a pristine world", diagnostics);
+        return eastl::unexpected(SaveError::InvalidState);
     }
     auto database = eastl::make_unique<SaveDatabase>();
     auto snapshot = database->Open(path, diagnostics);
@@ -763,7 +763,7 @@ SaveResult<SessionState> World::LoadSave(const char* path, Diagnostics* diagnost
     }
     if (snapshot->generationVersion != 1 || snapshot->nextId == 0) {
         const SaveError error = snapshot->generationVersion != 1
-            ? SaveError::unsupported_version : SaveError::invalid_data;
+            ? SaveError::UnsupportedVersion : SaveError::InvalidData;
         SaveFailure(error, "Invalid world generation version or next persistent ID", diagnostics);
         return eastl::unexpected(error);
     }
@@ -781,10 +781,10 @@ SaveResult<SessionState> World::LoadSave(const char* path, Diagnostics* diagnost
 
 SaveResult<void> World::Save(const SessionState& session, Diagnostics* diagnostics) {
     if (!impl_->database) {
-        return SaveFailure(SaveError::not_open, "World has no attached save", diagnostics);
+        return SaveFailure(SaveError::NotOpen, "World has no attached save", diagnostics);
     }
     if (!CheckInvariants()) {
-        return SaveFailure(SaveError::invalid_data, "Invalid world state", diagnostics);
+        return SaveFailure(SaveError::InvalidData, "Invalid world state", diagnostics);
     }
     return impl_->Checkpoint(*impl_->database, session, diagnostics);
 }

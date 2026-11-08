@@ -6,13 +6,13 @@
 namespace cataclysmx {
 
 enum class SaveError {
-    io,
-    busy,
-    invalid_data,
-    unsupported_version,
-    already_exists,
-    invalid_state,
-    not_open
+    Io,
+    Busy,
+    InvalidData,
+    UnsupportedVersion,
+    AlreadyExists,
+    InvalidState,
+    NotOpen
 };
 
 template<class T>

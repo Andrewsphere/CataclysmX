@@ -179,14 +179,14 @@ TEST_CASE("World retains unloaded archives until checkpoint then reloads from di
     CHECK(world.GetItem(child) == nullptr);
     auto invalid = session;
     invalid.playerPosition = {2, 1};
-    CHECK(world.Save(invalid) == eastl::unexpected(SaveError::invalid_data));
+    CHECK(world.Save(invalid) == eastl::unexpected(SaveError::InvalidData));
     CHECK(world.ArchivedChunkCount() == 1);
     {
         SaveDatabase competing;
         const auto snapshot = Take(competing.Open(files.database.c_str()));
         REQUIRE(competing.Begin());
         REQUIRE(competing.WriteSnapshot(snapshot)); // Hold an actual SQLite writer lock.
-        CHECK(world.Save(session) == eastl::unexpected(SaveError::busy));
+        CHECK(world.Save(session) == eastl::unexpected(SaveError::Busy));
         CHECK(world.ArchivedChunkCount() == 1);
         CHECK(world.LoadedChunks().empty());
         CHECK(world.GetActor(actor) == nullptr);
@@ -270,23 +270,23 @@ TEST_CASE("World checkpoints both sides of cross chunk moves and ownership chang
 TEST_CASE("World save rejects invalid attachment state and session without mutation", "[world][save]") {
     SaveDirectory files;
     World world;
-    CHECK(world.Save({}) == eastl::unexpected(SaveError::not_open));
+    CHECK(world.Save({}) == eastl::unexpected(SaveError::NotOpen));
     const auto request = Load(world);
     const auto actor = Take(world.CreateActor({0, 0}, true));
     const auto id = world.GetActor(actor)->id;
     SessionState session;
     session.player = id;
     session.playerPosition = {1, 0};
-    CHECK(world.CreateSave(files.database.c_str(), session) == eastl::unexpected(SaveError::invalid_data));
+    CHECK(world.CreateSave(files.database.c_str(), session) == eastl::unexpected(SaveError::InvalidData));
     CHECK_FALSE(world.HasSave());
     session.playerPosition = {0, 0};
     REQUIRE(world.CreateSave(files.database.c_str(), session));
-    CHECK(world.CreateSave(files.database.c_str(), session) == eastl::unexpected(SaveError::invalid_state));
-    CHECK(world.LoadSave(files.database.c_str()) == eastl::unexpected(SaveError::invalid_state));
+    CHECK(world.CreateSave(files.database.c_str(), session) == eastl::unexpected(SaveError::InvalidState));
+    CHECK(world.LoadSave(files.database.c_str()) == eastl::unexpected(SaveError::InvalidState));
     CHECK(world.GetActor(actor)->id == id);
     World requested;
     Take(requested.RequestChunks({{0, 0}, 0}, LoadMode::active));
-    CHECK(requested.LoadSave(files.database.c_str()) == eastl::unexpected(SaveError::invalid_state));
+    CHECK(requested.LoadSave(files.database.c_str()) == eastl::unexpected(SaveError::InvalidState));
     CHECK_FALSE(requested.HasSave());
     World pristine;
     CHECK_FALSE(pristine.LoadSave((files.directory / "missing.sqlite").string().c_str()));
@@ -383,7 +383,7 @@ TEST_CASE("Failed reconciliation preserves live keys activity and loaded set", "
     REQUIRE(world.GetActor(actor));
     REQUIRE(world.UpdateRequest(request, {{1, 0}, 0}, LoadMode::resident));
     Diagnostics diagnostics;
-    CHECK(world.ReconcileChunks(&diagnostics) == eastl::unexpected(SaveError::invalid_data));
+    CHECK(world.ReconcileChunks(&diagnostics) == eastl::unexpected(SaveError::InvalidData));
     CHECK_FALSE(diagnostics.message.empty());
     CHECK(world.LoadedChunks() == Vector<ChunkCoord>{{0, 0}});
     CHECK(world.IsActive({0, 0}));
@@ -392,7 +392,7 @@ TEST_CASE("Failed reconciliation preserves live keys activity and loaded set", "
     CHECK(world.ArchivedChunkCount() == 0);
     CHECK(world.CheckInvariants());
     // Retry still reads the invalid row rather than silently generating terrain.
-    CHECK(world.ReconcileChunks() == eastl::unexpected(SaveError::invalid_data));
+    CHECK(world.ReconcileChunks() == eastl::unexpected(SaveError::InvalidData));
     REQUIRE(world.UpdateRequest(request, {{0, 0}, 0}, LoadMode::resident));
     REQUIRE(world.ReconcileChunks());
     CHECK_FALSE(world.IsActive({0, 0}));
@@ -412,7 +412,7 @@ TEST_CASE("Reconciliation validates all staged disk chunks before activity chang
     REQUIRE(world.UpdateRequest(origin, {{0, 0}, 0}, LoadMode::resident));
     Take(world.RequestChunks({{1, 0}, 0}, LoadMode::active));
     Take(world.RequestChunks({{2, 0}, 0}, LoadMode::active));
-    CHECK(world.ReconcileChunks() == eastl::unexpected(SaveError::invalid_data));
+    CHECK(world.ReconcileChunks() == eastl::unexpected(SaveError::InvalidData));
     CHECK(world.LoadedChunks() == Vector<ChunkCoord>{{0, 0}});
     CHECK(world.IsActive({0, 0}));
     CHECK(world.FindActor(1) == actor);
@@ -433,7 +433,7 @@ TEST_CASE("Incoming disk chunks cannot alias IDs in pending RAM archives", "[wor
     REQUIRE(world.ReconcileChunks());
     REQUIRE(world.ArchivedChunkCount() == 1);
     Take(world.RequestChunks({{1, 0}, 0}, LoadMode::active));
-    CHECK(world.ReconcileChunks() == eastl::unexpected(SaveError::invalid_data));
+    CHECK(world.ReconcileChunks() == eastl::unexpected(SaveError::InvalidData));
     CHECK(world.LoadedChunks().empty());
     CHECK(world.ArchivedChunkCount() == 1);
     CHECK(world.CheckInvariants());

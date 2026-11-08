@@ -22,7 +22,7 @@ Build a small, deterministic C++23 roguelike inspired by Cataclysm: Bright Night
 - Keep simulation deterministic and independent of UI, networking, and wall-clock time. Pass RNG/time explicitly, define iteration/order semantics, and support headless tests and replay.
 - Avoid unnecessary abstractions, macros, implicit conversions, and framework-like code. Each change should preserve module boundaries and include focused tests; optimize only after measurement.
 - Keep third-party libraries behind narrow subsystem boundaries. Prefer EASTL for internal containers and vocabulary types. Use yyjson only in content loading, ENet only in networking, and terminal libraries only in frontends. Never expose third-party implementation details through simulation APIs unless explicitly justified.
-- Use PascalCase for types, methods, and functions.
+- Use PascalCase for types, methods, functions and enum members.
 - Use camelCase for variables, parameters, and fields.
 - Use a trailing underscore (camelCase_) for private and protected data members.
 - Do not use trailing underscores for public fields, including fields of simple value types and component structs.

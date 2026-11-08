@@ -103,7 +103,7 @@ void Replace(std::string& text, const char* before, const char* after) {
 TEST_CASE("Save database refuses existing files and never creates on Open", "[save][database]") {
     SaveFile file;
     SaveDatabase database;
-    CHECK(database.Open(file.path.c_str()) == eastl::unexpected(SaveError::io));
+    CHECK(database.Open(file.path.c_str()) == eastl::unexpected(SaveError::Io));
     CHECK_FALSE(std::filesystem::exists(file.path));
     {
         std::ofstream empty(file.path, std::ios::binary);
@@ -111,11 +111,11 @@ TEST_CASE("Save database refuses existing files and never creates on Open", "[sa
         empty.close();
         REQUIRE(empty.good());
     }
-    CHECK(database.Create(file.path.c_str()) == eastl::unexpected(SaveError::already_exists));
+    CHECK(database.Create(file.path.c_str()) == eastl::unexpected(SaveError::AlreadyExists));
     CHECK(std::filesystem::file_size(file.path) == 0);
-    CHECK(database.Open(file.path.c_str()) == eastl::unexpected(SaveError::invalid_data));
-    CHECK(database.Begin() == eastl::unexpected(SaveError::not_open));
-    CHECK(database.Create(file.directory.string().c_str()) == eastl::unexpected(SaveError::already_exists));
+    CHECK(database.Open(file.path.c_str()) == eastl::unexpected(SaveError::InvalidData));
+    CHECK(database.Begin() == eastl::unexpected(SaveError::NotOpen));
+    CHECK(database.Create(file.directory.string().c_str()) == eastl::unexpected(SaveError::AlreadyExists));
 }
 
 TEST_CASE("Save database stores nested standard JSON and round trips full width values", "[save][database]") {
@@ -128,7 +128,7 @@ TEST_CASE("Save database stores nested standard JSON and round trips full width 
     {
         SaveDatabase database;
         REQUIRE(database.Create(file.path.c_str()));
-        CHECK(database.WriteChunk(chunk) == eastl::unexpected(SaveError::invalid_state));
+        CHECK(database.WriteChunk(chunk) == eastl::unexpected(SaveError::InvalidState));
         REQUIRE(database.Begin());
         REQUIRE(database.WriteChunk(chunk));
         REQUIRE(database.WriteSnapshot(snapshot));
@@ -180,8 +180,8 @@ TEST_CASE("Save database rolls back failed checkpoints including previously writ
     auto bad = SampleSnapshot();
     bad.nextId = 7; // ID 7 is present: only full checkpoint validation can reject it.
     REQUIRE(database.WriteSnapshot(bad));
-    CHECK(database.Commit() == eastl::unexpected(SaveError::invalid_data));
-    CHECK(database.Commit() == eastl::unexpected(SaveError::invalid_state));
+    CHECK(database.Commit() == eastl::unexpected(SaveError::InvalidData));
+    CHECK(database.Commit() == eastl::unexpected(SaveError::InvalidState));
     auto original = database.ReadChunk({0, 0}, 8);
     REQUIRE(original);
     REQUIRE(*original);
@@ -190,8 +190,8 @@ TEST_CASE("Save database rolls back failed checkpoints including previously writ
     REQUIRE(database.Begin());
     REQUIRE(database.WriteChunk(chunk));
     chunk.items[0].owner = 999;
-    CHECK(database.WriteChunk(chunk) == eastl::unexpected(SaveError::invalid_data));
-    CHECK(database.Commit() == eastl::unexpected(SaveError::invalid_state));
+    CHECK(database.WriteChunk(chunk) == eastl::unexpected(SaveError::InvalidData));
+    CHECK(database.Commit() == eastl::unexpected(SaveError::InvalidState));
     original = database.ReadChunk({0, 0}, 8);
     REQUIRE(original);
     REQUIRE(*original);
@@ -218,7 +218,7 @@ TEST_CASE("Save database reports writer and commit contention as busy", "[save][
     REQUIRE(database.Open(file.path.c_str()));
     RawDatabase lock(file.path.c_str());
     lock.Exec("BEGIN IMMEDIATE");
-    CHECK(database.Begin() == eastl::unexpected(SaveError::busy));
+    CHECK(database.Begin() == eastl::unexpected(SaveError::Busy));
     lock.Exec("ROLLBACK");
 
     lock.Exec("BEGIN; SELECT * FROM chunks");
@@ -226,7 +226,7 @@ TEST_CASE("Save database reports writer and commit contention as busy", "[save][
     auto chunk = SampleChunk();
     chunk.tiles[0].damage = 90;
     REQUIRE(database.WriteChunk(chunk));
-    CHECK(database.Commit() == eastl::unexpected(SaveError::busy));
+    CHECK(database.Commit() == eastl::unexpected(SaveError::Busy));
     lock.Exec("ROLLBACK");
     auto original = database.ReadChunk({0, 0}, 8);
     REQUIRE(original);
@@ -250,8 +250,8 @@ TEST_CASE("Save database rolls back earlier SQL writes after a SQLite failure", 
     auto chunk = SampleChunk();
     chunk.tiles[0].damage = 73;
     REQUIRE(database.WriteChunk(chunk));
-    CHECK(database.WriteSnapshot(SampleSnapshot()) == eastl::unexpected(SaveError::invalid_data));
-    CHECK(database.Commit() == eastl::unexpected(SaveError::invalid_state));
+    CHECK(database.WriteSnapshot(SampleSnapshot()) == eastl::unexpected(SaveError::InvalidData));
+    CHECK(database.Commit() == eastl::unexpected(SaveError::InvalidState));
     auto original = database.ReadChunk({0, 0}, 8);
     REQUIRE(original);
     REQUIRE(*original);
@@ -275,7 +275,7 @@ TEST_CASE("Save database rejects unknown versions and incomplete or extended sch
         SECTION("old version") { raw.Exec("UPDATE metadata SET format_version=0"); }
     }
     SaveDatabase database;
-    CHECK(database.Open(file.path.c_str()) == eastl::unexpected(SaveError::unsupported_version));
+    CHECK(database.Open(file.path.c_str()) == eastl::unexpected(SaveError::UnsupportedVersion));
 }
 
 TEST_CASE("Save database rejects damaged metadata and schemas", "[save][database]") {
@@ -290,7 +290,7 @@ TEST_CASE("Save database rejects damaged metadata and schemas", "[save][database
         SECTION("malformed chunk") { raw.Exec("UPDATE chunks SET payload='{}'"); }
     }
     SaveDatabase database;
-    CHECK(database.Open(file.path.c_str()) == eastl::unexpected(SaveError::invalid_data));
+    CHECK(database.Open(file.path.c_str()) == eastl::unexpected(SaveError::InvalidData));
 }
 
 TEST_CASE("Save database strictly validates nested JSON and coordinates", "[save][database]") {
@@ -324,19 +324,19 @@ TEST_CASE("Save database strictly validates nested JSON and coordinates", "[save
         raw.SetText("UPDATE chunks SET payload=?1", payload);
     }
     SaveDatabase database;
-    CHECK(database.Open(file.path.c_str()) == eastl::unexpected(SaveError::invalid_data));
+    CHECK(database.Open(file.path.c_str()) == eastl::unexpected(SaveError::InvalidData));
 }
 
 TEST_CASE("Save database validates session, counters and generator version", "[save][database]") {
     SaveFile file;
     Populate(file.path.c_str());
-    SaveError expected = SaveError::invalid_data;
+    SaveError expected = SaveError::InvalidData;
     {
         RawDatabase raw(file.path.c_str());
         auto payload = raw.Text("SELECT payload FROM world_state");
         SECTION("unknown generator") {
             Replace(payload, "\"generation_version\":1", "\"generation_version\":2");
-            expected = SaveError::unsupported_version;
+            expected = SaveError::UnsupportedVersion;
         }
         SECTION("numeric counter") { Replace(payload, "\"tick\":\"18446744073709551615\"", "\"tick\":1"); }
         SECTION("invalid radius") { Replace(payload, "\"resident_radius\":2", "\"resident_radius\":9"); }
@@ -358,7 +358,7 @@ TEST_CASE("Save database rejects cross chunk duplicate IDs on Open and Commit", 
         REQUIRE(database.Open(file.path.c_str()));
         REQUIRE(database.Begin());
         REQUIRE(database.WriteChunk(SampleChunk({1, 0})));
-        CHECK(database.Commit() == eastl::unexpected(SaveError::invalid_data));
+        CHECK(database.Commit() == eastl::unexpected(SaveError::InvalidData));
         auto absent = database.ReadChunk({1, 0}, 8);
         REQUIRE(absent);
         CHECK_FALSE(*absent);
@@ -376,7 +376,7 @@ TEST_CASE("Save database rejects cross chunk duplicate IDs on Open and Commit", 
             raw.SetText("INSERT INTO chunks(x,z,payload) VALUES(1,0,?1)", payload);
         }
         SaveDatabase database;
-        CHECK(database.Open(file.path.c_str()) == eastl::unexpected(SaveError::invalid_data));
+        CHECK(database.Open(file.path.c_str()) == eastl::unexpected(SaveError::InvalidData));
     }
 }
 
@@ -401,7 +401,7 @@ TEST_CASE("Save database bounds containment depth on encode and decode", "[save]
     CHECK((**loaded).items.size() == 64);
     REQUIRE(database.Begin());
     chunk.items.push_back({65, ItemKind::backpack, LocationKind::item, {}, 64});
-    CHECK(database.WriteChunk(chunk) == eastl::unexpected(SaveError::invalid_data));
+    CHECK(database.WriteChunk(chunk) == eastl::unexpected(SaveError::InvalidData));
     {
         RawDatabase raw(file.path.c_str());
         auto payload = raw.Text("SELECT payload FROM chunks");
@@ -409,9 +409,9 @@ TEST_CASE("Save database bounds containment depth on encode and decode", "[save]
             "\"id\":\"64\",\"kind\":\"backpack\",\"contents\":[{\"id\":\"65\",\"kind\":\"backpack\",\"contents\":[]}]");
         raw.SetText("UPDATE chunks SET payload=?1", payload);
     }
-    CHECK(database.ReadChunk({0, 0}, 100) == eastl::unexpected(SaveError::invalid_data));
+    CHECK(database.ReadChunk({0, 0}, 100) == eastl::unexpected(SaveError::InvalidData));
     SaveDatabase reopened;
-    CHECK(reopened.Open(file.path.c_str()) == eastl::unexpected(SaveError::invalid_data));
+    CHECK(reopened.Open(file.path.c_str()) == eastl::unexpected(SaveError::InvalidData));
 }
 
 TEST_CASE("Save database validates flat archive owners before encoding", "[save][database]") {
@@ -433,8 +433,8 @@ TEST_CASE("Save database validates flat archive owners before encoding", "[save]
     SECTION("unknown location") { chunk.items[0].location = static_cast<LocationKind>(255); }
     SECTION("unknown terrain") { chunk.tiles[0].terrain = static_cast<Terrain>(255); }
     REQUIRE(database.Begin());
-    CHECK(database.WriteChunk(chunk) == eastl::unexpected(SaveError::invalid_data));
-    CHECK(database.Commit() == eastl::unexpected(SaveError::invalid_state));
+    CHECK(database.WriteChunk(chunk) == eastl::unexpected(SaveError::InvalidData));
+    CHECK(database.Commit() == eastl::unexpected(SaveError::InvalidState));
 }
 
 TEST_CASE("Save database distinguishes absent chunks from corrupt payloads after opening", "[save][database]") {
@@ -446,7 +446,7 @@ TEST_CASE("Save database distinguishes absent chunks from corrupt payloads after
         RawDatabase raw(file.path.c_str());
         raw.Exec("UPDATE chunks SET payload='null'");
     }
-    CHECK(database.ReadChunk({0, 0}, 8) == eastl::unexpected(SaveError::invalid_data));
+    CHECK(database.ReadChunk({0, 0}, 8) == eastl::unexpected(SaveError::InvalidData));
     auto absent = database.ReadChunk({2, 2}, 8);
     REQUIRE(absent);
     CHECK_FALSE(*absent);
@@ -458,7 +458,7 @@ TEST_CASE("Save database creation leaves snapshot initialization to the first ch
         SaveDatabase database;
         REQUIRE(database.Create(file.path.c_str()));
         REQUIRE(database.Begin());
-        CHECK(database.Commit() == eastl::unexpected(SaveError::invalid_data));
+        CHECK(database.Commit() == eastl::unexpected(SaveError::InvalidData));
         REQUIRE(database.Begin());
         REQUIRE(database.WriteSnapshot(SaveSnapshot{}));
         REQUIRE(database.Commit());
@@ -481,7 +481,7 @@ TEST_CASE("Save database removes abandoned creation and permits same path retry"
         REQUIRE(database.Create(file.path.c_str()));
         REQUIRE(std::filesystem::exists(file.path));
         SaveDatabase observer;
-        CHECK(observer.Open(file.path.c_str()) == eastl::unexpected(SaveError::invalid_data));
+        CHECK(observer.Open(file.path.c_str()) == eastl::unexpected(SaveError::InvalidData));
         CHECK(std::filesystem::exists(file.path));
         SECTION("schema only") {}
         SECTION("unfinished first checkpoint") {
@@ -492,7 +492,7 @@ TEST_CASE("Save database removes abandoned creation and permits same path retry"
         SECTION("failed first commit") {
             REQUIRE(database.Begin());
             REQUIRE(database.WriteChunk(SampleChunk()));
-            CHECK(database.Commit() == eastl::unexpected(SaveError::invalid_data));
+            CHECK(database.Commit() == eastl::unexpected(SaveError::InvalidData));
         }
     }
     CHECK_FALSE(std::filesystem::exists(file.path));
@@ -511,7 +511,7 @@ TEST_CASE("Save database removes creation after a failed first write", "[save][d
         REQUIRE(database.WriteChunk(SampleChunk()));
         auto invalid = SampleSnapshot();
         invalid.nextId = 0;
-        CHECK(database.WriteSnapshot(invalid) == eastl::unexpected(SaveError::invalid_data));
+        CHECK(database.WriteSnapshot(invalid) == eastl::unexpected(SaveError::InvalidData));
         // A failure rolls back but keeps the creator usable until destruction.
         CHECK(std::filesystem::exists(file.path));
         REQUIRE(database.Begin());
@@ -538,12 +538,12 @@ TEST_CASE("Save database retains its first committed checkpoint after later fail
         auto invalid = SampleSnapshot();
         SECTION("later write failure") {
             invalid.nextId = 0;
-            CHECK(database.WriteSnapshot(invalid) == eastl::unexpected(SaveError::invalid_data));
+            CHECK(database.WriteSnapshot(invalid) == eastl::unexpected(SaveError::InvalidData));
         }
         SECTION("later commit failure") {
             invalid.nextId = 7;
             REQUIRE(database.WriteSnapshot(invalid));
-            CHECK(database.Commit() == eastl::unexpected(SaveError::invalid_data));
+            CHECK(database.Commit() == eastl::unexpected(SaveError::InvalidData));
         }
     }
     REQUIRE(std::filesystem::exists(file.path));
@@ -585,8 +585,8 @@ TEST_CASE("Save database never removes a preexisting file after failed creation 
     }
     {
         SaveDatabase database;
-        CHECK(database.Create(file.path.c_str()) == eastl::unexpected(SaveError::already_exists));
-        CHECK(database.Open(file.path.c_str()) == eastl::unexpected(SaveError::invalid_data));
+        CHECK(database.Create(file.path.c_str()) == eastl::unexpected(SaveError::AlreadyExists));
+        CHECK(database.Open(file.path.c_str()) == eastl::unexpected(SaveError::InvalidData));
     }
     REQUIRE(std::filesystem::exists(file.path));
     std::ifstream existing(file.path, std::ios::binary);
