@@ -47,13 +47,11 @@ void TickPacer::Synchronize(const Vector<PlayerReadiness>& players) {
     next.reserve(players.size());
     hasActivity_ = false;
     for (const PlayerReadiness& player : players) {
-        if (!player.ready || player.hasCommand) {
-            hasActivity_ = true;
-            continue;
-        }
+        if (!player.ready || player.hasCommand) { hasActivity_ = true; }
+        if (!player.ready) { continue; }
         if (player.speed == 0) { std::abort(); }
         Deadline deadline{player.actor, player.id,
-            ActionTicks(100, player.speed) * unitsPerTick};
+            ActionTicks(100, player.speed) * unitsPerTick, player.hasCommand};
         for (const Deadline& previous : deadlines_) {
             if (previous.actor == player.actor && previous.id == player.id) {
                 deadline.remainingUnits = previous.remainingUnits;
@@ -107,8 +105,22 @@ eastl::optional<std::uint64_t> TickPacer::NextDeadlineMicroseconds() const {
     if (IsIdle() || deadlines_.empty()) { return {}; }
     std::uint64_t minimum = maximum;
     for (const Deadline& deadline : deadlines_) {
-        if (deadline.remainingUnits < minimum) { minimum = deadline.remainingUnits; }
+        if (!deadline.hasCommand && deadline.remainingUnits < minimum) { minimum = deadline.remainingUnits; }
     }
+    if (minimum == maximum) { return {}; }
+    return DivideCeiling(minimum, settings_.ticksPerSecond);
+}
+
+eastl::optional<std::uint64_t> TickPacer::NextUnexpiredDeadlineMicroseconds() const {
+    if (IsIdle() || deadlines_.empty()) { return {}; }
+    std::uint64_t minimum = maximum;
+    for (const Deadline& deadline : deadlines_) {
+        // Expired players remain eligible for the round; waiting on them again
+        // would yield a zero-duration step while another player still has grace.
+        if (!deadline.hasCommand && deadline.remainingUnits != 0
+            && deadline.remainingUnits < minimum) { minimum = deadline.remainingUnits; }
+    }
+    if (minimum == maximum) { return {}; }
     return DivideCeiling(minimum, settings_.ticksPerSecond);
 }
 
@@ -132,9 +144,27 @@ Vector<ActorHandle> TickPacer::ExpiredPlayers() const {
     Vector<ActorHandle> result;
     if (IsIdle()) { return result; }
     for (const Deadline& deadline : deadlines_) {
-        if (deadline.remainingUnits == 0) { result.push_back(deadline.actor); }
+        if (!deadline.hasCommand && deadline.remainingUnits == 0) { result.push_back(deadline.actor); }
     }
     return result;
+}
+
+std::uint64_t TickPacer::GraceMicroseconds(ActorHandle actor) const {
+    for (const Deadline& deadline : deadlines_) {
+        if (deadline.actor == actor) {
+            return DivideCeiling(deadline.remainingUnits, settings_.ticksPerSecond);
+        }
+    }
+    return 0;
+}
+
+void TickPacer::RestartGrace(ActorHandle actor) {
+    for (auto it = deadlines_.begin(); it != deadlines_.end(); ++it) {
+        if (it->actor == actor) {
+            deadlines_.erase(it);
+            return;
+        }
+    }
 }
 
 void TickPacer::Reset() {

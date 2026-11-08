@@ -1,11 +1,50 @@
 # Server and simulation API
 
-[`Server`](../src/core/server.h) is the authoritative local single-player
-endpoint: construct it, send commands, consume value snapshots. It owns a
+[`Server`](../src/core/server.h) is the authoritative local or LAN listen-server
+endpoint: construct it, submit commands, consume value snapshots. It owns a
 [`World`](world_api.md), player, bubble requests, tick counter and RNG state.
 The application supplies elapsed time explicitly; the endpoint reads no clock.
-It remains single-player. The reusable simulation barrier and pacer support
-multiple player readiness entries for future controller integration.
+One server owns one simulation timeline for the host and up to three connected guests.
+
+## Authoritative multiplayer session
+
+`JoinPlayer(name, reconnectToken, newToken)` returns a typed `SessionResult<PlayerJoin>`.
+Names contain 1–32 bytes. A zero reconnect token creates a character using the
+caller-generated, nonzero unique `newToken`; a nonzero reconnect token resumes a
+parked character. The result is `Joining`: it cannot hold the input barrier until
+`ActivatePlayer(id)` stages a personal active/resident bubble and finds a free,
+passable spawn tile. Candidate tiles are tried in deterministic square rings,
+starting at the saved position and searching beyond the original chunk even
+with zero-radius bubbles. A destination's entire resident bubble is staged
+before relocating or unparking; a failed storage read leaves the guest Joining.
+A `DisconnectPlayer(id)` parks a guest and releases its bubble;
+host disconnect is rejected. Up to four connected players (including host) and
+32 persisted characters are supported. Parked characters retain position,
+inventory and cooldown, but neither occupy tiles nor receive timer updates.
+
+`Submit(id, PlayerInput{sequence, opportunity, command})` admits a structurally
+valid latest intent without executing it. The per-player `opportunity` is an opaque
+action-slot token; submit the current value from `ViewForPlayer` and advance the
+sequence for each accepted replacement. Invalid shape leaves the slot intact;
+reused sequences return `duplicate_input`, and an old opportunity returns
+`stale_input`. Input arriving after its grace expires is also stale, even if
+another player's longer grace still holds the round. Disconnect, including cancellation while joining, invalidates the
+old opportunity. Reconnection resets the sequence baseline to zero; opportunities
+continue increasing. Each round collects one command or an expired normal wait
+from **every currently ready active player**, then resolves in persistent-player-ID
+order. A failed command consumes its slot and gets a new opportunity at the same
+tick without renewing its grace. Expired players remain eligible while other
+ready players' deadlines run. Due objects precede the barrier, and NPCs run only
+after all ready players have committed positive-cost actions.
+
+`Update(elapsedMicroseconds).commandResults` contains each consumed input result,
+including failures, exactly once in that update. Automatic waits increment
+`skippedActions` instead. The legacy optional `commandResult` describes the host's
+buffered result. `GetPlayers()` returns roster status and grace; `ViewForPlayer`
+provides personal LOS/inventory, roster, revision, opportunity and last accepted
+sequence. `View()` delegates to the host. The revision increases on admissions,
+connection and world/pacing changes even if the simulation tick does not advance.
+Network token generation and elapsed wall time live outside this deterministic API.
 
 `Server(content, seed)` defaults to seed `42`, starts at tick `0`, and builds a small demo:
 player at `{0, 0}`, a backpack containing a bandage there, a rock at `{1, 0}`,
@@ -19,7 +58,7 @@ resolved `opens_to`/`closes_to` IDs, not special terrain names.
 
 ## Commands and tick cost
 
-`Send(Command)` returns a `CommandResult` with `outcome`, `advanced`, `tick`,
+Legacy host `Send(Command)` returns a `CommandResult` with `outcome`, `advanced`, `tick`,
 optional `storageError`, and `cost`. Gameplay outcomes are distinct from the
 world's `eastl::expected` errors.
 
@@ -44,8 +83,10 @@ action costs `ceil(baseCost * speed / 100)` ticks. Wait accepts a positive
 base cost `100`, ignoring `waitCost`. Zero wait cost is `invalid_command`.
 Positive durations always round upward to at least one tick.
 
-When ready, each success resolves its effect immediately, commits a cooldown through
-`World::ScheduleActorAction`, then calls `Update(0)`. `advanced` means **an action
+In single-player host play, `Send` admits the input and processes due object
+updates before resolving its action. A success applies immediately, commits a
+cooldown through `World::ScheduleActorAction`, then calls `Update(0)`.
+`advanced` means **an action
 was committed**, rather than that the tick necessarily changed. `cost` records
 its actual speed-scaled duration; `tick` is the resulting simulation time.
 Default uncapped, idle-pausing play fast-forwards to the next player input.
@@ -93,7 +134,7 @@ changing settings. Rate changes affect real-time conversion, not simulation
 units or already committed action durations.
 
 `Update(uint64_t elapsedMicroseconds)` returns `SessionUpdate{tick,
-skippedActions, needsInput, storageError, commandResult}`. The optional
+skippedActions, needsInput, storageError, commandResult, commandResults}`. The optional
 `commandResult` reports a buffered intent's execution outcome, action cost, and
 execution tick; that tick may precede the final update tick. It is present only
 in the update that consumes the intent, including a failed intent. Deferred world
@@ -127,7 +168,7 @@ multi-player activity/deadline rules, rounding, and transient-state details.
 
 ## Player bubble and administrative loading
 
-The bubble is centered on the player's **chunk**. Defaults are active radius
+Each connected player has a bubble centered on their **chunk**. Defaults are active radius
 `1` (a `3 × 3` square) and resident radius `2` (`5 × 5`), with active chunks
 included in the resident total. `SetBubbleRadii(active, resident)` requires
 `0 <= active <= resident <= 8` and the full resident region to fit world limits.
@@ -297,10 +338,12 @@ it refuses an existing path. `Save()` checkpoints the attached database, and
 and restoration. These APIs return typed `SaveResult` values; optional
 diagnostics provide detail. See the [save format](save_format.md). The generic
 `World` save API also supports session player ID zero; `Server` requires a real
-player. Administrative load-request handles are runtime-only; the player's
-bubble requests are recreated on load.
+player. Administrative load-request handles are runtime-only; the host bubble is
+recreated on load, while guests return parked until activated again. Checkpoints
+read guest positions from live or archived world state, including administrative
+relocations of a parked character; a parked host is an invalid session.
 
-Save format **version 3** persists actor speed and remaining cooldown, object
+Save format **version 4** persists the player roster and reconnect tokens, actor speed and remaining cooldown, object
 interval and remaining timer, simulation tick/RNG, and session pacing settings.
 A checkpoint can therefore resume mid-action or partway through an object
 interval. Pending input intents, tick credit, fractional credit, readiness snapshots, and partially

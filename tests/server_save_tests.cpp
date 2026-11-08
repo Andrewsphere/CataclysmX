@@ -20,6 +20,7 @@ T Take(eastl::expected<T, Error> result) {
     return eastl::move(*result);
 }
 
+
 struct SaveFile {
     std::filesystem::path directory;
     std::string path;
@@ -63,6 +64,7 @@ SessionState ReadSession(const SaveFile& file) {
     SaveDatabase database(TestContent());
     return Take(database.Open(file.path.c_str())).session;
 }
+
 
 void SameState(const Server& first, const Server& second) {
     const auto a = first.View();
@@ -500,10 +502,19 @@ TEST_CASE("Server load rejects unsupported schema and invalid or missing session
         REQUIRE_FALSE(result);
         CHECK(result.error() == SaveError::InvalidData);
     }
+    SECTION("Parked host is not a valid server session") {
+        RawDatabase raw(file.path.c_str());
+        raw.Exec("UPDATE chunks SET payload=json_set(payload, '$.actors[0].parked', json('true')) "
+            "WHERE x=0 AND z=0");
+        const auto result = Server::LoadSave(TestContent(), file.path.c_str());
+        REQUIRE_FALSE(result);
+        CHECK(result.error() == SaveError::InvalidData);
+    }
     SECTION("Valid World checkpoint without a session player") {
         SaveDatabase database(TestContent());
         auto snapshot = Take(database.Open(file.path.c_str()));
         snapshot.session.player = 0;
+        snapshot.session.players.clear();
         REQUIRE(database.Begin());
         REQUIRE(database.WriteSnapshot(snapshot));
         REQUIRE(database.Commit());
@@ -513,6 +524,140 @@ TEST_CASE("Server load rejects unsupported schema and invalid or missing session
         CHECK(result.error() == SaveError::InvalidData);
         CHECK_FALSE(diagnostics.Empty());
     }
+}
+
+TEST_CASE("Guest checkpoint keeps parked inventory and reconnect identity", "[server][save][multiplayer]") {
+    SaveFile file;
+    Server server(TestContent());
+    const auto joined = server.JoinPlayer("Visitor", 0, 8844);
+    REQUIRE(joined);
+    REQUIRE(server.ActivatePlayer(joined->player));
+    const ActorHandle guest = server.GetWorld().FindActor(joined->player);
+    REQUIRE(server.GetWorld().GetActor(guest));
+    const ItemHandle item = Take(server.GetWorld().CreateItem(ItemKind::bandage,
+        ItemLocation::Ground(server.GetWorld().GetActor(guest)->position)));
+    REQUIRE(server.GetWorld().TransferItem(item, ItemLocation::Carried(guest)));
+    const PersistentId itemId = server.GetWorld().GetItem(item)->id;
+    REQUIRE(server.CreateSave(file.path.c_str()));
+    auto restored = Take(Server::LoadSave(TestContent(), file.path.c_str()));
+    REQUIRE(restored->GetPlayers().size() == 2);
+    CHECK(restored->GetPlayers()[1].state == PlayerConnectionState::Parked);
+    CHECK(restored->GetPlayers()[1].id == joined->player);
+    const auto resumed = restored->JoinPlayer("Visitor", 8844, 0);
+    REQUIRE(resumed);
+    CHECK(resumed->player == joined->player);
+    REQUIRE(restored->ActivatePlayer(resumed->player));
+    const WorldView view = restored->ViewForPlayer(resumed->player);
+    REQUIRE(view.inventory.size() == 1);
+    CHECK(view.inventory[0].id == itemId);
+    CHECK(view.inventory[0].kind == ItemKind::bandage);
+    CHECK(restored->GetWorld().CheckInvariants());
+}
+
+TEST_CASE("Shuffled persisted roster resolves rounds by ID with independent opportunities",
+    "[server][save][multiplayer]") {
+    SaveFile file;
+    Server original(TestContent());
+    const auto first = original.JoinPlayer("First", 0, 801);
+    const auto second = original.JoinPlayer("Second", 0, 802);
+    REQUIRE(first);
+    REQUIRE(second);
+    REQUIRE(original.CreateSave(file.path.c_str()));
+    {
+        SaveDatabase database(TestContent());
+        auto snapshot = Take(database.Open(file.path.c_str()));
+        REQUIRE(snapshot.session.players.size() == 3);
+        eastl::swap(snapshot.session.players[0], snapshot.session.players[2]);
+        REQUIRE(database.Begin());
+        REQUIRE(database.WriteSnapshot(snapshot));
+        REQUIRE(database.Commit());
+    }
+    auto server = Take(Server::LoadSave(TestContent(), file.path.c_str()));
+    REQUIRE(server->GetPlayers().size() == 3);
+    CHECK(server->GetPlayers()[0].id == server->GetHostPlayerId());
+    REQUIRE(server->SetPacing({100, true, true}));
+    REQUIRE(server->JoinPlayer("First", 801, 0));
+    REQUIRE(server->JoinPlayer("Second", 802, 0));
+    REQUIRE(server->ActivatePlayer(first->player));
+    REQUIRE(server->ActivatePlayer(second->player));
+    const ActorHandle older = server->GetWorld().FindActor(first->player);
+    REQUIRE(server->GetWorld().ScheduleActorAction(older));
+    const PersistentId host = server->GetHostPlayerId();
+    REQUIRE(server->Submit(second->player, {1, 1, {}}).outcome == Outcome::queued);
+    REQUIRE(server->Submit(host, {1, 1, {}}).outcome == Outcome::queued);
+    const auto partial = server->Update(0);
+    REQUIRE(partial.commandResults.size() == 2);
+    CHECK(partial.commandResults[0].player == host);
+    CHECK(partial.commandResults[1].player == second->player);
+    CHECK(server->ViewForPlayer(first->player).opportunity == 1);
+    CHECK(server->ViewForPlayer(second->player).opportunity == 2);
+    REQUIRE(server->Submit(second->player, {2, 2, {}}).outcome == Outcome::queued);
+    REQUIRE(server->Submit(first->player, {1, 1, {}}).outcome == Outcome::queued);
+    REQUIRE(server->Submit(host, {2, 2, {}}).outcome == Outcome::queued);
+    const auto round = server->Update(1'000'000);
+    REQUIRE(round.commandResults.size() == 3);
+    CHECK(round.commandResults[0].player == host);
+    CHECK(round.commandResults[1].player == first->player);
+    CHECK(round.commandResults[2].player == second->player);
+}
+
+TEST_CASE("Checkpoint reads administratively moved archived parked player position",
+    "[server][save][multiplayer]") {
+    SaveFile file;
+    Server server(TestContent());
+    const auto joined = server.JoinPlayer("Guest", 0, 871);
+    REQUIRE(joined);
+    const ActorHandle guest = server.GetWorld().FindActor(joined->player);
+    const TileCoord original = server.GetWorld().GetActor(guest)->position;
+    const ChunkCoord chunk = ChunkOf(original);
+    const TileCoord moved{chunk.x * chunk_size
+        + (original.x == chunk.x * chunk_size ? 1 : 0), original.z};
+    REQUIRE(ChunkOf(original) == ChunkOf(moved));
+    REQUIRE(server.GetWorld().SetTile(moved, {TestTerrain("floor"), 0}));
+    REQUIRE(server.GetWorld().MoveActor(guest, moved));
+    REQUIRE(server.DisconnectPlayer(joined->player));
+    REQUIRE(server.SetBubbleRadii(0, 0));
+    CHECK(server.GetWorld().FindPlayerPosition(joined->player) == moved);
+    REQUIRE(server.CreateSave(file.path.c_str()));
+    const auto session = ReadSession(file);
+    REQUIRE(session.players.size() == 2);
+    CHECK(session.players[1].position == moved);
+    auto loaded = Take(Server::LoadSave(TestContent(), file.path.c_str()));
+    REQUIRE(loaded->JoinPlayer("Guest", 871, 0));
+    REQUIRE(loaded->ActivatePlayer(joined->player));
+    CHECK(loaded->ViewForPlayer(joined->player).player_position == moved);
+}
+
+TEST_CASE("Reconnect staging failure leaves parked guest joining without relocating",
+    "[server][save][multiplayer][streaming]") {
+    SaveFile file;
+    Server server(TestContent());
+    const auto joined = server.JoinPlayer("Guest", 0, 872);
+    REQUIRE(joined);
+    World& world = server.GetWorld();
+    const ActorHandle guest = world.FindActor(joined->player);
+    REQUIRE(world.SetTile({15, 1}, {TestTerrain("floor"), 0}));
+    REQUIRE(world.SetTile({16, 0}, {TestTerrain("floor"), 0}));
+    for (TileCoord wall : {TileCoord{14, 0}, TileCoord{15, 0}, TileCoord{14, 1},
+             TileCoord{14, 2}, TileCoord{15, 2}}) {
+        REQUIRE(world.SetTile(wall, {TestTerrain("wall"), 0}));
+    }
+    REQUIRE(world.MoveActor(guest, {15, 1}));
+    REQUIRE(server.DisconnectPlayer(joined->player));
+    REQUIRE(server.SetBubbleRadii(0, 0));
+    REQUIRE(world.CreateActor({15, 1}));
+    REQUIRE(server.CreateSave(file.path.c_str()));
+    {
+        RawDatabase raw(file.path.c_str());
+        raw.Exec("UPDATE chunks SET payload='{}' WHERE x=1 AND z=0");
+    }
+    REQUIRE(server.JoinPlayer("Guest", 872, 0));
+    CHECK(server.ActivatePlayer(joined->player)
+        == eastl::unexpected(SessionError::StorageFailure));
+    CHECK(server.GetPlayers()[1].state == PlayerConnectionState::Joining);
+    CHECK(world.GetActor(world.FindActor(joined->player))->parked);
+    CHECK(world.GetActor(world.FindActor(joined->player))->position == TileCoord{15, 1});
+    CHECK(world.CheckInvariants());
 }
 
 }

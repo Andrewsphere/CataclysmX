@@ -1,7 +1,7 @@
 # CataclysmX
 
-C++23 single-player roguelike foundation with a deterministic world, chunk loading,
-local authoritative server, FTXUI client, and scriptable headless client.
+C++23 roguelike with a deterministic world, chunk loading, an authoritative LAN
+server, FTXUI terminal client, and scriptable headless client.
 
 ## Play and inspect
 
@@ -16,7 +16,32 @@ Get-Content tests/scenarios/streaming.txt | ./out/build/win-msvc-debug/cataclysm
 The terminal client uses **arrows/hjkl** to move, **.** to wait, **g** to pick up,
 **d** to drop, **o then a direction** to interact, **[/]** to halve/double the
 runtime tick rate, **r** to toggle rate limiting, **p** to toggle pause-when-idle,
-and **q/Escape** to quit.
+and **q/Escape** to quit. Press **F9** for the LAN menu: **O** opens the current
+local world to LAN, **C** closes it (guests are parked), **R** refreshes the
+same-subnet browser, **1–9** joins a discovered compatible game, **j** edits the
+direct address (**Enter** accepts the edit; **Enter** again joins), **n** edits
+your name, **D** leaves a guest session, and **X** joins the entered address as
+a *new character*, replacing its saved identity after admission. A host can
+open LAN mid-game; guest input and host input both flow through authoritative
+rounds. The status shows pending actions, server receipts, players and grace.
+
+```powershell
+./out/build/win-msvc-debug/cataclysmx_game.exe --host --port 24680 --name Host
+./out/build/win-msvc-debug/cataclysmx_game.exe --discover --name Alice
+./out/build/win-msvc-debug/cataclysmx_game.exe --join 192.168.1.20:24680 --name Alice
+```
+
+`--profile <path>` selects the local reconnect-token file (default
+`cataclysmx-lan-profile.txt` in the working directory). Each endpoint has its
+own token, written on admission; a rejected reconnect keeps the saved token.
+To intentionally abandon an identity, use **X** with its address in the LAN
+menu. Keep that file if you want to resume your character after disconnect.
+The host owns world saves (`--save` or `--load`); guest profiles are not saves.
+Literal address aliases have separate profile keys: use the same hostname or
+numeric address to reconnect. A different world on the same endpoint may reject
+the old token; **X** starts a fresh character explicitly.
+Closing LAN/host exit parks guests so they can return when the same save is
+hosted again. Use matching content files at both ends.
 Press **F11** in-game for the world-generation debug menu; arrows/hjkl move its
 cursor, **HJKL** jump by region, **1–5/Tab/Shift+Tab** change layers, **+/-** zoom,
 **Home/c** recenter, **PageUp/PageDown** browse details, and **F11/Escape/q** close.
@@ -32,7 +57,7 @@ Terrain definitions live in [`data/terrain.json5`](data/terrain.json5), with UTF
 symbols, named/RGB colors, appearance fallback, passability, sight blocking, and
 door transitions. Both clients accept `--content <path>` to load another JSON5
 document. The default path points to the bundled file in this source checkout.
-See [content format and APIs](doc/content_format.md). Save V3 stores terrain
+See [content format and APIs](doc/content_format.md). Save V4 stores terrain
 string IDs and rejects older save versions; migrations are not implemented yet.
 
 The world has 16×16 XZ chunks, typed generational handles, nested item ownership,
@@ -47,6 +72,27 @@ The dependency probes remain available separately below.
 Headless scripts can set `rate <ticks-per-second>`, `limit <on|off>`,
 `idle-pause <on|off>`, and supply deterministic elapsed time with
 `elapse <microseconds>`; `wait [base-cost]` optionally sets a positive wait cost.
+Live headless networking is a separate bounded real-time mode, leaving `--script`
+deterministic and unchanged:
+
+```powershell
+./out/build/win-msvc-debug/cataclysmx_headless.exe --host --port 24680 --name Host --run-for 30000 --command "wait"
+./out/build/win-msvc-debug/cataclysmx_headless.exe --discover --run-for 1500
+./out/build/win-msvc-debug/cataclysmx_headless.exe --discover --discovery-address 127.0.0.1 --run-for 1500
+./out/build/win-msvc-debug/cataclysmx_headless.exe --join 127.0.0.1:24680 --name Alice --run-for 3000 --command "move e"
+```
+
+`--discovery-port <n>` configures discovery (default 24681);
+`--discovery-address <address>` directs queries to a host (useful for loopback
+smoke tests), while omitting it broadcasts on the local subnet. `--port <n>`
+sets the host port or the default port for `--join address` without `:port`.
+Repeated
+`--command` accepts `wait`, `pickup`, `drop`, `move n/s/e/w`, or
+`interact n/s/e/w`. Host transport continues pumping throughout `--run-for`
+without waiting on stdin. The live client prints admission, submitted sequence
+numbers and server receipts. `--profile` works here too; `--new-character`
+explicitly starts a fresh identity for `--join` and overwrites its saved token
+only after successful admission.
 
 ## Build on Windows
 
@@ -203,12 +249,13 @@ The environment guide's FTXUI decision takes precedence over the earlier Notcurs
 | Catch2 | 3.16.1 |
 | yyjson | 0.13.0 |
 | FTXUI (compiled) | 7.0.3 |
+| ENet | 1.3.18 |
 
 `vcpkg.json` pins registry commit `6fdd23fa0a9479a9f9a1c48178696f60cf39255d`.
 Transitive dependencies include EABase and fmt. unordered_dense and SlotMap are vendored
 with exact commit IDs and licenses in [`third_party/README.md`](third_party/README.md).
 `scripts/vendor.ps1` re-downloads those pinned files; normal builds use the checked-in
-copies. ENet and other deferred candidates are not required by the manifest.
+copies. ENet provides LAN transport; SQLite provides host-side saves.
 
 The project triplets enable `SPDLOG_NO_EXCEPTIONS` **while compiling spdlog**, whose
 exported target then propagates the matching definition to consumers. No overlay port

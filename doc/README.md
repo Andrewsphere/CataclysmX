@@ -12,7 +12,9 @@
   crossings, parcels/buildings, terrain materialization and debug inspection.
 - [Diagnostics](diagnostics.md): structured error causes and contextual frames.
 - [Terrain rendering](terrain_rendering.md): UTF-8 symbols, colors, and frontend behavior.
-- [Save format](save_format.md): SQLite v3, snapshots, validation and checkpoints.
+- [Save format](save_format.md): SQLite v4, snapshots, validation and checkpoints.
+- [LAN networking](networking.md): ENet hosting, joining, authoritative messages and discovery.
+- [LAN client profile](lan_profile.md): endpoint identities, typed errors and durability.
 - [Project README](../README.md): build instructions and dependencies.
 
 The public interfaces are [`world.h`](../src/core/world.h),
@@ -20,7 +22,30 @@ The public interfaces are [`world.h`](../src/core/world.h),
 [`simulation.h`](../src/core/simulation.h), in namespace `cataclysmx`.
 These pages explain contracts and usage rather than repeat every declaration.
 
-The current game is a deterministic, local single-player demo with tick
-scheduling and SQLite disk saves. Player input barriers and pacing support
-future multiplayer integration. Unloaded archives stay in memory until a
+The deterministic server supports local-only sessions and authoritative LAN
+guests, with SQLite host saves. Unloaded archives stay in memory until a
 successful checkpoint permits eviction.
+
+## LAN profile API
+
+`client/lan_profile.h` owns a bounded set of endpoint identities. `Load(path)`
+reads a versioned text file, treating a missing file as empty and rejecting a
+malformed or truncated file without changing already loaded entries.
+`Find(address, port)` returns the saved token/name for precisely that endpoint;
+`Set(identity)` replaces that endpoint only, and `Forget(address, port)` removes
+it. `Save(path)` writes an exclusively created temporary file next to the target
+and replaces the target on success. A failed write leaves the prior file intact.
+Profiles are local client credentials, separate from host SQLite game saves.
+Endpoints are bounded to 64; address/name to 255/64 bytes, preserving UTF-8 and
+forbidding control characters. Tokens are nonzero decimal unsigned 64-bit values.
+
+The terminal and live headless client load the saved token when connecting and
+persist a newly issued token as soon as the server accepts. A rejected token is
+kept, so an unavailable save cannot silently replace a character. The terminal
+LAN menu offers **X** for explicit new-character admission at its direct address.
+The terminal retains its local world until a guest join succeeds; guest views
+and commands use `LanClient` exclusively. The host retains ownership of pacing,
+saves and the local command pipeline; `LanHost::Close()` parks remote players
+before a final save. The profile API uses checked C stdio because project code
+builds without exceptions. Including the port in endpoint keys prevents token
+collisions between independent sessions on the same address.

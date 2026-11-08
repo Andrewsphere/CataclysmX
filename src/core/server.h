@@ -19,7 +19,8 @@ struct Command {
 };
 enum class Outcome {
     waited, moved, picked_up, dropped, opened, closed, toggled,
-    blocked, occupied, nothing_here, invalid_command, not_carried, unavailable, not_ready, queued
+    blocked, occupied, nothing_here, invalid_command, not_carried, unavailable, not_ready, queued,
+    stale_input, duplicate_input
 };
 const char* OutcomeMessage(Outcome outcome);
 // The demo requires floor, wall, and closed_door; floor must be passable.
@@ -35,6 +36,37 @@ struct CommandResult {
     Tick cost = 0;
 };
 
+enum class PlayerConnectionState { Parked, Joining, Active };
+struct PlayerStatus {
+    PersistentId id = 0;
+    String name;
+    PlayerConnectionState state = PlayerConnectionState::Parked;
+    bool ready = false;
+    bool commandQueued = false;
+    std::uint64_t opportunity = 1;
+    std::uint64_t graceMicroseconds = 0;
+};
+struct PlayerInput {
+    std::uint64_t sequence = 0;
+    std::uint64_t opportunity = 0;
+    Command command;
+};
+struct PlayerCommandResult {
+    PersistentId player = 0;
+    std::uint64_t sequence = 0;
+    std::uint64_t opportunity = 0;
+    CommandResult result;
+};
+enum class SessionError {
+    InvalidPlayer, InvalidName, InvalidToken, UnknownToken, AlreadyConnected,
+    Full, Unavailable, StorageFailure
+};
+template<class T> using SessionResult = eastl::expected<T, SessionError>;
+struct PlayerJoin {
+    PersistentId player = 0;
+    std::uint64_t reconnectToken = 0;
+};
+
 struct SessionUpdate {
     Tick tick = 0;
     std::uint64_t skippedActions = 0;
@@ -42,6 +74,7 @@ struct SessionUpdate {
     eastl::optional<SaveError> storageError = {};
     // Resolution of the one buffered intent, with its execution tick and cost.
     eastl::optional<CommandResult> commandResult = {};
+    Vector<PlayerCommandResult> commandResults;
 };
 
 struct ViewCell {
@@ -72,9 +105,14 @@ struct WorldView {
     std::uint32_t speed = 100;
     PacingSettings pacing{};
     bool commandQueued = false;
+    PersistentId playerId = 0;
+    std::uint64_t revision = 0;
+    std::uint64_t opportunity = 1;
+    std::uint64_t lastInputSequence = 0;
+    Vector<PlayerStatus> players;
 };
 
-// Single-player authoritative local endpoint. No transport or clock access.
+// Authoritative deterministic endpoint. No transport or clock access.
 class Server {
 public:
     explicit Server(const ContentCatalog& content, std::uint32_t seed = 42);
@@ -85,6 +123,15 @@ public:
     bool SetPacing(PacingSettings settings);
     PacingSettings GetPacing() const;
     WorldView View(int radius = 8) const;
+    SessionResult<PlayerJoin> JoinPlayer(eastl::string_view name,
+        std::uint64_t reconnectToken, std::uint64_t newToken);
+    SessionResult<void> ActivatePlayer(PersistentId player);
+    SessionResult<void> DisconnectPlayer(PersistentId player);
+    CommandResult Submit(PersistentId player, PlayerInput input);
+    PersistentId GetHostPlayerId() const;
+    Vector<PlayerStatus> GetPlayers() const;
+    WorldView ViewForPlayer(PersistentId player, int radius = 8) const;
+    std::uint64_t GetRevision() const;
     WorldResult<void> SetBubbleRadii(int active_radius, int resident_radius,
         Diagnostics* diagnostics = nullptr);
     SaveResult<void> CreateSave(const char* path, Diagnostics* diagnostics = nullptr);
@@ -115,14 +162,33 @@ private:
     std::uint64_t autosaveInterval_ = 0;
     std::uint64_t lastSaveTick_ = 0;
     TickPacer pacer_;
-    eastl::optional<Command> pendingCommand_;
+    struct PlayerSlot {
+        PersistentId id = 0;
+        String name;
+        std::uint64_t token = 0;
+        TileCoord position{};
+        PlayerConnectionState state = PlayerConnectionState::Parked;
+        LoadRequest activeRequest{};
+        LoadRequest residentRequest{};
+        ChunkCoord center{};
+        eastl::optional<PlayerInput> pending;
+        std::uint64_t opportunity = 1;
+        std::uint64_t lastSequence = 0;
+    };
+    Vector<PlayerSlot> players_;
+    std::uint64_t revision_ = 1;
+    std::uint64_t legacySequence_ = 0;
 
-    CommandResult Execute(Command command);
+    CommandResult Execute(ActorHandle handle, PlayerSlot& slot, Command command);
+    PlayerSlot* FindPlayer(PersistentId id);
+    const PlayerSlot* FindPlayer(PersistentId id) const;
+    ActorHandle PlayerActor(const PlayerSlot& slot) const;
+    SaveResult<void> UpdatePlayerBubble(PlayerSlot& slot, int activeRadius, int residentRadius,
+        Diagnostics* diagnostics = nullptr);
+    bool ResolveRound(SessionUpdate& result, const Vector<ActorHandle>& expired);
     void SynchronizePacing();
     eastl::optional<SaveError> Autosave();
     SessionState Checkpoint() const;
-    SaveResult<void> UpdateBubble(int activeRadius, int residentRadius,
-        Diagnostics* diagnostics = nullptr);
 };
 
 }

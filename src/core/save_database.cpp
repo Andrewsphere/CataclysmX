@@ -204,13 +204,33 @@ bool ValidChunk(ChunkCoord position) {
         && position.z >= -limit && position.z <= limit;
 }
 
+bool Unique(Vector<PersistentId>& ids);
+
 bool ValidSnapshot(const SaveSnapshot& snapshot) {
     const auto& session = snapshot.session;
     if (session.pacing.ticksPerSecond == 0 || snapshot.nextId == 0 || session.player >= snapshot.nextId
         || !ValidPosition(session.playerPosition) || session.activeRadius < 0
-        || session.residentRadius < session.activeRadius || session.residentRadius > 8) {
+        || session.residentRadius < session.activeRadius || session.residentRadius > 8
+        || session.players.size() > 32) {
         return false;
     }
+    Vector<PersistentId> actorIds;
+    Vector<std::uint64_t> tokens;
+    bool hostFound = false;
+    for (const SavedPlayer& player : session.players) {
+        if (player.actor == 0 || player.actor >= snapshot.nextId || !ValidPosition(player.position)
+            || player.name.empty() || player.name.size() > 32
+            || std::memchr(player.name.data(), '\0', player.name.size())
+            || (player.actor == session.player
+                && (player.position != session.playerPosition || player.reconnectToken != 0))
+            || (player.actor != session.player && player.reconnectToken == 0)) { return false; }
+        hostFound = hostFound || player.actor == session.player;
+        actorIds.push_back(player.actor);
+        if (player.reconnectToken != 0) { tokens.push_back(player.reconnectToken); }
+    }
+    eastl::sort(tokens.begin(), tokens.end());
+    if (!Unique(actorIds) || eastl::adjacent_find(tokens.begin(), tokens.end()) != tokens.end()
+        || (session.player != 0 && !session.players.empty() && !hostFound)) { return false; }
     const auto center = ChunkOf(session.playerPosition);
     constexpr int limit = world_coordinate_limit / chunk_size;
     const int radius = session.residentRadius;
@@ -284,10 +304,12 @@ bool ValidateChunk(const ContentCatalog& content, const ChunkArchive& chunk,
     };
     for (std::size_t i = 0; i < chunk.actors.size(); ++i) {
         const auto& actor = chunk.actors[i];
-        if (actor.speed == 0 || !addId(actor.id) || !ValidPosition(actor.position)
+        if (actor.speed == 0 || (actor.parked && !actor.player)
+            || !addId(actor.id) || !ValidPosition(actor.position)
             || ChunkOf(actor.position) != chunk.position) { return false; }
         for (std::size_t j = 0; j < i; ++j) {
-            if (actor.position == chunk.actors[j].position) { return false; }
+            if (!actor.parked && !chunk.actors[j].parked
+                && actor.position == chunk.actors[j].position) { return false; }
         }
     }
     for (std::size_t i = 0; i < chunk.objects.size(); ++i) {
@@ -353,6 +375,16 @@ String EncodeSnapshot(const SaveSnapshot& snapshot) {
     writer.Boolean(pacing, "rate_limited", snapshot.session.pacing.rateLimited);
     writer.Boolean(pacing, "pause_when_idle", snapshot.session.pacing.pauseWhenIdle);
     writer.Add(session, "pacing", pacing);
+    auto* players = writer.Array();
+    for (const SavedPlayer& player : snapshot.session.players) {
+        auto* entry = writer.Object();
+        writer.Counter(entry, "actor", player.actor);
+        writer.Position(entry, player.position);
+        writer.Text(entry, "name", player.name.c_str());
+        writer.Counter(entry, "reconnect_token", player.reconnectToken);
+        writer.Append(players, entry);
+    }
+    writer.Add(session, "players", players);
     writer.Add(root, "session", session);
     return writer.Finish(root);
 }
@@ -377,7 +409,7 @@ SaveResult<SaveSnapshot> DecodeSnapshot(const char* text, std::size_t length, Di
     auto& state = snapshot.session;
     auto* pacing = Get(session, "pacing");
     if (!Fields(session, {"tick", "rng_state", "player", "position", "active_radius",
-            "resident_radius", "autosave_interval", "pacing"})
+            "resident_radius", "autosave_interval", "pacing", "players"})
         || !Fields(pacing, {"ticks_per_second", "rate_limited", "pause_when_idle"})
         || !Unsigned32(Get(pacing, "ticks_per_second"), state.pacing.ticksPerSecond)
         || !yyjson_is_bool(Get(pacing, "rate_limited"))
@@ -388,9 +420,30 @@ SaveResult<SaveSnapshot> DecodeSnapshot(const char* text, std::size_t length, Di
         || !Position(Get(session, "position"), state.playerPosition)
         || !Integer(Get(session, "active_radius"), state.activeRadius)
         || !Integer(Get(session, "resident_radius"), state.residentRadius)
-        || !Counter(Get(session, "autosave_interval"), state.autosaveInterval)
-        || !ValidSnapshot(snapshot)) {
+        || !Counter(Get(session, "autosave_interval"), state.autosaveInterval)) {
         return Failure(SaveError::InvalidData, "Invalid session or next_id", diagnostics);
+    }
+    auto* players = Get(session, "players");
+    if (!yyjson_is_arr(players) || yyjson_arr_size(players) > 32) {
+        return Failure(SaveError::InvalidData, "Invalid player roster", diagnostics);
+    }
+    yyjson_arr_iter playerIterator = yyjson_arr_iter_with(players);
+    while (auto* entry = yyjson_arr_iter_next(&playerIterator)) {
+        SavedPlayer player;
+        auto* name = Get(entry, "name");
+        if (!Fields(entry, {"actor", "position", "name", "reconnect_token"})
+            || !Counter(Get(entry, "actor"), player.actor)
+            || !Position(Get(entry, "position"), player.position)
+            || !Counter(Get(entry, "reconnect_token"), player.reconnectToken)
+            || !yyjson_is_str(name) || yyjson_get_len(name) == 0 || yyjson_get_len(name) > 32
+            || std::memchr(yyjson_get_str(name), '\0', yyjson_get_len(name))) {
+            return Failure(SaveError::InvalidData, "Invalid player roster entry", diagnostics);
+        }
+        player.name.assign(yyjson_get_str(name), yyjson_get_len(name));
+        state.players.push_back(eastl::move(player));
+    }
+    if (!ValidSnapshot(snapshot)) {
+        return Failure(SaveError::InvalidData, "Invalid player roster or session", diagnostics);
     }
     state.pacing.rateLimited = yyjson_get_bool(Get(pacing, "rate_limited"));
     state.pacing.pauseWhenIdle = yyjson_get_bool(Get(pacing, "pause_when_idle"));
@@ -415,6 +468,7 @@ String EncodeChunk(const ContentCatalog& content, const ChunkArchive& chunk) {
         writer.Counter(value, "id", actor.id);
         writer.Position(value, actor.position);
         writer.Boolean(value, "player", actor.player);
+        writer.Boolean(value, "parked", actor.parked);
         writer.Counter(value, "turns", actor.turns);
         writer.Integer(value, "speed", actor.speed);
         writer.Counter(value, "remaining_ticks", actor.remainingTicks);
@@ -552,14 +606,16 @@ SaveResult<ChunkArchive> DecodeChunk(const ContentCatalog& content, const char* 
     yyjson_arr_iter actorIterator = yyjson_arr_iter_with(actors);
     while (auto* value = yyjson_arr_iter_next(&actorIterator)) {
         SavedActor actor{};
-        if (!Fields(value, {"id", "position", "player", "turns", "inventory", "speed", "remaining_ticks"})
+        if (!Fields(value, {"id", "position", "player", "parked", "turns", "inventory", "speed", "remaining_ticks"})
             || !Unsigned32(Get(value, "speed"), actor.speed)
             || !Counter(Get(value, "remaining_ticks"), actor.remainingTicks)
             || !Counter(Get(value, "id"), actor.id) || !Position(Get(value, "position"), actor.position)
-            || !yyjson_is_bool(Get(value, "player")) || !Counter(Get(value, "turns"), actor.turns)) {
+            || !yyjson_is_bool(Get(value, "player")) || !yyjson_is_bool(Get(value, "parked"))
+            || !Counter(Get(value, "turns"), actor.turns)) {
             return Failure(SaveError::InvalidData, "Invalid actor", diagnostics);
         }
         actor.player = yyjson_get_bool(Get(value, "player"));
+        actor.parked = yyjson_get_bool(Get(value, "parked"));
         chunk.actors.push_back(actor);
         if (!DecodeItems(Get(value, "inventory"), LocationKind::actor, actor.id, 1, chunk)) {
             return Failure(SaveError::InvalidData, "Invalid inventory or excessive item depth", diagnostics);
@@ -816,6 +872,8 @@ SaveResult<void> ValidateDatabase(const ContentCatalog& content, sqlite3* db,
     if (code != SQLITE_OK) { return Failure(SqlError(code), sqlite3_errmsg(db), diagnostics); }
     Vector<PersistentId> ids;
     bool playerFound = snapshot.session.player == 0;
+    Vector<PersistentId> rosterFound;
+    const bool authoritative = snapshot.session.player != 0 || !snapshot.session.players.empty();
     bool havePrevious = false;
     ChunkCoord previous{};
     while ((code = sqlite3_step(statement.value)) == SQLITE_ROW) {
@@ -848,13 +906,28 @@ SaveResult<void> ValidateDatabase(const ContentCatalog& content, sqlite3* db,
         for (const auto& actor : chunk->actors) {
             ids.push_back(actor.id);
             if (actor.id == snapshot.session.player && actor.player
-                && actor.position == snapshot.session.playerPosition) { playerFound = true; }
+                && !actor.parked && actor.position == snapshot.session.playerPosition) {
+                playerFound = true;
+            }
+            if (actor.player && authoritative
+                && actor.id != snapshot.session.player
+                && eastl::none_of(snapshot.session.players.begin(), snapshot.session.players.end(),
+                    [&actor](const SavedPlayer& player) { return player.actor == actor.id; })) {
+                return Failure(SaveError::InvalidData, "Player actor missing from roster", diagnostics);
+            }
+            for (const SavedPlayer& player : snapshot.session.players) {
+                if (actor.id == player.actor && actor.player && actor.position == player.position
+                    && (actor.id != snapshot.session.player || !actor.parked)) {
+                    rosterFound.push_back(player.actor);
+                }
+            }
         }
         for (const auto& object : chunk->objects) { ids.push_back(object.id); }
         for (const auto& item : chunk->items) { ids.push_back(item.id); }
     }
     if (code != SQLITE_DONE) { return Failure(SqlError(code), sqlite3_errmsg(db), diagnostics); }
-    if (!Unique(ids) || !playerFound) {
+    if (!Unique(ids) || !playerFound || rosterFound.size() != snapshot.session.players.size()
+        || !Unique(rosterFound)) {
         return Failure(SaveError::InvalidData, "Duplicate persistent ID or missing session player", diagnostics);
     }
     return {};
@@ -909,7 +982,7 @@ SaveResult<void> SaveDatabase::Create(const char* path, Diagnostics* diagnostics
         "BEGIN IMMEDIATE;"
         "CREATE TABLE metadata(singleton INTEGER PRIMARY KEY CHECK(singleton=1),"
         "format_version INTEGER NOT NULL,game_version TEXT NOT NULL);"
-        "INSERT INTO metadata VALUES(1,3,'0.1.0');"
+        "INSERT INTO metadata VALUES(1,4,'0.1.0');"
         "CREATE TABLE world_state(singleton INTEGER PRIMARY KEY CHECK(singleton=1),payload TEXT NOT NULL);"
         "CREATE TABLE chunks(x INTEGER NOT NULL,z INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(x,z));"
         "COMMIT;", diagnostics);

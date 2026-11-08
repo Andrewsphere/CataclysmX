@@ -1,5 +1,9 @@
 # Tick scheduling: runtime pacing and input deadlines
 
+An expired player's wait is decided even when another player's longer grace
+still holds the round. Newly arriving input cannot replace that expired slot;
+the next opportunity becomes available after the round resolves.
+
 `core/pacing.h` provides the standalone `TickPacer`. It owns transient runtime
 pacing state and receives elapsed microseconds explicitly from its frontend.
 It has no clock access, sleeping, networking, command resolution, or world mutation.
@@ -29,7 +33,9 @@ The simulation tick unit remains fixed: `ticks_per_turn == 100`.
   is a rate conversion; callers check `IsIdle()` before waiting for advancement.
 - `NextDeadlineMicroseconds()` returns the ceiling of the nearest remaining
   input deadline, zero for an expired deadline, or an empty optional when idle
-  or there are no deadlines.
+  or none remain. `NextUnexpiredDeadlineMicroseconds()` ignores already-expired
+  budgets when choosing an elapsed step. Expired players stay eligible for a
+  wait while another participant still has grace.
 - `ExpiredPlayers()` returns expired handles in persistent-ID order only when
   non-idle. Expiration remains visible until a subsequent snapshot removes it;
   the caller owns command resolution. Handle value breaks equal-ID ties.
@@ -52,8 +58,11 @@ At the default 100 ticks per second, speeds 50/75/80/100 receive
 500/750/800/1000 milliseconds. An existing readiness episode retains its partial
 budget across speed changes and rate changes; a new rate changes only the real
 time needed to exhaust the remaining units. Both persistent ID and generational
-handle must match to retain a budget. Missing players, players no longer ready,
-and players with commands lose their deadlines. Returning players start fresh.
+handle must match to retain a budget. Missing players and players no longer ready
+lose their deadlines. Queued ready players retain their budget, which continues
+to decrease while the session is active. A queued intent suppresses automatic
+waits until it is validated; a failed intent exposes the remaining budget.
+Returning players start fresh.
 
 Idle synchronization clears whole and fractional advancement credit to prevent
 catch-up. Idle elapsed calls preserve input budgets. Switching the cap on or off
@@ -75,12 +84,17 @@ be saved. After loading, apply the saved settings, call `Reset()`, reset the
 frontend elapsed-time baseline, and synchronize current player readiness.
 Offline wall time is never counted; ready players receive fresh input grace.
 
-The local server owns a single pending intent slot while its player is busy.
-The latest structurally valid command replaces that slot. `Synchronize` receives
-`hasCommand = true` until the intent is consumed at readiness, so idle detection
-preserves tick credit and does not introduce a pause between queued actions.
-The server resolves the intent against current world state and reports its one
-result through `SessionUpdate::commandResult`, including failures.
+The server owns one pending intent slot per active player. A ready player with
+queued input retains its existing deadline budget (admission does not renew grace);
+the pacer excludes that deadline from expiration while the input is queued.
+An all-ready barrier resolves only once every missing participant has input or
+expired grace. All deadlines count down concurrently while another player is busy
+or has a command. Idle pause freezes all-ready/no-input sessions. Successful
+actions and automatic waits begin a fresh grace episode at the next readiness;
+zero-cost failures keep their existing deadline even after it expires. Repeated
+failed intents cannot extend a busy peer's cooldown. `SessionUpdate::commandResults`
+reports each admitted input consumed in the
+call; the legacy `commandResult` mirrors the host's buffered result.
 
 `tests/pacing_tests.cpp` covers grace lengths, runtime policy/rate/speed changes,
 fractional accumulation, idle behavior, command activity, deterministic ordering,

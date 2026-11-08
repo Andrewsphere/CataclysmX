@@ -65,6 +65,88 @@ void CheckSession(const SessionState& actual, const SessionState& expected) {
     CHECK(actual.residentRadius == expected.residentRadius);
     CHECK(actual.autosaveInterval == expected.autosaveInterval);
     CHECK(actual.pacing == expected.pacing);
+    REQUIRE(actual.players.size() == expected.players.size());
+    for (std::size_t index = 0; index < actual.players.size(); ++index) {
+        CHECK(actual.players[index].actor == expected.players[index].actor);
+        CHECK(actual.players[index].position == expected.players[index].position);
+        CHECK(actual.players[index].name == expected.players[index].name);
+        CHECK(actual.players[index].reconnectToken == expected.players[index].reconnectToken);
+    }
+}
+
+TEST_CASE("Parked guest roster and inventory survive checkpoint and unload", "[world][save][parking]") {
+    SaveDirectory files;
+    World world(TestContent());
+    const auto request = Load(world);
+    const auto host = Take(world.CreateActor({0, 0}, true));
+    const auto guest = Take(world.CreateActor({1, 0}, true));
+    const auto bag = Take(world.CreateItem(ItemKind::backpack, ItemLocation::Carried(guest)));
+    const auto bandage = Take(world.CreateItem(ItemKind::bandage, ItemLocation::Inside(bag)));
+    const PersistentId guestId = world.GetActor(guest)->id;
+    const PersistentId itemId = world.GetItem(bandage)->id;
+    SessionState session;
+    session.player = world.GetActor(host)->id;
+    session.players.push_back({session.player, {0, 0}, "host", 0});
+    session.players.push_back({guestId, {1, 0}, "guest", 12345});
+    REQUIRE(world.ScheduleActorAction(guest));
+    REQUIRE(world.SetActorParked(guest, true));
+    const auto live = Take(world.CreateActor({1, 0}));
+    REQUIRE(world.CreateSave(files.database.c_str(), session));
+    CHECK(world.FindPlayerPosition(guestId) == TileCoord{1, 0});
+    world.ElapseTicks(50);
+    CHECK(world.GetActor(guest)->remainingTicks == 100);
+    CHECK(world.ActorAt({1, 0}) == live);
+    REQUIRE(world.MoveActor(guest, {2, 0}));
+    session.players[1].position = {2, 0};
+    CHECK(world.FindPlayerPosition(guestId) == TileCoord{2, 0});
+    REQUIRE(world.ReleaseRequest(request));
+    REQUIRE(world.ReconcileChunks());
+    CHECK(world.FindActor(guestId) == ActorHandle{});
+    CHECK(world.FindPlayerPosition(guestId) == TileCoord{2, 0});
+    REQUIRE(world.Save(session));
+    CHECK(world.FindPlayerPosition(guestId) == TileCoord{2, 0});
+    World restored(TestContent());
+    CheckSession(Take(restored.LoadSave(files.database.c_str())), session);
+    CHECK(restored.FindActor(guestId) == ActorHandle{});
+    CHECK(restored.FindPlayerPosition(guestId) == TileCoord{2, 0});
+    Load(restored);
+    const auto parked = restored.FindActor(guestId);
+    REQUIRE(restored.GetActor(parked));
+    CHECK(restored.GetActor(parked)->parked);
+    CHECK(restored.GetActor(parked)->position == TileCoord{2, 0});
+    CHECK(restored.GetActor(parked)->remainingTicks == 100);
+    CHECK(restored.GetItem(restored.FindItem(itemId))->kind == ItemKind::bandage);
+    CHECK(restored.ActorAt({1, 0}).value != parked.value);
+    CHECK(restored.CheckInvariants());
+    auto invalid = session;
+    invalid.players[1].position = {3, 0};
+    CHECK(restored.Save(invalid) == eastl::unexpected(SaveError::InvalidData));
+}
+
+TEST_CASE("World rejects incomplete rosters and parked hosts before writing", "[world][save][players]") {
+    SaveDirectory files;
+    World world(TestContent());
+    Load(world);
+    const auto host = Take(world.CreateActor({0, 0}, true));
+    const auto guest = Take(world.CreateActor({1, 0}, true));
+    SessionState session;
+    session.player = world.GetActor(host)->id;
+    session.players.push_back({session.player, {0, 0}, "host", 0});
+    session.players.push_back({world.GetActor(guest)->id, {1, 0}, "guest", 72});
+    REQUIRE(world.CreateSave(files.database.c_str(), session));
+    auto incomplete = session;
+    incomplete.players.pop_back();
+    CHECK(world.Save(incomplete) == eastl::unexpected(SaveError::InvalidData));
+    incomplete.players.clear();
+    CHECK(world.Save(incomplete) == eastl::unexpected(SaveError::InvalidData));
+    REQUIRE(world.SetActorParked(host, true));
+    CHECK(world.Save(session) == eastl::unexpected(SaveError::InvalidData));
+    CHECK(world.FindPlayerPosition(session.player) == TileCoord{0, 0});
+    REQUIRE(world.SetActorParked(host, false));
+    REQUIRE(world.DestroyActor(guest));
+    CHECK(world.FindPlayerPosition(incomplete.player) == TileCoord{0, 0});
+    CHECK_FALSE(world.FindPlayerPosition(session.players[1].actor));
+    REQUIRE(world.Save(incomplete));
 }
 
 TEST_CASE("World save round trips every tile and nested inventory values", "[world][save]") {

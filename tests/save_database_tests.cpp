@@ -151,7 +151,7 @@ TEST_CASE("Save terrain names survive catalog renumbering and missing content fa
     }
     {
         RawDatabase raw(file.path.c_str());
-        CHECK(raw.Text("SELECT format_version FROM metadata") == "3");
+        CHECK(raw.Text("SELECT format_version FROM metadata") == "4");
         const auto payload = raw.Text("SELECT payload FROM chunks");
         CHECK(payload.find("\"terrain\":\"moss\"") != std::string::npos);
         CHECK(payload.find("\"terrain\":\"floor\"") != std::string::npos);
@@ -397,7 +397,8 @@ TEST_CASE("Save database rejects unknown versions and incomplete or extended sch
     Populate(file.path.c_str());
     {
         RawDatabase raw(file.path.c_str());
-        SECTION("future version") { raw.Exec("UPDATE metadata SET format_version=4"); }
+        SECTION("future version") { raw.Exec("UPDATE metadata SET format_version=5"); }
+        SECTION("previous v3 format") { raw.Exec("UPDATE metadata SET format_version=3"); }
         SECTION("command count ticks version") { raw.Exec("UPDATE metadata SET format_version=2"); }
         SECTION("old version without migration") { raw.Exec("UPDATE metadata SET format_version=1"); }
     }
@@ -447,6 +448,12 @@ TEST_CASE("Save database strictly validates nested JSON and coordinates", "[save
         SECTION("negative actor speed") { Replace(payload, "\"speed\":173", "\"speed\":-1"); }
         SECTION("overflow actor speed") { Replace(payload, "\"speed\":173", "\"speed\":4294967296"); }
         SECTION("missing actor speed") { Replace(payload, "\"speed\":173,", ""); }
+        SECTION("missing parked flag") { Replace(payload, "\"parked\":false,", ""); }
+        SECTION("numeric parked flag") { Replace(payload, "\"parked\":false", "\"parked\":0"); }
+        SECTION("nonplayer parked") {
+            Replace(payload, "\"player\":true", "\"player\":false");
+            Replace(payload, "\"parked\":false", "\"parked\":true");
+        }
         SECTION("numeric actor delay") { Replace(payload, "\"remaining_ticks\":\"18446744073709551615\"", "\"remaining_ticks\":1"); }
         SECTION("overflow actor delay") { Replace(payload, "\"remaining_ticks\":\"18446744073709551615\"", "\"remaining_ticks\":\"18446744073709551616\""); }
         SECTION("negative actor delay") { Replace(payload, "\"remaining_ticks\":\"18446744073709551615\"", "\"remaining_ticks\":\"-1\""); }
@@ -492,6 +499,7 @@ TEST_CASE("Save database validates session, counters and generator version", "[s
         SECTION("numeric rate limited") { Replace(payload, "\"rate_limited\":true", "\"rate_limited\":1"); }
         SECTION("numeric pause when idle") { Replace(payload, "\"pause_when_idle\":false", "\"pause_when_idle\":0"); }
         SECTION("missing pacing field") { Replace(payload, "\"ticks_per_second\":37,", ""); }
+        SECTION("missing roster") { Replace(payload, ",\"players\":[]", ""); }
         SECTION("duplicate pacing field") { Replace(payload, "\"ticks_per_second\":37", "\"ticks_per_second\":37,\"ticks_per_second\":37"); }
         raw.SetText("UPDATE world_state SET payload=?1", payload);
     }
@@ -601,6 +609,92 @@ TEST_CASE("Save database rejects zero pacing rate before encoding", "[save][data
     snapshot.session.pacing.ticksPerSecond = 0;
     CHECK(database.WriteSnapshot(snapshot) == eastl::unexpected(SaveError::InvalidData));
     CHECK(database.Commit() == eastl::unexpected(SaveError::InvalidState));
+}
+
+TEST_CASE("Save database validates player rosters against every chunk", "[save][database][players]") {
+    SaveFile file;
+    SaveDatabase database(TestContent());
+    REQUIRE(database.Create(file.path.c_str()));
+    auto host = SampleChunk();
+    auto guest = SampleChunk({1, 0});
+    guest.actors.clear();
+    guest.objects.clear();
+    guest.items.clear();
+    guest.actors.push_back({8, {16, 0}, true, 7, 100, 42, true});
+    guest.items.push_back({9, ItemKind::backpack, LocationKind::actor, {}, 8});
+    guest.items.push_back({10, ItemKind::rock, LocationKind::item, {}, 9});
+    auto snapshot = SampleSnapshot();
+    snapshot.nextId = 11;
+    snapshot.session.players.push_back({1, {0, 0}, "host", 0});
+    snapshot.session.players.push_back({8, {16, 0}, "guest", UINT64_MAX});
+    REQUIRE(database.Begin());
+    REQUIRE(database.WriteChunk(host));
+    REQUIRE(database.WriteChunk(guest));
+    REQUIRE(database.WriteSnapshot(snapshot));
+    REQUIRE(database.Commit());
+    SaveDatabase observer(TestContent());
+    auto opened = observer.Open(file.path.c_str());
+    REQUIRE(opened);
+    REQUIRE(opened->session.players.size() == 2);
+    CHECK(opened->session.players[1].reconnectToken == UINT64_MAX);
+    auto restored = observer.ReadChunk({1, 0}, 11);
+    REQUIRE(restored);
+    REQUIRE(*restored);
+    CHECK((**restored).actors[0].parked);
+    CHECK((**restored).items[1].owner == 9);
+
+    bool checkCommit = false;
+    SECTION("zero guest token") { snapshot.session.players[1].reconnectToken = 0; }
+    SECTION("duplicate guest token") {
+        snapshot.nextId = 12;
+        snapshot.session.players.push_back({11, {17, 0}, "third", UINT64_MAX});
+    }
+    SECTION("duplicate actor") { snapshot.session.players[1].actor = 1; }
+    SECTION("missing actor") { snapshot.session.players[1].actor = 7; checkCommit = true; }
+    SECTION("position mismatch") { snapshot.session.players[1].position = {17, 0}; checkCommit = true; }
+    SECTION("guest omitted from roster") { snapshot.session.players.pop_back(); checkCommit = true; }
+    SECTION("implicit host cannot omit guest") { snapshot.session.players.clear(); checkCommit = true; }
+    SECTION("empty name") { snapshot.session.players[1].name.clear(); }
+    SECTION("oversized name") { snapshot.session.players[1].name = String(33, 'x'); }
+    REQUIRE(observer.Begin());
+    if (checkCommit) {
+        REQUIRE(observer.WriteSnapshot(snapshot));
+        CHECK(observer.Commit() == eastl::unexpected(SaveError::InvalidData));
+    } else {
+        CHECK(observer.WriteSnapshot(snapshot) == eastl::unexpected(SaveError::InvalidData));
+    }
+}
+
+TEST_CASE("Opening a save rejects a parked host even with a matching roster", "[save][database][players]") {
+    SaveFile file;
+    Populate(file.path.c_str());
+    {
+        RawDatabase raw(file.path.c_str());
+        auto payload = raw.Text("SELECT payload FROM chunks");
+        Replace(payload, "\"player\":true,\"parked\":false", "\"player\":true,\"parked\":true");
+        raw.SetText("UPDATE chunks SET payload=?1", payload);
+    }
+    SaveDatabase database(TestContent());
+    CHECK(database.Open(file.path.c_str()) == eastl::unexpected(SaveError::InvalidData));
+}
+
+TEST_CASE("Save database rejects corrupt roster JSON on open", "[save][database][players]") {
+    SaveFile file;
+    Populate(file.path.c_str());
+    {
+        RawDatabase raw(file.path.c_str());
+        auto payload = raw.Text("SELECT payload FROM world_state");
+        SECTION("missing roster key") { Replace(payload, ",\"players\":[]", ""); }
+        SECTION("unknown roster key") { Replace(payload, "\"players\":[]", "\"players\":[],\"extra\":0"); }
+        SECTION("invalid roster type") { Replace(payload, "\"players\":[]", "\"players\":{}"); }
+        SECTION("roster missing actor") {
+            Replace(payload, "\"players\":[]",
+                "\"players\":[{\"actor\":\"99\",\"position\":{\"x\":0,\"z\":0},\"name\":\"guest\",\"reconnect_token\":\"1\"}]");
+        }
+        raw.SetText("UPDATE world_state SET payload=?1", payload);
+    }
+    SaveDatabase database(TestContent());
+    CHECK(database.Open(file.path.c_str()) == eastl::unexpected(SaveError::InvalidData));
 }
 
 TEST_CASE("Save database distinguishes absent chunks from corrupt payloads after opening", "[save][database]") {

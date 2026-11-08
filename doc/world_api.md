@@ -60,6 +60,36 @@ and movement reject impassable or actor-occupied destinations. World-level
 or spending a turn. Interactive objects have a separate occupancy index and do
 not themselves block actors.
 
+## Parked players
+
+`SetActorParked(actor, true)` parks a resident player actor without deleting its
+identity, last position, inventory, turns, or remaining delay. Invalid handles
+return `invalid_handle`; non-players return `invalid_request`. Repeating the
+same state succeeds. `GetActor` and `FindActor` still work, while `ActorAt`,
+`ActiveActors`, `ElapseTicks`, `ScheduleActorAction`, and `RecordActorTurn` exclude
+parked actors even in active chunks. Live actors may share their position.
+Explicit inventory operations remain available. `MoveActor` can relocate a
+parked actor to a loaded passable occupied tile without occupying it. Unparking
+requires a passable unoccupied tile (`blocked`/`occupied` otherwise). Unload and
+reload preserve parked state and possessions but retire runtime handles.
+
+`SessionState::players` is a connection-independent roster of at most 32
+`SavedPlayer` entries: player actor ID, last tile, 1–32 byte name and reconnect
+token. The host entry matches `player`/`playerPosition` and uses token zero;
+guests use unique nonzero tokens. Empty rosters preserve generic world saves.
+Session code updates roster positions before checkpoints and parks offline
+guests. Network connections are transient and are not saved.
+
+`FindPlayerPosition(id)` returns an `eastl::optional<TileCoord>` without loading
+chunks or accessing disk. It tracks created player actors across movement,
+parking, unload, archive eviction and reload; destroyed players return empty.
+`LoadSave` seeds it from the validated roster (or the implicit singleton host
+when the roster is empty), so server roster players are immediately queryable
+before chunk materialization. Generic saves with neither host nor roster may
+contain additional players; these become known when their chunks are loaded.
+This small ID-sorted index is kept separately because a connection's cached
+position can become stale after administrative movement of a parked actor.
+
 ## Chunk demand: request, reconcile, release
 
 `RequestChunks` acquires demand; `UpdateRequest` replaces that request's region

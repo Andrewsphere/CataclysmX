@@ -1,4 +1,5 @@
 #include <cstdlib>
+#include <cstring>
 
 #include "core/world.h"
 #include "core/slot_map.h"
@@ -108,11 +109,12 @@ bool ValidateArchive(const ContentCatalog& content, const Archive& saved,
     };
     Vector<TileCoord> positions;
     for (const SavedActor& actor : saved.actors) {
-        if (actor.speed == 0 || !addId(actor.id) || !ValidPosition(actor.position)
-            || ChunkOf(actor.position) != saved.position || Occurrences(positions, actor.position)) {
+        if (actor.speed == 0 || (actor.parked && !actor.player) || !addId(actor.id)
+            || !ValidPosition(actor.position) || ChunkOf(actor.position) != saved.position
+            || (!actor.parked && Occurrences(positions, actor.position))) {
             return false;
         }
-        positions.push_back(actor.position);
+        if (!actor.parked) { positions.push_back(actor.position); }
     }
     positions.clear();
     for (const SavedObject& object : saved.objects) {
@@ -170,6 +172,11 @@ bool UniqueIds(Vector<PersistentId>& ids) {
 struct Demand {
     ChunkCoord position;
     bool active;
+};
+
+struct PlayerLocation {
+    PersistentId id;
+    TileCoord position;
 };
 
 }
@@ -246,6 +253,7 @@ public:
     Vector<Chunk> chunks; // Always lexicographic (x, z).
     Vector<Archive> archives; // Only currently unloaded chunks.
     Vector<ChunkCoord> dirtyChunks; // Sorted, includes pending unloaded archives.
+    Vector<PlayerLocation> playerPositions; // Sorted by ID; survives unload and archive eviction.
     eastl::unique_ptr<SaveDatabase> database;
 
     explicit Impl(const ContentCatalog& catalog, std::uint32_t value)
@@ -257,6 +265,30 @@ public:
     PersistentId IssueId() {
         Require(next_id != eastl::numeric_limits<PersistentId>::max());
         return next_id++;
+    }
+
+    eastl::optional<TileCoord> PlayerPosition(PersistentId id) const {
+        const auto found = eastl::lower_bound(playerPositions.begin(), playerPositions.end(), id,
+            [](const PlayerLocation& value, PersistentId key) { return value.id < key; });
+        if (found == playerPositions.end() || found->id != id) { return eastl::nullopt; }
+        return found->position;
+    }
+
+    void TrackPlayer(PersistentId id, TileCoord position) {
+        const auto found = eastl::lower_bound(playerPositions.begin(), playerPositions.end(), id,
+            [](const PlayerLocation& value, PersistentId key) { return value.id < key; });
+        if (found != playerPositions.end() && found->id == id) {
+            found->position = position;
+        } else {
+            playerPositions.insert(found, {id, position});
+        }
+    }
+
+    void ForgetPlayer(PersistentId id) {
+        const auto found = eastl::lower_bound(playerPositions.begin(), playerPositions.end(), id,
+            [](const PlayerLocation& value, PersistentId key) { return value.id < key; });
+        Require(found != playerPositions.end() && found->id == id);
+        playerPositions.erase(found);
     }
 
     void MarkDirty(ChunkCoord position) {
@@ -434,7 +466,7 @@ public:
             const Actor* actor = Live(actors, handle);
             Require(actor != nullptr);
             saved.actors.push_back({actor->id, actor->position, actor->player, actor->turns,
-                actor->speed, actor->remainingTicks});
+                actor->speed, actor->remainingTicks, actor->parked});
             for (ItemHandle item : actor->inventory) {
                 pending.push_back(item);
             }
@@ -493,8 +525,9 @@ public:
         value.tiles = saved.tiles;
         for (const SavedActor& actor : saved.actors) {
             const auto key = actors.emplace(Actor{actor.id, actor.position, actor.player, actor.turns,
-                {}, actor.speed, actor.remainingTicks});
+                {}, actor.speed, actor.remainingTicks, actor.parked});
             value.actors.push_back({key.raw});
+            if (actor.player) { TrackPlayer(actor.id, actor.position); }
         }
         for (const SavedObject& object : saved.objects) {
             const auto key = objects.emplace(InteractiveObject{
@@ -525,48 +558,81 @@ public:
             || !ValidRegion({ChunkOf(session.playerPosition), session.residentRadius})) {
             return SaveFailure(SaveError::InvalidData, "Invalid session pacing or region", diagnostics);
         }
-        if (session.player == 0) {
-            return {}; // Headless/generic worlds have no authoritative player.
+        if (session.players.size() > 32) {
+            return SaveFailure(SaveError::InvalidData, "Player roster exceeds limit", diagnostics);
         }
-        if (session.player >= next_id) {
-            return SaveFailure(SaveError::InvalidData, "Invalid session player ID", diagnostics);
-        }
-        if (const Actor* player = Live(actors, FindActor(session.player))) {
-            if (player->player && player->position == session.playerPosition) {
-                return {};
+        Vector<SavedPlayer> roster = session.players;
+        if (session.player != 0) {
+            if (session.player >= next_id) {
+                return SaveFailure(SaveError::InvalidData, "Invalid session player ID", diagnostics);
             }
-            return SaveFailure(SaveError::InvalidData, "Session player does not match world", diagnostics);
-        }
-        const ChunkCoord position = ChunkOf(session.playerPosition);
-        const auto matches = [&session](const Archive& archive) {
-            return eastl::any_of(archive.actors.begin(), archive.actors.end(),
-                [&session](const SavedActor& actor) {
-                    return actor.id == session.player && actor.player
-                        && actor.position == session.playerPosition;
-                });
-        };
-        for (const Archive& archive : archives) {
-            if (archive.position == position) {
-                return matches(archive) ? SaveResult<void>{}
-                    : SaveFailure(SaveError::InvalidData, "Session player missing from archive", diagnostics);
+            if (roster.empty()) {
+                roster.push_back({session.player, session.playerPosition, {}, 0});
             }
         }
-        // A loaded chunk is authoritative even if the previous disk row has a player.
-        if (!GetChunk(position) && source) {
-            auto saved = source->ReadChunk(position, next_id, diagnostics);
-            if (!saved) {
-                if (diagnostics) { diagnostics->Add("Validating session player"); }
-                return eastl::unexpected(saved.error());
+        Vector<PersistentId> playerIds;
+        Vector<std::uint64_t> tokens;
+        for (const SavedPlayer& entry : roster) {
+            if (entry.actor == 0 || entry.actor >= next_id || !ValidPosition(entry.position)
+                || (!entry.name.empty() && entry.name.size() > 32)
+                || (!session.players.empty() && (entry.name.empty()
+                    || std::memchr(entry.name.data(), '\0', entry.name.size())))
+                || (session.player != 0 && entry.actor == session.player
+                    && (entry.position != session.playerPosition || entry.reconnectToken != 0))
+                || (entry.actor != session.player && entry.reconnectToken == 0)) {
+                return SaveFailure(SaveError::InvalidData, "Invalid player roster entry", diagnostics);
             }
-            if (*saved) {
-                Vector<PersistentId> ids;
-                if ((**saved).position == position && ValidateArchive(content, **saved, next_id, ids)
-                    && UniqueIds(ids) && matches(**saved)) {
-                    return {};
+            playerIds.push_back(entry.actor);
+            if (entry.reconnectToken != 0) { tokens.push_back(entry.reconnectToken); }
+            const Actor* live = Live(actors, FindActor(entry.actor));
+            if (live) {
+                if (live->player && live->position == entry.position
+                    && (entry.actor != session.player || !live->parked)) { continue; }
+                return SaveFailure(SaveError::InvalidData, "Roster player does not match world", diagnostics);
+            }
+            const ChunkCoord position = ChunkOf(entry.position);
+            if (GetChunk(position)) {
+                return SaveFailure(SaveError::InvalidData, "Roster player missing from loaded chunk", diagnostics);
+            }
+            const Archive* archive = nullptr;
+            for (const Archive& candidate : archives) {
+                if (candidate.position == position) { archive = &candidate; break; }
+            }
+            eastl::optional<Archive> disk;
+            if (!archive && source) {
+                auto saved = source->ReadChunk(position, next_id, diagnostics);
+                if (!saved) { return eastl::unexpected(saved.error()); }
+                if (*saved) { disk = eastl::move(**saved); archive = &*disk; }
+            }
+            if (!archive || eastl::none_of(archive->actors.begin(), archive->actors.end(),
+                    [&entry, &session](const SavedActor& actor) {
+                        return actor.id == entry.actor && actor.player && actor.position == entry.position
+                            && (entry.actor != session.player || !actor.parked);
+                    })) {
+                return SaveFailure(SaveError::InvalidData, "Roster player missing from world", diagnostics);
+            }
+        }
+        if (!UniqueIds(playerIds)) {
+            return SaveFailure(SaveError::InvalidData, "Duplicate player IDs", diagnostics);
+        }
+        eastl::sort(tokens.begin(), tokens.end());
+        if (eastl::adjacent_find(tokens.begin(), tokens.end()) != tokens.end()) {
+            return SaveFailure(SaveError::InvalidData, "Duplicate reconnect tokens", diagnostics);
+        }
+        if (session.player != 0 && !session.players.empty()
+            && eastl::find(playerIds.begin(), playerIds.end(), session.player) == playerIds.end()) {
+            return SaveFailure(SaveError::InvalidData, "Host missing from roster", diagnostics);
+        }
+        // Disk-only roster actors were checked above; all other known players
+        // must also be represented when the session has an authoritative host.
+        if (session.player != 0 || !session.players.empty()) {
+            for (const PlayerLocation& player : playerPositions) {
+                if (eastl::find(playerIds.begin(), playerIds.end(), player.id) == playerIds.end()) {
+                    return SaveFailure(SaveError::InvalidData, "Player missing from roster", diagnostics);
                 }
             }
         }
-        return SaveFailure(SaveError::InvalidData, "Session player missing from world", diagnostics);
+        return {};
     }
 
     SaveResult<void> Checkpoint(SaveDatabase& target, const SessionState& session,
@@ -779,7 +845,8 @@ SaveResult<void> World::CreateSave(const char* path, const SessionState& session
 SaveResult<SessionState> World::LoadSave(const char* path, Diagnostics* diagnostics) {
     if (impl_->database || !impl_->requests.empty() || !impl_->actors.empty()
         || !impl_->items.empty() || !impl_->objects.empty() || !impl_->chunks.empty()
-        || !impl_->archives.empty() || !impl_->dirtyChunks.empty() || impl_->next_id != 1) {
+        || !impl_->archives.empty() || !impl_->dirtyChunks.empty()
+        || !impl_->playerPositions.empty() || impl_->next_id != 1) {
         SaveFailure(SaveError::InvalidState, "Loading requires a pristine world", diagnostics);
         return eastl::unexpected(SaveError::InvalidState);
     }
@@ -807,6 +874,12 @@ SaveResult<SessionState> World::LoadSave(const char* path, Diagnostics* diagnost
     impl_->generationVersion = snapshot->generationVersion;
     impl_->generationPlan.reset();
     impl_->next_id = snapshot->nextId;
+    for (const SavedPlayer& player : snapshot->session.players) {
+        impl_->TrackPlayer(player.actor, player.position);
+    }
+    if (snapshot->session.player != 0 && snapshot->session.players.empty()) {
+        impl_->TrackPlayer(snapshot->session.player, snapshot->session.playerPosition);
+    }
     impl_->database = eastl::move(database);
     return snapshot->session;
 }
@@ -854,6 +927,9 @@ const Actor* World::GetActor(ActorHandle handle) const { return Live(impl_->acto
 const Item* World::GetItem(ItemHandle handle) const { return Live(impl_->items, handle); }
 const InteractiveObject* World::GetObject(ObjectHandle handle) const { return Live(impl_->objects, handle); }
 ActorHandle World::FindActor(PersistentId id) const { return impl_->FindActor(id); }
+eastl::optional<TileCoord> World::FindPlayerPosition(PersistentId id) const {
+    return impl_->PlayerPosition(id);
+}
 ItemHandle World::FindItem(PersistentId id) const { return impl_->FindItem(id); }
 ObjectHandle World::FindObject(PersistentId id) const { return impl_->FindObject(id); }
 
@@ -863,7 +939,7 @@ ActorHandle World::ActorAt(TileCoord position) const {
         for (ActorHandle handle : value->actors) {
             const Actor* candidate = GetActor(handle);
             Require(candidate != nullptr);
-            if (candidate->position == position) {
+            if (!candidate->parked && candidate->position == position) {
                 return handle;
             }
         }
@@ -928,6 +1004,7 @@ WorldResult<ActorHandle> World::CreateActor(TileCoord position, bool player) {
     const auto key = impl_->actors.emplace(Actor{impl_->IssueId(), position, player, 0, {}});
     const ActorHandle handle{key.raw};
     impl_->GetChunk(ChunkOf(position))->actors.push_back(handle);
+    if (player) { impl_->TrackPlayer(GetActor(handle)->id, position); }
     impl_->MarkDirty(ChunkOf(position));
     return handle;
 }
@@ -946,7 +1023,7 @@ WorldResult<void> World::MoveActor(ActorHandle handle, TileCoord destination) {
     if (!Passable(impl_->content, GetTile(destination)->terrain)) {
         return eastl::unexpected(WorldError::blocked);
     }
-    if (ActorAt(destination).value != 0) {
+    if (!value->parked && ActorAt(destination).value != 0) {
         return eastl::unexpected(WorldError::occupied);
     }
     const ChunkCoord previous = ChunkOf(value->position);
@@ -956,8 +1033,27 @@ WorldResult<void> World::MoveActor(ActorHandle handle, TileCoord destination) {
         impl_->GetChunk(next)->actors.push_back(handle);
     }
     value->position = destination;
+    if (value->player) { impl_->TrackPlayer(value->id, destination); }
     impl_->MarkDirty(previous);
     impl_->MarkDirty(next);
+    return {};
+}
+
+WorldResult<void> World::SetActorParked(ActorHandle handle, bool parked) {
+    Actor* value = Live(impl_->actors, handle);
+    if (!value) { return eastl::unexpected(WorldError::invalid_handle); }
+    if (!value->player) { return eastl::unexpected(WorldError::invalid_request); }
+    if (value->parked == parked) { return {}; }
+    if (!parked) {
+        if (!Passable(impl_->content, GetTile(value->position)->terrain)) {
+            return eastl::unexpected(WorldError::blocked);
+        }
+        if (ActorAt(value->position).value != 0) {
+            return eastl::unexpected(WorldError::occupied);
+        }
+    }
+    value->parked = parked;
+    impl_->MarkDirty(ChunkOf(value->position));
     return {};
 }
 
@@ -973,6 +1069,7 @@ WorldResult<void> World::DestroyActor(ActorHandle handle) {
         Require(value != nullptr);
     }
     EraseOne(impl_->GetChunk(ChunkOf(position))->actors, handle);
+    if (value->player) { impl_->ForgetPlayer(value->id); }
     impl_->actors.erase(dod::slot_map64<Actor>::key{handle.value});
     impl_->MarkDirty(ChunkOf(position));
     return {};
@@ -1086,7 +1183,7 @@ WorldResult<void> World::SetActorSpeed(ActorHandle handle, std::uint32_t speed) 
 WorldResult<void> World::ScheduleActorAction(ActorHandle handle, std::uint32_t baseCost) {
     Actor* value = Live(impl_->actors, handle);
     if (!value) { return eastl::unexpected(WorldError::invalid_handle); }
-    if (!IsActive(value->position)) { return eastl::unexpected(WorldError::chunk_unavailable); }
+    if (!IsActive(value->position) || value->parked) { return eastl::unexpected(WorldError::chunk_unavailable); }
     if (baseCost == 0 || value->remainingTicks != 0) {
         return eastl::unexpected(WorldError::invalid_request);
     }
@@ -1116,7 +1213,7 @@ void World::ElapseTicks(Tick elapsed) {
         for (ActorHandle handle : chunk.actors) {
             Actor* actor = Live(impl_->actors, handle);
             Require(actor != nullptr);
-            if (actor->remainingTicks != 0) {
+            if (!actor->parked && actor->remainingTicks != 0) {
                 actor->remainingTicks -= eastl::min(actor->remainingTicks, elapsed);
                 modified = true;
             }
@@ -1138,7 +1235,7 @@ Vector<ActorHandle> World::ActiveActors() const {
     for (const Chunk& value : impl_->chunks) {
         if (value.active) {
             for (ActorHandle handle : value.actors) {
-                result.push_back(handle);
+                if (!GetActor(handle)->parked) { result.push_back(handle); }
             }
         }
     }
@@ -1168,7 +1265,7 @@ WorldResult<void> World::RecordActorTurn(ActorHandle handle) {
     if (!value) {
         return eastl::unexpected(WorldError::invalid_handle);
     }
-    if (!IsActive(value->position)) {
+    if (!IsActive(value->position) || value->parked) {
         return eastl::unexpected(WorldError::chunk_unavailable);
     }
     Require(value->turns != eastl::numeric_limits<std::uint64_t>::max());
@@ -1221,10 +1318,11 @@ bool World::CheckInvariants() const {
         for (ActorHandle handle : value.actors) {
             const Actor* actor = this->GetActor(handle);
             if (!actor || !ValidPosition(actor->position) || ChunkOf(actor->position) != value.position
-                || Occurrences(actor_positions, actor->position) != 0) {
+                || (actor->parked && !actor->player)
+                || (!actor->parked && Occurrences(actor_positions, actor->position) != 0)) {
                 return false;
             }
-            actor_positions.push_back(actor->position);
+            if (!actor->parked) { actor_positions.push_back(actor->position); }
             indexed_actors.push_back(handle);
         }
         for (ObjectHandle handle : value.objects) {
@@ -1249,7 +1347,8 @@ bool World::CheckInvariants() const {
     for (const auto& entry : state.actors.items()) {
         const Actor& value = entry.second.get();
         const ActorHandle handle{entry.first.raw};
-        if (value.speed == 0 || !add_id(value.id) || Occurrences(indexed_actors, handle) != 1) {
+        if (value.speed == 0 || !add_id(value.id) || Occurrences(indexed_actors, handle) != 1
+            || (value.player && state.PlayerPosition(value.id) != value.position)) {
             return false;
         }
         for (ItemHandle child : value.inventory) {
@@ -1329,10 +1428,12 @@ bool World::CheckInvariants() const {
         for (const SavedActor& actor : saved.actors) {
             if (actor.speed == 0 || !add_id(actor.id) || !ValidPosition(actor.position)
                 || ChunkOf(actor.position) != saved.position
-                || Occurrences(actor_positions, actor.position) != 0) {
+                || (actor.parked && !actor.player)
+                || (actor.player && state.PlayerPosition(actor.id) != actor.position)
+                || (!actor.parked && Occurrences(actor_positions, actor.position) != 0)) {
                 return false;
             }
-            actor_positions.push_back(actor.position);
+            if (!actor.parked) { actor_positions.push_back(actor.position); }
         }
         for (const SavedObject& object : saved.objects) {
             if (object.updateInterval == 0 || object.remainingTicks > object.updateInterval
@@ -1379,6 +1480,11 @@ bool World::CheckInvariants() const {
                 break;
             default: return false;
             }
+        }
+    }
+    for (std::size_t index = 0; index < state.playerPositions.size(); ++index) {
+        if (index && state.playerPositions[index - 1].id >= state.playerPositions[index].id) {
+            return false;
         }
     }
     eastl::sort(ids.begin(), ids.end());

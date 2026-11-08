@@ -44,3 +44,15 @@ Build a small, deterministic C++23 roguelike inspired by Cataclysm: Bright Night
 ## Documentation
 - Document new APIs inside `/doc` directory.
 - Include brief insides into dicision making and reasoning for API shapes.
+
+
+## Subagent delegation strategy
+
+Select the least expensive subagent capable of reliably completing the task.
+- Luna: Exploration, searches, summaries, simple tests, and mechanical changes.
+- Terra: Default for small, well-defined engineering tasks and localized code changes.
+- Sol: Complex implementation, debugging, refactoring, and tasks requiring substantial reasoning.
+- Astra: Only for high-impact architecture, public API design, security-sensitive decisions, and difficult-to-reverse technical choices.
+- Do not use Astra for implementation volume alone. Use Sol for substantial coding and Astra for critical decisions.
+
+Escalate when requirements, complexity, or risk justify a stronger model. Avoid delegating a task multiple times unnecessarily.

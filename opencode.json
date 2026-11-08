@@ -11,19 +11,31 @@
         "task": {
           "*": "deny",
           "luna": "allow",
-          "sol": "allow"
+          "sol": "allow",
+          "astra": "allow",
+          "terra": "allow"
         }
       }
     },
     "luna": {
-      "description": "Fast, lightweight subagent for simple tasks, code exploration, straightforward edits, and routine analysis. Prefer this agent when the task does not require deep reasoning.",
+      "description": "Fast, inexpensive subagent for routine coding tasks, codebase exploration, simple bug fixes, and straightforward implementation. Prefer Luna for low-risk, well-defined tasks.",
       "mode": "subagent",
       "model": "openai/gpt-6-luna"
     },
     "sol": {
-      "description": "Powerful subagent for complex reasoning, architecture, difficult debugging, challenging implementation, and multi-step tasks. Use when Luna may struggle.",
+      "description": "Use for complex engineering: nontrivial debugging, multi-file refactoring, algorithms, integrations, performance optimization, and substantial implementation. Prefer Sol for difficult coding work without major architectural consequences.",
       "mode": "subagent",
       "model": "openai/gpt-6.1-sol"
+    },
+    "terra": {
+      "description": "Use for everyday lightweight engineering: scoped bug fixes, small features, UI adjustments, documentation changes, and straightforward edits requiring more care than Luna. Prefer Terra over Sol when the task is well-defined and localized.",
+      "mode": "subagent",
+      "model": "openai/gpt-6.1-terra"
+    },
+    "astra": {
+      "description": "Premium reasoning subagent. Reserve for the most demanding and important tasks: public API design decisions, system architecture, database schema decisions, security-critical design, distributed systems, concurrency correctness, major architectural trade-offs, and irreversible technical decisions. Do not use for routine coding, exploration, or straightforward implementation.",
+      "mode": "subagent",
+      "model": "openai/gpt-6-astra"
     }
   }
 }

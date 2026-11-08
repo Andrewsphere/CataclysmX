@@ -134,6 +134,8 @@ const char* OutcomeMessage(Outcome outcome) {
     case Outcome::unavailable: return "That location is unavailable.";
     case Outcome::not_ready: return "You are still busy.";
     case Outcome::queued: return "You queue your next action.";
+    case Outcome::stale_input: return "Stale input.";
+    case Outcome::duplicate_input: return "Duplicate input.";
     }
     std::abort();
 }
@@ -168,6 +170,7 @@ Server::Server(const ContentCatalog& content, std::uint32_t seed) : world_(conte
     Require(world_.SetTile({3, 0}, {content.FindTerrain("closed_door"), 0}).has_value());
     Require(world_.SetTile({3, 1}, {content.FindTerrain("wall"), 0}).has_value());
     player_ = Take(world_.CreateActor({0, 0}, true));
+    players_.push_back({world_.GetActor(player_)->id, "Host", 0, {0, 0}, PlayerConnectionState::Active});
     const ItemHandle backpack = Take(world_.CreateItem(ItemKind::backpack, ItemLocation::Ground({0, 0})));
     Take(world_.CreateItem(ItemKind::bandage, ItemLocation::Inside(backpack)));
     Take(world_.CreateItem(ItemKind::rock, ItemLocation::Ground({1, 0})));
@@ -180,25 +183,43 @@ CommandResult Server::Send(Command command) {
     if (!ValidCommand(command)) { return {Outcome::invalid_command, false, tick_}; }
     const Actor* actor = world_.GetActor(player_);
     Require(actor != nullptr);
-    if (actor->remainingTicks != 0) {
+    const PlayerSlot* host = FindPlayer(GetHostPlayerId());
+    Require(host != nullptr);
+    legacySequence_ = eastl::max(legacySequence_, host->lastSequence);
+    Require(legacySequence_ != eastl::numeric_limits<std::uint64_t>::max());
+    bool otherActive = false;
+    for (const PlayerSlot& slot : players_) {
+        if (slot.id != GetHostPlayerId() && slot.state == PlayerConnectionState::Active) {
+            otherActive = true;
+        }
+    }
+    if (actor->remainingTicks != 0 || otherActive) {
         // Keep the latest intent, not a chain of key-repeat-generated actions.
         // Destination, item ownership and cost are checked when it becomes due.
-        pendingCommand_ = command;
-        SynchronizePacing();
-        return {Outcome::queued, false, tick_};
+        return Submit(GetHostPlayerId(), {++legacySequence_, FindPlayer(GetHostPlayerId())->opportunity, command});
     }
-    pendingCommand_.reset();
-    CommandResult result = Execute(command);
-    if (result.advanced) {
-        const SessionUpdate update = Update(0);
-        result.tick = update.tick;
-        result.storageError = update.storageError;
+    const CommandResult admission = Submit(GetHostPlayerId(),
+        {++legacySequence_, FindPlayer(GetHostPlayerId())->opportunity, command});
+    if (admission.outcome != Outcome::queued) { return admission; }
+    const auto barrier = cataclysmx::AdvanceUntilInput(world_, tick_, rng_state_, tick_);
+    Require(barrier.stop == SimulationStop::InputRequired);
+    SessionUpdate resolved;
+    Require(ResolveRound(resolved, {}));
+    for (const PlayerCommandResult& consumed : resolved.commandResults) {
+        if (consumed.player != GetHostPlayerId()) { continue; }
+        CommandResult result = consumed.result;
+        if (result.advanced) {
+            const SessionUpdate update = Update(0);
+            result.tick = update.tick;
+            result.storageError = update.storageError;
+        }
+        return result;
     }
-    return result;
+    return admission;
 }
 
-CommandResult Server::Execute(Command command) {
-    const Actor* actor = world_.GetActor(player_);
+CommandResult Server::Execute(ActorHandle handle, PlayerSlot& slot, Command command) {
+    const Actor* actor = world_.GetActor(handle);
     Require(actor != nullptr);
     const TileCoord position = actor->position;
     const auto failed = [this](Outcome outcome) { return CommandResult{outcome, false, tick_}; };
@@ -230,7 +251,7 @@ CommandResult Server::Execute(Command command) {
         }
         // Preserve the old bubble while staging every chunk the new requests
         // will need. Reconcile failures leave all live world state untouched.
-        if (center != bubbleCenter_ || !complete) {
+        if (center != slot.center || !complete) {
             temporary = Take(world_.RequestChunks({center, resident_radius_}, LoadMode::resident));
             const auto loaded = world_.ReconcileChunks();
             if (!loaded) {
@@ -238,7 +259,7 @@ CommandResult Server::Execute(Command command) {
                 return {Outcome::unavailable, false, tick_, loaded.error()};
             }
         }
-        const auto moved = world_.MoveActor(player_, destination);
+        const auto moved = world_.MoveActor(handle, destination);
         if (!moved) {
             if (temporary.value != 0) {
                 Require(world_.ReleaseRequest(temporary).has_value());
@@ -250,7 +271,7 @@ CommandResult Server::Execute(Command command) {
         // removed, preserving its runtime key even with zero-radius bubbles.
         // The union is resident now; changing activity and releasing temporary
         // demand below cannot require another storage read.
-        Require(UpdateBubble(active_radius_, resident_radius_).has_value());
+        Require(UpdatePlayerBubble(slot, active_radius_, resident_radius_).has_value());
         if (temporary.value != 0) {
             Require(world_.ReleaseRequest(temporary).has_value());
             Require(world_.ReconcileChunks().has_value());
@@ -263,7 +284,7 @@ CommandResult Server::Execute(Command command) {
         if (item.value == 0) {
             return failed(Outcome::nothing_here);
         }
-        Require(world_.TransferItem(item, ItemLocation::Carried(player_)).has_value());
+        Require(world_.TransferItem(item, ItemLocation::Carried(handle)).has_value());
         outcome = Outcome::picked_up;
         break;
     }
@@ -310,25 +331,327 @@ CommandResult Server::Execute(Command command) {
         return failed(Outcome::invalid_command);
     }
     const std::uint32_t baseCost = command.kind == CommandKind::wait ? command.waitCost : ticks_per_turn;
-    const Tick cost = ActionTicks(baseCost, world_.GetActor(player_)->speed);
-    Require(world_.ScheduleActorAction(player_, baseCost).has_value());
+    const Tick cost = ActionTicks(baseCost, world_.GetActor(handle)->speed);
+    Require(world_.ScheduleActorAction(handle, baseCost).has_value());
     CommandResult result{outcome, true, tick_};
     result.cost = cost;
     return result;
 }
 
 void Server::SynchronizePacing() {
-    const Actor* player = world_.GetActor(player_);
-    Require(player && player->player && world_.IsActive(player->position));
     Vector<PlayerReadiness> players;
-    players.push_back({player_, player->id, player->speed,
-        player->remainingTicks == 0, pendingCommand_.has_value()});
+    for (const PlayerSlot& slot : players_) {
+        if (slot.state != PlayerConnectionState::Active) { continue; }
+        const ActorHandle handle = PlayerActor(slot);
+        const Actor* actor = world_.GetActor(handle);
+        Require(actor && actor->player && !actor->parked && world_.IsActive(actor->position));
+        players.push_back({handle, slot.id, actor->speed,
+            actor->remainingTicks == 0, slot.pending.has_value()});
+    }
     pacer_.Synchronize(players);
+}
+
+Server::PlayerSlot* Server::FindPlayer(PersistentId id) {
+    for (PlayerSlot& slot : players_) { if (slot.id == id) { return &slot; } }
+    return nullptr;
+}
+
+const Server::PlayerSlot* Server::FindPlayer(PersistentId id) const {
+    for (const PlayerSlot& slot : players_) { if (slot.id == id) { return &slot; } }
+    return nullptr;
+}
+
+ActorHandle Server::PlayerActor(const PlayerSlot& slot) const {
+    return world_.FindActor(slot.id);
+}
+
+PersistentId Server::GetHostPlayerId() const { return world_.GetActor(player_)->id; }
+std::uint64_t Server::GetRevision() const { return revision_; }
+
+Vector<PlayerStatus> Server::GetPlayers() const {
+    Vector<PlayerStatus> result;
+    for (const PlayerSlot& slot : players_) {
+        const Actor* actor = world_.GetActor(PlayerActor(slot));
+        const bool ready = slot.state == PlayerConnectionState::Active
+            && actor && actor->remainingTicks == 0;
+        result.push_back({slot.id, slot.name, slot.state, ready,
+            slot.pending.has_value(), slot.opportunity,
+            ready ? pacer_.GraceMicroseconds(PlayerActor(slot)) : 0});
+    }
+    return result;
+}
+
+SessionResult<PlayerJoin> Server::JoinPlayer(eastl::string_view name,
+    std::uint64_t reconnectToken, std::uint64_t newToken) {
+    if (name.empty() || name.size() > 32) {
+        return eastl::unexpected(SessionError::InvalidName);
+    }
+    for (char character : name) {
+        if (character == '\0') { return eastl::unexpected(SessionError::InvalidName); }
+    }
+    std::size_t online = 0;
+    for (const PlayerSlot& slot : players_) {
+        if (slot.state != PlayerConnectionState::Parked) { ++online; }
+    }
+    if (online >= 4) { return eastl::unexpected(SessionError::Full); }
+    if (reconnectToken != 0) {
+        for (PlayerSlot& slot : players_) {
+            if (slot.token != reconnectToken) { continue; }
+            if (slot.state != PlayerConnectionState::Parked) {
+                return eastl::unexpected(SessionError::AlreadyConnected);
+            }
+            const auto position = world_.FindPlayerPosition(slot.id);
+            if (!position) { return eastl::unexpected(SessionError::Unavailable); }
+            slot.position = *position;
+            slot.center = ChunkOf(*position);
+            slot.residentRequest = Take(world_.RequestChunks(
+                {ChunkOf(slot.position), 0}, LoadMode::resident));
+            if (!world_.ReconcileChunks()) {
+                Require(world_.ReleaseRequest(slot.residentRequest).has_value());
+                slot.residentRequest = {};
+                return eastl::unexpected(SessionError::StorageFailure);
+            }
+            const Actor* actor = world_.GetActor(PlayerActor(slot));
+            if (!actor || !actor->player || !actor->parked) {
+                Require(world_.ReleaseRequest(slot.residentRequest).has_value());
+                slot.residentRequest = {};
+                Require(world_.ReconcileChunks().has_value());
+                return eastl::unexpected(SessionError::Unavailable);
+            }
+            slot.state = PlayerConnectionState::Joining;
+            slot.name = String(name.data(), name.size());
+            ++revision_;
+            return PlayerJoin{slot.id, slot.token};
+        }
+        return eastl::unexpected(SessionError::UnknownToken);
+    }
+    if (newToken == 0) { return eastl::unexpected(SessionError::InvalidToken); }
+    if (players_.size() >= 32) { return eastl::unexpected(SessionError::Full); }
+    for (const PlayerSlot& slot : players_) {
+        if (slot.token == newToken) { return eastl::unexpected(SessionError::InvalidToken); }
+    }
+    const TileCoord origin = world_.GetActor(player_)->position;
+    TileCoord spawn{};
+    bool found = false;
+    for (int radius = 0; radius <= 64 && !found; ++radius) {
+        for (int dz = -radius; dz <= radius && !found; ++dz) {
+            for (int dx = -radius; dx <= radius; ++dx) {
+                if (eastl::max(std::abs(dx), std::abs(dz)) != radius) { continue; }
+                const TileCoord candidate{origin.x + dx, origin.z + dz};
+                const Tile* tile = world_.GetTile(candidate);
+                if (tile && Passable(world_.GetContent(), tile->terrain)
+                    && world_.ActorAt(candidate).value == 0
+                    && BubbleFits(candidate, resident_radius_)) {
+                    spawn = candidate;
+                    found = true;
+                    break;
+                }
+            }
+        }
+    }
+    if (!found) { return eastl::unexpected(SessionError::Unavailable); }
+    const ActorHandle actor = Take(world_.CreateActor(spawn, true));
+    Require(world_.SetActorParked(actor, true).has_value());
+    PlayerSlot slot;
+    slot.id = world_.GetActor(actor)->id;
+    slot.name = String(name.data(), name.size());
+    slot.token = newToken;
+    slot.position = spawn;
+    slot.center = ChunkOf(spawn);
+    slot.state = PlayerConnectionState::Joining;
+    slot.residentRequest = Take(world_.RequestChunks({slot.center, 0}, LoadMode::resident));
+    const PlayerJoin joined{slot.id, slot.token};
+    players_.push_back(eastl::move(slot));
+    ++revision_;
+    return joined;
+}
+
+SessionResult<void> Server::ActivatePlayer(PersistentId id) {
+    PlayerSlot* slot = FindPlayer(id);
+    if (!slot) { return eastl::unexpected(SessionError::InvalidPlayer); }
+    if (slot->state != PlayerConnectionState::Joining) {
+        return eastl::unexpected(SessionError::AlreadyConnected);
+    }
+    const ChunkCoord center = ChunkOf(slot->position);
+    if (!BubbleFits(slot->position, resident_radius_)) {
+        return eastl::unexpected(SessionError::Unavailable);
+    }
+    Require(slot->residentRequest.value != 0);
+    Require(world_.UpdateRequest(slot->residentRequest,
+        {center, resident_radius_}, LoadMode::resident).has_value());
+    slot->activeRequest = Take(world_.RequestChunks({center, active_radius_}, LoadMode::active));
+    const auto rollback = [this, slot, center](LoadRequest temporary) {
+        if (temporary.value != 0) { Require(world_.ReleaseRequest(temporary).has_value()); }
+        Require(world_.ReleaseRequest(slot->activeRequest).has_value());
+        slot->activeRequest = {};
+        Require(world_.UpdateRequest(slot->residentRequest,
+            {center, 0}, LoadMode::resident).has_value());
+        Require(world_.ReconcileChunks().has_value());
+    };
+    const auto staged = world_.ReconcileChunks();
+    if (!staged) {
+        rollback({});
+        return eastl::unexpected(SessionError::StorageFailure);
+    }
+    const ActorHandle actor = PlayerActor(*slot);
+    if (!world_.GetActor(actor)) {
+        rollback({});
+        return eastl::unexpected(SessionError::Unavailable);
+    }
+    TileCoord spawn{};
+    bool found = false;
+    LoadRequest temporary{};
+    ChunkCoord temporaryCenter{};
+    // At radius zero, the saved tile may be occupied while another tile in
+    // the same chunk is free. Rings can also cross a chunk boundary.
+    for (int radius = 0; radius <= chunk_size * (resident_radius_ + 1) && !found; ++radius) {
+        for (int dz = -radius; dz <= radius && !found; ++dz) {
+            for (int dx = -radius; dx <= radius; ++dx) {
+                if (eastl::max(std::abs(dx), std::abs(dz)) != radius) { continue; }
+                const TileCoord candidate{slot->position.x + dx, slot->position.z + dz};
+                if (!BubbleFits(candidate, resident_radius_)) { continue; }
+                const ChunkCoord candidateCenter = ChunkOf(candidate);
+                if (candidateCenter != center &&
+                    (!temporary.value || candidateCenter != temporaryCenter)) {
+                    if (temporary.value) {
+                        Require(world_.ReleaseRequest(temporary).has_value());
+                        temporary = {};
+                    }
+                    temporary = Take(world_.RequestChunks(
+                        {candidateCenter, resident_radius_}, LoadMode::resident));
+                    temporaryCenter = candidateCenter;
+                    if (!world_.ReconcileChunks()) {
+                        rollback(temporary);
+                        return eastl::unexpected(SessionError::StorageFailure);
+                    }
+                }
+                const Tile* tile = world_.GetTile(candidate);
+                if (tile && Passable(world_.GetContent(), tile->terrain)
+                    && world_.ActorAt(candidate).value == 0) {
+                    spawn = candidate;
+                    found = true;
+                    break;
+                }
+            }
+        }
+    }
+    if (!found) {
+        rollback(temporary);
+        return eastl::unexpected(SessionError::Unavailable);
+    }
+    // Every chunk of the destination bubble is resident before relocating or
+    // unparking the actor. Updating the permanent requests cannot need I/O.
+    if (ChunkOf(spawn) != center && !temporary.value) {
+        std::abort();
+    }
+    Require(world_.MoveActor(actor, spawn).has_value());
+    Require(world_.SetActorParked(actor, false).has_value());
+    slot->state = PlayerConnectionState::Active;
+    Require(UpdatePlayerBubble(*slot, active_radius_, resident_radius_).has_value());
+    if (temporary.value) {
+        Require(world_.ReleaseRequest(temporary).has_value());
+        Require(world_.ReconcileChunks().has_value());
+    }
+    ++revision_;
+    SynchronizePacing();
+    return {};
+}
+
+SessionResult<void> Server::DisconnectPlayer(PersistentId id) {
+    PlayerSlot* slot = FindPlayer(id);
+    if (!slot || id == GetHostPlayerId()) {
+        return eastl::unexpected(SessionError::InvalidPlayer);
+    }
+    if (slot->state == PlayerConnectionState::Parked) {
+        return eastl::unexpected(SessionError::Unavailable);
+    }
+    const ActorHandle actor = PlayerActor(*slot);
+    if (const auto position = world_.FindPlayerPosition(id)) { slot->position = *position; }
+    if (actor.value != 0) { Require(world_.SetActorParked(actor, true).has_value()); }
+    slot->pending.reset();
+    slot->lastSequence = 0;
+    Require(slot->opportunity != eastl::numeric_limits<std::uint64_t>::max());
+    ++slot->opportunity;
+    slot->state = PlayerConnectionState::Parked;
+    if (slot->activeRequest.value) { Require(world_.ReleaseRequest(slot->activeRequest).has_value()); }
+    if (slot->residentRequest.value) { Require(world_.ReleaseRequest(slot->residentRequest).has_value()); }
+    slot->activeRequest = {};
+    slot->residentRequest = {};
+    Require(world_.ReconcileChunks().has_value());
+    ++revision_;
+    SynchronizePacing();
+    return {};
+}
+
+CommandResult Server::Submit(PersistentId id, PlayerInput input) {
+    PlayerSlot* slot = FindPlayer(id);
+    if (!slot || slot->state != PlayerConnectionState::Active) {
+        return {Outcome::unavailable, false, tick_};
+    }
+    if (!ValidCommand(input.command)) { return {Outcome::invalid_command, false, tick_}; }
+    if (input.opportunity != slot->opportunity) { return {Outcome::stale_input, false, tick_}; }
+    if (input.sequence <= slot->lastSequence) { return {Outcome::duplicate_input, false, tick_}; }
+    const ActorHandle actor = PlayerActor(*slot);
+    // A shorter grace may expire while a different player still holds the
+    // round. Its automatic wait is already decided, even though no action can
+    // resolve until the entire cohort is satisfied.
+    if (!slot->pending && world_.GetActor(actor)->remainingTicks == 0
+        && !pacer_.IsIdle() && pacer_.GraceMicroseconds(actor) == 0) {
+        return {Outcome::stale_input, false, tick_};
+    }
+    slot->lastSequence = input.sequence;
+    slot->pending = input;
+    ++revision_;
+    SynchronizePacing();
+    return {Outcome::queued, false, tick_};
+}
+
+bool Server::ResolveRound(SessionUpdate& result, const Vector<ActorHandle>& expired) {
+    Vector<PlayerSlot*> cohort;
+    for (PlayerSlot& slot : players_) {
+        if (slot.state != PlayerConnectionState::Active) { continue; }
+        const Actor* actor = world_.GetActor(PlayerActor(slot));
+        Require(actor);
+        if (actor->remainingTicks != 0) { continue; }
+        bool timedOut = false;
+        for (ActorHandle handle : expired) {
+            if (handle == PlayerActor(slot)) { timedOut = true; break; }
+        }
+        if (!slot.pending && !timedOut) { return false; }
+        cohort.push_back(&slot);
+    }
+    if (cohort.empty()) { return false; }
+    eastl::sort(cohort.begin(), cohort.end(), [](const PlayerSlot* a, const PlayerSlot* b) {
+        return a->id < b->id;
+    });
+    for (PlayerSlot* slot : cohort) {
+        bool committed = false;
+        if (slot->pending) {
+            const PlayerInput input = *slot->pending;
+            slot->pending.reset();
+            CommandResult command = Execute(PlayerActor(*slot), *slot, input.command);
+            result.commandResults.push_back({slot->id, input.sequence, input.opportunity, command});
+            if (slot->id == GetHostPlayerId()) { result.commandResult = command; }
+            if (command.storageError) { result.storageError = command.storageError; }
+            committed = command.advanced;
+        } else {
+            Require(Execute(PlayerActor(*slot), *slot, {}).advanced);
+            ++result.skippedActions;
+            committed = true;
+        }
+        Require(slot->opportunity != eastl::numeric_limits<std::uint64_t>::max());
+        ++slot->opportunity;
+        if (committed) { pacer_.RestartGrace(PlayerActor(*slot)); }
+        ++revision_;
+    }
+    SynchronizePacing();
+    return true;
 }
 
 bool Server::SetPacing(PacingSettings settings) {
     if (!pacer_.SetSettings(settings)) { return false; }
     SynchronizePacing();
+    ++revision_;
     return true;
 }
 
@@ -358,31 +681,11 @@ SessionUpdate Server::Update(std::uint64_t elapsedMicroseconds) {
         const Tick limit = credit > maximum - tick_ ? maximum : tick_ + credit;
         const Tick before = tick_;
         const SimulationResult simulation = cataclysmx::AdvanceUntilInput(world_, tick_, rng_state_, limit);
+        if (tick_ != before) { ++revision_; }
         pacer_.ConsumeTicks(tick_ - before);
         SynchronizePacing();
-        if (pendingCommand_ && world_.GetActor(player_)->remainingTicks == 0) {
-            const Command command = *pendingCommand_;
-            pendingCommand_.reset();
-            result.commandResult = Execute(command);
-            if (result.commandResult->storageError) {
-                result.storageError = result.commandResult->storageError;
-            }
-            // A failed intent is consumed too. The next iteration establishes
-            // fresh input grace or enters idle pause against the current state.
-            continue;
-        }
+        if (ResolveRound(result, pacer_.ExpiredPlayers())) { continue; }
         if (pacer_.IsIdle()) { break; }
-
-        const Vector<ActorHandle> expired = pacer_.ExpiredPlayers();
-        if (!expired.empty()) {
-            // This local endpoint owns one external controller. The reusable
-            // simulator and pacer expose multi-player barriers independently.
-            Require(expired.size() == 1 && expired.front() == player_);
-            Require(Execute({CommandKind::wait}).advanced);
-            Require(result.skippedActions != maximum);
-            ++result.skippedActions;
-            continue;
-        }
         if (remaining == 0 || simulation.stop == SimulationStop::NoEvents) { break; }
 
         std::uint64_t untilEvent = maximum;
@@ -390,12 +693,13 @@ SessionUpdate Server::Update(std::uint64_t elapsedMicroseconds) {
             Require(tick_ != maximum && simulation.nextEventIn != 0);
             untilEvent = pacer_.MicrosecondsUntilTicks(simulation.nextEventIn);
         }
-        if (const auto deadline = pacer_.NextDeadlineMicroseconds()) {
+        if (const auto deadline = pacer_.NextUnexpiredDeadlineMicroseconds()) {
             if (*deadline < untilEvent) { untilEvent = *deadline; }
         }
         const std::uint64_t step = remaining < untilEvent ? remaining : untilEvent;
         Require(step != 0);
         pacer_.ElapseMicroseconds(step);
+        ++revision_;
         remaining -= step;
     }
     result.tick = tick_;
@@ -407,10 +711,17 @@ SessionUpdate Server::Update(std::uint64_t elapsedMicroseconds) {
 }
 
 WorldView Server::View(int radius) const {
+    return ViewForPlayer(GetHostPlayerId(), radius);
+}
+
+WorldView Server::ViewForPlayer(PersistentId id, int radius) const {
     // Public presentation input is clamped to [0, 12]. The square, row-major
     // snapshot has circular sight range; out-of-range corners stay empty.
     radius = eastl::clamp(radius, 0, 12);
-    const Actor* actor = world_.GetActor(player_);
+    const PlayerSlot* slot = FindPlayer(id);
+    if (!slot) { return {}; }
+    const Actor* actor = world_.GetActor(PlayerActor(*slot));
+    if (!actor) { return {}; }
     Require(actor != nullptr);
     WorldView result;
     result.player_position = actor->position;
@@ -421,7 +732,12 @@ WorldView Server::View(int radius) const {
     result.remainingTicks = actor->remainingTicks;
     result.speed = actor->speed;
     result.pacing = pacer_.GetSettings();
-    result.commandQueued = pendingCommand_.has_value();
+    result.commandQueued = slot->pending.has_value();
+    result.playerId = id;
+    result.revision = revision_;
+    result.opportunity = slot->opportunity;
+    result.lastInputSequence = slot->lastSequence;
+    result.players = GetPlayers();
     result.cells.resize(static_cast<std::size_t>(result.width * result.height));
     for (int z = 0; z < result.height; ++z) {
         for (int x = 0; x < result.width; ++x) {
@@ -464,26 +780,68 @@ WorldResult<void> Server::SetBubbleRadii(int active_radius, int resident_radius,
         || !BubbleFits(actor->position, resident_radius)) {
         return eastl::unexpected(WorldError::invalid_region);
     }
-    if (!UpdateBubble(active_radius, resident_radius, diagnostics)) {
+    for (const PlayerSlot& slot : players_) {
+        if (slot.state != PlayerConnectionState::Active) { continue; }
+        const Actor* participant = world_.GetActor(PlayerActor(slot));
+        Require(participant);
+        if (!BubbleFits(participant->position, resident_radius)) {
+            return eastl::unexpected(WorldError::invalid_region);
+        }
+    }
+    const int oldActive = active_radius_;
+    const int oldResident = resident_radius_;
+    for (PlayerSlot& slot : players_) {
+        if (slot.state != PlayerConnectionState::Active) { continue; }
+        const Actor* participant = world_.GetActor(PlayerActor(slot));
+        const ChunkCoord center = ChunkOf(participant->position);
+        const LoadRequest active = slot.id == GetHostPlayerId() ? active_request_ : slot.activeRequest;
+        const LoadRequest resident = slot.id == GetHostPlayerId() ? resident_request_ : slot.residentRequest;
+        Require(world_.UpdateRequest(active, {center, active_radius}, LoadMode::active).has_value());
+        Require(world_.UpdateRequest(resident, {center, resident_radius}, LoadMode::resident).has_value());
+    }
+    if (!world_.ReconcileChunks(diagnostics)) {
+        for (const PlayerSlot& slot : players_) {
+            if (slot.state != PlayerConnectionState::Active) { continue; }
+            const LoadRequest active = slot.id == GetHostPlayerId() ? active_request_ : slot.activeRequest;
+            const LoadRequest resident = slot.id == GetHostPlayerId() ? resident_request_ : slot.residentRequest;
+            Require(world_.UpdateRequest(active, {slot.center, oldActive}, LoadMode::active).has_value());
+            Require(world_.UpdateRequest(resident, {slot.center, oldResident}, LoadMode::resident).has_value());
+        }
         return eastl::unexpected(WorldError::storage_failure);
     }
+    for (PlayerSlot& slot : players_) {
+        if (slot.state != PlayerConnectionState::Active) { continue; }
+        const Actor* participant = world_.GetActor(PlayerActor(slot));
+        Require(participant);
+        slot.center = ChunkOf(participant->position);
+        slot.position = participant->position;
+    }
+    bubbleCenter_ = FindPlayer(GetHostPlayerId())->center;
+    active_radius_ = active_radius;
+    resident_radius_ = resident_radius;
+    ++revision_;
     return {};
 }
 
-SaveResult<void> Server::UpdateBubble(int activeRadius, int residentRadius,
+SaveResult<void> Server::UpdatePlayerBubble(PlayerSlot& slot, int activeRadius, int residentRadius,
     Diagnostics* diagnostics) {
-    const Actor* actor = world_.GetActor(player_);
+    const Actor* actor = world_.GetActor(PlayerActor(slot));
     Require(actor != nullptr);
     const ChunkCoord center = ChunkOf(actor->position);
-    Require(world_.UpdateRequest(active_request_, {center, activeRadius}, LoadMode::active).has_value());
-    Require(world_.UpdateRequest(resident_request_, {center, residentRadius}, LoadMode::resident).has_value());
+    LoadRequest active = slot.id == GetHostPlayerId() ? active_request_ : slot.activeRequest;
+    LoadRequest resident = slot.id == GetHostPlayerId() ? resident_request_ : slot.residentRequest;
+    Require(world_.UpdateRequest(active, {center, activeRadius}, LoadMode::active).has_value());
+    Require(world_.UpdateRequest(resident, {center, residentRadius}, LoadMode::resident).has_value());
+    const TileCoord position = actor->position;
     const auto reconciled = world_.ReconcileChunks(diagnostics);
     if (!reconciled) {
-        Require(world_.UpdateRequest(active_request_, {bubbleCenter_, active_radius_}, LoadMode::active).has_value());
-        Require(world_.UpdateRequest(resident_request_, {bubbleCenter_, resident_radius_}, LoadMode::resident).has_value());
+        Require(world_.UpdateRequest(active, {slot.center, active_radius_}, LoadMode::active).has_value());
+        Require(world_.UpdateRequest(resident, {slot.center, resident_radius_}, LoadMode::resident).has_value());
         return eastl::unexpected(reconciled.error());
     }
-    bubbleCenter_ = center;
+    slot.center = center;
+    slot.position = position;
+    if (slot.id == GetHostPlayerId()) { bubbleCenter_ = center; }
     active_radius_ = activeRadius;
     resident_radius_ = residentRadius;
     return {};
@@ -494,8 +852,14 @@ Server::Server(const ContentCatalog& content, EmptyTag) : world_(content) {}
 SessionState Server::Checkpoint() const {
     const Actor* actor = world_.GetActor(player_);
     Require(actor != nullptr);
-    return {tick_, rng_state_, actor->id, actor->position,
+    SessionState session{tick_, rng_state_, actor->id, actor->position,
         active_radius_, resident_radius_, autosaveInterval_, pacer_.GetSettings()};
+    for (const PlayerSlot& slot : players_) {
+        const auto position = world_.FindPlayerPosition(slot.id);
+        Require(position.has_value());
+        session.players.push_back({slot.id, *position, slot.name, slot.token});
+    }
+    return session;
 }
 
 SaveResult<void> Server::CreateSave(const char* path, Diagnostics* diagnostics) {
@@ -544,12 +908,44 @@ SaveResult<eastl::unique_ptr<Server>> Server::LoadSave(const ContentCatalog& con
     }
     server->player_ = server->world_.FindActor(session.player);
     const Actor* actor = server->world_.GetActor(server->player_);
-    if (!actor || !actor->player || actor->position != session.playerPosition) {
+    if (!actor || !actor->player || actor->parked || actor->position != session.playerPosition) {
         if (diagnostics) {
             diagnostics->Add("Saved player does not match server session");
         }
         return eastl::unexpected(SaveError::InvalidData);
     }
+    if (session.players.empty()) {
+        server->players_.push_back({session.player, "Host", 0, session.playerPosition,
+            PlayerConnectionState::Active, {}, {}, server->bubbleCenter_});
+    } else {
+        for (const SavedPlayer& saved : session.players) {
+            PlayerSlot slot;
+            slot.id = saved.actor;
+            slot.name = saved.name;
+            slot.token = saved.reconnectToken;
+            slot.position = saved.position;
+            slot.center = ChunkOf(saved.position);
+            slot.state = saved.actor == session.player
+                ? PlayerConnectionState::Active : PlayerConnectionState::Parked;
+            if (slot.state == PlayerConnectionState::Parked) {
+                const LoadRequest staging = Take(server->world_.RequestChunks(
+                    {slot.center, 0}, LoadMode::resident));
+                const auto staged = server->world_.ReconcileChunks(diagnostics);
+                if (!staged) { return eastl::unexpected(staged.error()); }
+                const ActorHandle guest = server->world_.FindActor(slot.id);
+                const Actor* value = server->world_.GetActor(guest);
+                if (!value || !value->player || value->position != slot.position) {
+                    return eastl::unexpected(SaveError::InvalidData);
+                }
+                Require(server->world_.SetActorParked(guest, true).has_value());
+                Require(server->world_.ReleaseRequest(staging).has_value());
+                Require(server->world_.ReconcileChunks().has_value());
+            }
+            server->players_.push_back(eastl::move(slot));
+        }
+    }
+    eastl::sort(server->players_.begin(), server->players_.end(),
+        [](const PlayerSlot& a, const PlayerSlot& b) { return a.id < b.id; });
     server->tick_ = session.tick;
     server->rng_state_ = session.rngState;
     server->autosaveInterval_ = session.autosaveInterval;

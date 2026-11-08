@@ -1,6 +1,7 @@
 #include "core/integration.h"
 #include "core/server.h"
 #include "client/text.h"
+#include "headless/lan.h"
 
 #include <EASTL/array.h>
 #include <EASTL/unique_ptr.h>
@@ -228,20 +229,46 @@ int main(int argc, char** argv) {
     const char* savePath = nullptr;
     const char* loadPath = nullptr;
     bool script = false;
+    cataclysmx::headless::LanOptions lan;
+    bool lanMode = false;
     for (int i = 1; i < argc; ++i) {
         const eastl::string_view argument(argv[i]);
         if (argument == "--script") { script = true;
+        } else if (argument == "--host") { lan.host = lanMode = true;
+        } else if (argument == "--discover") { lan.discover = lanMode = true;
+        } else if (argument == "--new-character") { lan.newCharacter = lanMode = true;
+        } else if (argument == "--join" && i + 1 < argc) { lan.join = argv[++i]; lanMode = true;
+        } else if (argument == "--name" && i + 1 < argc) { lan.name = argv[++i]; lanMode = true;
+        } else if (argument == "--profile" && i + 1 < argc) { lan.profile = argv[++i]; lanMode = true;
+        } else if (argument == "--discovery-address" && i + 1 < argc) { lan.discoveryAddress = argv[++i]; lanMode = true;
+        } else if (argument == "--command" && i + 1 < argc) { lan.commands.emplace_back(argv[++i]); lanMode = true;
+        } else if (argument == "--port" && i + 1 < argc) {
+            const eastl::string_view text(argv[++i]);
+            if (!Number(text, lan.port) || !lan.port) { return 2; }
+            lanMode = true;
+        } else if (argument == "--discovery-port" && i + 1 < argc) {
+            const eastl::string_view text(argv[++i]);
+            if (!Number(text, lan.discoveryPort) || !lan.discoveryPort) { return 2; }
+            lanMode = true;
+        } else if (argument == "--run-for" && i + 1 < argc) {
+            const eastl::string_view text(argv[++i]);
+            if (!Number(text, lan.runForMs)) { return 2; }
+            lanMode = true;
         } else if (argument == "--content" && i + 1 < argc) { contentPath = argv[++i];
         } else if (argument == "--save" && i + 1 < argc) { savePath = argv[++i];
         } else if (argument == "--load" && i + 1 < argc) { loadPath = argv[++i];
         } else {
-            std::fputs("Usage: cataclysmx_headless [--content <path>] [--script] [--save <path> | --load <path>] | --probe | --fail-log\n", stderr);
+            std::fputs("Usage: cataclysmx_headless [--content path] [--save path | --load path] [--script | --host | --join address[:port] | --discover] [--port n] [--discovery-port n] [--discovery-address address] [--name name] [--profile path] [--new-character] [--run-for ms] [--command 'move e'] | --probe | --fail-log\n", stderr);
             return 2;
         }
     }
     if (savePath != nullptr && loadPath != nullptr) {
         std::fputs("Choose either --save or --load\n", stderr);
         return 2;
+    }
+    if (script && lanMode) { std::fputs("--script and live LAN modes are separate\n", stderr); return 2; }
+    if ((!lan.join.empty() || lan.discover) && (savePath || loadPath)) {
+        std::fputs("Guest/discovery mode does not own a host game save\n", stderr); return 2;
     }
     Diagnostics diagnostics;
     // Scripted save loads also retain a reference to this main-stack catalog.
@@ -279,6 +306,7 @@ int main(int argc, char** argv) {
             }
         }
     }
+    if (lanMode) { return cataclysmx::headless::RunLan(*server, *content, lan); }
     if (!script) {
         bool quit = false;
         for (const char* command : {"pickup", "move e", "interact e", "wait", "view", "inspect"}) {

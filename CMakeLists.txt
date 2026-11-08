@@ -13,6 +13,8 @@ find_package(EASTL CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
 find_package(yyjson CONFIG REQUIRED)
 find_package(unofficial-sqlite3 CONFIG REQUIRED)
+find_package(unofficial-enet CONFIG REQUIRED)
+find_package(Threads REQUIRED)
 
 function(cataclysmx_target target)
     if(MSVC)
@@ -72,19 +74,28 @@ target_link_libraries(cataclysmx_engine PUBLIC EASTL PRIVATE spdlog::spdlog yyjs
 target_compile_definitions(cataclysmx_engine PUBLIC EASTL_EXCEPTIONS_ENABLED=0)
 cataclysmx_no_exceptions(cataclysmx_engine)
 
+add_library(cataclysmx_network STATIC src/network/network.cpp src/network/network.h
+    src/network/wire.cpp src/network/wire.h)
+target_link_libraries(cataclysmx_network PUBLIC cataclysmx_engine PRIVATE unofficial::enet::enet)
+if(WIN32)
+    # ENet's static vcpkg target does not propagate its WinSock/timer imports.
+    target_link_libraries(cataclysmx_network PRIVATE ws2_32 winmm)
+endif()
+cataclysmx_no_exceptions(cataclysmx_network)
+
 add_library(cataclysmx_client STATIC src/client/text.cpp src/client/text.h
-    src/client/worldgen_debug.cpp src/client/worldgen_debug.h)
+    src/client/worldgen_debug.cpp src/client/worldgen_debug.h
+    src/client/lan_profile.cpp src/client/lan_profile.h)
 target_link_libraries(cataclysmx_client PUBLIC cataclysmx_engine)
 cataclysmx_no_exceptions(cataclysmx_client)
 
-add_executable(cataclysmx_headless src/headless/main.cpp)
+add_executable(cataclysmx_headless src/headless/main.cpp src/headless/lan.cpp src/headless/lan.h)
 target_compile_definitions(cataclysmx_headless PRIVATE CATACLYSMX_TERRAIN_FILE="${CMAKE_CURRENT_SOURCE_DIR}/data/terrain.json5")
-target_link_libraries(cataclysmx_headless PRIVATE cataclysmx_client)
+target_link_libraries(cataclysmx_headless PRIVATE cataclysmx_client cataclysmx_network Threads::Threads)
 cataclysmx_no_exceptions(cataclysmx_headless)
 
 if(CATACLYSMX_BUILD_TERMINAL)
     find_package(ftxui CONFIG REQUIRED)
-    find_package(Threads REQUIRED)
     add_library(cataclysmx_terminal STATIC src/terminal/render.cpp src/terminal/render.h
         src/terminal/debug_menu.cpp src/terminal/debug_menu.h)
     target_include_directories(cataclysmx_terminal PUBLIC src)
@@ -95,7 +106,7 @@ if(CATACLYSMX_BUILD_TERMINAL)
     cataclysmx_no_exceptions(cataclysmx_terminal_smoke)
     add_executable(cataclysmx_game src/terminal/main.cpp)
     target_compile_definitions(cataclysmx_game PRIVATE CATACLYSMX_TERRAIN_FILE="${CMAKE_CURRENT_SOURCE_DIR}/data/terrain.json5")
-    target_link_libraries(cataclysmx_game PRIVATE cataclysmx_client cataclysmx_terminal ftxui::component Threads::Threads)
+    target_link_libraries(cataclysmx_game PRIVATE cataclysmx_client cataclysmx_network cataclysmx_terminal ftxui::component Threads::Threads)
     cataclysmx_no_exceptions(cataclysmx_game)
 endif()
 
@@ -106,9 +117,11 @@ if(CATACLYSMX_BUILD_TESTS)
         tests/save_database_tests.cpp tests/world_save_tests.cpp tests/server_save_tests.cpp
         tests/content_tests.cpp tests/diagnostics_tests.cpp tests/client_tests.cpp
         tests/terrain_integration_tests.cpp tests/building_pattern_tests.cpp tests/worldgen_tests.cpp
-        tests/worldgen_debug_tests.cpp tests/pacing_tests.cpp tests/scheduling_tests.cpp)
+        tests/worldgen_debug_tests.cpp tests/pacing_tests.cpp tests/scheduling_tests.cpp
+        tests/multiplayer_session_tests.cpp tests/player_parking_tests.cpp tests/network_tests.cpp
+        tests/lan_profile_tests.cpp)
     target_compile_definitions(cataclysmx_tests PRIVATE CATACLYSMX_TERRAIN_FILE="${CMAKE_CURRENT_SOURCE_DIR}/data/terrain.json5")
-    target_link_libraries(cataclysmx_tests PRIVATE cataclysmx_client Catch2::Catch2WithMain unofficial::sqlite3::sqlite3)
+    target_link_libraries(cataclysmx_tests PRIVATE cataclysmx_client cataclysmx_network Catch2::Catch2WithMain unofficial::sqlite3::sqlite3 Threads::Threads)
     if(CATACLYSMX_BUILD_TERMINAL)
         target_sources(cataclysmx_tests PRIVATE tests/terminal_render_tests.cpp tests/terminal_debug_menu_tests.cpp)
         target_link_libraries(cataclysmx_tests PRIVATE cataclysmx_terminal)
@@ -145,6 +158,14 @@ if(CATACLYSMX_BUILD_TESTS)
         "-DHEADLESS=$<TARGET_FILE:cataclysmx_headless>"
         ${save_client_terminal_arg}
         -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/run_save_script.cmake")
+    find_program(CATACLYSMX_PWSH NAMES pwsh)
+    if(CATACLYSMX_PWSH)
+        add_test(NAME headless_lan_roundtrip COMMAND "${CATACLYSMX_PWSH}" -NoProfile -File
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/run_lan_smoke.ps1"
+            -Headless "$<TARGET_FILE:cataclysmx_headless>"
+            -WorkDirectory "${CMAKE_CURRENT_BINARY_DIR}")
+        set_tests_properties(headless_lan_roundtrip PROPERTIES TIMEOUT 45 LABELS "network;integration")
+    endif()
     if(CATACLYSMX_BUILD_TERMINAL)
         add_test(NAME terminal_game_render COMMAND cataclysmx_game --render)
         set_tests_properties(terminal_game_render PROPERTIES PASS_REGULAR_EXPRESSION "tick=0 position=0,0")

@@ -13,6 +13,7 @@ struct SavedActor {
     std::uint64_t turns;
     std::uint32_t speed = 100;
     Tick remainingTicks = 0;
+    bool parked = false;
 };
 
 struct SavedObject {

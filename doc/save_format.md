@@ -1,10 +1,10 @@
 # Save format
 
-CataclysmX saves are SQLite database files. The strict v3 format is governed by
-one authoritative `metadata.format_version = 3` for both SQL and JSON. The
+CataclysmX saves are SQLite database files. The strict v4 format is governed by
+one authoritative `metadata.format_version = 4` for both SQL and JSON. The
 `metadata` columns are `singleton INTEGER PRIMARY KEY CHECK(singleton=1)`,
 `format_version INTEGER NOT NULL`, and `game_version TEXT NOT NULL`; its single
-row is `(1, 3, "0.1.0")`. The other tables are
+row is `(1, 4, "0.1.0")`. The other tables are
 `world_state(singleton INTEGER PRIMARY KEY CHECK(singleton=1), payload TEXT NOT
 NULL)` and `chunks(x INTEGER NOT NULL, z INTEGER NOT NULL, payload TEXT NOT NULL,
 PRIMARY KEY(x,z))`. Extra application tables/schema objects are rejected.
@@ -14,7 +14,20 @@ PRIMARY KEY(x,z))`. Extra application tables/schema objects are rejected.
 The single `world_state.payload` object has exactly `seed`,
 `generation_version`, `next_id`, and `session`. The session object has exactly
 `tick`, `rng_state`, `player`, `position` (`x`, `z`), `active_radius`,
-`resident_radius`, `autosave_interval`, and `pacing`. The nested `pacing` object
+`resident_radius`, `autosave_interval`, `pacing`, and `players`. `players` is an
+array of at most 32 exact objects `{ "actor": decimal-string,
+"position": {"x": int, "z": int}, "name": string,
+"reconnect_token": decimal-string }`. Names contain 1–32 bytes and no NUL;
+actor IDs and nonzero guest tokens are unique. Every entry refers to a
+player-marked actor at its recorded position, including unloaded chunks. The
+host entry, when present, matches `player`/`position` and uses token zero;
+guests require nonzero tokens. Empty rosters preserve generic world saves.
+For sessions with a host or nonempty roster, every player-marked actor across
+all saved chunks must appear in the roster; an empty roster with a nonzero host
+acts as an implicit singleton roster and permits no other player actors. The
+host must never be parked. Sessions with both host ID zero and empty roster
+remain generic and need not enumerate player-marked actors.
+The nested `pacing` object
 has exactly `ticks_per_second` (positive uint32 JSON integer), `rate_limited`
 (boolean), and `pause_when_idle` (boolean). Seed, generation version and RNG
 state are unsigned 32-bit JSON integers; coordinates and radii are JSON
@@ -32,7 +45,7 @@ The root object has exactly `tiles`, `actors`, `objects`, and `ground_items`:
   `TerrainId` numeric values are never persisted. Every tile must resolve in that
   catalog; unknown strings, embedded NULs and numeric terrain values are invalid.
 - `actors`: `{ "id": decimal-string, "position": {"x": int, "z": int},
-  "player": boolean, "turns": decimal-string, "inventory": [...],
+  "player": boolean, "parked": boolean, "turns": decimal-string, "inventory": [...],
   "speed": positive-uint32, "remaining_ticks": decimal-string }`.
 - `objects`: `{ "id": decimal-string, "position": {"x": int, "z": int},
   "enabled": boolean, "updates": decimal-string, "contents": [...],
@@ -43,14 +56,20 @@ The root object has exactly `tiles`, `actors`, `objects`, and `ground_items`:
   backpacks may contain items. Maximum nesting depth is 64 items including the
   root.
 
+Parked actors must be player-marked. They retain position, inventory and delay
+without occupying a tile. Parked actors may overlap live actors; two live
+actors may not overlap. Unload, checkpoint and reload preserve parked state.
+Session reconnect logic parks offline guests after loading; the durable roster
+keeps their identities and tokens independently of transient connections.
+
 IDs must be unique across all chunks and less than `next_id`; entity positions,
 ownership, chunks and session player identity/position are validated. Generic
 `World` saves allow session player ID zero; `Server` requires a nonzero player.
 `generation_version` accepts 1 (legacy) and 2 (current); other values fail with
 `SaveError::UnsupportedVersion`. New worlds use generation version 2. Version 1
 continues to generate unexplored chunks byte-for-byte as before, while version 2
-uses the region planner. The SQL/JSON save schema is version 3: save formats
-v1, v2 and all other schema versions are rejected, with no migrations or backup
+uses the region planner. The SQL/JSON save schema is version 4: save formats
+v1, v2, v3 and all other schema versions are rejected, with no migrations or backup
 files. In particular, v2 command-count ticks are not silently reinterpreted as
 simulation ticks. Content's own format version is independent of both versions.
 

@@ -26,8 +26,11 @@ public:
     Tick AvailableTicks() const;
     void ConsumeTicks(Tick ticks);
     eastl::optional<std::uint64_t> NextDeadlineMicroseconds() const;
+    eastl::optional<std::uint64_t> NextUnexpiredDeadlineMicroseconds() const;
     std::uint64_t MicrosecondsUntilTicks(Tick ticks) const;
     Vector<ActorHandle> ExpiredPlayers() const;
+    std::uint64_t GraceMicroseconds(ActorHandle actor) const;
+    void RestartGrace(ActorHandle actor);
     void Reset();
 
 private:
@@ -35,6 +38,7 @@ private:
         ActorHandle actor{};
         PersistentId id = 0;
         std::uint64_t remainingUnits = 0;
+        bool hasCommand = false;
     };
 
     PacingSettings settings_{};

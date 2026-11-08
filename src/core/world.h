@@ -7,6 +7,7 @@
 
 #include <EASTL/array.h>
 #include <EASTL/expected.h>
+#include <EASTL/optional.h>
 #include <EASTL/unique_ptr.h>
 
 #include <cstdint>
@@ -40,6 +41,13 @@ struct ChunkCoord {
 };
 
 // Authoritative server state captured in the same transaction as chunk values.
+struct SavedPlayer {
+    PersistentId actor = 0;
+    TileCoord position{};
+    String name;
+    std::uint64_t reconnectToken = 0;
+};
+
 struct SessionState {
     std::uint64_t tick = 0;
     std::uint32_t rngState = 0;
@@ -49,6 +57,7 @@ struct SessionState {
     int residentRadius = 2;
     std::uint64_t autosaveInterval = 0;
     PacingSettings pacing{};
+    Vector<SavedPlayer> players;
 };
 ChunkCoord ChunkOf(TileCoord position);
 int TileIndex(TileCoord position);
@@ -86,6 +95,7 @@ struct Actor {
     Vector<ItemHandle> inventory;
     std::uint32_t speed = 100;
     Tick remainingTicks = 0;
+    bool parked = false;
 };
 struct Item {
     PersistentId id = 0;
@@ -172,6 +182,8 @@ public:
     const Item* GetItem(ItemHandle handle) const;
     const InteractiveObject* GetObject(ObjectHandle handle) const;
     ActorHandle FindActor(PersistentId id) const;
+    // Last known position of a player actor, including unloaded roster players.
+    eastl::optional<TileCoord> FindPlayerPosition(PersistentId id) const;
     ItemHandle FindItem(PersistentId id) const;
     ObjectHandle FindObject(PersistentId id) const;
     ActorHandle ActorAt(TileCoord position) const;
@@ -181,6 +193,9 @@ public:
     WorldResult<void> SetTile(TileCoord position, Tile tile);
     WorldResult<ActorHandle> CreateActor(TileCoord position, bool player = false);
     WorldResult<void> MoveActor(ActorHandle actor, TileCoord destination);
+    // Parked players remain owned but do not occupy tiles or advance time.
+    // Unparking requires an unoccupied passable tile.
+    WorldResult<void> SetActorParked(ActorHandle actor, bool parked);
     // Actor destruction drops possessions at its last position.
     WorldResult<void> DestroyActor(ActorHandle actor);
     WorldResult<ItemHandle> CreateItem(ItemKind kind, ItemLocation location);
