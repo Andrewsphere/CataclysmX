@@ -32,13 +32,13 @@ not ownership or lifetime guarantees.
 
 - `TileCoord{x, z}` is a two-dimensional tile position; Z is the map's second
   horizontal axis, not elevation. Each axis is valid in `[-1'000'000, 1'000'000]`.
-- Chunks are `16 × 16` tiles. `chunk_of` uses floor division, so tile `{-1, -1}`
-  belongs to chunk `{-1, -1}`. `tile_index` is row-major (`local_z * 16 + local_x`)
+- Chunks are `16 × 16` tiles. `ChunkOf` uses floor division, so tile `{-1, -1}`
+  belongs to chunk `{-1, -1}`. `TileIndex` is row-major (`local_z * 16 + local_x`)
   and gives `255` for that tile.
 - `ChunkRegion{center, radius}` is an inclusive square in **chunk units**, with
   radius `0..8`. The entire square must fit chunk coordinates `[-62'500, 62'500]`.
   Edge chunks still contain slots outside valid tile coordinates; use
-  `valid_position`/`GetTile` for tile access.
+  `ValidPosition`/`GetTile` for tile access.
 - Spatial mutations require loaded destination chunks. A valid but unloaded
   destination returns `chunk_unavailable`; an out-of-bounds tile returns
   `invalid_position`. Queries and mutations do not implicitly load chunks.
@@ -53,7 +53,9 @@ not themselves block actors.
 
 `RequestChunks` acquires demand; `UpdateRequest` replaces that request's region
 and mode; `ReleaseRequest` retires it. These operations change demand only.
-Call `ReconcileChunks()` explicitly at a synchronous boundary to apply it.
+Call `ReconcileChunks()` explicitly at a synchronous boundary to apply it. It
+returns `SaveResult<void>` because storage-backed loads can fail; see the
+[save format and checkpoint contract](save_format.md).
 Invalid updates leave the previous request intact. Copying or dropping a
 `LoadRequest` value does not acquire or release demand.
 
@@ -133,8 +135,8 @@ item ownership trees as values linked by persistent IDs, then retires runtime
 handles. Reload restores those values and collection order with fresh handles.
 Resident-only and archived entities do not advance or catch up on reactivation.
 Archives exist only for currently unloaded chunks in this `World`, and disappear
-with it. This is **not disk saving or bounded-memory world streaming**: retained
-archives can grow as more chunks are visited.
+with it. See the [save format](save_format.md) for disk checkpointing and archive
+eviction; validation scans all durable chunks and is not constant-cost streaming.
 
 Internally, central slot maps own live entities, while chunks hold spatial
 indexes. Keeping these separate preserves live handles across chunk movement.

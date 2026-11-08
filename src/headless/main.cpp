@@ -3,10 +3,12 @@
 #include "client/text.h"
 
 #include <EASTL/array.h>
+#include <EASTL/unique_ptr.h>
 #include <EASTL/string_view.h>
 
 #include <charconv>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <string>
@@ -16,12 +18,12 @@ namespace {
 using namespace cataclysmx;
 
 template<class T>
-bool number(eastl::string_view text, T& value) {
+bool Number(eastl::string_view text, T& value) {
     const auto result = std::from_chars(text.data(), text.data() + text.size(), value);
     return result.ec == std::errc{} && result.ptr == text.data() + text.size();
 }
 
-bool direction(eastl::string_view text, Command& command) {
+bool Direction(eastl::string_view text, Command& command) {
     if (text == "n") { command.dz = -1;
     } else if (text == "s") { command.dz = 1;
     } else if (text == "e") { command.dx = 1;
@@ -30,7 +32,7 @@ bool direction(eastl::string_view text, Command& command) {
     return true;
 }
 
-void inspect(const Server& server) {
+void Inspect(const Server& server) {
     const World& world = server.GetWorld();
     std::size_t active = 0;
     for (ChunkCoord coord : world.LoadedChunks()) {
@@ -56,7 +58,8 @@ void inspect(const Server& server) {
 
 // Returns false for malformed syntax/failed administrative requests. Gameplay
 // rejections are valid responses, so scripts can exercise blocked actions.
-bool execute(Server& server, eastl::string_view line, bool& quit) {
+bool Execute(eastl::unique_ptr<Server>& ownedServer, eastl::string_view line, bool& quit) {
+    Server& server = *ownedServer;
     eastl::array<eastl::string_view, 8> words{};
     std::size_t count = 0;
     while (!line.empty()) {
@@ -77,33 +80,60 @@ bool execute(Server& server, eastl::string_view line, bool& quit) {
         std::fputs(render_text(server.View()).c_str(), stdout);
         return true;
     }
-    if (name == "inspect" && count == 1) { inspect(server); return true; }
+    if (name == "inspect" && count == 1) { Inspect(server); return true; }
+    if (name == "save" && (count == 1 || count == 2)) {
+        Diagnostics diagnostics;
+        SaveResult<void> saved;
+        if (count == 2) {
+            const String path(words[1].data(), words[1].size());
+            saved = server.CreateSave(path.c_str(), &diagnostics);
+        } else { saved = server.Save(&diagnostics); }
+        if (!saved) { std::fprintf(stderr, "Save failed: %s\n", diagnostics.message.c_str()); return false; }
+        return true;
+    }
+    if (name == "load" && count == 2) {
+        Diagnostics diagnostics;
+        const String path(words[1].data(), words[1].size());
+        auto loaded = Server::LoadSave(path.c_str(), &diagnostics);
+        if (!loaded) { std::fprintf(stderr, "Load failed: %s\n", diagnostics.message.c_str()); return false; }
+        ownedServer = eastl::move(*loaded);
+        return true;
+    }
+    if (name == "autosave" && count == 2) {
+        std::uint64_t turns = 0;
+        if (!Number(words[1], turns)) { return false; }
+        server.SetAutosaveInterval(turns);
+        return true;
+    }
     if (name == "bubble" && count == 3) {
         int active = 0;
         int resident = 0;
-        if (!number(words[1], active) || !number(words[2], resident)
+        if (!Number(words[1], active) || !Number(words[2], resident)
             || !server.SetBubbleRadii(active, resident)) { return false; }
         std::printf("bubble active=%d resident=%d\n", active, resident);
         return true;
     }
     if (name == "force" && count == 5) {
         ChunkRegion region;
-        if (!number(words[1], region.center.x) || !number(words[2], region.center.z)
-            || !number(words[3], region.radius)) { return false; }
+        if (!Number(words[1], region.center.x) || !Number(words[2], region.center.z)
+            || !Number(words[3], region.radius)) { return false; }
         LoadMode mode;
         if (words[4] == "resident") { mode = LoadMode::resident;
         } else if (words[4] == "active") { mode = LoadMode::active;
         } else { return false; }
         auto request = server.GetWorld().RequestChunks(region, mode);
         if (!request) { return false; }
-        server.GetWorld().ReconcileChunks();
+        if (!server.GetWorld().ReconcileChunks()) {
+            if (!server.GetWorld().ReleaseRequest(*request)) { std::abort(); }
+            return false;
+        }
         std::printf("request=%llu\n", static_cast<unsigned long long>(request->value));
         return true;
     }
     if (name == "release" && count == 2) {
         LoadRequest request;
-        if (!number(words[1], request.value) || !server.GetWorld().ReleaseRequest(request)) { return false; }
-        server.GetWorld().ReconcileChunks();
+        if (!Number(words[1], request.value) || !server.GetWorld().ReleaseRequest(request)) { return false; }
+        if (!server.GetWorld().ReconcileChunks()) { return false; }
         std::puts("released");
         return true;
     }
@@ -112,14 +142,18 @@ bool execute(Server& server, eastl::string_view line, bool& quit) {
         command.kind = CommandKind::wait;
     } else if ((name == "move" || name == "interact") && count == 2) {
         command.kind = name == "move" ? CommandKind::move : CommandKind::interact;
-        if (!direction(words[1], command)) { return false; }
+        if (!Direction(words[1], command)) { return false; }
     } else if ((name == "pickup" || name == "drop") && (count == 1 || count == 2)) {
         command.kind = name == "pickup" ? CommandKind::pick_up : CommandKind::drop;
-        if (count == 2 && !number(words[1], command.item)) { return false; }
+        if (count == 2 && !Number(words[1], command.item)) { return false; }
     } else { return false; }
     const CommandResult result = server.Send(command);
     std::printf("tick=%llu advanced=%d %s\n", static_cast<unsigned long long>(result.tick),
         result.advanced ? 1 : 0, OutcomeMessage(result.outcome));
+    if (result.storageError) {
+        std::fputs(result.advanced ? "Autosave failed after completed turn\n" : "World load failed\n", stderr);
+        return false;
+    }
     return true;
 }
 
@@ -134,13 +168,13 @@ int main(int argc, char** argv) {
         std::printf("seed=42 checksum=%u\n", cataclysmx::headless_checksum(42));
         return 0;
     }
-    Server server;
+    eastl::unique_ptr<Server> server = eastl::make_unique<Server>();
     if (argc == 1) {
         bool quit = false;
         for (const char* command : {"pickup", "move e", "interact e", "wait", "view", "inspect"}) {
-            if (!execute(server, command, quit)) { return 1; }
+            if (!Execute(server, command, quit)) { return 1; }
         }
-        return server.GetWorld().CheckInvariants() ? 0 : 1;
+        return server->GetWorld().CheckInvariants() ? 0 : 1;
     }
     if (argc != 2 || std::strcmp(argv[1], "--script") != 0) {
         std::fputs("Usage: cataclysmx_headless [--script | --probe | --fail-log]\n", stderr);
@@ -151,10 +185,10 @@ int main(int argc, char** argv) {
     std::size_t line_number = 0;
     while (!quit && std::getline(std::cin, line)) {
         ++line_number;
-        if (!execute(server, eastl::string_view(line.data(), line.size()), quit)) {
+        if (!Execute(server, eastl::string_view(line.data(), line.size()), quit)) {
             std::fprintf(stderr, "Invalid command/request on line %zu: %s\n", line_number, line.c_str());
             return 2;
         }
     }
-    return !std::cin.bad() && server.GetWorld().CheckInvariants() ? 0 : 1;
+    return !std::cin.bad() && server->GetWorld().CheckInvariants() ? 0 : 1;
 }

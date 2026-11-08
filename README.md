@@ -22,8 +22,9 @@ a wandering NPC. Successful actions spend one turn; rejected actions spend none.
 The world has 16×16 XZ chunks, typed generational handles, nested item ownership,
 resident/active load requests, and a following player reality bubble. Unloaded
 objects are destroyed; value snapshots restore their persistent IDs with fresh
-runtime handles. The backing store is currently **in-memory**, so there are no
-disk saves or bounded-memory world streaming yet. Offscreen actors freeze.
+runtime handles. SQLite checkpoints persist full chunk snapshots and session
+state; unloaded archives remain in RAM until saved successfully. Offscreen actors
+freeze. See [save format and behavior](doc/save_format.md).
 
 See [`doc/`](doc/README.md) for the world/server API and headless command grammar.
 The dependency probes remain available separately below.

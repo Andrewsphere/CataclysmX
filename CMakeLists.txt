@@ -12,6 +12,7 @@ option(CATACLYSMX_ENABLE_ASAN_UBSAN "Enable Clang/GCC ASan and UBSan" OFF)
 find_package(EASTL CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
 find_package(yyjson CONFIG REQUIRED)
+find_package(unofficial-sqlite3 CONFIG REQUIRED)
 
 function(cataclysmx_target target)
     if(MSVC)
@@ -55,12 +56,13 @@ endfunction()
 
 add_library(cataclysmx_engine STATIC
     src/core/integration.cpp src/core/world.cpp src/core/simulation.cpp src/core/server.cpp
+    src/core/save_database.cpp src/core/save_database.h src/core/save_result.h src/core/world_archive.h
     src/core/containers.h src/core/integration.h src/core/server.h
     src/core/simulation.h src/core/slot_map.h src/core/world.h)
 target_include_directories(cataclysmx_engine PUBLIC src)
 target_include_directories(cataclysmx_engine SYSTEM PRIVATE
     third_party/unordered_dense/include third_party/slotmap)
-target_link_libraries(cataclysmx_engine PUBLIC EASTL PRIVATE spdlog::spdlog yyjson::yyjson)
+target_link_libraries(cataclysmx_engine PUBLIC EASTL PRIVATE spdlog::spdlog yyjson::yyjson unofficial::sqlite3::sqlite3)
 # Public EASTL containers must have the same inline definitions in engine and
 # exception-enabled Catch2 translation units. Catch2 itself keeps exceptions.
 target_compile_definitions(cataclysmx_engine PUBLIC EASTL_EXCEPTIONS_ENABLED=0)
@@ -91,8 +93,9 @@ endif()
 if(CATACLYSMX_BUILD_TESTS)
     enable_testing()
     find_package(Catch2 3 CONFIG REQUIRED)
-    add_executable(cataclysmx_tests tests/integration_tests.cpp tests/world_tests.cpp tests/server_tests.cpp)
-    target_link_libraries(cataclysmx_tests PRIVATE cataclysmx_engine Catch2::Catch2WithMain)
+    add_executable(cataclysmx_tests tests/integration_tests.cpp tests/world_tests.cpp tests/server_tests.cpp
+        tests/save_database_tests.cpp tests/world_save_tests.cpp tests/server_save_tests.cpp)
+    target_link_libraries(cataclysmx_tests PRIVATE cataclysmx_engine Catch2::Catch2WithMain unofficial::sqlite3::sqlite3)
     cataclysmx_target(cataclysmx_tests)
     if(MSVC)
         target_compile_options(cataclysmx_tests PRIVATE /EHsc)
@@ -113,6 +116,14 @@ if(CATACLYSMX_BUILD_TESTS)
         "-DHEADLESS=$<TARGET_FILE:cataclysmx_headless>"
         "-DSCENARIO=${CMAKE_CURRENT_SOURCE_DIR}/tests/scenarios/invalid.txt"
         -DINVALID=ON -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/run_headless_script.cmake")
+    set(save_client_terminal_arg)
+    if(CATACLYSMX_BUILD_TERMINAL)
+        set(save_client_terminal_arg "-DTERMINAL=$<TARGET_FILE:cataclysmx_game>")
+    endif()
+    add_test(NAME save_client_roundtrip COMMAND ${CMAKE_COMMAND}
+        "-DHEADLESS=$<TARGET_FILE:cataclysmx_headless>"
+        ${save_client_terminal_arg}
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/run_save_script.cmake")
     if(CATACLYSMX_BUILD_TERMINAL)
         add_test(NAME terminal_game_render COMMAND cataclysmx_game --render)
         set_tests_properties(terminal_game_render PROPERTIES PASS_REGULAR_EXPRESSION "tick=0 position=0,0")

@@ -2,6 +2,8 @@
 
 #include "core/world.h"
 
+#include <EASTL/optional.h>
+
 namespace cataclysmx {
 
 enum class CommandKind { wait, move, pick_up, drop, interact };
@@ -21,6 +23,7 @@ struct CommandResult {
     Outcome outcome = Outcome::invalid_command;
     bool advanced = false;
     std::uint64_t tick = 0;
+    eastl::optional<SaveError> storageError = {};
 };
 
 struct ViewCell {
@@ -55,7 +58,14 @@ public:
     explicit Server(std::uint32_t seed = 42);
     CommandResult Send(Command command);
     WorldView View(int radius = 8) const;
-    WorldResult<void> SetBubbleRadii(int active_radius, int resident_radius);
+    WorldResult<void> SetBubbleRadii(int active_radius, int resident_radius,
+        Diagnostics* diagnostics = nullptr);
+    SaveResult<void> CreateSave(const char* path, Diagnostics* diagnostics = nullptr);
+    SaveResult<void> Save(Diagnostics* diagnostics = nullptr);
+    static SaveResult<eastl::unique_ptr<Server>> LoadSave(const char* path,
+        Diagnostics* diagnostics = nullptr);
+    void SetAutosaveInterval(std::uint64_t turns);
+    std::uint64_t GetAutosaveInterval() const;
 
     // Administrative/headless inspection; ordinary clients consume View().
     World& GetWorld();
@@ -64,6 +74,8 @@ public:
     std::uint64_t GetTick() const;
 
 private:
+    struct EmptyTag {};
+    explicit Server(EmptyTag);
     World world_;
     ActorHandle player_{};
     LoadRequest active_request_{};
@@ -72,8 +84,13 @@ private:
     int resident_radius_ = 2;
     std::uint64_t tick_ = 0;
     std::uint32_t rng_state_ = 0;
+    ChunkCoord bubbleCenter_{};
+    std::uint64_t autosaveInterval_ = 0;
+    std::uint64_t lastSaveTick_ = 0;
 
-    void UpdateBubble();
+    SessionState Checkpoint() const;
+    SaveResult<void> UpdateBubble(int activeRadius, int residentRadius,
+        Diagnostics* diagnostics = nullptr);
 };
 
 }

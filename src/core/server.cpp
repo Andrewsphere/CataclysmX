@@ -7,6 +7,7 @@
 #include <EASTL/algorithm.h>
 #include <EASTL/numeric_limits.h>
 #include <EASTL/sort.h>
+#include <EASTL/utility.h>
 
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
 #error Engine must compile without exceptions
@@ -127,7 +128,7 @@ const char* OutcomeMessage(Outcome outcome) {
 Server::Server(std::uint32_t seed) : world_(seed), rng_state_(seed) {
     active_request_ = Take(world_.RequestChunks({{0, 0}, active_radius_}, LoadMode::active));
     resident_request_ = Take(world_.RequestChunks({{0, 0}, resident_radius_}, LoadMode::resident));
-    world_.ReconcileChunks();
+    Require(world_.ReconcileChunks().has_value());
     constexpr TileCoord floors[] = {{0, 0}, {1, 0}, {2, 0}, {5, 5}};
     for (TileCoord position : floors) {
         Require(world_.SetTile(position, {}).has_value());
@@ -162,24 +163,41 @@ CommandResult Server::Send(Command command) {
             return failed(Outcome::unavailable);
         }
         LoadRequest temporary{};
-        if (!world_.GetTile(destination)) {
-            temporary = Take(world_.RequestChunks({ChunkOf(destination), 0}, LoadMode::resident));
-            world_.ReconcileChunks();
+        const ChunkCoord center = ChunkOf(destination);
+        bool complete = true;
+        for (int z = center.z - resident_radius_; z <= center.z + resident_radius_; ++z) {
+            for (int x = center.x - resident_radius_; x <= center.x + resident_radius_; ++x) {
+                if (!world_.GetChunk({x, z})) {
+                    complete = false;
+                }
+            }
+        }
+        // Preserve the old bubble while staging every chunk the new requests
+        // will need. Reconcile failures leave all live world state untouched.
+        if (center != bubbleCenter_ || !complete) {
+            temporary = Take(world_.RequestChunks({center, resident_radius_}, LoadMode::resident));
+            const auto loaded = world_.ReconcileChunks();
+            if (!loaded) {
+                Require(world_.ReleaseRequest(temporary).has_value());
+                return {Outcome::unavailable, false, tick_, loaded.error()};
+            }
         }
         const auto moved = world_.MoveActor(player_, destination);
         if (!moved) {
             if (temporary.value != 0) {
                 Require(world_.ReleaseRequest(temporary).has_value());
-                world_.ReconcileChunks();
+                Require(world_.ReconcileChunks().has_value());
             }
             return failed(MovementFailure(moved.error()));
         }
         // The player has entered the destination before any old demand can be
         // removed, preserving its runtime key even with zero-radius bubbles.
-        UpdateBubble();
+        // The union is resident now; changing activity and releasing temporary
+        // demand below cannot require another storage read.
+        Require(UpdateBubble(active_radius_, resident_radius_).has_value());
         if (temporary.value != 0) {
             Require(world_.ReleaseRequest(temporary).has_value());
-            world_.ReconcileChunks();
+            Require(world_.ReconcileChunks().has_value());
         }
         outcome = Outcome::moved;
         break;
@@ -237,7 +255,15 @@ CommandResult Server::Send(Command command) {
     Require(tick_ != eastl::numeric_limits<std::uint64_t>::max());
     cataclysmx::Advance(world_, player_, rng_state_);
     ++tick_;
-    return {outcome, true, tick_};
+    CommandResult result{outcome, true, tick_};
+    if (world_.HasSave() && autosaveInterval_ != 0
+        && tick_ - lastSaveTick_ >= autosaveInterval_) {
+        const auto saved = Save();
+        if (!saved) {
+            result.storageError = saved.error();
+        }
+    }
+    return result;
 }
 
 WorldView Server::View(int radius) const {
@@ -286,27 +312,107 @@ WorldView Server::View(int radius) const {
     return result;
 }
 
-WorldResult<void> Server::SetBubbleRadii(int active_radius, int resident_radius) {
+WorldResult<void> Server::SetBubbleRadii(int active_radius, int resident_radius,
+    Diagnostics* diagnostics) {
     const Actor* actor = world_.GetActor(player_);
     Require(actor != nullptr);
     if (active_radius < 0 || resident_radius < active_radius || resident_radius > 8
         || !BubbleFits(actor->position, resident_radius)) {
         return eastl::unexpected(WorldError::invalid_region);
     }
-    active_radius_ = active_radius;
-    resident_radius_ = resident_radius;
-    UpdateBubble();
+    if (!UpdateBubble(active_radius, resident_radius, diagnostics)) {
+        return eastl::unexpected(WorldError::storage_failure);
+    }
     return {};
 }
 
-void Server::UpdateBubble() {
+SaveResult<void> Server::UpdateBubble(int activeRadius, int residentRadius,
+    Diagnostics* diagnostics) {
     const Actor* actor = world_.GetActor(player_);
     Require(actor != nullptr);
     const ChunkCoord center = ChunkOf(actor->position);
-    Require(world_.UpdateRequest(active_request_, {center, active_radius_}, LoadMode::active).has_value());
-    Require(world_.UpdateRequest(resident_request_, {center, resident_radius_}, LoadMode::resident).has_value());
-    world_.ReconcileChunks();
+    Require(world_.UpdateRequest(active_request_, {center, activeRadius}, LoadMode::active).has_value());
+    Require(world_.UpdateRequest(resident_request_, {center, residentRadius}, LoadMode::resident).has_value());
+    const auto reconciled = world_.ReconcileChunks(diagnostics);
+    if (!reconciled) {
+        Require(world_.UpdateRequest(active_request_, {bubbleCenter_, active_radius_}, LoadMode::active).has_value());
+        Require(world_.UpdateRequest(resident_request_, {bubbleCenter_, resident_radius_}, LoadMode::resident).has_value());
+        return eastl::unexpected(reconciled.error());
+    }
+    bubbleCenter_ = center;
+    active_radius_ = activeRadius;
+    resident_radius_ = residentRadius;
+    return {};
 }
+
+Server::Server(EmptyTag) {}
+
+SessionState Server::Checkpoint() const {
+    const Actor* actor = world_.GetActor(player_);
+    Require(actor != nullptr);
+    return {tick_, rng_state_, actor->id, actor->position,
+        active_radius_, resident_radius_, autosaveInterval_};
+}
+
+SaveResult<void> Server::CreateSave(const char* path, Diagnostics* diagnostics) {
+    const auto result = world_.CreateSave(path, Checkpoint(), diagnostics);
+    if (result) {
+        lastSaveTick_ = tick_;
+    }
+    return result;
+}
+
+SaveResult<void> Server::Save(Diagnostics* diagnostics) {
+    const auto result = world_.Save(Checkpoint(), diagnostics);
+    if (result) {
+        lastSaveTick_ = tick_;
+    }
+    return result;
+}
+
+SaveResult<eastl::unique_ptr<Server>> Server::LoadSave(const char* path, Diagnostics* diagnostics) {
+    eastl::unique_ptr<Server> server(new Server(EmptyTag{}));
+    const auto loaded = server->world_.LoadSave(path, diagnostics);
+    if (!loaded) {
+        return eastl::unexpected(loaded.error());
+    }
+    const SessionState& session = *loaded;
+    if (session.player == 0 || session.activeRadius < 0
+        || session.residentRadius < session.activeRadius || session.residentRadius > 8
+        || !BubbleFits(session.playerPosition, session.residentRadius)) {
+        if (diagnostics) {
+            diagnostics->message = "Invalid server session";
+        }
+        return eastl::unexpected(SaveError::invalid_data);
+    }
+    server->bubbleCenter_ = ChunkOf(session.playerPosition);
+    server->active_radius_ = session.activeRadius;
+    server->resident_radius_ = session.residentRadius;
+    server->active_request_ = Take(server->world_.RequestChunks(
+        {server->bubbleCenter_, session.activeRadius}, LoadMode::active));
+    server->resident_request_ = Take(server->world_.RequestChunks(
+        {server->bubbleCenter_, session.residentRadius}, LoadMode::resident));
+    const auto reconciled = server->world_.ReconcileChunks(diagnostics);
+    if (!reconciled) {
+        return eastl::unexpected(reconciled.error());
+    }
+    server->player_ = server->world_.FindActor(session.player);
+    const Actor* actor = server->world_.GetActor(server->player_);
+    if (!actor || !actor->player || actor->position != session.playerPosition) {
+        if (diagnostics) {
+            diagnostics->message = "Saved player does not match server session";
+        }
+        return eastl::unexpected(SaveError::invalid_data);
+    }
+    server->tick_ = session.tick;
+    server->rng_state_ = session.rngState;
+    server->autosaveInterval_ = session.autosaveInterval;
+    server->lastSaveTick_ = session.tick;
+    return eastl::move(server);
+}
+
+void Server::SetAutosaveInterval(std::uint64_t turns) { autosaveInterval_ = turns; }
+std::uint64_t Server::GetAutosaveInterval() const { return autosaveInterval_; }
 
 World& Server::GetWorld() { return world_; }
 const World& Server::GetWorld() const { return world_; }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/containers.h"
+#include "core/save_result.h"
 
 #include <EASTL/array.h>
 #include <EASTL/expected.h>
@@ -34,6 +35,17 @@ struct ChunkCoord {
     int x = 0;
     int z = 0;
     bool operator==(const ChunkCoord&) const = default;
+};
+
+// Authoritative server state captured in the same transaction as chunk values.
+struct SessionState {
+    std::uint64_t tick = 0;
+    std::uint32_t rngState = 0;
+    PersistentId player = 0;
+    TileCoord playerPosition{};
+    int activeRadius = 1;
+    int residentRadius = 2;
+    std::uint64_t autosaveInterval = 0;
 };
 ChunkCoord ChunkOf(TileCoord position);
 int TileIndex(TileCoord position);
@@ -102,7 +114,8 @@ enum class WorldError {
     occupied,
     containment_cycle,
     not_container,
-    invalid_request
+    invalid_request,
+    storage_failure
 };
 template<class T>
 using WorldResult = eastl::expected<T, WorldError>;
@@ -128,7 +141,15 @@ public:
     WorldResult<void> UpdateRequest(LoadRequest request, ChunkRegion region, LoadMode mode);
     WorldResult<void> ReleaseRequest(LoadRequest request);
     // Synchronous boundary operation. Overlapping requests combine; active wins.
-    void ReconcileChunks();
+    SaveResult<void> ReconcileChunks(Diagnostics* diagnostics = nullptr);
+
+    // Create attaches a new database only after a successful first checkpoint.
+    // Load requires a pristine World and leaves chunk materialization to demand.
+    SaveResult<void> CreateSave(const char* path, const SessionState& session,
+        Diagnostics* diagnostics = nullptr);
+    SaveResult<SessionState> LoadSave(const char* path, Diagnostics* diagnostics = nullptr);
+    SaveResult<void> Save(const SessionState& session, Diagnostics* diagnostics = nullptr);
+    bool HasSave() const;
 
     const Chunk* GetChunk(ChunkCoord position) const;
     const Tile* GetTile(TileCoord position) const;

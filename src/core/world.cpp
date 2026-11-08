@@ -2,6 +2,7 @@
 
 #include "core/world.h"
 #include "core/slot_map.h"
+#include "core/save_database.h"
 
 #include <EASTL/algorithm.h>
 #include <EASTL/numeric_limits.h>
@@ -75,36 +76,97 @@ struct Request {
     LoadMode mode;
 };
 
-struct SavedActor {
-    PersistentId id;
-    TileCoord position;
-    bool player;
-    std::uint64_t turns;
-};
+using Archive = ChunkArchive;
 
-struct SavedObject {
-    PersistentId id;
-    TileCoord position;
-    bool enabled;
-    std::uint64_t updates;
-};
+SaveResult<void> SaveFailure(SaveError error, const char* message, Diagnostics* diagnostics) {
+    if (diagnostics) {
+        diagnostics->message = message;
+    }
+    return eastl::unexpected(error);
+}
 
-struct SavedItem {
-    PersistentId id;
-    ItemKind kind;
-    LocationKind location;
-    TileCoord position;
-    PersistentId owner;
-};
+bool ValidTerrain(Terrain terrain) {
+    return terrain == Terrain::floor || terrain == Terrain::wall
+        || terrain == Terrain::closed_door || terrain == Terrain::open_door;
+}
 
-struct Archive {
-    ChunkCoord position;
-    eastl::array<Tile, chunk_size * chunk_size> tiles;
-    Vector<SavedActor> actors;
-    Vector<SavedObject> objects;
-    // Breadth-first, preserving each owner's collection order. No runtime keys.
-    Vector<SavedItem> items;
-};
+// Validate before Restore: it must never discover a bad owner after creating keys.
+// Append IDs to a shared list so the caller can also reject cross-chunk aliases.
+bool ValidateArchive(const Archive& saved, PersistentId nextId, Vector<PersistentId>& ids) {
+    if (!ValidRegion({saved.position, 0})) {
+        return false;
+    }
+    for (Tile tile : saved.tiles) {
+        if (!ValidTerrain(tile.terrain)) {
+            return false;
+        }
+    }
+    const auto addId = [&ids, nextId](PersistentId id) {
+        if (id == 0 || id >= nextId) {
+            return false;
+        }
+        ids.push_back(id);
+        return true;
+    };
+    Vector<TileCoord> positions;
+    for (const SavedActor& actor : saved.actors) {
+        if (!addId(actor.id) || !ValidPosition(actor.position)
+            || ChunkOf(actor.position) != saved.position || Occurrences(positions, actor.position)) {
+            return false;
+        }
+        positions.push_back(actor.position);
+    }
+    positions.clear();
+    for (const SavedObject& object : saved.objects) {
+        if (!addId(object.id) || !ValidPosition(object.position)
+            || ChunkOf(object.position) != saved.position || Occurrences(positions, object.position)) {
+            return false;
+        }
+        positions.push_back(object.position);
+    }
+    for (std::size_t index = 0; index < saved.items.size(); ++index) {
+        const SavedItem& item = saved.items[index];
+        if (!addId(item.id) || (item.kind != ItemKind::rock && item.kind != ItemKind::backpack
+                && item.kind != ItemKind::bandage)) {
+            return false;
+        }
+        switch (item.location) {
+        case LocationKind::ground:
+            if (item.owner != 0 || !ValidPosition(item.position)
+                || ChunkOf(item.position) != saved.position) {
+                return false;
+            }
+            break;
+        case LocationKind::actor:
+            if (eastl::none_of(saved.actors.begin(), saved.actors.end(),
+                    [&item](const SavedActor& owner) { return owner.id == item.owner; })) {
+                return false;
+            }
+            break;
+        case LocationKind::object:
+            if (eastl::none_of(saved.objects.begin(), saved.objects.end(),
+                    [&item](const SavedObject& owner) { return owner.id == item.owner; })) {
+                return false;
+            }
+            break;
+        case LocationKind::item:
+            if (eastl::none_of(saved.items.begin(), saved.items.begin() + index,
+                    [&item](const SavedItem& owner) {
+                        return owner.id == item.owner && owner.kind == ItemKind::backpack;
+                    })) {
+                return false;
+            }
+            break;
+        default: return false;
+        }
+    }
+    return true;
+}
+
+bool UniqueIds(Vector<PersistentId>& ids) {
+    eastl::sort(ids.begin(), ids.end());
+    return eastl::adjacent_find(ids.begin(), ids.end()) == ids.end();
+}
 
 struct Demand {
     ChunkCoord position;
@@ -178,12 +240,34 @@ public:
     dod::slot_map64<Request> requests;
     Vector<Chunk> chunks; // Always lexicographic (x, z).
     Vector<Archive> archives; // Only currently unloaded chunks.
+    Vector<ChunkCoord> dirtyChunks; // Sorted, includes pending unloaded archives.
+    eastl::unique_ptr<SaveDatabase> database;
 
     explicit Impl(std::uint32_t value) : seed(value) {}
 
     PersistentId IssueId() {
         Require(next_id != eastl::numeric_limits<PersistentId>::max());
         return next_id++;
+    }
+
+    void MarkDirty(ChunkCoord position) {
+        const auto found = eastl::lower_bound(dirtyChunks.begin(), dirtyChunks.end(), position, ChunkLess);
+        if (found == dirtyChunks.end() || *found != position) {
+            dirtyChunks.insert(found, position);
+        }
+    }
+
+    ChunkCoord RootChunk(ItemLocation location) const {
+        for (std::size_t depth = 0; ; ++depth) {
+            Require(depth <= items.size());
+            switch (location.kind) {
+            case LocationKind::ground: return ChunkOf(location.position);
+            case LocationKind::actor: return ChunkOf(Live(actors, location.actor)->position);
+            case LocationKind::object: return ChunkOf(Live(objects, location.object)->position);
+            case LocationKind::item: location = Live(items, location.item)->location; break;
+            default: std::abort();
+            }
+        }
     }
 
     Chunk* GetChunk(ChunkCoord position) {
@@ -324,7 +408,7 @@ public:
         }
     }
 
-    void Unload(const Chunk& value) {
+    Archive Capture(const Chunk& value, Vector<ItemHandle>* capturedItems = nullptr) const {
         Archive saved{value.position, value.tiles, {}, {}, {}};
         Vector<ItemHandle> pending = value.ground_items;
         for (ActorHandle handle : value.actors) {
@@ -360,6 +444,15 @@ public:
                 pending.push_back(child);
             }
         }
+        if (capturedItems) {
+            *capturedItems = eastl::move(pending);
+        }
+        return saved;
+    }
+
+    void Unload(const Chunk& value) {
+        Vector<ItemHandle> pending;
+        Archive saved = Capture(value, &pending);
         // First capture all values; then retire every runtime key. Do not reset
         // the central slot maps, even when the last chunk is unloaded.
         for (ItemHandle handle : pending) {
@@ -372,6 +465,7 @@ public:
             objects.erase(dod::slot_map64<InteractiveObject>::key{handle.value});
         }
         archives.push_back(eastl::move(saved));
+        MarkDirty(value.position);
     }
 
     void Restore(Chunk& value, const Archive& saved) {
@@ -398,6 +492,98 @@ public:
             const auto key = items.emplace(Item{item.id, item.kind, location, {}});
             Collection(location).push_back({key.raw});
         }
+    }
+
+    SaveResult<void> ValidateSession(const SessionState& session, SaveDatabase* source,
+        Diagnostics* diagnostics) const {
+        if (!ValidPosition(session.playerPosition) || session.activeRadius < 0
+            || session.residentRadius < session.activeRadius
+            || !ValidRegion({ChunkOf(session.playerPosition), session.residentRadius})) {
+            return SaveFailure(SaveError::invalid_data, "Invalid session region", diagnostics);
+        }
+        if (session.player == 0) {
+            return {}; // Headless/generic worlds have no authoritative player.
+        }
+        if (session.player >= next_id) {
+            return SaveFailure(SaveError::invalid_data, "Invalid session player ID", diagnostics);
+        }
+        if (const Actor* player = Live(actors, FindActor(session.player))) {
+            if (player->player && player->position == session.playerPosition) {
+                return {};
+            }
+            return SaveFailure(SaveError::invalid_data, "Session player does not match world", diagnostics);
+        }
+        const ChunkCoord position = ChunkOf(session.playerPosition);
+        const auto matches = [&session](const Archive& archive) {
+            return eastl::any_of(archive.actors.begin(), archive.actors.end(),
+                [&session](const SavedActor& actor) {
+                    return actor.id == session.player && actor.player
+                        && actor.position == session.playerPosition;
+                });
+        };
+        for (const Archive& archive : archives) {
+            if (archive.position == position) {
+                return matches(archive) ? SaveResult<void>{}
+                    : SaveFailure(SaveError::invalid_data, "Session player missing from archive", diagnostics);
+            }
+        }
+        // A loaded chunk is authoritative even if the previous disk row has a player.
+        if (!GetChunk(position) && source) {
+            auto saved = source->ReadChunk(position, next_id, diagnostics);
+            if (!saved) {
+                return eastl::unexpected(saved.error());
+            }
+            if (*saved) {
+                Vector<PersistentId> ids;
+                if ((**saved).position == position && ValidateArchive(**saved, next_id, ids)
+                    && UniqueIds(ids) && matches(**saved)) {
+                    return {};
+                }
+            }
+        }
+        return SaveFailure(SaveError::invalid_data, "Session player missing from world", diagnostics);
+    }
+
+    SaveResult<void> Checkpoint(SaveDatabase& target, const SessionState& session,
+        Diagnostics* diagnostics) {
+        if (auto valid = ValidateSession(session, &target, diagnostics); !valid) {
+            return valid;
+        }
+        Vector<Archive> snapshots;
+        for (ChunkCoord position : dirtyChunks) {
+            if (const Chunk* chunk = GetChunk(position)) {
+                snapshots.push_back(Capture(*chunk));
+            }
+        }
+        // Both live source/destination rows and unloaded archives are replaced in
+        // one transaction, so moves never leave an old persistent owner on disk.
+        if (auto result = target.Begin(diagnostics); !result) {
+            return result;
+        }
+        for (const Archive& archive : archives) {
+            if (auto result = target.WriteChunk(archive, diagnostics); !result) {
+                target.Rollback();
+                return result;
+            }
+        }
+        for (const Archive& snapshot : snapshots) {
+            if (auto result = target.WriteChunk(snapshot, diagnostics); !result) {
+                target.Rollback();
+                return result;
+            }
+        }
+        if (auto result = target.WriteSnapshot({seed, 1, next_id, session}, diagnostics); !result) {
+            target.Rollback();
+            return result;
+        }
+        if (auto result = target.Commit(diagnostics); !result) {
+            target.Rollback();
+            return result;
+        }
+        dirtyChunks.clear();
+        // clear() alone retains the potentially large outer archive allocation.
+        Vector<Archive>().swap(archives);
+        return {};
     }
 };
 
@@ -437,7 +623,7 @@ WorldResult<void> World::ReleaseRequest(LoadRequest handle) {
     return {};
 }
 
-void World::ReconcileChunks() {
+SaveResult<void> World::ReconcileChunks(Diagnostics* diagnostics) {
     Vector<Demand> demand;
     for (const Request& request : impl_->requests) {
         const ChunkRegion region = request.region;
@@ -459,6 +645,47 @@ void World::ReconcileChunks() {
         }
     }
     demand.resize(count);
+    Vector<Archive> staged;
+    Vector<PersistentId> ids;
+    // Include entities about to unload: their IDs still belong to this world.
+    for (const Actor& actor : impl_->actors) {
+        ids.push_back(actor.id);
+    }
+    for (const Item& item : impl_->items) {
+        ids.push_back(item.id);
+    }
+    for (const InteractiveObject& object : impl_->objects) {
+        ids.push_back(object.id);
+    }
+    for (const Archive& archive : impl_->archives) {
+        if (!ValidateArchive(archive, impl_->next_id, ids)) {
+            return SaveFailure(SaveError::invalid_data, "Invalid RAM chunk archive", diagnostics);
+        }
+    }
+    if (impl_->database) {
+        for (const Demand entry : demand) {
+            if (impl_->GetChunk(entry.position)
+                || eastl::any_of(impl_->archives.begin(), impl_->archives.end(),
+                    [entry](const Archive& archive) { return archive.position == entry.position; })) {
+                continue;
+            }
+            auto saved = impl_->database->ReadChunk(entry.position, impl_->next_id, diagnostics);
+            if (!saved) {
+                return eastl::unexpected(saved.error());
+            }
+            if (*saved) {
+                if ((**saved).position != entry.position
+                    || !ValidateArchive(**saved, impl_->next_id, ids)) {
+                    return SaveFailure(SaveError::invalid_data, "Invalid disk chunk archive", diagnostics);
+                }
+                staged.push_back(eastl::move(**saved));
+            }
+        }
+    }
+    if (!UniqueIds(ids)) {
+        return SaveFailure(SaveError::invalid_data, "Duplicate persistent ID in incoming chunks", diagnostics);
+    }
+    // No live state, activity flags, archives, or keys change before this point.
     for (auto current = impl_->chunks.begin(); current != impl_->chunks.end();) {
         const auto wanted = eastl::lower_bound(demand.begin(), demand.end(), current->position,
             [](const Demand& value, ChunkCoord key) { return ChunkLess(value.position, key); });
@@ -484,13 +711,85 @@ void World::ReconcileChunks() {
         const auto saved = eastl::find_if(impl_->archives.begin(), impl_->archives.end(),
             [entry](const Archive& archive) { return archive.position == entry.position; });
         if (saved == impl_->archives.end()) {
-            impl_->Generate(*inserted);
+            const auto disk = eastl::find_if(staged.begin(), staged.end(),
+                [entry](const Archive& archive) { return archive.position == entry.position; });
+            if (disk != staged.end()) {
+                impl_->Restore(*inserted, *disk);
+            } else {
+                impl_->Generate(*inserted);
+                impl_->MarkDirty(entry.position);
+            }
         } else {
             impl_->Restore(*inserted, *saved);
             impl_->archives.erase(saved);
         }
     }
+    return {};
 }
+
+SaveResult<void> World::CreateSave(const char* path, const SessionState& session,
+    Diagnostics* diagnostics) {
+    if (impl_->database) {
+        return SaveFailure(SaveError::invalid_state, "World already has an attached save", diagnostics);
+    }
+    if (!CheckInvariants()) {
+        return SaveFailure(SaveError::invalid_data, "Invalid world state", diagnostics);
+    }
+    if (auto result = impl_->ValidateSession(session, nullptr, diagnostics); !result) {
+        return result;
+    }
+    auto database = eastl::make_unique<SaveDatabase>();
+    if (auto result = database->Create(path, diagnostics); !result) {
+        return result;
+    }
+    if (auto result = impl_->Checkpoint(*database, session, diagnostics); !result) {
+        return result;
+    }
+    impl_->database = eastl::move(database);
+    return {};
+}
+
+SaveResult<SessionState> World::LoadSave(const char* path, Diagnostics* diagnostics) {
+    if (impl_->database || !impl_->requests.empty() || !impl_->actors.empty()
+        || !impl_->items.empty() || !impl_->objects.empty() || !impl_->chunks.empty()
+        || !impl_->archives.empty() || !impl_->dirtyChunks.empty() || impl_->next_id != 1) {
+        SaveFailure(SaveError::invalid_state, "Loading requires a pristine world", diagnostics);
+        return eastl::unexpected(SaveError::invalid_state);
+    }
+    auto database = eastl::make_unique<SaveDatabase>();
+    auto snapshot = database->Open(path, diagnostics);
+    if (!snapshot) {
+        return eastl::unexpected(snapshot.error());
+    }
+    if (snapshot->generationVersion != 1 || snapshot->nextId == 0) {
+        const SaveError error = snapshot->generationVersion != 1
+            ? SaveError::unsupported_version : SaveError::invalid_data;
+        SaveFailure(error, "Invalid world generation version or next persistent ID", diagnostics);
+        return eastl::unexpected(error);
+    }
+    // Validate on temporary state; even seed/ID installation waits for success.
+    Impl candidate(snapshot->seed);
+    candidate.next_id = snapshot->nextId;
+    if (auto result = candidate.ValidateSession(snapshot->session, database.get(), diagnostics); !result) {
+        return eastl::unexpected(result.error());
+    }
+    impl_->seed = snapshot->seed;
+    impl_->next_id = snapshot->nextId;
+    impl_->database = eastl::move(database);
+    return snapshot->session;
+}
+
+SaveResult<void> World::Save(const SessionState& session, Diagnostics* diagnostics) {
+    if (!impl_->database) {
+        return SaveFailure(SaveError::not_open, "World has no attached save", diagnostics);
+    }
+    if (!CheckInvariants()) {
+        return SaveFailure(SaveError::invalid_data, "Invalid world state", diagnostics);
+    }
+    return impl_->Checkpoint(*impl_->database, session, diagnostics);
+}
+
+bool World::HasSave() const { return impl_->database != nullptr; }
 
 const Chunk* World::GetChunk(ChunkCoord position) const { return impl_->GetChunk(position); }
 
@@ -573,7 +872,11 @@ WorldResult<void> World::SetTile(TileCoord position, Tile value) {
     if (auto result = impl_->Available(position); !result) {
         return result;
     }
+    if (!ValidTerrain(value.terrain)) {
+        return eastl::unexpected(WorldError::invalid_request);
+    }
     impl_->GetChunk(ChunkOf(position))->tiles[TileIndex(position)] = value;
+    impl_->MarkDirty(ChunkOf(position));
     return {};
 }
 
@@ -590,6 +893,7 @@ WorldResult<ActorHandle> World::CreateActor(TileCoord position, bool player) {
     const auto key = impl_->actors.emplace(Actor{impl_->IssueId(), position, player, 0, {}});
     const ActorHandle handle{key.raw};
     impl_->GetChunk(ChunkOf(position))->actors.push_back(handle);
+    impl_->MarkDirty(ChunkOf(position));
     return handle;
 }
 
@@ -617,6 +921,8 @@ WorldResult<void> World::MoveActor(ActorHandle handle, TileCoord destination) {
         impl_->GetChunk(next)->actors.push_back(handle);
     }
     value->position = destination;
+    impl_->MarkDirty(previous);
+    impl_->MarkDirty(next);
     return {};
 }
 
@@ -633,6 +939,7 @@ WorldResult<void> World::DestroyActor(ActorHandle handle) {
     }
     EraseOne(impl_->GetChunk(ChunkOf(position))->actors, handle);
     impl_->actors.erase(dod::slot_map64<Actor>::key{handle.value});
+    impl_->MarkDirty(ChunkOf(position));
     return {};
 }
 
@@ -645,6 +952,7 @@ WorldResult<ItemHandle> World::CreateItem(ItemKind kind, ItemLocation location) 
     const auto key = impl_->items.emplace(Item{impl_->IssueId(), kind, *destination, {}});
     const ItemHandle handle{key.raw};
     impl_->Collection(*destination).push_back(handle);
+    impl_->MarkDirty(impl_->RootChunk(*destination));
     return handle;
 }
 
@@ -660,6 +968,8 @@ WorldResult<void> World::TransferItem(ItemHandle handle, ItemLocation location) 
     if (value->location == *destination) {
         return {};
     }
+    impl_->MarkDirty(impl_->RootChunk(value->location));
+    impl_->MarkDirty(impl_->RootChunk(*destination));
     EraseOne(impl_->Collection(value->location), handle);
     impl_->Collection(*destination).push_back(handle);
     value->location = *destination;
@@ -671,6 +981,7 @@ WorldResult<void> World::DestroyItem(ItemHandle handle) {
     if (!value) {
         return eastl::unexpected(WorldError::invalid_handle);
     }
+    impl_->MarkDirty(impl_->RootChunk(value->location));
     EraseOne(impl_->Collection(value->location), handle);
     Vector<ItemHandle> pending{handle};
     for (std::size_t index = 0; index < pending.size(); ++index) {
@@ -697,6 +1008,7 @@ WorldResult<ObjectHandle> World::CreateObject(TileCoord position, bool enabled) 
     const auto key = impl_->objects.emplace(InteractiveObject{impl_->IssueId(), position, enabled, 0, {}});
     const ObjectHandle handle{key.raw};
     impl_->GetChunk(ChunkOf(position))->objects.push_back(handle);
+    impl_->MarkDirty(ChunkOf(position));
     return handle;
 }
 
@@ -713,6 +1025,7 @@ WorldResult<void> World::DestroyObject(ObjectHandle handle) {
     }
     EraseOne(impl_->GetChunk(ChunkOf(position))->objects, handle);
     impl_->objects.erase(dod::slot_map64<InteractiveObject>::key{handle.value});
+    impl_->MarkDirty(ChunkOf(position));
     return {};
 }
 
@@ -722,6 +1035,7 @@ WorldResult<void> World::SetObjectEnabled(ObjectHandle handle, bool enabled) {
         return eastl::unexpected(WorldError::invalid_handle);
     }
     value->enabled = enabled;
+    impl_->MarkDirty(ChunkOf(value->position));
     return {};
 }
 
@@ -765,6 +1079,7 @@ WorldResult<void> World::RecordActorTurn(ActorHandle handle) {
     }
     Require(value->turns != eastl::numeric_limits<std::uint64_t>::max());
     ++value->turns;
+    impl_->MarkDirty(ChunkOf(value->position));
     return {};
 }
 
@@ -779,6 +1094,7 @@ WorldResult<void> World::RecordObjectUpdate(ObjectHandle handle) {
     if (value->enabled) {
         Require(value->updates != eastl::numeric_limits<std::uint64_t>::max());
         ++value->updates;
+        impl_->MarkDirty(ChunkOf(value->position));
     }
     return {};
 }

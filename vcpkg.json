@@ -2,5 +2,5 @@
   "name": "cataclysmx",
   "version-string": "0.1.0",
   "builtin-baseline": "6fdd23fa0a9479a9f9a1c48178696f60cf39255d",
-  "dependencies": ["eastl", "spdlog", "catch2", "yyjson", "ftxui"]
+  "dependencies": ["eastl", "spdlog", "catch2", "yyjson", "ftxui", "sqlite3"]
 }

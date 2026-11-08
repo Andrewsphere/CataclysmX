@@ -29,20 +29,20 @@ the lowest-ID eligible item. Nested contents cannot be selected directly;
 moving a backpack preserves its contents. Fields irrelevant to a command are
 ignored. Closing a door occupied by an actor fails with `occupied`.
 
-Each success, including wait, applies the command, calls `advance` once, then
+Each success, including wait, applies the command, calls `Advance` once, then
 increments the server tick once. `advanced` is true and `tick` is the resulting
 tick. Failures (`blocked`, `occupied`, `nothing_here`, `invalid_command`,
 `not_carried`, `unavailable`) leave the tick and simulation RNG unchanged and
 pause all simulation. A failed move may temporarily load a destination for
 validation, then release that demand; failure does not promise zero archive
-bookkeeping. Use `outcome_message` for a short display message.
+bookkeeping. Use `OutcomeMessage` for a short display message.
 
 ```cpp
 #include "core/server.h"
 
 cataclysmx::Server server(42);
 const auto result = server.Send({cataclysmx::CommandKind::move, 1, 0});
-const char* message = cataclysmx::outcome_message(result.outcome);
+const char* message = cataclysmx::OutcomeMessage(result.outcome);
 const auto snapshot = server.View(); // Safe to keep after later commands.
 ```
 
@@ -104,10 +104,10 @@ or ground-item IDs; administrative inspection can obtain those from `World`.
 
 ## Explicit simulation and brief decisions
 
-[`cataclysmx::advance(World&, ActorHandle, std::uint32_t&)`](../src/core/simulation.h)
+[`cataclysmx::Advance(World&, ActorHandle, std::uint32_t&)`](../src/core/simulation.h)
 advances one current active snapshot. The supplied player must be live,
 player-marked and active. Direct callers own RNG state and decide when to call;
-`advance` does not increment a server tick or reconcile chunk requests.
+`Advance` does not increment a server tick or reconcile chunk requests.
 
 Active actors are processed once in persistent-ID order, independent of storage
 or reload order. Every active actor records one turn, including the player.
@@ -165,3 +165,22 @@ initialization. Both clients render the same value-only view through
 `cataclysmx_headless --probe` retains the earlier checksum-probe invocation;
 the default invocation is the game demo. Build/run setup belongs in the
 [project README](../README.md).
+
+## Saves
+
+`Server::CreateSave(path)` creates a new save and performs its first checkpoint;
+it refuses an existing path. `Save()` checkpoints the attached database, and
+`Server::LoadSave(path)` returns a new server only after successful validation
+and restoration. These APIs return typed `SaveResult` values; optional
+diagnostics provide detail. See the [save format](save_format.md). The generic
+`World` save API also supports session player ID zero; `Server` requires a real
+player. Administrative load-request handles are runtime-only; the player's
+bubble requests are recreated on load.
+
+Headless commands: `save <path>` creates the first save (refusing an existing
+path), `save` checkpoints, `load <path>` replaces the session only on success,
+and `autosave <turns>` configures autosave (`0` disables it). Paths cannot
+contain whitespace. The terminal frontend accepts `--save <path>` for a new
+game (default autosave interval 1000 turns), `--load <path>` to restore the
+saved interval, and capital `S` to save. With no arguments it remains in-memory;
+`--render` is preserved.
