@@ -12,8 +12,14 @@ try {
         $vswhere = "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe"
         if (-not (Test-Path -LiteralPath $vswhere)) { throw 'Install Visual Studio C++ Build Tools first.' }
         $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+        if (-not $vs) {
+            $vs = & $vswhere -latest -prerelease -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+        }
         if (-not $vs) { throw 'No Visual Studio C++ toolchain found.' }
+        # Keep the caller's vcpkg selection; VS may inject its bundled copy.
+        $vcpkgRootBeforeDevShell = $env:VCPKG_ROOT
         & "$vs/Common7/Tools/Launch-VsDevShell.ps1" -Arch amd64 -HostArch amd64 -SkipAutomaticLocation
+        $env:VCPKG_ROOT = $vcpkgRootBeforeDevShell
     }
     if ($Preset -eq 'win-msvc-asan') {
         $compiler = (Get-Command cl.exe -ErrorAction Stop).Source

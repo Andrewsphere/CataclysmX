@@ -1,0 +1,53 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Build: MSVC Debug",
+      "type": "process",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-File", "${workspaceFolder}/scripts/build.ps1",
+        "-Preset", "win-msvc-debug",
+        "-SkipTests"
+      ],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": "$msCompile",
+      "group": { "kind": "build", "isDefault": true }
+    },
+    {
+      "label": "Build: MSVC Release",
+      "type": "process",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-File", "${workspaceFolder}/scripts/build.ps1",
+        "-Preset", "win-msvc-release",
+        "-SkipTests"
+      ],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": "$msCompile",
+      "group": "build"
+    },
+    {
+      "label": "Run: MSVC Debug",
+      "type": "process",
+      "command": "${workspaceFolder}/out/build/win-msvc-debug/cataclysmx_game.exe",
+      "options": { "cwd": "${workspaceFolder}" },
+      "dependsOn": "Build: MSVC Debug",
+      "problemMatcher": [],
+      "presentation": { "focus": true, "panel": "dedicated", "clear": true }
+    },
+    {
+      "label": "Run: MSVC Release",
+      "type": "process",
+      "command": "${workspaceFolder}/out/build/win-msvc-release/cataclysmx_game.exe",
+      "options": { "cwd": "${workspaceFolder}" },
+      "dependsOn": "Build: MSVC Release",
+      "problemMatcher": [],
+      "presentation": { "focus": true, "panel": "dedicated", "clear": true }
+    }
+  ]
+}
