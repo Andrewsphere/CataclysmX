@@ -16,6 +16,7 @@ class FatalAllocator : public eastl::allocator_malloc {
 public:
     using eastl::allocator_malloc::allocator_malloc;
 
+    // Lowercase allocate is required by EASTL's allocator interface.
     void* allocate(std::size_t size, int flags = 0) {
         void* result = eastl::allocator_malloc::allocate(size, flags);
         if (!result) { std::abort(); }

@@ -22,6 +22,8 @@ Build a small, deterministic C++23 roguelike inspired by Cataclysm: Bright Night
 - Keep simulation deterministic and independent of UI, networking, and wall-clock time. Pass RNG/time explicitly, define iteration/order semantics, and support headless tests and replay.
 - Avoid unnecessary abstractions, macros, implicit conversions, and framework-like code. Each change should preserve module boundaries and include focused tests; optimize only after measurement.
 - Keep third-party libraries behind narrow subsystem boundaries. Prefer EASTL for internal containers and vocabulary types. Use yyjson only in content loading, ENet only in networking, and terminal libraries only in frontends. Never expose third-party implementation details through simulation APIs unless explicitly justified.
+- Use PascalCase for Class names and Methods.
+- Use structs for simple objects and classes for complex objects that internalize some behavior. Keep most APIs public, use private when sure that it's not usefull to expose.
 
 ## Architecture
 

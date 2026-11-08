@@ -141,34 +141,35 @@ const char* item_name(ItemKind kind) {
     std::abort();
 }
 
-ItemLocation ItemLocation::ground(TileCoord position) {
+ItemLocation ItemLocation::Ground(TileCoord position) {
     ItemLocation result;
     result.position = position;
     return result;
 }
 
-ItemLocation ItemLocation::carried(ActorHandle actor) {
+ItemLocation ItemLocation::Carried(ActorHandle actor) {
     ItemLocation result;
     result.kind = LocationKind::actor;
     result.actor = actor;
     return result;
 }
 
-ItemLocation ItemLocation::inside(ItemHandle item) {
+ItemLocation ItemLocation::Inside(ItemHandle item) {
     ItemLocation result;
     result.kind = LocationKind::item;
     result.item = item;
     return result;
 }
 
-ItemLocation ItemLocation::stored(ObjectHandle object) {
+ItemLocation ItemLocation::Stored(ObjectHandle object) {
     ItemLocation result;
     result.kind = LocationKind::object;
     result.object = object;
     return result;
 }
 
-struct World::Impl {
+class World::Impl {
+public:
     std::uint32_t seed;
     PersistentId next_id = 1;
     dod::slot_map64<Actor> actors;
@@ -180,34 +181,34 @@ struct World::Impl {
 
     explicit Impl(std::uint32_t value) : seed(value) {}
 
-    PersistentId issue_id() {
+    PersistentId IssueId() {
         require(next_id != eastl::numeric_limits<PersistentId>::max());
         return next_id++;
     }
 
-    Chunk* chunk(ChunkCoord position) {
+    Chunk* GetChunk(ChunkCoord position) {
         const auto found = eastl::lower_bound(chunks.begin(), chunks.end(), position,
             [](const Chunk& value, ChunkCoord key) { return chunk_less(value.position, key); });
         return found != chunks.end() && found->position == position ? &*found : nullptr;
     }
 
-    const Chunk* chunk(ChunkCoord position) const {
+    const Chunk* GetChunk(ChunkCoord position) const {
         const auto found = eastl::lower_bound(chunks.begin(), chunks.end(), position,
             [](const Chunk& value, ChunkCoord key) { return chunk_less(value.position, key); });
         return found != chunks.end() && found->position == position ? &*found : nullptr;
     }
 
-    WorldResult<void> available(TileCoord position) const {
+    WorldResult<void> Available(TileCoord position) const {
         if (!valid_position(position)) {
             return eastl::unexpected(WorldError::invalid_position);
         }
-        if (!chunk(chunk_of(position))) {
+        if (!GetChunk(chunk_of(position))) {
             return eastl::unexpected(WorldError::chunk_unavailable);
         }
         return {};
     }
 
-    ActorHandle find_actor(PersistentId id) const {
+    ActorHandle FindActor(PersistentId id) const {
         for (const auto& entry : actors.items()) {
             if (entry.second.get().id == id) {
                 return {entry.first.raw};
@@ -216,7 +217,7 @@ struct World::Impl {
         return {};
     }
 
-    ItemHandle find_item(PersistentId id) const {
+    ItemHandle FindItem(PersistentId id) const {
         for (const auto& entry : items.items()) {
             if (entry.second.get().id == id) {
                 return {entry.first.raw};
@@ -225,7 +226,7 @@ struct World::Impl {
         return {};
     }
 
-    ObjectHandle find_object(PersistentId id) const {
+    ObjectHandle FindObject(PersistentId id) const {
         for (const auto& entry : objects.items()) {
             if (entry.second.get().id == id) {
                 return {entry.first.raw};
@@ -234,23 +235,23 @@ struct World::Impl {
         return {};
     }
 
-    WorldResult<ItemLocation> destination(ItemLocation location, ItemHandle moving = {}) const {
+    WorldResult<ItemLocation> Destination(ItemLocation location, ItemHandle moving = {}) const {
         switch (location.kind) {
         case LocationKind::ground:
-            if (auto result = available(location.position); !result) {
+            if (auto result = Available(location.position); !result) {
                 return eastl::unexpected(result.error());
             }
-            return ItemLocation::ground(location.position);
+            return ItemLocation::Ground(location.position);
         case LocationKind::actor:
             if (!live(actors, location.actor)) {
                 return eastl::unexpected(WorldError::invalid_handle);
             }
-            return ItemLocation::carried(location.actor);
+            return ItemLocation::Carried(location.actor);
         case LocationKind::object:
             if (!live(objects, location.object)) {
                 return eastl::unexpected(WorldError::invalid_handle);
             }
-            return ItemLocation::stored(location.object);
+            return ItemLocation::Stored(location.object);
         case LocationKind::item: {
             const Item* parent = live(items, location.item);
             if (!parent) {
@@ -272,16 +273,16 @@ struct World::Impl {
                 }
                 cursor = ancestor->location.item;
             }
-            return ItemLocation::inside(location.item);
+            return ItemLocation::Inside(location.item);
         }
         }
         return eastl::unexpected(WorldError::invalid_handle);
     }
 
-    Vector<ItemHandle>& collection(ItemLocation location) {
+    Vector<ItemHandle>& Collection(ItemLocation location) {
         switch (location.kind) {
         case LocationKind::ground: {
-            Chunk* owner = chunk(chunk_of(location.position));
+            Chunk* owner = GetChunk(chunk_of(location.position));
             require(owner != nullptr);
             return owner->ground_items;
         }
@@ -304,7 +305,7 @@ struct World::Impl {
         std::abort();
     }
 
-    void generate(Chunk& value) const {
+    void Generate(Chunk& value) const {
         for (int z = 0; z < chunk_size; ++z) {
             for (int x = 0; x < chunk_size; ++x) {
                 const int global_x = value.position.x * chunk_size + x;
@@ -323,7 +324,7 @@ struct World::Impl {
         }
     }
 
-    void unload(const Chunk& value) {
+    void Unload(const Chunk& value) {
         Archive saved{value.position, value.tiles, {}, {}, {}};
         Vector<ItemHandle> pending = value.ground_items;
         for (ActorHandle handle : value.actors) {
@@ -373,7 +374,7 @@ struct World::Impl {
         archives.push_back(eastl::move(saved));
     }
 
-    void restore(Chunk& value, const Archive& saved) {
+    void Restore(Chunk& value, const Archive& saved) {
         value.tiles = saved.tiles;
         for (const SavedActor& actor : saved.actors) {
             const auto key = actors.emplace(Actor{actor.id, actor.position, actor.player, actor.turns, {}});
@@ -388,14 +389,14 @@ struct World::Impl {
         for (const SavedItem& item : saved.items) {
             ItemLocation location;
             switch (item.location) {
-            case LocationKind::ground: location = ItemLocation::ground(item.position); break;
-            case LocationKind::actor: location = ItemLocation::carried(find_actor(item.owner)); break;
-            case LocationKind::item: location = ItemLocation::inside(find_item(item.owner)); break;
-            case LocationKind::object: location = ItemLocation::stored(find_object(item.owner)); break;
+            case LocationKind::ground: location = ItemLocation::Ground(item.position); break;
+            case LocationKind::actor: location = ItemLocation::Carried(FindActor(item.owner)); break;
+            case LocationKind::item: location = ItemLocation::Inside(FindItem(item.owner)); break;
+            case LocationKind::object: location = ItemLocation::Stored(FindObject(item.owner)); break;
             }
-            require(destination(location).has_value());
+            require(Destination(location).has_value());
             const auto key = items.emplace(Item{item.id, item.kind, location, {}});
-            collection(location).push_back({key.raw});
+            Collection(location).push_back({key.raw});
         }
     }
 };
@@ -403,7 +404,7 @@ struct World::Impl {
 World::World(std::uint32_t seed) : impl_(eastl::make_unique<Impl>(seed)) {}
 World::~World() = default;
 
-WorldResult<LoadRequest> World::request_chunks(ChunkRegion region, LoadMode mode) {
+WorldResult<LoadRequest> World::RequestChunks(ChunkRegion region, LoadMode mode) {
     if (!valid_region(region)) {
         return eastl::unexpected(WorldError::invalid_region);
     }
@@ -413,7 +414,7 @@ WorldResult<LoadRequest> World::request_chunks(ChunkRegion region, LoadMode mode
     return LoadRequest{impl_->requests.emplace(Request{region, mode}).raw};
 }
 
-WorldResult<void> World::update_request(LoadRequest handle, ChunkRegion region, LoadMode mode) {
+WorldResult<void> World::UpdateRequest(LoadRequest handle, ChunkRegion region, LoadMode mode) {
     Request* request = live(impl_->requests, handle);
     if (!request) {
         return eastl::unexpected(WorldError::invalid_request);
@@ -428,7 +429,7 @@ WorldResult<void> World::update_request(LoadRequest handle, ChunkRegion region, 
     return {};
 }
 
-WorldResult<void> World::release_request(LoadRequest handle) {
+WorldResult<void> World::ReleaseRequest(LoadRequest handle) {
     if (!live(impl_->requests, handle)) {
         return eastl::unexpected(WorldError::invalid_request);
     }
@@ -436,7 +437,7 @@ WorldResult<void> World::release_request(LoadRequest handle) {
     return {};
 }
 
-void World::reconcile_chunks() {
+void World::ReconcileChunks() {
     Vector<Demand> demand;
     for (const Request& request : impl_->requests) {
         const ChunkRegion region = request.region;
@@ -463,7 +464,7 @@ void World::reconcile_chunks() {
             [](const Demand& value, ChunkCoord key) { return chunk_less(value.position, key); });
         if (wanted == demand.end() || wanted->position != current->position) {
             current->active = false;
-            impl_->unload(*current);
+            impl_->Unload(*current);
             current = impl_->chunks.erase(current);
         } else {
             current->active = wanted->active;
@@ -471,7 +472,7 @@ void World::reconcile_chunks() {
         }
     }
     for (const Demand entry : demand) {
-        if (impl_->chunk(entry.position)) {
+        if (impl_->GetChunk(entry.position)) {
             continue;
         }
         Chunk value;
@@ -483,30 +484,30 @@ void World::reconcile_chunks() {
         const auto saved = eastl::find_if(impl_->archives.begin(), impl_->archives.end(),
             [entry](const Archive& archive) { return archive.position == entry.position; });
         if (saved == impl_->archives.end()) {
-            impl_->generate(*inserted);
+            impl_->Generate(*inserted);
         } else {
-            impl_->restore(*inserted, *saved);
+            impl_->Restore(*inserted, *saved);
             impl_->archives.erase(saved);
         }
     }
 }
 
-const Chunk* World::chunk(ChunkCoord position) const { return impl_->chunk(position); }
+const Chunk* World::GetChunk(ChunkCoord position) const { return impl_->GetChunk(position); }
 
-const Tile* World::tile(TileCoord position) const {
+const Tile* World::GetTile(TileCoord position) const {
     if (!valid_position(position)) {
         return nullptr;
     }
-    const Chunk* value = chunk(chunk_of(position));
+    const Chunk* value = GetChunk(chunk_of(position));
     return value ? &value->tiles[tile_index(position)] : nullptr;
 }
 
-bool World::active(TileCoord position) const {
-    const Chunk* value = valid_position(position) ? chunk(chunk_of(position)) : nullptr;
+bool World::IsActive(TileCoord position) const {
+    const Chunk* value = valid_position(position) ? GetChunk(chunk_of(position)) : nullptr;
     return value && value->active;
 }
 
-Vector<ChunkCoord> World::loaded_chunks() const {
+Vector<ChunkCoord> World::LoadedChunks() const {
     Vector<ChunkCoord> result;
     for (const Chunk& value : impl_->chunks) {
         result.push_back(value.position);
@@ -514,19 +515,19 @@ Vector<ChunkCoord> World::loaded_chunks() const {
     return result;
 }
 
-std::size_t World::archived_chunk_count() const { return impl_->archives.size(); }
-const Actor* World::actor(ActorHandle handle) const { return live(impl_->actors, handle); }
-const Item* World::item(ItemHandle handle) const { return live(impl_->items, handle); }
-const InteractiveObject* World::object(ObjectHandle handle) const { return live(impl_->objects, handle); }
-ActorHandle World::find_actor(PersistentId id) const { return impl_->find_actor(id); }
-ItemHandle World::find_item(PersistentId id) const { return impl_->find_item(id); }
-ObjectHandle World::find_object(PersistentId id) const { return impl_->find_object(id); }
+std::size_t World::ArchivedChunkCount() const { return impl_->archives.size(); }
+const Actor* World::GetActor(ActorHandle handle) const { return live(impl_->actors, handle); }
+const Item* World::GetItem(ItemHandle handle) const { return live(impl_->items, handle); }
+const InteractiveObject* World::GetObject(ObjectHandle handle) const { return live(impl_->objects, handle); }
+ActorHandle World::FindActor(PersistentId id) const { return impl_->FindActor(id); }
+ItemHandle World::FindItem(PersistentId id) const { return impl_->FindItem(id); }
+ObjectHandle World::FindObject(PersistentId id) const { return impl_->FindObject(id); }
 
-ActorHandle World::actor_at(TileCoord position) const {
-    const Chunk* value = valid_position(position) ? chunk(chunk_of(position)) : nullptr;
+ActorHandle World::ActorAt(TileCoord position) const {
+    const Chunk* value = valid_position(position) ? GetChunk(chunk_of(position)) : nullptr;
     if (value) {
         for (ActorHandle handle : value->actors) {
-            const Actor* candidate = actor(handle);
+            const Actor* candidate = GetActor(handle);
             require(candidate != nullptr);
             if (candidate->position == position) {
                 return handle;
@@ -536,12 +537,12 @@ ActorHandle World::actor_at(TileCoord position) const {
     return {};
 }
 
-Vector<ItemHandle> World::items_at(TileCoord position) const {
+Vector<ItemHandle> World::ItemsAt(TileCoord position) const {
     Vector<ItemHandle> result;
-    const Chunk* value = valid_position(position) ? chunk(chunk_of(position)) : nullptr;
+    const Chunk* value = valid_position(position) ? GetChunk(chunk_of(position)) : nullptr;
     if (value) {
         for (ItemHandle handle : value->ground_items) {
-            const Item* candidate = item(handle);
+            const Item* candidate = GetItem(handle);
             require(candidate != nullptr);
             if (candidate->location.position == position) {
                 result.push_back(handle);
@@ -549,16 +550,16 @@ Vector<ItemHandle> World::items_at(TileCoord position) const {
         }
     }
     eastl::sort(result.begin(), result.end(), [this](ItemHandle a, ItemHandle b) {
-        return item(a)->id < item(b)->id;
+        return GetItem(a)->id < GetItem(b)->id;
     });
     return result;
 }
 
-ObjectHandle World::object_at(TileCoord position) const {
-    const Chunk* value = valid_position(position) ? chunk(chunk_of(position)) : nullptr;
+ObjectHandle World::ObjectAt(TileCoord position) const {
+    const Chunk* value = valid_position(position) ? GetChunk(chunk_of(position)) : nullptr;
     if (value) {
         for (ObjectHandle handle : value->objects) {
-            const InteractiveObject* candidate = object(handle);
+            const InteractiveObject* candidate = GetObject(handle);
             require(candidate != nullptr);
             if (candidate->position == position) {
                 return handle;
@@ -568,112 +569,112 @@ ObjectHandle World::object_at(TileCoord position) const {
     return {};
 }
 
-WorldResult<void> World::set_tile(TileCoord position, Tile value) {
-    if (auto result = impl_->available(position); !result) {
+WorldResult<void> World::SetTile(TileCoord position, Tile value) {
+    if (auto result = impl_->Available(position); !result) {
         return result;
     }
-    impl_->chunk(chunk_of(position))->tiles[tile_index(position)] = value;
+    impl_->GetChunk(chunk_of(position))->tiles[tile_index(position)] = value;
     return {};
 }
 
-WorldResult<ActorHandle> World::create_actor(TileCoord position, bool player) {
-    if (auto result = impl_->available(position); !result) {
+WorldResult<ActorHandle> World::CreateActor(TileCoord position, bool player) {
+    if (auto result = impl_->Available(position); !result) {
         return eastl::unexpected(result.error());
     }
-    if (!passable(tile(position)->terrain)) {
+    if (!passable(GetTile(position)->terrain)) {
         return eastl::unexpected(WorldError::blocked);
     }
-    if (actor_at(position).value != 0) {
+    if (ActorAt(position).value != 0) {
         return eastl::unexpected(WorldError::occupied);
     }
-    const auto key = impl_->actors.emplace(Actor{impl_->issue_id(), position, player, 0, {}});
+    const auto key = impl_->actors.emplace(Actor{impl_->IssueId(), position, player, 0, {}});
     const ActorHandle handle{key.raw};
-    impl_->chunk(chunk_of(position))->actors.push_back(handle);
+    impl_->GetChunk(chunk_of(position))->actors.push_back(handle);
     return handle;
 }
 
-WorldResult<void> World::move_actor(ActorHandle handle, TileCoord destination) {
+WorldResult<void> World::MoveActor(ActorHandle handle, TileCoord destination) {
     Actor* value = live(impl_->actors, handle);
     if (!value) {
         return eastl::unexpected(WorldError::invalid_handle);
     }
-    if (auto result = impl_->available(destination); !result) {
+    if (auto result = impl_->Available(destination); !result) {
         return result;
     }
     if (value->position == destination) {
         return {};
     }
-    if (!passable(tile(destination)->terrain)) {
+    if (!passable(GetTile(destination)->terrain)) {
         return eastl::unexpected(WorldError::blocked);
     }
-    if (actor_at(destination).value != 0) {
+    if (ActorAt(destination).value != 0) {
         return eastl::unexpected(WorldError::occupied);
     }
     const ChunkCoord previous = chunk_of(value->position);
     const ChunkCoord next = chunk_of(destination);
     if (previous != next) {
-        erase_one(impl_->chunk(previous)->actors, handle);
-        impl_->chunk(next)->actors.push_back(handle);
+        erase_one(impl_->GetChunk(previous)->actors, handle);
+        impl_->GetChunk(next)->actors.push_back(handle);
     }
     value->position = destination;
     return {};
 }
 
-WorldResult<void> World::destroy_actor(ActorHandle handle) {
+WorldResult<void> World::DestroyActor(ActorHandle handle) {
     Actor* value = live(impl_->actors, handle);
     if (!value) {
         return eastl::unexpected(WorldError::invalid_handle);
     }
     const TileCoord position = value->position;
     while (!value->inventory.empty()) {
-        require(transfer_item(value->inventory.back(), ItemLocation::ground(position)).has_value());
+        require(TransferItem(value->inventory.back(), ItemLocation::Ground(position)).has_value());
         value = live(impl_->actors, handle);
         require(value != nullptr);
     }
-    erase_one(impl_->chunk(chunk_of(position))->actors, handle);
+    erase_one(impl_->GetChunk(chunk_of(position))->actors, handle);
     impl_->actors.erase(dod::slot_map64<Actor>::key{handle.value});
     return {};
 }
 
-WorldResult<ItemHandle> World::create_item(ItemKind kind, ItemLocation location) {
-    const auto destination = impl_->destination(location);
+WorldResult<ItemHandle> World::CreateItem(ItemKind kind, ItemLocation location) {
+    const auto destination = impl_->Destination(location);
     if (!destination) {
         return eastl::unexpected(destination.error());
     }
     require(kind == ItemKind::rock || kind == ItemKind::backpack || kind == ItemKind::bandage);
-    const auto key = impl_->items.emplace(Item{impl_->issue_id(), kind, *destination, {}});
+    const auto key = impl_->items.emplace(Item{impl_->IssueId(), kind, *destination, {}});
     const ItemHandle handle{key.raw};
-    impl_->collection(*destination).push_back(handle);
+    impl_->Collection(*destination).push_back(handle);
     return handle;
 }
 
-WorldResult<void> World::transfer_item(ItemHandle handle, ItemLocation location) {
+WorldResult<void> World::TransferItem(ItemHandle handle, ItemLocation location) {
     Item* value = live(impl_->items, handle);
     if (!value) {
         return eastl::unexpected(WorldError::invalid_handle);
     }
-    const auto destination = impl_->destination(location, handle);
+    const auto destination = impl_->Destination(location, handle);
     if (!destination) {
         return eastl::unexpected(destination.error());
     }
     if (value->location == *destination) {
         return {};
     }
-    erase_one(impl_->collection(value->location), handle);
-    impl_->collection(*destination).push_back(handle);
+    erase_one(impl_->Collection(value->location), handle);
+    impl_->Collection(*destination).push_back(handle);
     value->location = *destination;
     return {};
 }
 
-WorldResult<void> World::destroy_item(ItemHandle handle) {
-    const Item* value = item(handle);
+WorldResult<void> World::DestroyItem(ItemHandle handle) {
+    const Item* value = GetItem(handle);
     if (!value) {
         return eastl::unexpected(WorldError::invalid_handle);
     }
-    erase_one(impl_->collection(value->location), handle);
+    erase_one(impl_->Collection(value->location), handle);
     Vector<ItemHandle> pending{handle};
     for (std::size_t index = 0; index < pending.size(); ++index) {
-        const Item* current = item(pending[index]);
+        const Item* current = GetItem(pending[index]);
         require(current != nullptr);
         for (ItemHandle child : current->contents) {
             pending.push_back(child);
@@ -686,36 +687,36 @@ WorldResult<void> World::destroy_item(ItemHandle handle) {
     return {};
 }
 
-WorldResult<ObjectHandle> World::create_object(TileCoord position, bool enabled) {
-    if (auto result = impl_->available(position); !result) {
+WorldResult<ObjectHandle> World::CreateObject(TileCoord position, bool enabled) {
+    if (auto result = impl_->Available(position); !result) {
         return eastl::unexpected(result.error());
     }
-    if (object_at(position).value != 0) {
+    if (ObjectAt(position).value != 0) {
         return eastl::unexpected(WorldError::occupied);
     }
-    const auto key = impl_->objects.emplace(InteractiveObject{impl_->issue_id(), position, enabled, 0, {}});
+    const auto key = impl_->objects.emplace(InteractiveObject{impl_->IssueId(), position, enabled, 0, {}});
     const ObjectHandle handle{key.raw};
-    impl_->chunk(chunk_of(position))->objects.push_back(handle);
+    impl_->GetChunk(chunk_of(position))->objects.push_back(handle);
     return handle;
 }
 
-WorldResult<void> World::destroy_object(ObjectHandle handle) {
+WorldResult<void> World::DestroyObject(ObjectHandle handle) {
     InteractiveObject* value = live(impl_->objects, handle);
     if (!value) {
         return eastl::unexpected(WorldError::invalid_handle);
     }
     const TileCoord position = value->position;
     while (!value->contents.empty()) {
-        require(transfer_item(value->contents.back(), ItemLocation::ground(position)).has_value());
+        require(TransferItem(value->contents.back(), ItemLocation::Ground(position)).has_value());
         value = live(impl_->objects, handle);
         require(value != nullptr);
     }
-    erase_one(impl_->chunk(chunk_of(position))->objects, handle);
+    erase_one(impl_->GetChunk(chunk_of(position))->objects, handle);
     impl_->objects.erase(dod::slot_map64<InteractiveObject>::key{handle.value});
     return {};
 }
 
-WorldResult<void> World::set_object_enabled(ObjectHandle handle, bool enabled) {
+WorldResult<void> World::SetObjectEnabled(ObjectHandle handle, bool enabled) {
     InteractiveObject* value = live(impl_->objects, handle);
     if (!value) {
         return eastl::unexpected(WorldError::invalid_handle);
@@ -724,7 +725,7 @@ WorldResult<void> World::set_object_enabled(ObjectHandle handle, bool enabled) {
     return {};
 }
 
-Vector<ActorHandle> World::active_actors() const {
+Vector<ActorHandle> World::ActiveActors() const {
     Vector<ActorHandle> result;
     for (const Chunk& value : impl_->chunks) {
         if (value.active) {
@@ -734,12 +735,12 @@ Vector<ActorHandle> World::active_actors() const {
         }
     }
     eastl::sort(result.begin(), result.end(), [this](ActorHandle a, ActorHandle b) {
-        return actor(a)->id < actor(b)->id;
+        return GetActor(a)->id < GetActor(b)->id;
     });
     return result;
 }
 
-Vector<ObjectHandle> World::active_objects() const {
+Vector<ObjectHandle> World::ActiveObjects() const {
     Vector<ObjectHandle> result;
     for (const Chunk& value : impl_->chunks) {
         if (value.active) {
@@ -749,17 +750,17 @@ Vector<ObjectHandle> World::active_objects() const {
         }
     }
     eastl::sort(result.begin(), result.end(), [this](ObjectHandle a, ObjectHandle b) {
-        return object(a)->id < object(b)->id;
+        return GetObject(a)->id < GetObject(b)->id;
     });
     return result;
 }
 
-WorldResult<void> World::record_actor_turn(ActorHandle handle) {
+WorldResult<void> World::RecordActorTurn(ActorHandle handle) {
     Actor* value = live(impl_->actors, handle);
     if (!value) {
         return eastl::unexpected(WorldError::invalid_handle);
     }
-    if (!active(value->position)) {
+    if (!IsActive(value->position)) {
         return eastl::unexpected(WorldError::chunk_unavailable);
     }
     require(value->turns != eastl::numeric_limits<std::uint64_t>::max());
@@ -767,12 +768,12 @@ WorldResult<void> World::record_actor_turn(ActorHandle handle) {
     return {};
 }
 
-WorldResult<void> World::record_object_update(ObjectHandle handle) {
+WorldResult<void> World::RecordObjectUpdate(ObjectHandle handle) {
     InteractiveObject* value = live(impl_->objects, handle);
     if (!value) {
         return eastl::unexpected(WorldError::invalid_handle);
     }
-    if (!active(value->position)) {
+    if (!IsActive(value->position)) {
         return eastl::unexpected(WorldError::chunk_unavailable);
     }
     if (value->enabled) {
@@ -782,7 +783,7 @@ WorldResult<void> World::record_object_update(ObjectHandle handle) {
     return {};
 }
 
-bool World::check_invariants() const {
+bool World::CheckInvariants() const {
     const Impl& state = *impl_;
     Vector<PersistentId> ids;
     Vector<ActorHandle> indexed_actors;
@@ -804,7 +805,7 @@ bool World::check_invariants() const {
         Vector<TileCoord> actor_positions;
         Vector<TileCoord> object_positions;
         for (ActorHandle handle : value.actors) {
-            const Actor* actor = this->actor(handle);
+            const Actor* actor = this->GetActor(handle);
             if (!actor || !valid_position(actor->position) || chunk_of(actor->position) != value.position
                 || occurrences(actor_positions, actor->position) != 0) {
                 return false;
@@ -813,7 +814,7 @@ bool World::check_invariants() const {
             indexed_actors.push_back(handle);
         }
         for (ObjectHandle handle : value.objects) {
-            const InteractiveObject* object = this->object(handle);
+            const InteractiveObject* object = this->GetObject(handle);
             if (!object || !valid_position(object->position) || chunk_of(object->position) != value.position
                 || occurrences(object_positions, object->position) != 0) {
                 return false;
@@ -822,7 +823,7 @@ bool World::check_invariants() const {
             indexed_objects.push_back(handle);
         }
         for (ItemHandle handle : value.ground_items) {
-            const Item* item = this->item(handle);
+            const Item* item = this->GetItem(handle);
             if (!item || item->location.kind != LocationKind::ground
                 || !valid_position(item->location.position)
                 || chunk_of(item->location.position) != value.position) {
@@ -838,8 +839,8 @@ bool World::check_invariants() const {
             return false;
         }
         for (ItemHandle child : value.inventory) {
-            const Item* item = this->item(child);
-            if (!item || item->location != ItemLocation::carried(handle)) {
+            const Item* item = this->GetItem(child);
+            if (!item || item->location != ItemLocation::Carried(handle)) {
                 return false;
             }
             owned_items.push_back(child);
@@ -852,8 +853,8 @@ bool World::check_invariants() const {
             return false;
         }
         for (ItemHandle child : value.contents) {
-            const Item* item = this->item(child);
-            if (!item || item->location != ItemLocation::stored(handle)) {
+            const Item* item = this->GetItem(child);
+            if (!item || item->location != ItemLocation::Stored(handle)) {
                 return false;
             }
             owned_items.push_back(child);
@@ -866,8 +867,8 @@ bool World::check_invariants() const {
             return false;
         }
         for (ItemHandle child : value.contents) {
-            const Item* item = this->item(child);
-            if (!item || item->location != ItemLocation::inside(handle)) {
+            const Item* item = this->GetItem(child);
+            if (!item || item->location != ItemLocation::Inside(handle)) {
                 return false;
             }
             owned_items.push_back(child);
@@ -879,12 +880,12 @@ bool World::check_invariants() const {
             if (++depth > state.items.size()) {
                 return false;
             }
-            cursor = item(cursor->location.item);
+            cursor = GetItem(cursor->location.item);
             if (!cursor || cursor->kind != ItemKind::backpack) {
                 return false;
             }
         }
-        const auto location = state.destination(cursor->location);
+        const auto location = state.Destination(cursor->location);
         if (!location || *location != cursor->location) {
             return false;
         }
@@ -900,7 +901,7 @@ bool World::check_invariants() const {
     }
     Vector<ChunkCoord> archived_positions;
     for (const Archive& saved : state.archives) {
-        if (!valid_region({saved.position, 0}) || state.chunk(saved.position)
+        if (!valid_region({saved.position, 0}) || state.GetChunk(saved.position)
             || occurrences(archived_positions, saved.position) != 0) {
             return false;
         }

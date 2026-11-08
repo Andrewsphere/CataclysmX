@@ -12,8 +12,8 @@ an initially disabled object at `{2, 0}`, a closed door at `{3, 0}`, a wall at
 
 ## Commands and turn cost
 
-`send(Command)` returns `CommandResult{outcome, advanced, tick}`. Gameplay
-outcomes are distinct from the world's `std::expected` errors.
+`Send(Command)` returns `CommandResult{outcome, advanced, tick}`. Gameplay
+outcomes are distinct from the world's `eastl::expected` errors.
 
 | Command kind | Semantics |
 | --- | --- |
@@ -41,25 +41,25 @@ bookkeeping. Use `outcome_message` for a short display message.
 #include "core/server.h"
 
 cataclysmx::Server server(42);
-const auto result = server.send({cataclysmx::CommandKind::move, 1, 0});
+const auto result = server.Send({cataclysmx::CommandKind::move, 1, 0});
 const char* message = cataclysmx::outcome_message(result.outcome);
-const auto snapshot = server.view(); // Safe to keep after later commands.
+const auto snapshot = server.View(); // Safe to keep after later commands.
 ```
 
 ## Player bubble and administrative loading
 
 The bubble is centered on the player's **chunk**. Defaults are active radius
 `1` (a `3 × 3` square) and resident radius `2` (`5 × 5`), with active chunks
-included in the resident total. `set_bubble_radii(active, resident)` requires
+included in the resident total. `SetBubbleRadii(active, resident)` requires
 `0 <= active <= resident <= 8` and the full resident region to fit world limits.
 Invalid settings return `invalid_region` without changing the bubble; valid
 settings reconcile immediately without consuming a tick.
 
 ```cpp
 cataclysmx::WorldResult<void> shrink_bubble(cataclysmx::Server& server) {
-    auto changed = server.set_bubble_radii(0, 1);
+    auto changed = server.SetBubbleRadii(0, 1);
     if (!changed) {
-        return std::unexpected(changed.error());
+        return eastl::unexpected(changed.error());
     }
     return {};
 }
@@ -71,20 +71,20 @@ is removed, preserving the player's runtime handle even with zero radii.
 Moves whose future resident bubble would cross the coordinate limits fail as
 `unavailable`. Interact does not load unavailable neighboring chunks.
 
-`world()`, `player()` and `tick()` provide administrative/headless access.
-Additional `world().request_chunks(...)` requests combine with the bubble using
+`GetWorld()`, `GetPlayer()` and `GetTick()` provide administrative/headless access.
+Additional `GetWorld().RequestChunks(...)` requests combine with the bubble using
 the [world demand rules](world_api.md#chunk-demand-request-reconcile-release).
 An external active request can advance remote actors on each successful player
-command; a resident request only keeps them loaded. Call `reconcile_chunks()`
+command; a resident request only keeps them loaded. Call `ReconcileChunks()`
 after changing external demand and explicitly release owned requests.
 
-Ordinary clients use `send`/`view`. Administrative mutation bypasses command
+Ordinary clients use `Send`/`View`. Administrative mutation bypasses command
 validation and turn costs; callers must preserve the server's live, player-marked,
 active player and bubble assumptions. It is not a second gameplay command API.
 
 ## Views and line of sight
 
-`view(radius = 8)` returns an independent `WorldView` value and does not load
+`View(radius = 8)` returns an independent `WorldView` value and does not load
 chunks, advance turns or consume RNG. Radius is clamped to `0..12`. The square
 has width and height `2 * radius + 1`, with `origin` at its minimum world X/Z.
 Cells are row-major: `cells[row_z * width + column_x]`. Display rows follow world

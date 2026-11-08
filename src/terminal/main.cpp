@@ -13,7 +13,7 @@
 int main(int argc, char** argv) {
     cataclysmx::Server server;
     if (argc == 2 && std::string(argv[1]) == "--render") {
-        std::fputs(cataclysmx::render_text(server.view()).c_str(), stdout);
+        std::fputs(cataclysmx::render_text(server.View()).c_str(), stdout);
         return 0;
     }
     if (argc != 1) {
@@ -27,7 +27,7 @@ int main(int argc, char** argv) {
         ftxui::Elements rows;
         rows.push_back(ftxui::text("CataclysmX | arrows/hjkl move | . wait | g pickup | d drop | o + direction interact | q quit"));
         rows.push_back(ftxui::text(interacting ? "Interact in which direction? (Escape cancels)" : message));
-        const cataclysmx::String rendered = cataclysmx::render_text(server.view());
+        const cataclysmx::String rendered = cataclysmx::render_text(server.View());
         std::istringstream text(std::string(rendered.data(), rendered.size()));
         std::string line;
         while (std::getline(text, line)) { rows.push_back(ftxui::text(line)); }
@@ -58,7 +58,7 @@ int main(int argc, char** argv) {
         } else if (event == ftxui::Event::Character('d')) { command.kind = cataclysmx::CommandKind::drop;
         } else { return false; }
         interacting = false;
-        const auto result = server.send(command);
+        const auto result = server.Send(command);
         message = cataclysmx::outcome_message(result.outcome);
         return true;
     });

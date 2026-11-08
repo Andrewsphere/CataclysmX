@@ -16,24 +16,24 @@ T take(WorldResult<T> result) {
 }
 
 LoadRequest load(World& world, ChunkRegion region = {{0, 0}, 0}, LoadMode mode = LoadMode::active) {
-    const LoadRequest request = take(world.request_chunks(region, mode));
-    world.reconcile_chunks();
-    REQUIRE(world.check_invariants());
+    const LoadRequest request = take(world.RequestChunks(region, mode));
+    world.ReconcileChunks();
+    REQUIRE(world.CheckInvariants());
     return request;
 }
 
 Vector<PersistentId> actor_ids(const World& world) {
     Vector<PersistentId> result;
-    for (ActorHandle handle : world.active_actors()) {
-        result.push_back(world.actor(handle)->id);
+    for (ActorHandle handle : world.ActiveActors()) {
+        result.push_back(world.GetActor(handle)->id);
     }
     return result;
 }
 
 Vector<PersistentId> object_ids(const World& world) {
     Vector<PersistentId> result;
-    for (ObjectHandle handle : world.active_objects()) {
-        result.push_back(world.object(handle)->id);
+    for (ObjectHandle handle : world.ActiveObjects()) {
+        result.push_back(world.GetObject(handle)->id);
     }
     return result;
 }
@@ -58,451 +58,451 @@ TEST_CASE("World coordinates use floor division and bounded positions", "[world]
 
     World world;
     load(world, {{-1, -1}, 0});
-    REQUIRE(world.set_tile({-1, -1}, {Terrain::open_door, 7}));
-    CHECK(world.chunk({-1, -1})->tiles[255] == Tile{Terrain::open_door, 7});
-    CHECK(world.tile({0, 0}) == nullptr);
-    CHECK(world.set_tile({0, 0}, {}) == eastl::unexpected(WorldError::chunk_unavailable));
-    CHECK(world.create_actor({INT_MAX, 0}) == eastl::unexpected(WorldError::invalid_position));
-    CHECK(world.create_object({0, INT_MIN}) == eastl::unexpected(WorldError::invalid_position));
-    CHECK(world.create_item(ItemKind::rock, ItemLocation::ground({world_coordinate_limit + 1, 0}))
+    REQUIRE(world.SetTile({-1, -1}, {Terrain::open_door, 7}));
+    CHECK(world.GetChunk({-1, -1})->tiles[255] == Tile{Terrain::open_door, 7});
+    CHECK(world.GetTile({0, 0}) == nullptr);
+    CHECK(world.SetTile({0, 0}, {}) == eastl::unexpected(WorldError::chunk_unavailable));
+    CHECK(world.CreateActor({INT_MAX, 0}) == eastl::unexpected(WorldError::invalid_position));
+    CHECK(world.CreateObject({0, INT_MIN}) == eastl::unexpected(WorldError::invalid_position));
+    CHECK(world.CreateItem(ItemKind::rock, ItemLocation::Ground({world_coordinate_limit + 1, 0}))
         == eastl::unexpected(WorldError::invalid_position));
 
     load(world, {{62'500, -62'500}, 0});
-    REQUIRE(world.tile({world_coordinate_limit, -world_coordinate_limit}) != nullptr);
-    CHECK(world.tile({world_coordinate_limit + 1, -world_coordinate_limit}) == nullptr);
-    REQUIRE(world.set_tile({world_coordinate_limit, -world_coordinate_limit}, {}));
-    take(world.create_actor({world_coordinate_limit, -world_coordinate_limit}));
-    CHECK(world.check_invariants());
+    REQUIRE(world.GetTile({world_coordinate_limit, -world_coordinate_limit}) != nullptr);
+    CHECK(world.GetTile({world_coordinate_limit + 1, -world_coordinate_limit}) == nullptr);
+    REQUIRE(world.SetTile({world_coordinate_limit, -world_coordinate_limit}, {}));
+    take(world.CreateActor({world_coordinate_limit, -world_coordinate_limit}));
+    CHECK(world.CheckInvariants());
 }
 
 TEST_CASE("Chunk requests combine demand and reject invalid updates atomically", "[world][streaming]") {
     World world;
-    CHECK(world.request_chunks({{0, 0}, -1}, LoadMode::active)
+    CHECK(world.RequestChunks({{0, 0}, -1}, LoadMode::active)
         == eastl::unexpected(WorldError::invalid_region));
-    CHECK(world.request_chunks({{0, 0}, 9}, LoadMode::active)
+    CHECK(world.RequestChunks({{0, 0}, 9}, LoadMode::active)
         == eastl::unexpected(WorldError::invalid_region));
-    CHECK(world.request_chunks({{INT_MAX, INT_MIN}, 1}, LoadMode::active)
+    CHECK(world.RequestChunks({{INT_MAX, INT_MIN}, 1}, LoadMode::active)
         == eastl::unexpected(WorldError::invalid_region));
-    CHECK(world.request_chunks({{62'500, 0}, 1}, LoadMode::resident)
+    CHECK(world.RequestChunks({{62'500, 0}, 1}, LoadMode::resident)
         == eastl::unexpected(WorldError::invalid_region));
-    CHECK(world.request_chunks({{0, 0}, 0}, static_cast<LoadMode>(99))
+    CHECK(world.RequestChunks({{0, 0}, 0}, static_cast<LoadMode>(99))
         == eastl::unexpected(WorldError::invalid_request));
-    const LoadRequest resident = take(world.request_chunks({{0, 0}, 1}, LoadMode::resident));
-    const LoadRequest active = take(world.request_chunks({{0, 0}, 0}, LoadMode::active));
-    const LoadRequest overlap = take(world.request_chunks({{1, 0}, 0}, LoadMode::active));
-    CHECK(world.loaded_chunks().empty());
-    world.reconcile_chunks();
-    REQUIRE(world.loaded_chunks().size() == 9);
-    CHECK(world.loaded_chunks().front() == ChunkCoord{-1, -1});
-    CHECK(world.loaded_chunks().back() == ChunkCoord{1, 1});
-    CHECK(world.active({0, 0}));
-    CHECK(world.active({16, 0}));
-    CHECK_FALSE(world.active({-1, -1}));
-    CHECK(world.update_request(resident, {{0, 0}, 9}, LoadMode::active)
+    const LoadRequest resident = take(world.RequestChunks({{0, 0}, 1}, LoadMode::resident));
+    const LoadRequest active = take(world.RequestChunks({{0, 0}, 0}, LoadMode::active));
+    const LoadRequest overlap = take(world.RequestChunks({{1, 0}, 0}, LoadMode::active));
+    CHECK(world.LoadedChunks().empty());
+    world.ReconcileChunks();
+    REQUIRE(world.LoadedChunks().size() == 9);
+    CHECK(world.LoadedChunks().front() == ChunkCoord{-1, -1});
+    CHECK(world.LoadedChunks().back() == ChunkCoord{1, 1});
+    CHECK(world.IsActive({0, 0}));
+    CHECK(world.IsActive({16, 0}));
+    CHECK_FALSE(world.IsActive({-1, -1}));
+    CHECK(world.UpdateRequest(resident, {{0, 0}, 9}, LoadMode::active)
         == eastl::unexpected(WorldError::invalid_region));
-    CHECK(world.update_request(active, {{0, 0}, 0}, static_cast<LoadMode>(99))
+    CHECK(world.UpdateRequest(active, {{0, 0}, 0}, static_cast<LoadMode>(99))
         == eastl::unexpected(WorldError::invalid_request));
-    world.reconcile_chunks();
-    CHECK(world.loaded_chunks().size() == 9);
-    REQUIRE(world.release_request(active));
-    world.reconcile_chunks();
-    CHECK_FALSE(world.active({0, 0}));
-    CHECK(world.chunk({0, 0}) != nullptr);
-    CHECK(world.release_request(active) == eastl::unexpected(WorldError::invalid_request));
-    CHECK(world.update_request(active, {{0, 0}, 0}, LoadMode::active)
+    world.ReconcileChunks();
+    CHECK(world.LoadedChunks().size() == 9);
+    REQUIRE(world.ReleaseRequest(active));
+    world.ReconcileChunks();
+    CHECK_FALSE(world.IsActive({0, 0}));
+    CHECK(world.GetChunk({0, 0}) != nullptr);
+    CHECK(world.ReleaseRequest(active) == eastl::unexpected(WorldError::invalid_request));
+    CHECK(world.UpdateRequest(active, {{0, 0}, 0}, LoadMode::active)
         == eastl::unexpected(WorldError::invalid_request));
-    CHECK(world.release_request({}) == eastl::unexpected(WorldError::invalid_request));
-    CHECK(world.update_request({UINT64_MAX}, {{0, 0}, 0}, LoadMode::active)
+    CHECK(world.ReleaseRequest({}) == eastl::unexpected(WorldError::invalid_request));
+    CHECK(world.UpdateRequest({UINT64_MAX}, {{0, 0}, 0}, LoadMode::active)
         == eastl::unexpected(WorldError::invalid_request));
-    REQUIRE(world.update_request(overlap, {{-2, 0}, 0}, LoadMode::resident));
-    world.reconcile_chunks();
-    CHECK(world.loaded_chunks().size() == 10);
-    CHECK(world.loaded_chunks().front() == ChunkCoord{-2, 0});
-    CHECK_FALSE(world.active({16, 0}));
-    REQUIRE(world.release_request(resident));
-    world.reconcile_chunks();
-    CHECK(world.loaded_chunks() == Vector<ChunkCoord>{{-2, 0}});
-    CHECK(world.archived_chunk_count() == 9);
-    REQUIRE(world.release_request(overlap));
-    world.reconcile_chunks();
-    CHECK(world.loaded_chunks().empty());
-    CHECK(world.archived_chunk_count() == 10);
-    CHECK(world.check_invariants());
+    REQUIRE(world.UpdateRequest(overlap, {{-2, 0}, 0}, LoadMode::resident));
+    world.ReconcileChunks();
+    CHECK(world.LoadedChunks().size() == 10);
+    CHECK(world.LoadedChunks().front() == ChunkCoord{-2, 0});
+    CHECK_FALSE(world.IsActive({16, 0}));
+    REQUIRE(world.ReleaseRequest(resident));
+    world.ReconcileChunks();
+    CHECK(world.LoadedChunks() == Vector<ChunkCoord>{{-2, 0}});
+    CHECK(world.ArchivedChunkCount() == 9);
+    REQUIRE(world.ReleaseRequest(overlap));
+    world.ReconcileChunks();
+    CHECK(world.LoadedChunks().empty());
+    CHECK(world.ArchivedChunkCount() == 10);
+    CHECK(world.CheckInvariants());
 
     // Exercise SlotMap request recycling, not just never-reused indices.
     for (int index = 0; index < 140; ++index) {
-        const auto request = take(world.request_chunks({{0, 0}, 0}, LoadMode::resident));
+        const auto request = take(world.RequestChunks({{0, 0}, 0}, LoadMode::resident));
         CHECK(request != active);
-        REQUIRE(world.release_request(request));
+        REQUIRE(world.ReleaseRequest(request));
     }
-    CHECK(world.release_request(active) == eastl::unexpected(WorldError::invalid_request));
+    CHECK(world.ReleaseRequest(active) == eastl::unexpected(WorldError::invalid_request));
 }
 
 TEST_CASE("Only active chunks accrue turns and enabled object updates", "[world][activity]") {
     World world;
     const auto request = load(world, {{0, 0}, 0}, LoadMode::resident);
-    const auto actor = take(world.create_actor({0, 0}, true));
-    const auto object = take(world.create_object({1, 0}, true));
-    CHECK(world.active_actors().empty());
-    CHECK(world.active_objects().empty());
-    CHECK(world.record_actor_turn(actor) == eastl::unexpected(WorldError::chunk_unavailable));
-    CHECK(world.record_object_update(object) == eastl::unexpected(WorldError::chunk_unavailable));
-    CHECK(world.actor(actor)->turns == 0);
-    CHECK(world.object(object)->updates == 0);
-    REQUIRE(world.update_request(request, {{0, 0}, 0}, LoadMode::active));
-    world.reconcile_chunks();
-    CHECK(world.active_actors() == Vector<ActorHandle>{actor});
-    CHECK(world.active_objects() == Vector<ObjectHandle>{object});
-    REQUIRE(world.record_actor_turn(actor));
-    REQUIRE(world.record_object_update(object));
-    REQUIRE(world.set_object_enabled(object, false));
-    REQUIRE(world.record_object_update(object));
-    CHECK(world.actor(actor)->turns == 1);
-    CHECK(world.object(object)->updates == 1);
-    REQUIRE(world.update_request(request, {{0, 0}, 0}, LoadMode::resident));
-    world.reconcile_chunks();
-    CHECK(world.record_object_update(object) == eastl::unexpected(WorldError::chunk_unavailable));
-    CHECK(world.record_actor_turn({}) == eastl::unexpected(WorldError::invalid_handle));
-    CHECK(world.record_object_update({UINT64_MAX}) == eastl::unexpected(WorldError::invalid_handle));
-    CHECK(world.check_invariants());
+    const auto actor = take(world.CreateActor({0, 0}, true));
+    const auto object = take(world.CreateObject({1, 0}, true));
+    CHECK(world.ActiveActors().empty());
+    CHECK(world.ActiveObjects().empty());
+    CHECK(world.RecordActorTurn(actor) == eastl::unexpected(WorldError::chunk_unavailable));
+    CHECK(world.RecordObjectUpdate(object) == eastl::unexpected(WorldError::chunk_unavailable));
+    CHECK(world.GetActor(actor)->turns == 0);
+    CHECK(world.GetObject(object)->updates == 0);
+    REQUIRE(world.UpdateRequest(request, {{0, 0}, 0}, LoadMode::active));
+    world.ReconcileChunks();
+    CHECK(world.ActiveActors() == Vector<ActorHandle>{actor});
+    CHECK(world.ActiveObjects() == Vector<ObjectHandle>{object});
+    REQUIRE(world.RecordActorTurn(actor));
+    REQUIRE(world.RecordObjectUpdate(object));
+    REQUIRE(world.SetObjectEnabled(object, false));
+    REQUIRE(world.RecordObjectUpdate(object));
+    CHECK(world.GetActor(actor)->turns == 1);
+    CHECK(world.GetObject(object)->updates == 1);
+    REQUIRE(world.UpdateRequest(request, {{0, 0}, 0}, LoadMode::resident));
+    world.ReconcileChunks();
+    CHECK(world.RecordObjectUpdate(object) == eastl::unexpected(WorldError::chunk_unavailable));
+    CHECK(world.RecordActorTurn({}) == eastl::unexpected(WorldError::invalid_handle));
+    CHECK(world.RecordObjectUpdate({UINT64_MAX}) == eastl::unexpected(WorldError::invalid_handle));
+    CHECK(world.CheckInvariants());
 }
 
 TEST_CASE("Actor movement keeps handles and inventory across chunk boundaries", "[world][actors]") {
     World world;
     const auto origin = load(world);
     load(world, {{1, 0}, 0}, LoadMode::resident);
-    const auto actor = take(world.create_actor({15, 1}, true));
-    const auto backpack = take(world.create_item(ItemKind::backpack, ItemLocation::carried(actor)));
-    const auto rock = take(world.create_item(ItemKind::rock, ItemLocation::inside(backpack)));
-    const PersistentId id = world.actor(actor)->id;
-    REQUIRE(world.move_actor(actor, {16, 1}));
-    CHECK(world.actor(actor)->id == id);
-    CHECK(world.actor_at({15, 1}) == ActorHandle{});
-    CHECK(world.actor_at({16, 1}) == actor);
-    CHECK(world.chunk({0, 0})->actors.empty());
-    CHECK(world.chunk({1, 0})->actors == Vector<ActorHandle>{actor});
-    CHECK(world.item(backpack)->location == ItemLocation::carried(actor));
-    CHECK(world.item(rock)->location == ItemLocation::inside(backpack));
-    CHECK(world.active_actors().empty());
-    REQUIRE(world.move_actor(actor, {16, 1}));
-    const auto other = take(world.create_actor({17, 1}));
-    CHECK(world.move_actor(actor, {17, 1}) == eastl::unexpected(WorldError::occupied));
-    CHECK(world.create_actor({17, 1}) == eastl::unexpected(WorldError::occupied));
-    REQUIRE(world.set_tile({18, 1}, {Terrain::closed_door, 0}));
-    CHECK(world.move_actor(actor, {18, 1}) == eastl::unexpected(WorldError::blocked));
-    CHECK(world.move_actor(actor, {32, 1}) == eastl::unexpected(WorldError::chunk_unavailable));
-    CHECK(world.move_actor(actor, {INT_MAX, 1}) == eastl::unexpected(WorldError::invalid_position));
-    CHECK(world.move_actor({}, {16, 1}) == eastl::unexpected(WorldError::invalid_handle));
-    CHECK(world.actor(actor)->position == TileCoord{16, 1});
-    CHECK(world.actor(other)->position == TileCoord{17, 1});
-    REQUIRE(world.release_request(origin));
-    world.reconcile_chunks();
-    REQUIRE(world.actor(actor) != nullptr);
-    REQUIRE(world.item(rock) != nullptr);
-    CHECK(world.find_actor(id) == actor);
-    CHECK(world.check_invariants());
+    const auto actor = take(world.CreateActor({15, 1}, true));
+    const auto backpack = take(world.CreateItem(ItemKind::backpack, ItemLocation::Carried(actor)));
+    const auto rock = take(world.CreateItem(ItemKind::rock, ItemLocation::Inside(backpack)));
+    const PersistentId id = world.GetActor(actor)->id;
+    REQUIRE(world.MoveActor(actor, {16, 1}));
+    CHECK(world.GetActor(actor)->id == id);
+    CHECK(world.ActorAt({15, 1}) == ActorHandle{});
+    CHECK(world.ActorAt({16, 1}) == actor);
+    CHECK(world.GetChunk({0, 0})->actors.empty());
+    CHECK(world.GetChunk({1, 0})->actors == Vector<ActorHandle>{actor});
+    CHECK(world.GetItem(backpack)->location == ItemLocation::Carried(actor));
+    CHECK(world.GetItem(rock)->location == ItemLocation::Inside(backpack));
+    CHECK(world.ActiveActors().empty());
+    REQUIRE(world.MoveActor(actor, {16, 1}));
+    const auto other = take(world.CreateActor({17, 1}));
+    CHECK(world.MoveActor(actor, {17, 1}) == eastl::unexpected(WorldError::occupied));
+    CHECK(world.CreateActor({17, 1}) == eastl::unexpected(WorldError::occupied));
+    REQUIRE(world.SetTile({18, 1}, {Terrain::closed_door, 0}));
+    CHECK(world.MoveActor(actor, {18, 1}) == eastl::unexpected(WorldError::blocked));
+    CHECK(world.MoveActor(actor, {32, 1}) == eastl::unexpected(WorldError::chunk_unavailable));
+    CHECK(world.MoveActor(actor, {INT_MAX, 1}) == eastl::unexpected(WorldError::invalid_position));
+    CHECK(world.MoveActor({}, {16, 1}) == eastl::unexpected(WorldError::invalid_handle));
+    CHECK(world.GetActor(actor)->position == TileCoord{16, 1});
+    CHECK(world.GetActor(other)->position == TileCoord{17, 1});
+    REQUIRE(world.ReleaseRequest(origin));
+    world.ReconcileChunks();
+    REQUIRE(world.GetActor(actor) != nullptr);
+    REQUIRE(world.GetItem(rock) != nullptr);
+    CHECK(world.FindActor(id) == actor);
+    CHECK(world.CheckInvariants());
 }
 
 TEST_CASE("Item transfers validate destinations and cycles before changing ownership", "[world][items]") {
     World world;
     load(world);
     load(world, {{1, 0}, 0}, LoadMode::resident);
-    const auto actor = take(world.create_actor({1, 1}));
-    const auto object = take(world.create_object({2, 1}));
-    const auto root = take(world.create_item(ItemKind::backpack, ItemLocation::ground({0, 0})));
-    const auto nested = take(world.create_item(ItemKind::backpack, ItemLocation::inside(root)));
-    const auto rock = take(world.create_item(ItemKind::rock, ItemLocation::inside(nested)));
-    CHECK(world.transfer_item(root, ItemLocation::inside(root))
+    const auto actor = take(world.CreateActor({1, 1}));
+    const auto object = take(world.CreateObject({2, 1}));
+    const auto root = take(world.CreateItem(ItemKind::backpack, ItemLocation::Ground({0, 0})));
+    const auto nested = take(world.CreateItem(ItemKind::backpack, ItemLocation::Inside(root)));
+    const auto rock = take(world.CreateItem(ItemKind::rock, ItemLocation::Inside(nested)));
+    CHECK(world.TransferItem(root, ItemLocation::Inside(root))
         == eastl::unexpected(WorldError::containment_cycle));
-    CHECK(world.transfer_item(root, ItemLocation::inside(nested))
+    CHECK(world.TransferItem(root, ItemLocation::Inside(nested))
         == eastl::unexpected(WorldError::containment_cycle));
-    CHECK(world.transfer_item(nested, ItemLocation::inside(rock))
+    CHECK(world.TransferItem(nested, ItemLocation::Inside(rock))
         == eastl::unexpected(WorldError::not_container));
-    CHECK(world.create_item(ItemKind::bandage, ItemLocation::inside(rock))
+    CHECK(world.CreateItem(ItemKind::bandage, ItemLocation::Inside(rock))
         == eastl::unexpected(WorldError::not_container));
-    CHECK(world.transfer_item(root, ItemLocation::carried({UINT64_MAX}))
+    CHECK(world.TransferItem(root, ItemLocation::Carried({UINT64_MAX}))
         == eastl::unexpected(WorldError::invalid_handle));
-    CHECK(world.transfer_item(root, ItemLocation::stored({}))
+    CHECK(world.TransferItem(root, ItemLocation::Stored({}))
         == eastl::unexpected(WorldError::invalid_handle));
-    CHECK(world.transfer_item(root, ItemLocation::inside({}))
+    CHECK(world.TransferItem(root, ItemLocation::Inside({}))
         == eastl::unexpected(WorldError::invalid_handle));
-    CHECK(world.transfer_item(root, ItemLocation::ground({32, 0}))
+    CHECK(world.TransferItem(root, ItemLocation::Ground({32, 0}))
         == eastl::unexpected(WorldError::chunk_unavailable));
-    CHECK(world.transfer_item(root, ItemLocation::ground({INT_MIN, 0}))
+    CHECK(world.TransferItem(root, ItemLocation::Ground({INT_MIN, 0}))
         == eastl::unexpected(WorldError::invalid_position));
-    CHECK(world.transfer_item({}, ItemLocation::carried(actor))
+    CHECK(world.TransferItem({}, ItemLocation::Carried(actor))
         == eastl::unexpected(WorldError::invalid_handle));
-    CHECK(world.items_at({0, 0}) == Vector<ItemHandle>{root});
-    CHECK(world.item(root)->contents == Vector<ItemHandle>{nested});
-    CHECK(world.item(nested)->contents == Vector<ItemHandle>{rock});
-    CHECK(world.item(root)->location == ItemLocation::ground({0, 0}));
-    CHECK(world.actor(actor)->inventory.empty());
-    CHECK(world.object(object)->contents.empty());
-    REQUIRE(world.transfer_item(root, ItemLocation::carried(actor)));
-    CHECK(world.items_at({0, 0}).empty());
-    CHECK(world.actor(actor)->inventory == Vector<ItemHandle>{root});
-    REQUIRE(world.transfer_item(root, ItemLocation::carried(actor)));
-    CHECK(world.actor(actor)->inventory.size() == 1);
-    REQUIRE(world.transfer_item(root, ItemLocation::stored(object)));
-    CHECK(world.actor(actor)->inventory.empty());
-    CHECK(world.object(object)->contents == Vector<ItemHandle>{root});
-    REQUIRE(world.transfer_item(root, ItemLocation::ground({16, 2})));
-    CHECK(world.object(object)->contents.empty());
-    CHECK(world.chunk({0, 0})->ground_items.empty());
-    CHECK(world.chunk({1, 0})->ground_items == Vector<ItemHandle>{root});
-    CHECK(world.item(rock)->location == ItemLocation::inside(nested));
-    REQUIRE(world.transfer_item(rock, ItemLocation::carried(actor)));
-    CHECK(world.item(nested)->contents.empty());
-    CHECK(world.actor(actor)->inventory == Vector<ItemHandle>{rock});
-    CHECK(world.check_invariants());
+    CHECK(world.ItemsAt({0, 0}) == Vector<ItemHandle>{root});
+    CHECK(world.GetItem(root)->contents == Vector<ItemHandle>{nested});
+    CHECK(world.GetItem(nested)->contents == Vector<ItemHandle>{rock});
+    CHECK(world.GetItem(root)->location == ItemLocation::Ground({0, 0}));
+    CHECK(world.GetActor(actor)->inventory.empty());
+    CHECK(world.GetObject(object)->contents.empty());
+    REQUIRE(world.TransferItem(root, ItemLocation::Carried(actor)));
+    CHECK(world.ItemsAt({0, 0}).empty());
+    CHECK(world.GetActor(actor)->inventory == Vector<ItemHandle>{root});
+    REQUIRE(world.TransferItem(root, ItemLocation::Carried(actor)));
+    CHECK(world.GetActor(actor)->inventory.size() == 1);
+    REQUIRE(world.TransferItem(root, ItemLocation::Stored(object)));
+    CHECK(world.GetActor(actor)->inventory.empty());
+    CHECK(world.GetObject(object)->contents == Vector<ItemHandle>{root});
+    REQUIRE(world.TransferItem(root, ItemLocation::Ground({16, 2})));
+    CHECK(world.GetObject(object)->contents.empty());
+    CHECK(world.GetChunk({0, 0})->ground_items.empty());
+    CHECK(world.GetChunk({1, 0})->ground_items == Vector<ItemHandle>{root});
+    CHECK(world.GetItem(rock)->location == ItemLocation::Inside(nested));
+    REQUIRE(world.TransferItem(rock, ItemLocation::Carried(actor)));
+    CHECK(world.GetItem(nested)->contents.empty());
+    CHECK(world.GetActor(actor)->inventory == Vector<ItemHandle>{rock});
+    CHECK(world.CheckInvariants());
 }
 
 TEST_CASE("Chunk archives preserve values and nested ownership with fresh runtime keys", "[world][streaming][items]") {
     World world(123);
     const auto origin = load(world);
     load(world, {{2, 0}, 0}, LoadMode::resident);
-    const auto actor = take(world.create_actor({1, 1}, true));
-    const auto object = take(world.create_object({2, 2}, true));
-    const auto bag = take(world.create_item(ItemKind::backpack, ItemLocation::carried(actor)));
-    const auto nested = take(world.create_item(ItemKind::backpack, ItemLocation::inside(bag)));
-    const auto rock = take(world.create_item(ItemKind::rock, ItemLocation::inside(nested)));
-    const auto bandage = take(world.create_item(ItemKind::bandage, ItemLocation::inside(bag)));
-    const auto carried = take(world.create_item(ItemKind::rock, ItemLocation::carried(actor)));
-    const auto stored = take(world.create_item(ItemKind::backpack, ItemLocation::stored(object)));
-    const auto stored_child = take(world.create_item(ItemKind::bandage, ItemLocation::inside(stored)));
-    const auto ground = take(world.create_item(ItemKind::backpack, ItemLocation::ground({0, 4})));
-    const auto ground_child = take(world.create_item(ItemKind::rock, ItemLocation::inside(ground)));
+    const auto actor = take(world.CreateActor({1, 1}, true));
+    const auto object = take(world.CreateObject({2, 2}, true));
+    const auto bag = take(world.CreateItem(ItemKind::backpack, ItemLocation::Carried(actor)));
+    const auto nested = take(world.CreateItem(ItemKind::backpack, ItemLocation::Inside(bag)));
+    const auto rock = take(world.CreateItem(ItemKind::rock, ItemLocation::Inside(nested)));
+    const auto bandage = take(world.CreateItem(ItemKind::bandage, ItemLocation::Inside(bag)));
+    const auto carried = take(world.CreateItem(ItemKind::rock, ItemLocation::Carried(actor)));
+    const auto stored = take(world.CreateItem(ItemKind::backpack, ItemLocation::Stored(object)));
+    const auto stored_child = take(world.CreateItem(ItemKind::bandage, ItemLocation::Inside(stored)));
+    const auto ground = take(world.CreateItem(ItemKind::backpack, ItemLocation::Ground({0, 4})));
+    const auto ground_child = take(world.CreateItem(ItemKind::rock, ItemLocation::Inside(ground)));
     // Reorder siblings so reload cannot accidentally rely on ID or slot order.
-    REQUIRE(world.transfer_item(nested, ItemLocation::ground({0, 0})));
-    REQUIRE(world.transfer_item(nested, ItemLocation::inside(bag)));
-    const PersistentId actor_id = world.actor(actor)->id;
-    const PersistentId object_id = world.object(object)->id;
+    REQUIRE(world.TransferItem(nested, ItemLocation::Ground({0, 0})));
+    REQUIRE(world.TransferItem(nested, ItemLocation::Inside(bag)));
+    const PersistentId actor_id = world.GetActor(actor)->id;
+    const PersistentId object_id = world.GetObject(object)->id;
     const Vector<ItemHandle> old_items{bag, nested, rock, bandage, carried, stored,
         stored_child, ground, ground_child};
     Vector<PersistentId> item_ids;
     for (const auto handle : old_items) {
-        item_ids.push_back(world.item(handle)->id);
+        item_ids.push_back(world.GetItem(handle)->id);
     }
-    REQUIRE(world.record_actor_turn(actor));
-    REQUIRE(world.record_actor_turn(actor));
-    REQUIRE(world.record_object_update(object));
-    REQUIRE(world.set_object_enabled(object, false));
-    REQUIRE(world.set_tile({3, 3}, {Terrain::closed_door, 19}));
-    CHECK(world.check_invariants());
-    REQUIRE(world.release_request(origin));
-    world.reconcile_chunks();
-    CHECK(world.archived_chunk_count() == 1);
-    CHECK(world.actor(actor) == nullptr);
-    CHECK(world.object(object) == nullptr);
-    CHECK(world.find_actor(actor_id) == ActorHandle{});
-    CHECK(world.find_object(object_id) == ObjectHandle{});
+    REQUIRE(world.RecordActorTurn(actor));
+    REQUIRE(world.RecordActorTurn(actor));
+    REQUIRE(world.RecordObjectUpdate(object));
+    REQUIRE(world.SetObjectEnabled(object, false));
+    REQUIRE(world.SetTile({3, 3}, {Terrain::closed_door, 19}));
+    CHECK(world.CheckInvariants());
+    REQUIRE(world.ReleaseRequest(origin));
+    world.ReconcileChunks();
+    CHECK(world.ArchivedChunkCount() == 1);
+    CHECK(world.GetActor(actor) == nullptr);
+    CHECK(world.GetObject(object) == nullptr);
+    CHECK(world.FindActor(actor_id) == ActorHandle{});
+    CHECK(world.FindObject(object_id) == ObjectHandle{});
     for (std::size_t index = 0; index < old_items.size(); ++index) {
-        CHECK(world.item(old_items[index]) == nullptr);
-        CHECK(world.find_item(item_ids[index]) == ItemHandle{});
+        CHECK(world.GetItem(old_items[index]) == nullptr);
+        CHECK(world.FindItem(item_ids[index]) == ItemHandle{});
     }
-    CHECK(world.destroy_actor(actor) == eastl::unexpected(WorldError::invalid_handle));
-    CHECK(world.destroy_object(object) == eastl::unexpected(WorldError::invalid_handle));
-    CHECK(world.destroy_item(bag) == eastl::unexpected(WorldError::invalid_handle));
-    CHECK(world.check_invariants());
-    const auto newer = take(world.create_item(ItemKind::rock, ItemLocation::ground({32, 0})));
-    CHECK(world.item(newer)->id > item_ids.back());
-    CHECK(world.transfer_item(newer, ItemLocation::carried(actor))
+    CHECK(world.DestroyActor(actor) == eastl::unexpected(WorldError::invalid_handle));
+    CHECK(world.DestroyObject(object) == eastl::unexpected(WorldError::invalid_handle));
+    CHECK(world.DestroyItem(bag) == eastl::unexpected(WorldError::invalid_handle));
+    CHECK(world.CheckInvariants());
+    const auto newer = take(world.CreateItem(ItemKind::rock, ItemLocation::Ground({32, 0})));
+    CHECK(world.GetItem(newer)->id > item_ids.back());
+    CHECK(world.TransferItem(newer, ItemLocation::Carried(actor))
         == eastl::unexpected(WorldError::invalid_handle));
-    CHECK(world.transfer_item(newer, ItemLocation::stored(object))
+    CHECK(world.TransferItem(newer, ItemLocation::Stored(object))
         == eastl::unexpected(WorldError::invalid_handle));
-    CHECK(world.transfer_item(newer, ItemLocation::inside(bag))
+    CHECK(world.TransferItem(newer, ItemLocation::Inside(bag))
         == eastl::unexpected(WorldError::invalid_handle));
-    CHECK(world.transfer_item(newer, ItemLocation::ground({0, 0}))
+    CHECK(world.TransferItem(newer, ItemLocation::Ground({0, 0}))
         == eastl::unexpected(WorldError::chunk_unavailable));
-    CHECK(world.item(newer)->location == ItemLocation::ground({32, 0}));
+    CHECK(world.GetItem(newer)->location == ItemLocation::Ground({32, 0}));
     const auto reload = load(world);
-    CHECK(world.archived_chunk_count() == 0);
-    const auto fresh_actor = world.find_actor(actor_id);
-    const auto fresh_object = world.find_object(object_id);
-    REQUIRE(world.actor(fresh_actor) != nullptr);
-    REQUIRE(world.object(fresh_object) != nullptr);
+    CHECK(world.ArchivedChunkCount() == 0);
+    const auto fresh_actor = world.FindActor(actor_id);
+    const auto fresh_object = world.FindObject(object_id);
+    REQUIRE(world.GetActor(fresh_actor) != nullptr);
+    REQUIRE(world.GetObject(fresh_object) != nullptr);
     CHECK(fresh_actor != actor);
     CHECK(fresh_object != object);
-    CHECK(world.actor(fresh_actor)->player);
-    CHECK(world.actor(fresh_actor)->turns == 2);
-    CHECK(world.actor(fresh_actor)->position == TileCoord{1, 1});
-    CHECK_FALSE(world.object(fresh_object)->enabled);
-    CHECK(world.object(fresh_object)->updates == 1);
-    CHECK(*world.tile({3, 3}) == Tile{Terrain::closed_door, 19});
+    CHECK(world.GetActor(fresh_actor)->player);
+    CHECK(world.GetActor(fresh_actor)->turns == 2);
+    CHECK(world.GetActor(fresh_actor)->position == TileCoord{1, 1});
+    CHECK_FALSE(world.GetObject(fresh_object)->enabled);
+    CHECK(world.GetObject(fresh_object)->updates == 1);
+    CHECK(*world.GetTile({3, 3}) == Tile{Terrain::closed_door, 19});
     Vector<ItemHandle> fresh;
     for (std::size_t index = 0; index < old_items.size(); ++index) {
-        const auto handle = world.find_item(item_ids[index]);
-        REQUIRE(world.item(handle) != nullptr);
+        const auto handle = world.FindItem(item_ids[index]);
+        REQUIRE(world.GetItem(handle) != nullptr);
         CHECK(handle != old_items[index]);
-        CHECK(world.item(handle)->id == item_ids[index]);
-        CHECK(world.item(old_items[index]) == nullptr);
+        CHECK(world.GetItem(handle)->id == item_ids[index]);
+        CHECK(world.GetItem(old_items[index]) == nullptr);
         fresh.push_back(handle);
     }
-    CHECK(world.actor(fresh_actor)->inventory == Vector<ItemHandle>{fresh[0], fresh[4]});
-    CHECK(world.item(fresh[0])->location == ItemLocation::carried(fresh_actor));
-    CHECK(world.item(fresh[0])->contents == Vector<ItemHandle>{fresh[3], fresh[1]});
-    CHECK(world.item(fresh[1])->location == ItemLocation::inside(fresh[0]));
-    CHECK(world.item(fresh[1])->contents == Vector<ItemHandle>{fresh[2]});
-    CHECK(world.item(fresh[2])->kind == ItemKind::rock);
-    CHECK(world.item(fresh[2])->location == ItemLocation::inside(fresh[1]));
-    CHECK(world.item(fresh[3])->kind == ItemKind::bandage);
-    CHECK(world.object(fresh_object)->contents == Vector<ItemHandle>{fresh[5]});
-    CHECK(world.item(fresh[5])->location == ItemLocation::stored(fresh_object));
-    CHECK(world.item(fresh[5])->contents == Vector<ItemHandle>{fresh[6]});
-    CHECK(world.item(fresh[6])->location == ItemLocation::inside(fresh[5]));
-    CHECK(world.items_at({0, 4}) == Vector<ItemHandle>{fresh[7]});
-    CHECK(world.item(fresh[7])->contents == Vector<ItemHandle>{fresh[8]});
-    CHECK(world.item(fresh[8])->location == ItemLocation::inside(fresh[7]));
-    CHECK(world.check_invariants());
+    CHECK(world.GetActor(fresh_actor)->inventory == Vector<ItemHandle>{fresh[0], fresh[4]});
+    CHECK(world.GetItem(fresh[0])->location == ItemLocation::Carried(fresh_actor));
+    CHECK(world.GetItem(fresh[0])->contents == Vector<ItemHandle>{fresh[3], fresh[1]});
+    CHECK(world.GetItem(fresh[1])->location == ItemLocation::Inside(fresh[0]));
+    CHECK(world.GetItem(fresh[1])->contents == Vector<ItemHandle>{fresh[2]});
+    CHECK(world.GetItem(fresh[2])->kind == ItemKind::rock);
+    CHECK(world.GetItem(fresh[2])->location == ItemLocation::Inside(fresh[1]));
+    CHECK(world.GetItem(fresh[3])->kind == ItemKind::bandage);
+    CHECK(world.GetObject(fresh_object)->contents == Vector<ItemHandle>{fresh[5]});
+    CHECK(world.GetItem(fresh[5])->location == ItemLocation::Stored(fresh_object));
+    CHECK(world.GetItem(fresh[5])->contents == Vector<ItemHandle>{fresh[6]});
+    CHECK(world.GetItem(fresh[6])->location == ItemLocation::Inside(fresh[5]));
+    CHECK(world.ItemsAt({0, 4}) == Vector<ItemHandle>{fresh[7]});
+    CHECK(world.GetItem(fresh[7])->contents == Vector<ItemHandle>{fresh[8]});
+    CHECK(world.GetItem(fresh[8])->location == ItemLocation::Inside(fresh[7]));
+    CHECK(world.CheckInvariants());
     // A second archive replaces the first value snapshot, including mutations.
-    REQUIRE(world.record_actor_turn(fresh_actor));
-    REQUIRE(world.set_object_enabled(fresh_object, true));
-    REQUIRE(world.record_object_update(fresh_object));
-    REQUIRE(world.transfer_item(fresh[2], ItemLocation::stored(fresh_object)));
-    REQUIRE(world.release_request(reload));
-    world.reconcile_chunks();
+    REQUIRE(world.RecordActorTurn(fresh_actor));
+    REQUIRE(world.SetObjectEnabled(fresh_object, true));
+    REQUIRE(world.RecordObjectUpdate(fresh_object));
+    REQUIRE(world.TransferItem(fresh[2], ItemLocation::Stored(fresh_object)));
+    REQUIRE(world.ReleaseRequest(reload));
+    world.ReconcileChunks();
     load(world);
-    CHECK(world.actor(world.find_actor(actor_id))->turns == 3);
-    CHECK(world.object(world.find_object(object_id))->updates == 2);
-    CHECK(world.object(world.find_object(object_id))->enabled);
-    CHECK(world.item(world.find_item(item_ids[2]))->location
-        == ItemLocation::stored(world.find_object(object_id)));
-    CHECK(world.check_invariants());
+    CHECK(world.GetActor(world.FindActor(actor_id))->turns == 3);
+    CHECK(world.GetObject(world.FindObject(object_id))->updates == 2);
+    CHECK(world.GetObject(world.FindObject(object_id))->enabled);
+    CHECK(world.GetItem(world.FindItem(item_ids[2]))->location
+        == ItemLocation::Stored(world.FindObject(object_id)));
+    CHECK(world.CheckInvariants());
 }
 
 TEST_CASE("Actor and object destruction drop trees while item destruction removes descendants", "[world][destruction]") {
     World world;
     const auto request = load(world);
-    const auto actor = take(world.create_actor({1, 1}));
-    const auto object = take(world.create_object({2, 2}));
-    const auto bag = take(world.create_item(ItemKind::backpack, ItemLocation::carried(actor)));
-    const auto child = take(world.create_item(ItemKind::backpack, ItemLocation::inside(bag)));
-    const auto grandchild = take(world.create_item(ItemKind::bandage, ItemLocation::inside(child)));
-    const auto loose = take(world.create_item(ItemKind::rock, ItemLocation::carried(actor)));
-    const auto stored = take(world.create_item(ItemKind::backpack, ItemLocation::stored(object)));
-    const auto stored_child = take(world.create_item(ItemKind::rock, ItemLocation::inside(stored)));
-    const auto id = world.item(grandchild)->id;
-    REQUIRE(world.destroy_actor(actor));
-    CHECK(world.actor_at({1, 1}) == ActorHandle{});
-    CHECK(world.items_at({1, 1}) == Vector<ItemHandle>{bag, loose});
-    CHECK(world.item(bag)->location == ItemLocation::ground({1, 1}));
-    CHECK(world.item(child)->location == ItemLocation::inside(bag));
-    CHECK(world.item(grandchild)->location == ItemLocation::inside(child));
-    REQUIRE(world.destroy_object(object));
-    CHECK(world.object_at({2, 2}) == ObjectHandle{});
-    CHECK(world.item(stored)->location == ItemLocation::ground({2, 2}));
-    CHECK(world.item(stored_child)->location == ItemLocation::inside(stored));
-    REQUIRE(world.destroy_item(child));
-    CHECK(world.item(child) == nullptr);
-    CHECK(world.item(grandchild) == nullptr);
-    CHECK(world.find_item(id) == ItemHandle{});
-    CHECK(world.item(bag)->contents.empty());
-    REQUIRE(world.destroy_item(stored));
-    CHECK(world.item(stored_child) == nullptr);
-    CHECK(world.items_at({2, 2}).empty());
-    CHECK(world.destroy_item(child) == eastl::unexpected(WorldError::invalid_handle));
-    CHECK(world.destroy_actor(actor) == eastl::unexpected(WorldError::invalid_handle));
-    CHECK(world.destroy_object(object) == eastl::unexpected(WorldError::invalid_handle));
-    CHECK(world.set_object_enabled(object, true) == eastl::unexpected(WorldError::invalid_handle));
-    CHECK(world.check_invariants());
-    REQUIRE(world.release_request(request));
-    world.reconcile_chunks();
+    const auto actor = take(world.CreateActor({1, 1}));
+    const auto object = take(world.CreateObject({2, 2}));
+    const auto bag = take(world.CreateItem(ItemKind::backpack, ItemLocation::Carried(actor)));
+    const auto child = take(world.CreateItem(ItemKind::backpack, ItemLocation::Inside(bag)));
+    const auto grandchild = take(world.CreateItem(ItemKind::bandage, ItemLocation::Inside(child)));
+    const auto loose = take(world.CreateItem(ItemKind::rock, ItemLocation::Carried(actor)));
+    const auto stored = take(world.CreateItem(ItemKind::backpack, ItemLocation::Stored(object)));
+    const auto stored_child = take(world.CreateItem(ItemKind::rock, ItemLocation::Inside(stored)));
+    const auto id = world.GetItem(grandchild)->id;
+    REQUIRE(world.DestroyActor(actor));
+    CHECK(world.ActorAt({1, 1}) == ActorHandle{});
+    CHECK(world.ItemsAt({1, 1}) == Vector<ItemHandle>{bag, loose});
+    CHECK(world.GetItem(bag)->location == ItemLocation::Ground({1, 1}));
+    CHECK(world.GetItem(child)->location == ItemLocation::Inside(bag));
+    CHECK(world.GetItem(grandchild)->location == ItemLocation::Inside(child));
+    REQUIRE(world.DestroyObject(object));
+    CHECK(world.ObjectAt({2, 2}) == ObjectHandle{});
+    CHECK(world.GetItem(stored)->location == ItemLocation::Ground({2, 2}));
+    CHECK(world.GetItem(stored_child)->location == ItemLocation::Inside(stored));
+    REQUIRE(world.DestroyItem(child));
+    CHECK(world.GetItem(child) == nullptr);
+    CHECK(world.GetItem(grandchild) == nullptr);
+    CHECK(world.FindItem(id) == ItemHandle{});
+    CHECK(world.GetItem(bag)->contents.empty());
+    REQUIRE(world.DestroyItem(stored));
+    CHECK(world.GetItem(stored_child) == nullptr);
+    CHECK(world.ItemsAt({2, 2}).empty());
+    CHECK(world.DestroyItem(child) == eastl::unexpected(WorldError::invalid_handle));
+    CHECK(world.DestroyActor(actor) == eastl::unexpected(WorldError::invalid_handle));
+    CHECK(world.DestroyObject(object) == eastl::unexpected(WorldError::invalid_handle));
+    CHECK(world.SetObjectEnabled(object, true) == eastl::unexpected(WorldError::invalid_handle));
+    CHECK(world.CheckInvariants());
+    REQUIRE(world.ReleaseRequest(request));
+    world.ReconcileChunks();
     load(world);
-    CHECK(world.find_item(id) == ItemHandle{});
-    CHECK(world.check_invariants());
+    CHECK(world.FindItem(id) == ItemHandle{});
+    CHECK(world.CheckInvariants());
 }
 
 TEST_CASE("Active lists retain persistent ID order across different chunk reload orders", "[world][determinism]") {
     World world;
     const auto left = load(world);
     const auto right = load(world, {{1, 0}, 0});
-    take(world.create_actor({17, 1}));
-    take(world.create_object({17, 2}, false));
-    take(world.create_actor({1, 1}));
-    take(world.create_object({1, 2}, true));
+    take(world.CreateActor({17, 1}));
+    take(world.CreateObject({17, 2}, false));
+    take(world.CreateActor({1, 1}));
+    take(world.CreateObject({1, 2}, true));
     const auto actors = actor_ids(world);
     const auto objects = object_ids(world);
     REQUIRE(actors.size() == 2);
     REQUIRE(objects.size() == 2);
     CHECK(actors[0] < actors[1]);
     CHECK(objects[0] < objects[1]);
-    REQUIRE(world.release_request(left));
-    world.reconcile_chunks();
+    REQUIRE(world.ReleaseRequest(left));
+    world.ReconcileChunks();
     load(world);
     CHECK(actor_ids(world) == actors);
     CHECK(object_ids(world) == objects);
-    REQUIRE(world.release_request(right));
-    world.reconcile_chunks();
+    REQUIRE(world.ReleaseRequest(right));
+    world.ReconcileChunks();
     load(world, {{1, 0}, 0});
     CHECK(actor_ids(world) == actors);
     CHECK(object_ids(world) == objects);
-    CHECK(world.check_invariants());
+    CHECK(world.CheckInvariants());
 }
 
 TEST_CASE("Full unload preserves moved item roots and never resets entity slot maps", "[world][streaming]") {
     World world;
     const auto request = load(world, {{0, 0}, 1});
-    const auto actor = take(world.create_actor({1, 1}));
-    const auto object = take(world.create_object({17, 1}));
-    const auto bag = take(world.create_item(ItemKind::backpack, ItemLocation::carried(actor)));
-    const auto child = take(world.create_item(ItemKind::rock, ItemLocation::inside(bag)));
-    const auto actor_id = world.actor(actor)->id;
-    const auto object_id = world.object(object)->id;
-    const auto bag_id = world.item(bag)->id;
-    const auto child_id = world.item(child)->id;
-    REQUIRE(world.transfer_item(bag, ItemLocation::stored(object)));
-    REQUIRE(world.release_request(request));
-    world.reconcile_chunks();
-    CHECK(world.loaded_chunks().empty());
-    CHECK(world.actor(actor) == nullptr);
-    CHECK(world.object(object) == nullptr);
-    CHECK(world.item(bag) == nullptr);
-    CHECK(world.item(child) == nullptr);
-    CHECK(world.check_invariants());
+    const auto actor = take(world.CreateActor({1, 1}));
+    const auto object = take(world.CreateObject({17, 1}));
+    const auto bag = take(world.CreateItem(ItemKind::backpack, ItemLocation::Carried(actor)));
+    const auto child = take(world.CreateItem(ItemKind::rock, ItemLocation::Inside(bag)));
+    const auto actor_id = world.GetActor(actor)->id;
+    const auto object_id = world.GetObject(object)->id;
+    const auto bag_id = world.GetItem(bag)->id;
+    const auto child_id = world.GetItem(child)->id;
+    REQUIRE(world.TransferItem(bag, ItemLocation::Stored(object)));
+    REQUIRE(world.ReleaseRequest(request));
+    world.ReconcileChunks();
+    CHECK(world.LoadedChunks().empty());
+    CHECK(world.GetActor(actor) == nullptr);
+    CHECK(world.GetObject(object) == nullptr);
+    CHECK(world.GetItem(bag) == nullptr);
+    CHECK(world.GetItem(child) == nullptr);
+    CHECK(world.CheckInvariants());
     load(world); // The origin must not restore a tree transferred elsewhere.
-    CHECK(world.find_actor(actor_id) != actor);
-    REQUIRE(world.actor(world.find_actor(actor_id)) != nullptr);
-    CHECK(world.actor(world.find_actor(actor_id))->inventory.empty());
-    CHECK(world.find_item(bag_id) == ItemHandle{});
-    CHECK(world.find_item(child_id) == ItemHandle{});
+    CHECK(world.FindActor(actor_id) != actor);
+    REQUIRE(world.GetActor(world.FindActor(actor_id)) != nullptr);
+    CHECK(world.GetActor(world.FindActor(actor_id))->inventory.empty());
+    CHECK(world.FindItem(bag_id) == ItemHandle{});
+    CHECK(world.FindItem(child_id) == ItemHandle{});
     load(world, {{1, 0}, 0});
-    const auto fresh_object = world.find_object(object_id);
-    const auto fresh_bag = world.find_item(bag_id);
-    const auto fresh_child = world.find_item(child_id);
-    REQUIRE(world.object(fresh_object) != nullptr);
-    REQUIRE(world.item(fresh_bag) != nullptr);
-    REQUIRE(world.item(fresh_child) != nullptr);
+    const auto fresh_object = world.FindObject(object_id);
+    const auto fresh_bag = world.FindItem(bag_id);
+    const auto fresh_child = world.FindItem(child_id);
+    REQUIRE(world.GetObject(fresh_object) != nullptr);
+    REQUIRE(world.GetItem(fresh_bag) != nullptr);
+    REQUIRE(world.GetItem(fresh_child) != nullptr);
     CHECK(fresh_object != object);
     CHECK(fresh_bag != bag);
     CHECK(fresh_child != child);
-    CHECK(world.item(fresh_bag)->location == ItemLocation::stored(fresh_object));
-    CHECK(world.item(fresh_child)->location == ItemLocation::inside(fresh_bag));
-    const auto newer = take(world.create_item(ItemKind::bandage, ItemLocation::ground({0, 0})));
-    CHECK(world.item(newer)->id > child_id);
-    CHECK(world.check_invariants());
+    CHECK(world.GetItem(fresh_bag)->location == ItemLocation::Stored(fresh_object));
+    CHECK(world.GetItem(fresh_child)->location == ItemLocation::Inside(fresh_bag));
+    const auto newer = take(world.CreateItem(ItemKind::bandage, ItemLocation::Ground({0, 0})));
+    CHECK(world.GetItem(newer)->id > child_id);
+    CHECK(world.CheckInvariants());
 }
 
 TEST_CASE("Terrain generation depends only on seed and position and never issues entity IDs", "[world][determinism]") {
     World first(91);
     World second(91);
     const auto remote = load(first, {{10, -10}, 0});
-    const auto terrain = first.chunk({10, -10})->tiles;
+    const auto terrain = first.GetChunk({10, -10})->tiles;
     load(first);
     load(second);
     load(second, {{10, -10}, 0});
-    CHECK(second.chunk({10, -10})->tiles == terrain);
-    CHECK(first.active_actors().empty());
-    CHECK(first.active_objects().empty());
-    take(first.create_actor({0, 0}));
-    take(second.create_actor({0, 0}));
-    CHECK(first.actor(first.actor_at({0, 0}))->id == 1);
-    CHECK(second.actor(second.actor_at({0, 0}))->id == 1);
-    REQUIRE(first.release_request(remote));
-    first.reconcile_chunks();
+    CHECK(second.GetChunk({10, -10})->tiles == terrain);
+    CHECK(first.ActiveActors().empty());
+    CHECK(first.ActiveObjects().empty());
+    take(first.CreateActor({0, 0}));
+    take(second.CreateActor({0, 0}));
+    CHECK(first.GetActor(first.ActorAt({0, 0}))->id == 1);
+    CHECK(second.GetActor(second.ActorAt({0, 0}))->id == 1);
+    REQUIRE(first.ReleaseRequest(remote));
+    first.ReconcileChunks();
     load(first, {{10, -10}, 0});
-    CHECK(first.chunk({10, -10})->tiles == terrain);
-    CHECK(first.check_invariants());
-    CHECK(second.check_invariants());
+    CHECK(first.GetChunk({10, -10})->tiles == terrain);
+    CHECK(first.CheckInvariants());
+    CHECK(second.CheckInvariants());
 }
 
 }

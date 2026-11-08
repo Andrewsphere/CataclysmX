@@ -3,5 +3,27 @@
   "lsp": true,
   "permission": {
     "lsp": "allow"
+  },
+  "agent": {
+    "build": {
+      "mode": "primary",
+      "permission": {
+        "task": {
+          "*": "deny",
+          "luna": "allow",
+          "sol": "allow"
+        }
+      }
+    },
+    "luna": {
+      "description": "Fast, lightweight subagent for simple tasks, code exploration, straightforward edits, and routine analysis. Prefer this agent when the task does not require deep reasoning.",
+      "mode": "subagent",
+      "model": "openai/gpt-6-luna"
+    },
+    "sol": {
+      "description": "Powerful subagent for complex reasoning, architecture, difficult debugging, challenging implementation, and multi-step tasks. Use when Luna may struggle.",
+      "mode": "subagent",
+      "model": "openai/gpt-6.1-sol"
+    }
   }
 }

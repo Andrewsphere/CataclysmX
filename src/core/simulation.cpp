@@ -23,21 +23,21 @@ struct ActorSnapshot {
 }
 
 void advance(World& world, ActorHandle player, std::uint32_t& rng_state) {
-    const Actor* controlled = world.actor(player);
+    const Actor* controlled = world.GetActor(player);
     require(controlled != nullptr);
-    require(controlled->player && world.active(controlled->position));
+    require(controlled->player && world.IsActive(controlled->position));
 
     Vector<ActorSnapshot> actors;
-    for (ActorHandle handle : world.active_actors()) {
-        const Actor* actor = world.actor(handle);
+    for (ActorHandle handle : world.ActiveActors()) {
+        const Actor* actor = world.GetActor(handle);
         require(actor != nullptr);
         actors.push_back({handle, actor->position});
     }
-    const Vector<ObjectHandle> objects = world.active_objects();
+    const Vector<ObjectHandle> objects = world.ActiveObjects();
 
     constexpr TileCoord directions[] = {{1, 0}, {0, 1}, {-1, 0}, {0, -1}};
     for (const ActorSnapshot& actor : actors) {
-        require(world.record_actor_turn(actor.handle).has_value());
+        require(world.RecordActorTurn(actor.handle).has_value());
         if (actor.handle == player) {
             continue;
         }
@@ -45,15 +45,15 @@ void advance(World& world, ActorHandle player, std::uint32_t& rng_state) {
         rng_state = rng_state * 1'664'525U + 1'013'904'223U;
         const TileCoord direction = directions[rng_state >> 30];
         const TileCoord destination{actor.position.x + direction.x, actor.position.z + direction.z};
-        const Tile* tile = world.tile(destination);
-        if (!world.active(destination) || !tile || !passable(tile->terrain)
-            || world.actor_at(destination).value != 0) {
+        const Tile* tile = world.GetTile(destination);
+        if (!world.IsActive(destination) || !tile || !passable(tile->terrain)
+            || world.ActorAt(destination).value != 0) {
             continue;
         }
-        require(world.move_actor(actor.handle, destination).has_value());
+        require(world.MoveActor(actor.handle, destination).has_value());
     }
     for (ObjectHandle handle : objects) {
-        require(world.record_object_update(handle).has_value());
+        require(world.RecordObjectUpdate(handle).has_value());
     }
 }
 

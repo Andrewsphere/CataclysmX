@@ -53,15 +53,15 @@ struct WorldView {
 class Server {
 public:
     explicit Server(std::uint32_t seed = 42);
-    CommandResult send(Command command);
-    WorldView view(int radius = 8) const;
-    WorldResult<void> set_bubble_radii(int active_radius, int resident_radius);
+    CommandResult Send(Command command);
+    WorldView View(int radius = 8) const;
+    WorldResult<void> SetBubbleRadii(int active_radius, int resident_radius);
 
-    // Administrative/headless inspection; ordinary clients consume view().
-    World& world();
-    const World& world() const;
-    ActorHandle player() const;
-    std::uint64_t tick() const;
+    // Administrative/headless inspection; ordinary clients consume View().
+    World& GetWorld();
+    const World& GetWorld() const;
+    ActorHandle GetPlayer() const;
+    std::uint64_t GetTick() const;
 
 private:
     World world_;
@@ -73,7 +73,7 @@ private:
     std::uint64_t tick_ = 0;
     std::uint32_t rng_state_ = 0;
 
-    void update_bubble();
+    void UpdateBubble();
 };
 
 }

@@ -57,10 +57,10 @@ struct ItemLocation {
     ItemHandle item{};
     ObjectHandle object{};
 
-    static ItemLocation ground(TileCoord position);
-    static ItemLocation carried(ActorHandle actor);
-    static ItemLocation inside(ItemHandle item);
-    static ItemLocation stored(ObjectHandle object);
+    static ItemLocation Ground(TileCoord position);
+    static ItemLocation Carried(ActorHandle actor);
+    static ItemLocation Inside(ItemHandle item);
+    static ItemLocation Stored(ObjectHandle object);
     bool operator==(const ItemLocation&) const = default;
 };
 
@@ -124,52 +124,52 @@ public:
     World(World&&) = delete;
     World& operator=(World&&) = delete;
 
-    WorldResult<LoadRequest> request_chunks(ChunkRegion region, LoadMode mode);
-    WorldResult<void> update_request(LoadRequest request, ChunkRegion region, LoadMode mode);
-    WorldResult<void> release_request(LoadRequest request);
+    WorldResult<LoadRequest> RequestChunks(ChunkRegion region, LoadMode mode);
+    WorldResult<void> UpdateRequest(LoadRequest request, ChunkRegion region, LoadMode mode);
+    WorldResult<void> ReleaseRequest(LoadRequest request);
     // Synchronous boundary operation. Overlapping requests combine; active wins.
-    void reconcile_chunks();
+    void ReconcileChunks();
 
-    const Chunk* chunk(ChunkCoord position) const;
-    const Tile* tile(TileCoord position) const;
-    bool active(TileCoord position) const;
-    Vector<ChunkCoord> loaded_chunks() const;
-    std::size_t archived_chunk_count() const;
+    const Chunk* GetChunk(ChunkCoord position) const;
+    const Tile* GetTile(TileCoord position) const;
+    bool IsActive(TileCoord position) const;
+    Vector<ChunkCoord> LoadedChunks() const;
+    std::size_t ArchivedChunkCount() const;
 
-    const Actor* actor(ActorHandle handle) const;
-    const Item* item(ItemHandle handle) const;
-    const InteractiveObject* object(ObjectHandle handle) const;
-    ActorHandle find_actor(PersistentId id) const;
-    ItemHandle find_item(PersistentId id) const;
-    ObjectHandle find_object(PersistentId id) const;
-    ActorHandle actor_at(TileCoord position) const;
-    Vector<ItemHandle> items_at(TileCoord position) const;
-    ObjectHandle object_at(TileCoord position) const;
+    const Actor* GetActor(ActorHandle handle) const;
+    const Item* GetItem(ItemHandle handle) const;
+    const InteractiveObject* GetObject(ObjectHandle handle) const;
+    ActorHandle FindActor(PersistentId id) const;
+    ItemHandle FindItem(PersistentId id) const;
+    ObjectHandle FindObject(PersistentId id) const;
+    ActorHandle ActorAt(TileCoord position) const;
+    Vector<ItemHandle> ItemsAt(TileCoord position) const;
+    ObjectHandle ObjectAt(TileCoord position) const;
 
-    WorldResult<void> set_tile(TileCoord position, Tile tile);
-    WorldResult<ActorHandle> create_actor(TileCoord position, bool player = false);
-    WorldResult<void> move_actor(ActorHandle actor, TileCoord destination);
+    WorldResult<void> SetTile(TileCoord position, Tile tile);
+    WorldResult<ActorHandle> CreateActor(TileCoord position, bool player = false);
+    WorldResult<void> MoveActor(ActorHandle actor, TileCoord destination);
     // Actor destruction drops possessions at its last position.
-    WorldResult<void> destroy_actor(ActorHandle actor);
-    WorldResult<ItemHandle> create_item(ItemKind kind, ItemLocation location);
-    WorldResult<void> transfer_item(ItemHandle item, ItemLocation destination);
-    WorldResult<void> destroy_item(ItemHandle item);
-    WorldResult<ObjectHandle> create_object(TileCoord position, bool enabled = false);
+    WorldResult<void> DestroyActor(ActorHandle actor);
+    WorldResult<ItemHandle> CreateItem(ItemKind kind, ItemLocation location);
+    WorldResult<void> TransferItem(ItemHandle item, ItemLocation destination);
+    WorldResult<void> DestroyItem(ItemHandle item);
+    WorldResult<ObjectHandle> CreateObject(TileCoord position, bool enabled = false);
     // Object destruction drops its contents on the ground.
-    WorldResult<void> destroy_object(ObjectHandle object);
-    WorldResult<void> set_object_enabled(ObjectHandle object, bool enabled);
+    WorldResult<void> DestroyObject(ObjectHandle object);
+    WorldResult<void> SetObjectEnabled(ObjectHandle object, bool enabled);
 
     // Snapshot lists ordered by persistent ID, independent of storage/load order.
-    Vector<ActorHandle> active_actors() const;
-    Vector<ObjectHandle> active_objects() const;
-    WorldResult<void> record_actor_turn(ActorHandle actor);
-    WorldResult<void> record_object_update(ObjectHandle object);
+    Vector<ActorHandle> ActiveActors() const;
+    Vector<ObjectHandle> ActiveObjects() const;
+    WorldResult<void> RecordActorTurn(ActorHandle actor);
+    WorldResult<void> RecordObjectUpdate(ObjectHandle object);
 
     // Useful for headless scenarios: validates ownership and spatial indexes.
-    bool check_invariants() const;
+    bool CheckInvariants() const;
 
 private:
-    struct Impl;
+    class Impl;
     eastl::unique_ptr<Impl> impl_;
 };
 
