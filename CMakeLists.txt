@@ -8,6 +8,16 @@ option(CATACLYSMX_BUILD_TESTS "Build the Catch2 integration harness" ON)
 option(CATACLYSMX_BUILD_TERMINAL "Build the FTXUI adapter and manual probe" ON)
 option(CATACLYSMX_ENABLE_ASAN "Enable MSVC AddressSanitizer" OFF)
 option(CATACLYSMX_ENABLE_ASAN_UBSAN "Enable Clang/GCC ASan and UBSan" OFF)
+option(CATACLYSMX_ENABLE_PROFILING "Build MSVC symbols and link for Visual Studio instrumentation" OFF)
+
+if(CATACLYSMX_ENABLE_PROFILING)
+    if(NOT MSVC)
+        message(FATAL_ERROR "CATACLYSMX_ENABLE_PROFILING requires MSVC (see win-vs2022-profile preset)")
+    endif()
+    if(CATACLYSMX_ENABLE_ASAN OR CATACLYSMX_ENABLE_ASAN_UBSAN)
+        message(FATAL_ERROR "Use separate profiling and sanitizer builds")
+    endif()
+endif()
 
 find_package(EASTL CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
@@ -21,6 +31,15 @@ function(cataclysmx_target target)
         target_compile_options(${target} PRIVATE /W4 /utf-8)
     else()
         target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    if(CATACLYSMX_ENABLE_PROFILING)
+        # Include symbols for the engine/client static libraries as well as the
+        # executable. /Zo retains useful source information in optimized code.
+        target_compile_options(${target} PRIVATE /Zi /Zo)
+        # /PROFILE supplies CV/fixup data for VS instrumentation. Explicitly
+        # override configuration defaults for full PDBs, no incremental linking,
+        # and distinct function addresses instead of identical COMDAT folding.
+        target_link_options(${target} PRIVATE /PROFILE /DEBUG:FULL /INCREMENTAL:NO /OPT:REF /OPT:NOICF)
     endif()
     if(CATACLYSMX_ENABLE_ASAN)
         if(NOT MSVC OR CATACLYSMX_ENABLE_ASAN_UBSAN)
@@ -126,6 +145,10 @@ if(CATACLYSMX_BUILD_TERMINAL)
     target_compile_definitions(cataclysmx_game PRIVATE CATACLYSMX_LOC_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/data/loc")
     target_link_libraries(cataclysmx_game PRIVATE cataclysmx_client cataclysmx_network cataclysmx_terminal ftxui::component Threads::Threads)
     cataclysmx_no_exceptions(cataclysmx_game)
+    if(CATACLYSMX_ENABLE_PROFILING)
+        set_property(DIRECTORY PROPERTY VS_STARTUP_PROJECT cataclysmx_game)
+        set_property(TARGET cataclysmx_game PROPERTY VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
+    endif()
     # Explicit opt-in build target; uses the production engine and terminal paths.
     add_executable(cataclysmx_perception_benchmark EXCLUDE_FROM_ALL tools/perception_benchmark.cpp)
     target_compile_definitions(cataclysmx_perception_benchmark PRIVATE

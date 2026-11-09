@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('win-msvc-debug', 'win-msvc-release', 'win-msvc-asan')]
+    [ValidateSet('win-msvc-debug', 'win-msvc-release', 'win-msvc-asan', 'win-msvc-profile', 'win-vs2022-profile')]
     [string]$Preset = 'win-msvc-debug',
     [switch]$SkipTests
 )
@@ -8,7 +8,10 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 Push-Location $root
 try {
-    if (-not $env:VSCMD_VER) {
+    # The VS generator discovers its own VS2022 installation and pinned v143
+    # toolset. Do not inject a newer developer shell into that build.
+    $visualStudioGenerator = $Preset -eq 'win-vs2022-profile'
+    if (-not $visualStudioGenerator -and -not $env:VSCMD_VER) {
         $vswhere = "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe"
         if (-not (Test-Path -LiteralPath $vswhere)) { throw 'Install Visual Studio C++ Build Tools first.' }
         $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
@@ -34,8 +37,10 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed' }
     cmake --build --preset $Preset
     if ($LASTEXITCODE -ne 0) { throw 'Build failed' }
-    cmake -E copy_if_different "out/build/$Preset/compile_commands.json" compile_commands.json
-    if ($LASTEXITCODE -ne 0) { throw 'Compilation database copy failed' }
+    if (-not $visualStudioGenerator) {
+        cmake -E copy_if_different "out/build/$Preset/compile_commands.json" compile_commands.json
+        if ($LASTEXITCODE -ne 0) { throw 'Compilation database copy failed' }
+    }
     if (-not $SkipTests) {
         & "$PSScriptRoot/test.ps1" -Preset $Preset
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

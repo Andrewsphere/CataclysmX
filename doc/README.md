@@ -23,6 +23,8 @@
 - [Terminal performance](terminal_performance.md): map DOM reuse and timer wakeups.
 - [Perception benchmark matrix](perception_benchmarks.md): scenarios and measurement
   method, integrated Debug/Release results, and measured remaining limits.
+- [In-game profiling](profiling.md): instrument the terminal game with Visual Studio
+  2022, full symbols, optimized or Debug builds, and reproducible captures.
 - [Items API](items_api.md): physical properties, volume-limited containment,
   installed batteries, explicit use actions, charging and timed door controllers.
 - [Adding item behaviors](item_behaviors.md): virtual interfaces, explicit factories,

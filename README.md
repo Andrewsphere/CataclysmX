@@ -179,6 +179,22 @@ container-boundary annotations are disabled.
 VS 2026 was approved and verified for this setup; the original environment guide used
 VS 2022. The script discovers the installed toolchain rather than hardcoding a VS path.
 
+### Profile in-game with Visual Studio 2022
+
+```powershell
+./scripts/build.ps1 -Preset win-vs2022-profile -SkipTests
+```
+
+This builds optimized `RelWithDebInfo` binaries with full PDBs and `/PROFILE`
+linking using VS2022's v143/14.44 toolset. Open
+`out/build/win-vs2022-profile/CataclysmX.sln` in VS2022, select **RelWithDebInfo / x64**,
+then **Debug > Performance Profiler** (`Alt+F2`). Select **Executable** as the
+target and choose `out/build/win-vs2022-profile/RelWithDebInfo/cataclysmx_game.exe`.
+Use **Instrumentation** for function timings/call counts or **CPU Usage** for sampling.
+
+See [in-game profiling](doc/profiling.md) for symbols, launch arguments, recording
+a gameplay scenario, Debug profiling, and the `win-msvc-profile` Ninja preset.
+
 ## Open a Visual Studio solution in Rider
 
 With Visual Studio 2022 Community, MSVC v143 14.44 C++ tools and a Windows SDK installed, generate a solution

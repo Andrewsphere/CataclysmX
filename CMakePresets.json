@@ -23,6 +23,11 @@
       }
     },
     {"name": "win-msvc-release", "inherits": "win-msvc-debug", "cacheVariables": {"CMAKE_BUILD_TYPE": "Release"}},
+    {
+      "name": "win-msvc-profile", "inherits": "win-msvc-debug",
+      "displayName": "MSVC optimized profiling (Ninja)",
+      "cacheVariables": {"CMAKE_BUILD_TYPE": "RelWithDebInfo", "CATACLYSMX_ENABLE_PROFILING": "ON"}
+    },
     {"name": "win-msvc-asan", "inherits": "win-msvc-debug", "cacheVariables": {"CMAKE_BUILD_TYPE": "RelWithDebInfo", "CATACLYSMX_ENABLE_ASAN": "ON"}},
     {
       "name": "win-vs2022", "inherits": "common",
@@ -32,6 +37,14 @@
       "cacheVariables": {
         "CMAKE_EXPORT_COMPILE_COMMANDS": "OFF",
         "VCPKG_TARGET_TRIPLET": "x64-windows-v143-cataclysmx"
+      }
+    },
+    {
+      "name": "win-vs2022-profile", "inherits": "win-vs2022",
+      "displayName": "Visual Studio 2022 profiling (v143)",
+      "cacheVariables": {
+        "CMAKE_CONFIGURATION_TYPES": "Debug;RelWithDebInfo",
+        "CATACLYSMX_ENABLE_PROFILING": "ON"
       }
     },
     {
@@ -48,8 +61,10 @@
   "buildPresets": [
     {"name": "win-vs2022-debug", "configurePreset": "win-vs2022", "configuration": "Debug"},
     {"name": "win-vs2022-release", "configurePreset": "win-vs2022", "configuration": "Release"},
+    {"name": "win-vs2022-profile", "configurePreset": "win-vs2022-profile", "configuration": "RelWithDebInfo"},
     {"name": "win-msvc-debug", "configurePreset": "win-msvc-debug"},
     {"name": "win-msvc-release", "configurePreset": "win-msvc-release"},
+    {"name": "win-msvc-profile", "configurePreset": "win-msvc-profile"},
     {"name": "win-msvc-asan", "configurePreset": "win-msvc-asan"},
     {"name": "linux-clang-debug", "configurePreset": "linux-clang-debug"},
     {"name": "linux-clang-sanitizers", "configurePreset": "linux-clang-sanitizers"},
@@ -58,8 +73,10 @@
   "testPresets": [
     {"name": "win-vs2022-debug", "configurePreset": "win-vs2022", "configuration": "Debug", "output": {"outputOnFailure": true}, "execution": {"noTestsAction": "error"}},
     {"name": "win-vs2022-release", "configurePreset": "win-vs2022", "configuration": "Release", "output": {"outputOnFailure": true}, "execution": {"noTestsAction": "error"}},
+    {"name": "win-vs2022-profile", "configurePreset": "win-vs2022-profile", "configuration": "RelWithDebInfo", "output": {"outputOnFailure": true}, "execution": {"noTestsAction": "error"}},
     {"name": "win-msvc-debug", "configurePreset": "win-msvc-debug", "output": {"outputOnFailure": true}, "execution": {"noTestsAction": "error"}},
     {"name": "win-msvc-release", "configurePreset": "win-msvc-release", "output": {"outputOnFailure": true}, "execution": {"noTestsAction": "error"}},
+    {"name": "win-msvc-profile", "configurePreset": "win-msvc-profile", "output": {"outputOnFailure": true}, "execution": {"noTestsAction": "error"}},
     {"name": "win-msvc-asan", "configurePreset": "win-msvc-asan", "output": {"outputOnFailure": true}, "execution": {"noTestsAction": "error"}},
     {"name": "linux-clang-debug", "configurePreset": "linux-clang-debug", "output": {"outputOnFailure": true}, "execution": {"noTestsAction": "error"}},
     {"name": "linux-clang-sanitizers", "configurePreset": "linux-clang-sanitizers", "output": {"outputOnFailure": true}, "execution": {"noTestsAction": "error"}},
