@@ -3,6 +3,14 @@ set -euo pipefail
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 preset="${1:-linux-clang-debug}"
+if [[ $# -gt 0 ]]; then shift; fi
+skipTests=false
+for argument in "$@"; do
+    case "$argument" in
+        --skip-tests) skipTests=true ;;
+        *) printf 'Unknown build option: %s\n' "$argument" >&2; exit 1 ;;
+    esac
+done
 case "$preset" in
     linux-clang-debug|linux-clang-sanitizers|linux-gcc-debug) ;;
     *) printf 'Unknown Linux preset: %s\n' "$preset" >&2; exit 1 ;;
@@ -24,4 +32,6 @@ fi
 cmake --preset "$preset"
 cmake --build --preset "$preset"
 cmake -E copy_if_different "out/build/$preset/compile_commands.json" compile_commands.json
-ctest --preset "$preset"
+if [[ "$skipTests" == false ]]; then
+    ctest --preset "$preset"
+fi
