@@ -1,5 +1,7 @@
 # API documentation
 
+- [SDL sprite client preparation](sdl_client.md): frontend integration points,
+  snapshot limits, and a first playable milestone.
 - [Gameplay UI](gameplay_ui.md): responsive map/status layout, on-demand inventory,
   players and controls, selected-item drops and terminal presentation API.
 - [UI navigation controls](ui_navigation.md): baseline keyboard controls, focus,

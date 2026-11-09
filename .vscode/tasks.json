@@ -2,6 +2,15 @@
   "version": "2.0.0",
   "tasks": [
     {
+      "label": "Build: Linux GCC Debug",
+      "type": "process",
+      "command": "bash",
+      "args": ["${workspaceFolder}/scripts/build.sh", "linux-gcc-debug", "--skip-tests"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": "$gcc",
+      "group": "build"
+    },
+    {
       "label": "Build: MSVC Debug",
       "type": "process",
       "command": "powershell",
