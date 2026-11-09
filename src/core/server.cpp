@@ -867,7 +867,7 @@ WorldView Server::ViewForPlayer(PersistentId id, int radius) const {
     ++viewStats_.requests;
     // Radius is a viewport extent, independent of the fixed gameplay sight range.
     // Queries use current perception and existing memories without learning.
-    radius = eastl::clamp(radius, 0, 12);
+    radius = eastl::clamp(radius, 0, playerSightRange);
     const PlayerSlot* slot = FindPlayer(id);
     if (!slot) { return {}; }
     const ActorHandle player = PlayerActor(*slot);
@@ -904,34 +904,69 @@ WorldView Server::ViewForPlayer(PersistentId id, int radius) const {
         result.cells = slot->cachedView.cells;
     } else {
         ++viewStats_.mapConstructions;
+        const auto* visibility = observing ? world_.GetPlayerVisibility(player) : nullptr;
+        const auto observerLight = observing ? world_.GetLightLevel(actor->position) : std::uint8_t{0};
+        const auto vision = world_.GetVisionProfile();
+        int overlayRanges[4];
+        for (int i = 0; i < 4; ++i) {
+            const int range = VisionRange(vision, static_cast<LightBand>(i), observerLight);
+            overlayRanges[i] = range * range;
+        }
+        // All World accesses below are read-only. Reuse chunk/lighting borrows
+        // across each horizontal run instead of resolving them for every cell.
+        eastl::array<const Chunk*, world_layer_count> columnChunks{};
+        eastl::array<eastl::span<const std::uint8_t>, world_layer_count> columnLight{};
+        eastl::array<bool, world_layer_count> columnLoaded{};
+        ChunkCoord cachedColumn{world_coordinate_limit, world_coordinate_limit, 0};
         result.cells.resize(static_cast<std::size_t>(result.width * result.height));
         for (int z = 0; z < result.height; ++z) {
             for (int x = 0; x < result.width; ++x) {
                 TileCoord position{result.origin.x + x, result.origin.z + z, result.origin.y};
+                const auto column = ChunkOf({position.x, position.z, 0});
+                if (column != cachedColumn) {
+                    columnLoaded.fill(false);
+                    cachedColumn = column;
+                }
                 ViewCell& cell = result.cells[static_cast<std::size_t>(z * result.width + x)];
                 bool liveColumnOpen = observing;
                 bool knownColumnOpen = true;
                 for (unsigned int depth = 0; position.y >= world_min_y; ++depth, --position.y) {
                     // Live projection can see a lit lower tile through unlit air.
                     // Its geometry never controls the independent remembered path.
-                    const Tile* current = liveColumnOpen ? world_.GetTile(position) : nullptr;
-                    const bool visible = current && world_.CanPlayerSee(player, position);
+                    const int layer = position.y - world_min_y;
+                    const Chunk* chunk = nullptr;
+                    const Tile* current = nullptr;
+                    int tileIndex = 0;
+                    if (liveColumnOpen && ValidPosition(position)) {
+                        if (!columnLoaded[layer]) {
+                            const ChunkCoord coord{column.x, column.z, position.y};
+                            columnChunks[layer] = world_.GetChunk(coord);
+                            columnLight[layer] = columnChunks[layer] ? world_.GetChunkLightLevels(coord)
+                                : eastl::span<const std::uint8_t>{};
+                            columnLoaded[layer] = true;
+                        }
+                        chunk = columnChunks[layer];
+                        tileIndex = TileIndex(position);
+                        if (chunk) { current = &chunk->tiles[tileIndex]; }
+                    }
+                    const auto* terrain = current ? &world_.GetContent().GetTerrain(current->terrain) : nullptr;
+                    const bool visible = current && visibility && visibility->Contains(position);
                     if (visible) {
                         cell.terrainVisibility = Visibility::Visible;
                         cell.tile = *current;
                         cell.terrainDepth = depth;
-                        cell.terrainLight = ClassifyLight(TerrainLightLevel(world_, actor->position, position));
-                        const auto spaceLight = ClassifyLight(world_.GetLightLevel(position));
-                        const auto vision = world_.GetVisionProfile();
-                        const int overlayRange = VisionRange(vision, spaceLight, world_.GetLightLevel(actor->position));
+                        const auto level = columnLight[layer][tileIndex];
+                        const auto spaceLight = ClassifyLight(level);
+                        cell.terrainLight = terrain->blocksSight
+                            ? ClassifyLight(TerrainLightLevel(world_, actor->position, position)) : spaceLight;
                         const int dx = position.x - actor->position.x;
                         const int dz = position.z - actor->position.z;
-                        const int dy = position.y - actor->position.y;
                         if (cell.overlayVisibility != Visibility::Visible
-                            && dx*dx + dz*dz + dy*dy <= overlayRange*overlayRange) {
-                            const Actor* occupant = world_.GetActor(world_.ActorAt(position));
-                            const auto items = static_cast<unsigned int>(world_.ItemsAt(position).size());
-                            const InteractiveObject* object = world_.GetObject(world_.ObjectAt(position));
+                            && dx*dx + dz*dz <= overlayRanges[static_cast<int>(spaceLight)]) {
+                            const Actor* occupant = chunk->actors.empty() ? nullptr : world_.GetActor(world_.ActorAt(position));
+                            const auto items = chunk->ground_items.empty() ? 0U
+                                : static_cast<unsigned int>(world_.ItemsAt(position).size());
+                            const InteractiveObject* object = chunk->objects.empty() ? nullptr : world_.GetObject(world_.ObjectAt(position));
                             if (occupant || items != 0 || object) {
                                 // Memories are a fallback, never an occluder for an
                                 // actually visible lower overlay. Nearest live wins.
@@ -945,7 +980,7 @@ WorldView Server::ViewForPlayer(PersistentId id, int radius) const {
                                 cell.overlayLight = spaceLight;
                             }
                         }
-                        knownColumnOpen = world_.GetContent().GetTerrain(current->terrain).openSpace;
+                        knownColumnOpen = terrain->openSpace;
                     } else if (knownColumnOpen) {
                         const auto remembered = world_.GetRememberedTile(id, position);
                         if (remembered.terrain.value == 0) {
@@ -964,7 +999,7 @@ WorldView Server::ViewForPlayer(PersistentId id, int radius) const {
                             knownColumnOpen = world_.GetContent().GetTerrain(remembered.terrain).openSpace;
                         }
                     }
-                    liveColumnOpen = current && world_.GetContent().GetTerrain(current->terrain).openSpace;
+                    liveColumnOpen = terrain && terrain->openSpace;
                     if (!liveColumnOpen && !knownColumnOpen) { break; }
                 }
             }

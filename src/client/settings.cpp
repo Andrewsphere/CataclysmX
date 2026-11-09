@@ -63,7 +63,7 @@ SettingsResult<void> ValidateSettings(const Settings& settings, Diagnostics* dia
             return Invalid(diagnostics, "language identifier must contain only letters, digits, '-' or '_'");
         }
     }
-    if (settings.viewRadius < 0 || settings.viewRadius > 12) { return Invalid(diagnostics, "view_radius must be in [0,12]"); }
+    if (settings.viewRadius < 0 || settings.viewRadius > 64) { return Invalid(diagnostics, "view_radius must be in [0,64]"); }
     if (settings.activeRadius < 0 || settings.residentRadius < settings.activeRadius || settings.residentRadius > 8) {
         return Invalid(diagnostics, "expected 0 <= active_radius <= resident_radius <= 8");
     }

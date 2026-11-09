@@ -10,6 +10,28 @@
 namespace {
 using namespace cataclysmx;
 
+TEST_CASE("View radius defaults to 64 and validates both bounds with explicit overrides", "[settings]") {
+    CHECK(Settings{}.viewRadius == 64);
+    CHECK(ResolveSettings({}, {}).viewRadius == 64);
+    Settings settings;
+    for (const int radius : {0, 13, 63, 64}) {
+        settings.viewRadius = radius;
+        REQUIRE(ValidateSettings(settings));
+    }
+    for (const int radius : {-1, 65, INT32_MAX}) {
+        settings.viewRadius = radius;
+        CHECK_FALSE(ValidateSettings(settings));
+    }
+    SettingsOverrides global; global.viewRadius = 64;
+    SettingsOverrides world; world.viewRadius = 0;
+    CHECK(ResolveSettings(global, world).viewRadius == 0);
+    world.viewRadius = 8;
+    CHECK(ResolveSettings(global, world).viewRadius == 8);
+    ResetOverride(world, SettingsField::ViewRadius);
+    CHECK(ResolveSettings(global, world).viewRadius == 64);
+    CHECK(ParseSettings("{format_version:1,settings:{view_radius:64}}"));
+}
+
 TEST_CASE("World files contain only explicit overrides and inherit subsequent global changes", "[settings]") {
     SettingsDirectory files;
     SettingsStore store(String(files.root.string().c_str()), String(files.File("world").c_str()));
@@ -84,7 +106,7 @@ TEST_CASE("Invalid configuration never replaces valid state or overwrites a malf
     REQUIRE_FALSE(store.Save(SettingsScope::Global));
     CHECK(files.Read("config/settings.json5") == "{broken}");
     for (const char* text : {
-        "{format_version:1,settings:{view_radius:13}}",
+        "{format_version:1,settings:{view_radius:65}}",
         "{format_version:1,settings:{view_radius:1,view_radius:2}}",
         "{format_version:1,settings:{unknown:1}}",
         "{format_version:1,settings:{language:'../escape'}}",

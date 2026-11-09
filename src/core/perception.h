@@ -2,6 +2,7 @@
 
 #include "core/perception_types.h"
 #include <EASTL/utility.h>
+#include <EASTL/span.h>
 
 namespace cataclysmx {
 
@@ -11,22 +12,20 @@ struct OpticalChunk {
     ChunkCoord position;
     eastl::array<std::uint8_t, chunk_size * chunk_size> cells{};
     eastl::array<std::uint16_t, chunk_size> opaqueRows{};
-    eastl::array<std::uint16_t, chunk_size> closedRows{};
     bool transparent = false;
-    bool openBelow = false;
-    bool closedBelow = false;
 };
 // Mutation-generation snapshot. Values remain valid when World storage moves.
 struct OpticalField {
     Vector<OpticalChunk> chunks;
     std::uint64_t revision = 0;
     void Rebuild(const World& world);
+    // Exact changed/residency coordinates; absent World chunks are removed.
+    // Advances revision only when copied optical flags or residency differ.
+    void Refresh(const World& world, eastl::span<const ChunkCoord> positions);
     const OpticalChunk* Find(ChunkCoord position) const;
 };
 
-struct OpticalCounts { int obstacles = 0; int floors = 0; };
-// Chunk-aligned observer working volume. Reused within a chunk until optical
-// mutation; never borrows World/chunk storage.
+// Chunk-aligned observer plane; never borrows World/chunk storage.
 struct VisibilityWorkspace {
     ChunkCoord firstChunk{};
     ChunkCoord lastChunk{};
@@ -35,13 +34,12 @@ struct VisibilityWorkspace {
     const OpticalField* source = nullptr;
     std::uint64_t revision = 0;
     Vector<std::uint8_t> optics;
-    Vector<OpticalCounts> sums;
+    std::uint64_t projectionSamples = 0; // Downward residency probes in last build.
     bool Prepare(const OpticalField& field, ChunkCoord first, ChunkCoord last);
     std::uint8_t Sample(TileCoord position) const;
-    OpticalCounts Box(int x0, int z0, int y0, int x1, int z1, int y1) const;
 };
 
-// Bounded 3D mask with implicit clear slabs and dense fallback cells.
+// Downward-projected planar mask, with packed dense layers and implicit circles.
 // Absent residency is opaque.
 struct VisibilityMask {
     TileCoord origin{};
@@ -51,6 +49,8 @@ struct VisibilityMask {
     Vector<std::uint8_t> cells; // bit 0 visible, bit 1 opaque endpoint
     eastl::array<bool, world_max_y - world_min_y + 1> visibleLayers{};
     eastl::array<bool, world_max_y - world_min_y + 1> clearLayers{};
+    // Offsets are indexed relative to minimumY; -1 means no dense allocation.
+    eastl::array<int, world_max_y - world_min_y + 1> layerOffsets{};
     std::size_t Index(TileCoord position) const;
     std::uint8_t Get(TileCoord position) const;
     void MaterializeLayer(int y);
@@ -69,6 +69,8 @@ int VisionRange(const VisionProfile& vision, LightBand targetBand, std::uint8_t 
 
 // Geometry queries are independent of illumination and frontend projection.
 bool OpenVerticalFace(const World& world, TileCoord first, TileCoord second);
+// Local observer-plane shadowcast plus only the target's downward column.
+// Work is bounded by horizontal target radius and column depth, not residency.
 bool LineVisible(const World& world, TileCoord origin, TileCoord target);
 bool CanSeeTile(const World& world, TileCoord observer, TileCoord target,
     const VisionProfile& vision = {});

@@ -73,7 +73,7 @@ TEST_CASE("Memories are per player, survive unloading and exclude inactive playe
     CHECK(world.GetRememberedTile(secondId, {2,1,0}).terrain.value == 0);
 }
 
-TEST_CASE("Observations include visible vertical tiles without a viewport", "[memory]") {
+TEST_CASE("Observations learn lower open columns but not the floor above", "[memory]") {
     World world(TestContent());
     REQUIRE(world.RequestChunks({{0,0},0}, LoadMode::active));
     REQUIRE(world.ReconcileChunks());
@@ -86,9 +86,16 @@ TEST_CASE("Observations include visible vertical tiles without a viewport", "[me
     REQUIRE(object);
     REQUIRE(world.SetObjectAppearance(*object, ObjectKind::Table));
     world.UpdatePlayerObservations();
-    const auto remembered = world.GetRememberedTile(world.GetActor(*player)->id, {5,5,1});
+    const auto id = world.GetActor(*player)->id;
+    CHECK(world.GetRememberedTile(id, {5,5,1}) == RememberedTile{});
+    REQUIRE(world.SetTile({6,5,1}, {TestTerrain("air"),0}));
+    REQUIRE(world.SetTile({6,5,0}, {TestTerrain("grass"),0}));
+    REQUIRE(world.MoveActor(*player, {5,5,1}));
+    world.UpdatePlayerObservations();
+    const auto remembered = world.GetRememberedTile(id, {5,5,1});
     CHECK(remembered.terrain == TestTerrain("stairs"));
     CHECK(remembered.object.kind == ObjectKind::Table);
+    CHECK(world.GetRememberedTile(id, {6,5,0}).terrain == TestTerrain("grass"));
 }
 
 TEST_CASE("Memory observes lit targets at the full sight radius independent of observer light", "[memory]") {

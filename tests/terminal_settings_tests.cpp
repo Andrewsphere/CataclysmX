@@ -85,6 +85,23 @@ struct MenuFixture {
     }
 };
 
+TEST_CASE("Settings editor accepts radius 64 rejects 65 and restores inherited default", "[terminal][settings]") {
+    MenuFixture f;
+    CHECK(f.store.Effective().viewRadius == 64);
+    Event(f.menu, ftxui::Event::ArrowDown);
+    Number(f.menu, "0"); Key(f.menu, 'a');
+    REQUIRE(f.store.Effective().viewRadius == 0);
+    Number(f.menu, "64"); Key(f.menu, 'a');
+    REQUIRE(f.store.Effective().viewRadius == 64);
+    Number(f.menu, "65");
+    CHECK(DrawSettings(f.menu).find("Invalid value") != std::string::npos);
+    CHECK(f.store.Effective().viewRadius == 64);
+    Event(f.menu, ftxui::Event::Escape);
+    Event(f.menu, ftxui::Event::Backspace); Key(f.menu, 'a');
+    CHECK_FALSE(f.store.Overrides(SettingsScope::Global).viewRadius);
+    CHECK(f.store.Effective().viewRadius == 64);
+}
+
 TEST_CASE("Settings modal edits sparse scopes applies saves resets and never advances simulation", "[terminal][settings]") {
     MenuFixture f;
     CHECK(DrawSettings(f.menu).find("[Global]") != std::string::npos);
@@ -92,7 +109,7 @@ TEST_CASE("Settings modal edits sparse scopes applies saves resets and never adv
     CHECK(DrawSettings(f.menu).find("[Interface]") != std::string::npos);
     Event(f.menu, ftxui::Event::ArrowDown);
     Number(f.menu, "10");
-    CHECK(f.store.Effective().viewRadius == 8);
+    CHECK(f.store.Effective().viewRadius == 64);
     CHECK(DrawSettings(f.menu).find("Unapplied") != std::string::npos);
     Key(f.menu, 'a');
     CHECK(f.store.Effective().viewRadius == 10);
@@ -150,7 +167,7 @@ TEST_CASE("Settings save failure and invalid numeric input remain readable witho
     Event(f.menu, ftxui::Event::Return); Key(f.menu, '9'); Key(f.menu, '9'); Event(f.menu, ftxui::Event::Return);
     screen = RenderSettings(f.menu);
     CHECK(Plain(screen).find("Invalid value") != std::string::npos);
-    CHECK(Plain(screen).find("from 0 to 12") != std::string::npos);
+    CHECK(Plain(screen).find("from 0 to 64") != std::string::npos);
     CHECK(f.store.Effective().viewRadius == 4);
     Event(f.menu, ftxui::Event::Escape); Key(f.menu, 'a');
     CHECK(f.store.Effective().viewRadius == 4);
@@ -292,7 +309,7 @@ TEST_CASE("Settings indicate draft override inheritance success and fixed world 
     auto screen = RenderSettings(f.menu);
     auto cell = FindText(screen, "Unapplied"); REQUIRE(cell);
     CHECK(screen.PixelAt(cell->x, cell->y).foreground_color == ftxui::Color(ftxui::Color::Yellow));
-    CHECK(Plain(screen).find("Applied value: 8") != std::string::npos);
+    CHECK(Plain(screen).find("Applied value: 64") != std::string::npos);
     Key(f.menu, 's'); screen = RenderSettings(f.menu);
     cell = FindText(screen, "Saved"); REQUIRE(cell);
     CHECK(screen.PixelAt(cell->x, cell->y).foreground_color == ftxui::Color(ftxui::Color::Green));
@@ -458,7 +475,9 @@ TEST_CASE("Settings use terminal colors and distinct selection and focus styling
         CHECK(screen.PixelAt(language->x - 4, language->y).character == ">");
         const auto languageValue = FindText(screen, "en", 1000000, language->y); REQUIRE(languageValue);
         CHECK(screen.PixelAt(languageValue->x, languageValue->y).inverted);
-        CHECK(screen.PixelAt(languageValue->x + 1, view->y).character == "8");
+        // Numeric values are right-aligned with the two-character language code.
+        CHECK(screen.PixelAt(languageValue->x, view->y).character == "6");
+        CHECK(screen.PixelAt(languageValue->x + 1, view->y).character == "4");
         Event(f.menu, ftxui::Event::ArrowDown);
         screen = RenderSettings(f.menu, width, width == 80 ? 24 : 32);
         CHECK(screen.PixelAt(view->x, view->y).inverted);
@@ -610,7 +629,7 @@ TEST_CASE("Settings editors retain modes drafts and focus across layout changes"
         CHECK(screen.PixelAt(view->x - 2, view->y).character == "*");
         CHECK(Plain(screen).find("Unapplied") != std::string::npos);
     }
-    CHECK(f.store.Effective().viewRadius == 8);
+    CHECK(f.store.Effective().viewRadius == 64);
     Key(f.menu, 'a'); CHECK(f.store.Effective().viewRadius == 6);
 
     NextSection(f.menu); Event(f.menu, ftxui::Event::Return); // Binding capture.

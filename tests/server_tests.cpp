@@ -255,7 +255,7 @@ TEST_CASE("Views isolate live values from last observations and preserve memory 
     CHECK(cell_at(old, {0, 1}).tile.terrain == TestTerrain("closed_door"));
     CHECK(cell_at(old, {0, 2}).terrainVisibility == Visibility::Remembered);
     CHECK(cell_at(old, {0, 2}).tile == Tile{TestTerrain("floor"), 0});
-    // Viewport radius four crops the fixed radius-twelve gameplay sight sphere.
+    // The viewport crops gameplay sight without changing observation range.
     CHECK(cell_at(old, {-4, -4}).terrainVisibility == Visibility::Visible);
 
     REQUIRE(world.SetTile({1, 0}, {TestTerrain("open_door"), 12}));
@@ -278,8 +278,8 @@ TEST_CASE("Views isolate live values from last observations and preserve memory 
     CHECK(carrying.tick + 100 == server.GetTick());
     CHECK(old.inventory.empty());
     CHECK(server.View(INT_MIN).width == 1);
-    CHECK(server.View(INT_MAX).width == 25);
-    CHECK(server.View(INT_MAX).cells.size() == 625);
+    CHECK(server.View(INT_MAX).width == 129);
+    CHECK(server.View(INT_MAX).cells.size() == 16641);
 
     REQUIRE(server.SetBubbleRadii(0, 0));
     const WorldView unavailable = server.View(4);
@@ -639,7 +639,7 @@ TEST_CASE("Vertical interaction checks the shared face before exposing an object
     CHECK_FALSE(world.GetObject(object)->enabled);
 }
 
-TEST_CASE("Downward projection uses straight spherical LOS and isolates lower items", "[server][3d][view]") {
+TEST_CASE("Downward projection follows open columns and isolates lower items", "[server][3d][view]") {
     Server server(TestContent());
     World& world = server.GetWorld();
     REQUIRE(world.DestroyObject(world.ObjectAt({2, 0})));
@@ -663,9 +663,9 @@ TEST_CASE("Downward projection uses straight spherical LOS and isolates lower it
     CHECK(cell_at(server.View(2), {2, 0}).terrainDepth == 1); // Viewport does not shorten sight.
     REQUIRE(world.SetTile({1, 0, 0}, {TestTerrain("floor"), 0}));
     const auto closed = server.View(4);
-    CHECK(cell_at(closed, {2, 0}).tile.terrain == TestTerrain("air"));
-    CHECK(cell_at(closed, {2, 0}).ground_items == 0);
-    CHECK(cell_at(closed, {2, 0}).terrainDepth == 0);
+    CHECK(cell_at(closed, {2, 0}).tile.terrain == TestTerrain("floor"));
+    CHECK(cell_at(closed, {2, 0}).ground_items == 1);
+    CHECK(cell_at(closed, {2, 0}).terrainDepth == 1);
     CHECK(cell_at(old, {2, 0}).terrainDepth == 1); // Value snapshot remains isolated.
     REQUIRE(world.SetTile({1, 0, 0}, {TestTerrain("wall"), 0}));
     CHECK(cell_at(server.View(4), {2, 0}).terrainVisibility == Visibility::Remembered);
@@ -699,19 +699,19 @@ TEST_CASE("Air retains a foreground actor over lower terrain and stops at the fi
     CHECK(cell_at(view, {2, 0}).ground_items == 0); // Opaque-bottom floor stops deeper content.
 }
 
-TEST_CASE("Voxel corner ties conservatively block walls and closed floor edges", "[server][3d][view]") {
+TEST_CASE("Planar corner visibility and downward columns ignore diagonal floor ties", "[server][3d][view]") {
     Server server(TestContent());
     World& world = server.GetWorld();
     REQUIRE(world.SetTile({1, 1}, {TestTerrain("floor"), 0}));
     REQUIRE(world.SetTile({0, 1}, {TestTerrain("floor"), 0}));
     REQUIRE(world.SetTile({1, 0}, {TestTerrain("wall"), 0}));
-    CHECK(cell_at(server.View(4), {1, 1}).terrainVisibility == Visibility::Remembered);
+    CHECK(cell_at(server.View(4), {1, 1}).terrainVisibility == Visibility::Visible);
     REQUIRE(world.SetTile({1, 0, -1}, {TestTerrain("floor"), 11}));
     REQUIRE(world.SetTile({1, 0}, {TestTerrain("air"), 0}));
-    // The exact diagonal to (1,0,-1) touches the origin's closed bottom edge.
+    // An adjacent open column reveals its first surface despite the observer's floor.
     const auto view = server.View(4);
-    CHECK(cell_at(view, {1, 0}).terrainDepth == 0);
-    CHECK(cell_at(view, {1, 0}).ground_items == 0);
+    CHECK(cell_at(view, {1, 0}).terrainDepth == 1);
+    CHECK(cell_at(view, {1, 0}).ground_items == 1);
 }
 
 TEST_CASE("Local server command replay returns identical outcomes and snapshots", "[server][determinism]") {

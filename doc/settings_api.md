@@ -57,7 +57,7 @@ inheritance explicit without a property registry, reflection, or variant map.
 | Field | Default | Rules |
 | --- | --- | --- |
 | `language` | `en` | Catalog identifier; missing translation falls back to English |
-| `view_radius` | 8 | 0–12 |
+| `view_radius` | 64 | 0–64; terminal display preference, including LAN guests |
 | `autosave_interval` | 1000 | Simulation turns (100 ticks each); 0 disables |
 | `active_radius` | 1 | 0–8, no larger than resident radius |
 | `resident_radius` | 5 | 0–8 |
@@ -75,7 +75,11 @@ The next checkpoint records those active runtime values. `Server::LoadSave` itse
 preserves saved radii, including smaller ones; terminal application of effective
 settings can replace them with inherited defaults or explicit overrides. Explicit
 small bubbles remain supported and clip sight at residency boundaries. Default
-sight is 64, independently of the bounded viewport. See [sight defaults](sight_defaults.md).
+sight is 64, independently of the viewport. The default display requests a
+129×129 snapshot; terminal layout crops around the player to fit the allocated
+panel. Explicit smaller overrides continue to work. LAN guests receive the
+full radius-64 snapshot and apply their own display preference without changing
+host perception. See [terminal view](terminal_view.md) and [sight defaults](sight_defaults.md).
 
 Configuration is re-resolved on startup, world changes, and explicit reload or
 Apply; files are not watched. Headless runs retain their previous behavior
@@ -229,6 +233,7 @@ settings APIs, sparse inheritance, and file formats are unchanged. In local play
 Settings and debug modals suspend elapsed updates and discard time spent open.
 An open LAN host keeps pumping authoritative rounds while either modal is open
 so guests remain connected and their inputs and deadlines continue to resolve.
-Guest settings apply to the retained local world; the remote host controls its
-own pacing and saves. The debug viewer is available only in the local world.
+Guest world settings apply to the retained local world; the remote host controls its
+own pacing and saves. Interface settings, including view radius, apply to the
+guest terminal immediately. The debug viewer is available only in the local world.
 Save failures remain visibly unsaved.

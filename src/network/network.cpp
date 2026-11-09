@@ -255,7 +255,7 @@ public:
         }
         if (!initial && !force && clock_ - guest.lastSnapshotAt < 50000) return;
         if (!initial && !force && guest.outstandingRevision == server_.GetRevision()) return;
-        const auto view = server_.ViewForPlayer(guest.player);
+        const auto view = server_.ViewForPlayer(guest.player, wire::maxViewRadius);
         auto w = Message(wire::Type::Snapshot);
         w.U64(guest.nonce);
         if (!w.View(view)) {
@@ -359,15 +359,20 @@ void LanHost::Close() {
         impl_->arrivals_.clear(); impl_->inputs_.clear(); impl_->localInputs_.clear();
         return;
     }
-    auto closing = Message(wire::Type::Closing);
     for (auto& guest : impl_->guests_) {
         if (guest.peer && guest.peer->state == ENET_PEER_STATE_CONNECTED) {
-            Send(guest.peer, 0, closing); enet_peer_disconnect_later(guest.peer, 0);
+            // Closing must not drain obsolete snapshots first. A fragmented
+            // snapshot exceeds ENet's reliable window, and clients may not be
+            // pumped while this synchronous Close runs. disconnect_later would
+            // wait for their ACKs and strand the notification behind that data.
+            // disconnect cancels queued traffic and sends an acknowledged
+            // transport control command independently of the data channels.
+            enet_peer_disconnect(guest.peer, 0);
         }
         impl_->Drop(guest);
     }
     enet_host_flush(impl_->host_);
-    // Drain reliable closing frames for at most 200 ms, then release transport.
+    // Service disconnect acknowledgements for at most 200 ms, then release transport.
     for (int attempt = 0; attempt < 20; ++attempt) {
         bool pending = false;
         for (const auto& guest : impl_->guests_)

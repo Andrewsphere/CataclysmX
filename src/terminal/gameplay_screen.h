@@ -7,8 +7,11 @@
 
 #include <functional>
 #include <atomic>
+#include <memory>
 
 namespace cataclysmx {
+
+struct TerminalMapCache;
 
 // At most one timer wakeup is outstanding; input events are never coalesced.
 class TerminalTimerWakeup {
@@ -25,6 +28,8 @@ struct GameplayPresentation {
     String pending;
     bool interacting = false;
     bool enhancedKeyboard = false;
+    // Display preference only; never limits authoritative perception or LAN snapshots.
+    int viewRadius = 64;
     // Optional LAN content, already converted at the application boundary.
     ftxui::Element lan;
 };
@@ -37,10 +42,15 @@ public:
     bool IsOpen() const;
     void Close();
     bool PausesLocal(eastl::optional<InputAction> action) const;
-    ftxui::Element Render(const WorldView& view, const ContentCatalog& content,
+    // Temporary snapshots transfer their cells into the node; lvalues are copied.
+    ftxui::Element Render(WorldView view, const ContentCatalog& content,
         const Localization& localization, const Keymap& keys, const GameplayPresentation& presentation);
-    // Number of map element trees prepared by this UI, for reuse diagnostics.
-    std::uint64_t MapPreparations() const { return mapPreparations_; }
+    // First preparation / source changes / changed previously cached visible cells.
+    // Newly exposed cells on resize are not counted as a changed map.
+    std::uint64_t MapPreparations() const;
+    std::size_t MapRasterizedCells() const;
+    // Appearance resolutions in the last draw; always bounded by rasterized cells.
+    std::size_t MapResolvedCells() const;
     // Consumes every event while open. Submit returns true only when accepted;
     // failures keep Inventory open. The application owns routing and timing.
     // Quick actions open UI-owned windows directly; other choices close the
@@ -50,12 +60,7 @@ public:
         const std::function<void(InputAction)>& activate = {}, const ContentCatalog* content = nullptr);
 
 private:
-    Vector<ViewCell> mapCells_;
-    const ContentCatalog* mapContent_ = nullptr;
-    int mapWidth_ = 0;
-    int mapHeight_ = 0;
-    ftxui::Element mapElements_;
-    std::uint64_t mapPreparations_ = 0;
+    std::shared_ptr<TerminalMapCache> mapCache_;
     enum class Modal { None, Inventory, Players, Controls, QuickActions };
     enum class ItemStage { Browse, Actions, Item, Container, Direction };
     ItemStage itemStage_ = ItemStage::Browse;

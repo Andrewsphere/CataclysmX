@@ -6,8 +6,14 @@
 
 namespace cataclysmx::network::wire {
 
-inline constexpr std::uint32_t protocol = 0x43584e07;
-inline constexpr std::size_t maxPacket = 32768;
+// Version 9 encodes LAN snapshot cells as bounded runs of identical values.
+inline constexpr std::uint32_t protocol = 0x43584e09;
+inline constexpr int maxViewRadius = 64;
+inline constexpr int maxViewDimension = 2 * maxViewRadius + 1;
+static_assert(maxViewDimension <= UINT8_MAX && maxViewDimension * maxViewDimension <= UINT16_MAX);
+// Worst-case 129 squared cells use 632358 bytes (one 38-byte run per cell),
+// before inventory and session metadata. Repeated cells use one run instead.
+inline constexpr std::size_t maxPacket = 1024 * 1024;
 inline constexpr std::size_t maxItemEntries = 2048;
 inline constexpr std::size_t maxItemActions = maxItemActionsPerItem;
 // Validate definition-dependent metadata after structural decoding, before publication.
@@ -26,6 +32,7 @@ struct Writer {
     void U64(std::uint64_t v);
     void I32(std::int32_t v);
     bool Text(eastl::string_view v, std::size_t limit);
+    // Expanded cell count, then (u16 run length, 36-byte cell payload) records.
     bool View(const WorldView& v);
     bool CommandValue(const Command& v);
     bool Result(const PlayerCommandResult& v);

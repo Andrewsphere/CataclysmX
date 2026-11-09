@@ -19,6 +19,8 @@
 
 namespace cataclysmx {
 
+struct VisibilityMask;
+
 // Authoritative server state captured in the same transaction as chunk values.
 struct SavedPlayer {
     PersistentId actor = 0;
@@ -161,6 +163,9 @@ public:
     VisionProfile GetVisionProfile() const;
     // Authoritative terrain perception; cache refreshes never teach memory.
     bool CanPlayerSee(ActorHandle observer, TileCoord target) const;
+    // Read-only projection borrow; expires at a World mutation or perception refresh.
+    // Null for an unavailable observer. Does not teach memory or acquire residency.
+    const VisibilityMask* GetPlayerVisibility(ActorHandle observer) const;
     PerceptionStats GetPerceptionStats() const;
     void ResetPerceptionStats() const;
 
@@ -223,8 +228,13 @@ public:
     WorldResult<void> SetActorLight(ActorHandle actor, LightEmission light);
     void SetSkyLight(std::uint8_t level);
     std::uint8_t GetSkyLight() const;
+    // Disposable chunk-local optical/source input token; zero when nonresident.
+    // Used by derived lighting to skip unchanged terrain and emitter scans.
+    std::uint64_t GetLightingInputRevision(ChunkCoord position) const;
     // Derived caches may refresh; these queries never change player memories.
     std::uint8_t GetLightLevel(TileCoord position) const;
+    // Chunk-contiguous projection borrow; expires at the next lighting rebuild.
+    eastl::span<const std::uint8_t> GetChunkLightLevels(ChunkCoord position) const;
     // Direct incident endpoint light; faces +X,-X,+Z,-Z,+Y,-Y (0..5).
     std::uint8_t GetIncidentLightLevel(TileCoord position, int face) const;
     RememberedTile GetRememberedTile(PersistentId player, TileCoord position) const;
@@ -247,7 +257,7 @@ public:
 
 private:
     friend bool LineVisible(const World&, TileCoord, TileCoord);
-    void RecordPointLos(bool voxel) const;
+    void RecordPointLos(bool voxel, std::uint64_t count = 1) const;
     friend class ItemSystem;
     friend class ItemReadContext;
     friend class ItemMutationContext;

@@ -304,6 +304,9 @@ public:
     Vector<PlayerMemory> memories;
     mutable LightingField lighting;
     mutable bool lightingDirty = true;
+    struct LightingInput { ChunkCoord position; std::uint64_t revision; };
+    Vector<LightingInput> lightingInputs;
+    std::uint64_t nextLightingInputRevision = 0;
     std::uint64_t revision = 1;
     std::uint64_t mapRevision = 1;
     std::uint64_t geometryRevision = 1;
@@ -315,12 +318,14 @@ public:
     mutable PerceptionStats perceptionStats;
     mutable OpticalField optics;
     mutable std::uint64_t opticsRevision = 0;
+    mutable Vector<ChunkCoord> opticalChanges;
     struct LightSamples {
+        ChunkCoord position{};
+        std::uint64_t revision = 0;
         eastl::array<std::uint8_t, chunk_size * chunk_size> levels;
         std::uint8_t minimum = 255;
     };
     mutable Vector<LightSamples> lightSamples;
-    mutable std::uint64_t sampledLightingRevision = 0;
     struct AppearanceChange { ChunkCoord position; std::uint64_t revision; };
     Vector<AppearanceChange> appearanceChanges;
     struct FootprintChunk {
@@ -343,6 +348,34 @@ public:
     };
     mutable Vector<ObserverCache> observers;
 
+    static bool TouchesPerception(ChunkCoord chunk, const VisibilityMask& mask, int margin = 0) {
+        return chunk.y >= mask.minimumY - margin && chunk.y <= mask.maximumY + margin
+            && chunk.x * chunk_size <= mask.origin.x + mask.radius + margin
+            && (chunk.x + 1) * chunk_size > mask.origin.x - mask.radius - margin
+            && chunk.z * chunk_size <= mask.origin.z + mask.radius + margin
+            && (chunk.z + 1) * chunk_size > mask.origin.z - mask.radius - margin;
+    }
+
+    void MarkGeometryDirty(ChunkCoord position) {
+        ++geometryRevision;
+        const auto where = eastl::lower_bound(opticalChanges.begin(), opticalChanges.end(), position, ChunkLess);
+        if (where == opticalChanges.end() || *where != position) { opticalChanges.insert(where, position); }
+        for (auto& observer : observers) {
+            if (TouchesPerception(position, observer.geometry)) { observer.geometryRevision = 0; }
+        }
+    }
+
+    void MarkLightingDirty(ChunkCoord position) {
+        lightingDirty = true;
+        const auto where = eastl::lower_bound(lightingInputs.begin(), lightingInputs.end(), position,
+            [](const LightingInput& entry, ChunkCoord key) { return ChunkLess(entry.position, key); });
+        const auto inputRevision = ++nextLightingInputRevision;
+        Require(inputRevision != 0);
+        if (where == lightingInputs.end() || where->position != position) {
+            lightingInputs.insert(where, {position, inputRevision});
+        } else { where->revision = inputRevision; }
+    }
+
     ObserverCache& PerceptionFor(const World& world, const Actor& actor) const {
         auto found = eastl::find_if(observers.begin(), observers.end(), [&](const ObserverCache& cache) {
             return cache.player == actor.id;
@@ -353,11 +386,13 @@ public:
             found->player = actor.id;
         }
         auto& cache = *found;
-        const bool geometryChanged = cache.geometryRevision != geometryRevision
+        const bool geometryChanged = cache.geometryRevision == 0
             || cache.geometry.origin != actor.position || cache.geometry.radius != vision.range;
         if (geometryChanged) {
             if (opticsRevision != geometryRevision) {
-                optics.Rebuild(world);
+                if (opticsRevision == 0) { optics.Rebuild(world); }
+                else { optics.Refresh(world, {opticalChanges.data(), opticalChanges.size()}); }
+                opticalChanges.clear();
                 ++perceptionStats.opticalRebuilds;
                 opticsRevision = geometryRevision;
             }
@@ -367,24 +402,9 @@ public:
         // Resolve pending lighting before comparing the light generation. Geometry
         // and light have different lifetimes, including const-only projections.
         world.GetLightLevel(actor.position);
-        if (geometryChanged || cache.lightingRevision != lightingRevision || cache.vision != vision) {
+        if (geometryChanged || cache.lightingRevision == 0 || cache.vision != vision) {
             ++perceptionStats.filterRebuilds;
-            if (sampledLightingRevision != lightingRevision) {
-                lightSamples.clear();
-                lightSamples.reserve(chunks.size());
-                for (const Chunk& chunk : chunks) {
-                    LightSamples samples;
-                    const auto levels = lighting.GetChunkLevels(chunk.position);
-                    Require(levels.size() == chunk_size * chunk_size);
-                    for (int i = 0; i < chunk_size * chunk_size; ++i) {
-                        const auto level = levels[i];
-                        samples.levels[i] = level;
-                        samples.minimum = eastl::min(samples.minimum, level);
-                    }
-                    lightSamples.push_back(samples);
-                }
-                sampledLightingRevision = lightingRevision;
-            }
+            lightSamples.resize(chunks.size());
             cache.visible = cache.geometry;
             cache.footprint.clear();
             const auto observerLight = lighting.Get(actor.position);
@@ -402,7 +422,19 @@ public:
                     || coord.z * chunk_size > actor.position.z + vision.range
                     || (coord.z + 1) * chunk_size <= actor.position.z - vision.range) { continue; }
                 if (!cache.geometry.visibleLayers[coord.y - cache.geometry.minimumY]) { continue; }
-                const auto& samples = lightSamples[chunkIndex];
+                auto& samples = lightSamples[chunkIndex];
+                const auto chunkRevision = lighting.GetChunkRevision(coord);
+                if (samples.position != coord || samples.revision != chunkRevision) {
+                    const auto levels = lighting.GetChunkLevels(coord);
+                    Require(levels.size() == chunk_size * chunk_size);
+                    samples.position = coord;
+                    samples.revision = chunkRevision;
+                    samples.minimum = 255;
+                    for (int i = 0; i < chunk_size * chunk_size; ++i) {
+                        samples.levels[i] = levels[i];
+                        samples.minimum = eastl::min(samples.minimum, levels[i]);
+                    }
+                }
                 FootprintChunk footprint{coord, {}};
                 if (cache.geometry.clearLayers[coord.y - cache.geometry.minimumY] && samples.minimum >= 64) {
                     const int chunkX = coord.x * chunk_size;
@@ -426,7 +458,6 @@ public:
                     }
                     continue;
                 }
-                const int dy = coord.y - actor.position.y;
                 for (int index = 0; index < chunk_size * chunk_size; ++index) {
                     const TileCoord p{coord.x * chunk_size + index % chunk_size,
                         coord.z * chunk_size + index / chunk_size, coord.y};
@@ -437,7 +468,7 @@ public:
                         ? TerrainLightLevel(world, actor.position, p) : samples.levels[index];
                     const int dx = p.x - actor.position.x;
                     const int dz = p.z - actor.position.z;
-                    if (dx*dx + dz*dz + dy*dy > squaredRanges[static_cast<int>(ClassifyLight(light))]) {
+                    if (dx*dx + dz*dz > squaredRanges[static_cast<int>(ClassifyLight(light))]) {
                         cache.visible.MaterializeLayer(coord.y);
                         cache.visible.cells[cache.visible.Index(p)] = 0;
                     } else {
@@ -1169,7 +1200,12 @@ SaveResult<void> World::ReconcileChunks(Diagnostics* diagnostics) {
             [](const Demand& value, ChunkCoord key) { return ChunkLess(value.position, key); });
         if (wanted == demand.end() || wanted->position != current->position) {
             impl_->lightingDirty = true;
-            ++impl_->geometryRevision;
+            impl_->MarkGeometryDirty(current->position);
+            const auto input = eastl::lower_bound(impl_->lightingInputs.begin(), impl_->lightingInputs.end(), current->position,
+                [](const Impl::LightingInput& entry, ChunkCoord key) { return ChunkLess(entry.position, key); });
+            if (input != impl_->lightingInputs.end() && input->position == current->position) {
+                impl_->lightingInputs.erase(input);
+            }
             ++impl_->mapRevision;
             ++impl_->revision;
             current->active = false;
@@ -1186,8 +1222,8 @@ SaveResult<void> World::ReconcileChunks(Diagnostics* diagnostics) {
             continue;
         }
         Chunk value;
-        impl_->lightingDirty = true;
-        ++impl_->geometryRevision;
+        impl_->MarkLightingDirty(entry.position);
+        impl_->MarkGeometryDirty(entry.position);
         ++impl_->mapRevision;
         ++impl_->revision;
         value.position = entry.position;
@@ -1316,15 +1352,19 @@ WorldResult<void> World::SetVisionProfile(VisionProfile vision) {
 }
 PerceptionStats World::GetPerceptionStats() const { return impl_->perceptionStats; }
 void World::ResetPerceptionStats() const { impl_->perceptionStats = {}; }
-void World::RecordPointLos(bool voxel) const {
-    if (voxel) { ++impl_->perceptionStats.traversedVoxels; }
-    else { ++impl_->perceptionStats.pointLosCalls; }
+void World::RecordPointLos(bool voxel, std::uint64_t count) const {
+    if (voxel) { impl_->perceptionStats.traversedVoxels += count; }
+    else { impl_->perceptionStats.pointLosCalls += count; }
 }
 bool World::CanPlayerSee(ActorHandle observer, TileCoord target) const {
+    if (!ValidPosition(target)) { return false; }
+    const auto* mask = GetPlayerVisibility(observer);
+    return mask && mask->Contains(target);
+}
+const VisibilityMask* World::GetPlayerVisibility(ActorHandle observer) const {
     const Actor* actor = GetActor(observer);
-    if (!actor || !actor->player || actor->parked || !IsActive(actor->position)
-        || !ValidPosition(target)) { return false; }
-    return impl_->PerceptionFor(*this, *actor).visible.Contains(target);
+    if (!actor || !actor->player || actor->parked || !IsActive(actor->position)) { return nullptr; }
+    return &impl_->PerceptionFor(*this, *actor).visible;
 }
 
 const Chunk* World::GetChunk(ChunkCoord position) const { return impl_->GetChunk(position); }
@@ -1504,9 +1544,9 @@ WorldResult<void> World::SetTile(TileCoord position, Tile value) {
     const auto& before = impl_->content.GetTerrain(previous.terrain);
     const auto& after = impl_->content.GetTerrain(value.terrain);
     if (before.blocksSight != after.blocksSight || before.openSpace != after.openSpace
-        || before.stairs != after.stairs) { ++impl_->geometryRevision; }
+        || before.stairs != after.stairs) { impl_->MarkGeometryDirty(ChunkOf(position)); }
     if (before.blocksSight != after.blocksSight || before.openSpace != after.openSpace
-        || before.stairs != after.stairs || before.light != after.light) { impl_->lightingDirty = true; }
+        || before.stairs != after.stairs || before.light != after.light) { impl_->MarkLightingDirty(ChunkOf(position)); }
     impl_->GetChunk(ChunkOf(position))->tiles[TileIndex(position)] = value;
     impl_->MarkDirty(ChunkOf(position), true, true);
     impl_->QueueGravity(position);
@@ -1561,7 +1601,10 @@ WorldResult<void> World::MoveActor(ActorHandle handle, TileCoord destination) {
         impl_->GetChunk(next)->actors.push_back(handle);
     }
     value->position = destination;
-    if (value->light.intensity && !value->parked) { impl_->lightingDirty = true; }
+    if (value->light.intensity && !value->parked) {
+        impl_->MarkLightingDirty(previous);
+        if (next != previous) { impl_->MarkLightingDirty(next); }
+    }
     if (value->player) { impl_->TrackPlayer(value->id, destination); }
     impl_->MarkDirty(previous);
     impl_->MarkDirty(next);
@@ -1583,7 +1626,7 @@ WorldResult<void> World::SetActorParked(ActorHandle handle, bool parked) {
         }
     }
     value->parked = parked;
-    if (value->light.intensity) { impl_->lightingDirty = true; }
+    if (value->light.intensity) { impl_->MarkLightingDirty(ChunkOf(value->position)); }
     impl_->MarkDirty(ChunkOf(value->position));
     impl_->QueueGravity(value->position);
     return {};
@@ -1617,7 +1660,7 @@ WorldResult<void> World::DestroyActor(ActorHandle handle) {
     }
     EraseOne(impl_->GetChunk(ChunkOf(position))->actors, handle);
     if (value->player) { impl_->ForgetPlayer(value->id); }
-    if (value->light.intensity && !value->parked) { impl_->lightingDirty = true; }
+    if (value->light.intensity && !value->parked) { impl_->MarkLightingDirty(ChunkOf(position)); }
     impl_->actors.erase(dod::slot_map64<Actor>::key{handle.value});
     impl_->MarkDirty(ChunkOf(position));
     return {};
@@ -1819,7 +1862,7 @@ WorldResult<void> World::DestroyObject(ObjectHandle handle) {
         Require(value != nullptr);
     }
     EraseOne(impl_->GetChunk(ChunkOf(position))->objects, handle);
-    if (value->enabled && value->light.intensity) { impl_->lightingDirty = true; }
+    if (value->enabled && value->light.intensity) { impl_->MarkLightingDirty(ChunkOf(position)); }
     impl_->objects.erase(dod::slot_map64<InteractiveObject>::key{handle.value});
     impl_->MarkDirty(ChunkOf(position), true, true);
     return {};
@@ -1831,7 +1874,7 @@ WorldResult<void> World::SetObjectEnabled(ObjectHandle handle, bool enabled) {
         return eastl::unexpected(WorldError::invalid_handle);
     }
     if (value->enabled == enabled) { return {}; }
-    if (value->light.intensity) { impl_->lightingDirty = true; }
+    if (value->light.intensity) { impl_->MarkLightingDirty(ChunkOf(value->position)); }
     value->enabled = enabled;
     impl_->MarkDirty(ChunkOf(value->position), true, true);
     return {};
@@ -1861,7 +1904,7 @@ WorldResult<void> World::SetObjectLight(ObjectHandle handle, LightEmission light
     if (!ValidLightEmission(light)) { return eastl::unexpected(WorldError::invalid_request); }
     if (object->light == light) { return {}; }
     object->light = light;
-    if (object->enabled) { impl_->lightingDirty = true; }
+    if (object->enabled) { impl_->MarkLightingDirty(ChunkOf(object->position)); }
     impl_->MarkDirty(ChunkOf(object->position));
     return {};
 }
@@ -1872,7 +1915,7 @@ WorldResult<void> World::SetActorLight(ActorHandle handle, LightEmission light) 
     if (!ValidLightEmission(light)) { return eastl::unexpected(WorldError::invalid_request); }
     if (actor->light == light) { return {}; }
     actor->light = light;
-    if (!actor->parked) { impl_->lightingDirty = true; }
+    if (!actor->parked) { impl_->MarkLightingDirty(ChunkOf(actor->position)); }
     impl_->MarkDirty(ChunkOf(actor->position));
     return {};
 }
@@ -1886,16 +1929,38 @@ void World::SetSkyLight(std::uint8_t level) {
     }
 }
 std::uint8_t World::GetSkyLight() const { return impl_->skyLight; }
+std::uint64_t World::GetLightingInputRevision(ChunkCoord position) const {
+    const auto found = eastl::lower_bound(impl_->lightingInputs.begin(), impl_->lightingInputs.end(), position,
+        [](const Impl::LightingInput& entry, ChunkCoord key) { return ChunkLess(entry.position, key); });
+    return found != impl_->lightingInputs.end() && found->position == position ? found->revision : 0;
+}
 std::uint8_t World::GetLightLevel(TileCoord position) const {
     if (!ValidPosition(position)) { return 0; }
     if (impl_->lightingDirty) {
         if (!impl_->GetChunk(ChunkOf(position))) { return 0; }
         impl_->lighting.Rebuild(*this);
+        for (auto& observer : impl_->observers) {
+            for (const auto changed : impl_->lighting.ChangedChunks()) {
+                // Opaque endpoints sample adjacent space, including their upper face.
+                if (Impl::TouchesPerception(changed, observer.geometry, 1)) {
+                    observer.lightingRevision = 0;
+                    break;
+                }
+            }
+        }
         ++impl_->perceptionStats.lightingRebuilds;
         ++impl_->lightingRevision;
         impl_->lightingDirty = false;
     }
     return impl_->lighting.Get(position);
+}
+
+eastl::span<const std::uint8_t> World::GetChunkLightLevels(ChunkCoord position) const {
+    if (!GetChunk(position)) { return {}; }
+    // Edge chunks may start outside the horizontal coordinate contract.
+    GetLightLevel({eastl::clamp(position.x * chunk_size, -world_coordinate_limit, world_coordinate_limit),
+        eastl::clamp(position.z * chunk_size, -world_coordinate_limit, world_coordinate_limit), position.y});
+    return impl_->lighting.GetChunkLevels(position);
 }
 
 std::uint8_t World::GetIncidentLightLevel(TileCoord position, int face) const {

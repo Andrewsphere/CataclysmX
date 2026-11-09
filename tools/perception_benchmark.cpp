@@ -29,7 +29,7 @@ struct Samples {
 };
 
 void PrintCounters(const PerceptionStats& p, const ViewStats& v, std::uint64_t maps) {
-    std::printf(",%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu\n",
+    std::printf(",%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu\n",
         static_cast<unsigned long long>(p.geometryRebuilds),
         static_cast<unsigned long long>(p.pointLosCalls),
         static_cast<unsigned long long>(p.traversedVoxels),
@@ -45,7 +45,8 @@ void PrintCounters(const PerceptionStats& p, const ViewStats& v, std::uint64_t m
         static_cast<unsigned long long>(p.volumeRebuilds),
         static_cast<unsigned long long>(p.filterRebuilds),
         static_cast<unsigned long long>(p.filterTilesSampled),
-        static_cast<unsigned long long>(p.memoryTilesExamined));
+        static_cast<unsigned long long>(p.memoryTilesExamined),
+        static_cast<unsigned long long>(p.projectedCells));
     std::fflush(stdout);
 }
 
@@ -76,6 +77,7 @@ void MeasureScenario(const char* name, int count, Server& server, GameplayUi& ui
         stats.traversedVoxels += isolatedStats->traversedVoxels;
         stats.opticalRebuilds += isolatedStats->opticalRebuilds;
         stats.volumeRebuilds += isolatedStats->volumeRebuilds;
+        stats.projectedCells += isolatedStats->projectedCells;
     }
     PrintCounters(stats, server.GetViewStats(), ui.MapPreparations() - mapStart);
 }
@@ -86,6 +88,7 @@ struct Frontend {
     GameplayUi ui;
     GameplayPresentation presentation;
     std::uint64_t sink = 0;
+    int viewport = 64;
     Frontend() {
         Require(localization.Load(CATACLYSMX_LOC_DIRECTORY, "en").has_value());
         presentation.session = "Local";
@@ -97,8 +100,9 @@ struct Frontend {
         sink += screen.ToString().size();
     }
     void Frame(Server& server) {
-        const auto view = server.View(12);
-        Require(view.cells.size() == 625);
+        const auto view = server.View(viewport);
+        const int side = 2 * viewport + 1;
+        Require(view.cells.size() == static_cast<std::size_t>(side * side));
         sink += view.tick + view.cells.size();
         Draw(view, server.GetWorld().GetContent());
     }
@@ -144,7 +148,7 @@ void Prepare(Server& server, const ContentCatalog& content, int resident, bool f
 }
 
 int main(int argc, char** argv) {
-    int count = 100, sight = 12, resident = 2;
+    int count = 100, sight = 12, resident = 2, viewport = 64;
     bool flat = true;
     char* end = nullptr;
     if (argc > 1) {
@@ -152,20 +156,25 @@ int main(int argc, char** argv) {
         if (*argv[1] == '\0' || *end != '\0' || parsed < 2 || parsed > 10000) { end = nullptr; }
         else { count = static_cast<int>(parsed); }
     }
-    if ((argc > 1 && !end) || argc > 5
+    if ((argc > 1 && !end) || argc > 6
         || (argc > 2 && std::strcmp(argv[2], "12") != 0 && std::strcmp(argv[2], "64") != 0)
         || (argc > 3 && std::strcmp(argv[3], "2") != 0 && std::strcmp(argv[3], "5") != 0)
-        || (argc > 4 && std::strcmp(argv[4], "flat") != 0 && std::strcmp(argv[4], "mixed") != 0)) {
-        std::fprintf(stderr, "usage: cataclysmx_perception_benchmark [samples:2..10000] [sight:12|64] [resident:2|5] [flat|mixed]\n"); return 2;
+        || (argc > 4 && std::strcmp(argv[4], "flat") != 0 && std::strcmp(argv[4], "mixed") != 0)
+        || (argc > 5 && std::strcmp(argv[5], "12") != 0 && std::strcmp(argv[5], "64") != 0)) {
+        std::fprintf(stderr, "usage: cataclysmx_perception_benchmark [samples:2..10000] [sight:12|64] [resident:2|5] [flat|mixed] [viewport:12|64]\n"); return 2;
     }
     if (argc > 2) { sight = std::atoi(argv[2]); }
     if (argc > 3) { resident = std::atoi(argv[3]); }
     if (argc > 4) { flat = std::strcmp(argv[4], "flat") == 0; }
+    if (argc > 5) { viewport = std::atoi(argv[5]); }
     auto content = cataclysmx::LoadContentFile(CATACLYSMX_TERRAIN_FILE);
     Require(content.has_value());
     Frontend frontend;
-    std::printf("sight=%d resident=%d scene=%s viewport=25x25 screen=120x40 seed=42 samples=%d warmup=8 burst=8\n", sight, resident, flat ? "flat" : "mixed", count);
-    std::printf("scenario,n,median_ms,p95_ms,p99_ms,geometry,los,voxels,memoryTilesChanged,observations,lighting,demand,viewRequests,fullViews,mapBuilds,mapPreparations,optics,volumes,filters,filterTiles,memoryTilesExamined\n");
+    frontend.viewport = viewport;
+    frontend.presentation.viewRadius = viewport;
+    const int side = 2 * viewport + 1;
+    std::printf("sight=%d resident=%d scene=%s viewport=%dx%d screen=120x40 seed=42 samples=%d warmup=8 burst=8\n", sight, resident, flat ? "flat" : "mixed", side, side, count);
+    std::printf("scenario,n,median_ms,p95_ms,p99_ms,geometry,los,voxels,memoryTilesChanged,observations,lighting,demand,viewRequests,fullViews,mapBuilds,mapPreparations,optics,volumes,filters,filterTiles,memoryTilesExamined,projectedCells\n");
     // Constructor uses production defaults; requested policy is applied afterward.
     Samples initialSamples{"first_server_load_default"};
     PerceptionStats initialStats{};
@@ -182,6 +191,7 @@ int main(int argc, char** argv) {
         initialStats.opticalRebuilds += p.opticalRebuilds; initialStats.volumeRebuilds += p.volumeRebuilds;
         initialStats.filterRebuilds += p.filterRebuilds; initialStats.filterTilesSampled += p.filterTilesSampled;
         initialStats.memoryTilesExamined += p.memoryTilesExamined;
+        initialStats.projectedCells += p.projectedCells;
         const auto v = initial.GetViewStats();
         initialViews.requests += v.requests; initialViews.constructions += v.constructions; initialViews.mapConstructions += v.mapConstructions;
         frontend.sink += initial.GetTick();
@@ -214,22 +224,25 @@ int main(int argc, char** argv) {
     std::printf("resident_chunks=%zu active_actors=%zu active_objects=%zu\n",
         world.LoadedChunks().size(), world.ActiveActors().size(), world.ActiveObjects().size());
 
-    Vector<TileCoord> targets;
-    for (int y = -10; y <= 10; ++y) {
-        for (int z = -sight; z <= sight; ++z) {
-            for (int x = -sight; x <= sight; ++x) {
-                if (x*x + y*y + z*z <= sight*sight) { targets.push_back({x, z, y}); }
-            }
-        }
-    }
-    std::printf("point_los_calls_per_sweep=%zu\n", targets.size());
+    const int r = sight / 2;
+    const TileCoord targets[] = {{r, 0, 0}, {-r, 0, 0}, {0, r, 0}, {0, -r, 0},
+        {r, r, 0}, {r, -r, 0}, {-r, r, 0}, {-r, -r, 0}};
+    std::printf("planar_point_queries_per_sample=8 cardinal_offset=%d diagonal_offset=%d\n", r, r);
     VisibilityMask mask;
     PerceptionStats geometryStats{};
-    MeasureScenario("geometry_bulk_visibility_mask", count, server, frontend.ui, [&](int) {
+    MeasureScenario("geometry_bulk_standalone", count, server, frontend.ui, [&](int) {
         BuildVisibilityMask(world, {0, 0, 0}, sight, mask, geometryStats);
         frontend.sink += mask.cells.size();
     }, &geometryStats);
-    Measure("geometry_point_los_sphere", count, [&](int) {
+    OpticalField optics;
+    optics.Rebuild(world);
+    VisibilityWorkspace workspace;
+    BuildVisibilityMask(world, {0, 0, 0}, sight, mask, geometryStats, &optics, &workspace);
+    MeasureScenario("geometry_bulk_warm_optics_workspace", count, server, frontend.ui, [&](int) {
+        BuildVisibilityMask(world, {0, 0, 0}, sight, mask, geometryStats, &optics, &workspace);
+        frontend.sink += mask.cells.size();
+    }, &geometryStats);
+    Measure("geometry_point_planar_8", count, [&](int) {
         for (const auto target : targets) { frontend.sink += LineVisible(world, {0, 0, 0}, target); }
     });
     LightingField lighting;
@@ -241,8 +254,8 @@ int main(int argc, char** argv) {
         frontend.sink += fresh.Get({0, 0});
     });
     Measure("memory_observation_warm", count, [&](int) { world.UpdatePlayerObservations(); });
-    Measure("view_idle", count, [&](int) { auto view = server.View(12); frontend.sink += view.cells.size(); });
-    const auto snapshot = server.View(12);
+    Measure("view_idle", count, [&](int) { auto view = server.View(viewport); frontend.sink += view.cells.size(); });
+    const auto snapshot = server.View(viewport);
     Measure("terminal_existing_snapshot", count, [&](int) { frontend.Draw(snapshot, *content); });
     Measure("idle_view_and_terminal", count, [&](int) { frontend.Frame(server); });
     Measure("idle_update_view_terminal", count, [&](int) { server.Update(20000); frontend.Frame(server); });
@@ -250,7 +263,7 @@ int main(int argc, char** argv) {
     if (count % 2 != 0) { Move(server, -1); }
     Measure("warm_move_and_view", count, [&](int i) {
         Move(server, i % 2 == 0 ? 1 : -1);
-        const auto view = server.View(12);
+        const auto view = server.View(viewport);
         frontend.sink += view.cells.size();
     });
     if (count % 2 != 0) { Move(server, -1); }

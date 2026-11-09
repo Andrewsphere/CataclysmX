@@ -3,6 +3,18 @@
 string(RANDOM LENGTH 12 ALPHABET 0123456789abcdef suffix)
 set(directory "${CMAKE_CURRENT_BINARY_DIR}/settings-script-${suffix}")
 file(MAKE_DIRECTORY "${directory}/user/config" "${directory}/world")
+function(check_map_rows output expected)
+    string(FIND "${output}" "\nInventory:" end)
+    if(end LESS 0)
+        message(FATAL_ERROR "Rendered snapshot has no inventory boundary")
+    endif()
+    string(SUBSTRING "${output}" 0 ${end} map)
+    string(REGEX MATCHALL "\n" newlines "${map}")
+    list(LENGTH newlines rows)
+    if(NOT rows EQUAL expected)
+        message(FATAL_ERROR "Expected ${expected} map rows, got ${rows}")
+    endif()
+endfunction()
 file(WRITE "${directory}/user/config/settings.json5"
     "{format_version:1,settings:{seed:123,view_radius:1,autosave_interval:100,ticks_per_second:123}}")
 file(WRITE "${directory}/world/settings.json5"
@@ -14,6 +26,7 @@ execute_process(COMMAND "${TERMINAL}" --user-dir "${directory}/user" --world-dir
 if(NOT result EQUAL 0 OR NOT before MATCHES "tick=0 position=0,0")
     message(FATAL_ERROR "Configured terminal create failed (${result}): ${errors}")
 endif()
+check_map_rows("${before}" 5)
 file(READ "${directory}/world/settings.json5" local)
 if(local MATCHES "seed|autosave_interval|ticks_per_second" OR NOT local MATCHES "view_radius")
     message(FATAL_ERROR "Inherited fields were copied into world overrides: ${local}")
@@ -45,6 +58,19 @@ execute_process(COMMAND "${HEADLESS}" --load "${directory}/world/a.sqlite" --scr
     INPUT_FILE "${directory}/inspect.txt" RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE errors)
 if(NOT result EQUAL 0 OR NOT output MATCHES "pacing rate=123")
     message(FATAL_ERROR "Unconfigured headless unexpectedly applied preferences (${result}): ${output}\n${errors}")
+endif()
+# A fresh terminal uses the full 129-row view; an explicit maximum is equivalent.
+execute_process(COMMAND "${TERMINAL}" --user-dir "${directory}/empty-user" --render
+    RESULT_VARIABLE result OUTPUT_VARIABLE default_view ERROR_VARIABLE errors)
+if(NOT result EQUAL 0)
+    message(FATAL_ERROR "Default terminal render failed (${result}): ${errors}")
+endif()
+check_map_rows("${default_view}" 129)
+file(WRITE "${directory}/user/config/settings.json5" "{format_version:1,settings:{view_radius:64}}")
+execute_process(COMMAND "${TERMINAL}" --user-dir "${directory}/user" --render
+    RESULT_VARIABLE result OUTPUT_VARIABLE maximum_view ERROR_VARIABLE errors)
+if(NOT result EQUAL 0 OR NOT default_view STREQUAL maximum_view)
+    message(FATAL_ERROR "Explicit radius 64 differs from built-in default (${result}): ${errors}")
 endif()
 file(WRITE "${directory}/user/config/settings.json5" "{broken}")
 execute_process(COMMAND "${TERMINAL}" --user-dir "${directory}/user" --render

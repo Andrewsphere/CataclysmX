@@ -249,27 +249,25 @@ active player and bubble assumptions. It is not a second gameplay command API.
 ## Views and line of sight
 
 `View(radius = 8)` returns an independent `WorldView` value and does not load
-chunks, advance turns or consume RNG. Radius is clamped to `0..12`. The square
+chunks, advance turns or consume RNG. Radius is clamped to `0..64`. The square
 has width and height `2 * radius + 1`, with `origin` at its minimum world X/Z
 and the observer's Y.
 Cells are row-major: `cells[row_z * width + column_x]`. Display rows follow world
 Z, not elevation.
 
-Visibility uses a 3D spherical range and deterministic integer voxel line of
-sight. Closed floor bottoms block sight; open-space columns and matched stairs
-provide the documented vertical openings. Each projected terrain candidate has
-an independent straight LOS check. `terrainDepth` and `overlayDepth` independently
+Visibility uses planar FOV at the observer's elevation and a horizontal range;
+visible columns project downward through open space. `terrainDepth` and `overlayDepth` independently
 describe the projected terrain and nearest visible overlay layers. Unavailable
 tiles stop sight without loading. Terrain and overlay report independent
 `Visibility::Unknown`, `Remembered`, or `Visible` states and independent
 `LightBand` values. Current visible cells use live state; remembered cells use
 owned per-player observations, including limited object appearance but no machine
 state. View queries can be fresh without updating memory. Viewport radius is
-independent of gameplay sight: default vision range is 64 in a full 3D sphere,
+independent of gameplay sight: default vision range is 64 horizontally,
 regardless of displayed square radius. Always check each channel's visibility
 before drawing its payload.
-Sight does not expand the bounded 25 × 25 viewport or the LAN protocol's 32 KiB
-packet limit; the protocol remains version 7.
+The terminal defaults to radius 64 (129 × 129); LAN protocol version 9 supports
+that maximum viewport with a 1 MiB packet limit.
 The nearest remembered furniture is used only when no live overlay is visible.
 Live projection can see a lit lower floor through unknown dark air; remembered
 projection follows its own known geometry, unaffected by hidden world edits.

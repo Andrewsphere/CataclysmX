@@ -1,12 +1,13 @@
 # Core lighting, perception, and player memory
 
-`LineVisible` is illumination-independent, integer center-to-center supercover
-voxel traversal. Opaque targets are visible; opaque intermediate and corner-touch
-tiles block. Vertical crossings require upper open space or matching stairs.
-Missing tiles block. Queries never request residency.
+`LineVisible` is illumination-independent: it shadowcasts in the observer's X/Z
+plane, then follows the target column downward through open space. Opaque planar
+endpoints can be visible; missing tiles block. Targets above the observer are not
+visible. Queries never request residency. A point query builds a local planar FOV,
+so a batch of point queries is not a substitute for the bulk mask.
 
-`CanSeeTile` uses the **target's** light band and spherical three-dimensional
-distance. Default vision is range 64, dim range 6, dark range 1. An observer at
+`CanSeeTile` uses the **target's** light band and horizontal X/Z distance,
+including for lower targets. Default vision is range 64, dim range 6, dark range 1. An observer at
 light 240 or above has dim/dark range capped at 3; ordinarily lit targets remain
 unaffected. `ValidVisionProfile` requires ordered nonnegative ranges bounded by
 64, glare range no larger than dim range, and a bright-band glare threshold.
@@ -20,8 +21,8 @@ it. Time counters, views, and observations do not invalidate it. Content is
 immutable for the lifetime of a World.
 
 Terrain light, enabled object light, and nonparked actor light contribute from all
-resident chunks, including inactive chunks. Sources use spherical radius and
-LOS; intensity at integer ceil-distance `d` is `intensity * (range+1-d) /
+resident chunks, including inactive chunks. Direct local sources propagate in
+their own X/Z plane using planar visibility and horizontal radius; intensity at integer ceil-distance `d` is `intensity * (range+1-d) /
 (range+1)`. Integer division truncates. Contributions max-combine, never sum.
 Intensity and range are independent; valid emissions are either both zero or
 have nonzero intensity and range 1–12.
@@ -31,12 +32,16 @@ vertical faces, and stops at opaque geometry. A closed floor face blocks sky
 even when its terrain is horizontally transparent. There is no ambient basement
 light. Illuminated opaque faces cannot seed or transmit indirect light.
 
-Indirect light uses exactly two open six-neighbor graph steps: direct /4 at the
+Indirect light uses exactly two open six-neighbor graph steps, including vertical
+spill between layers: direct /4 at the
 first step, direct /8 at the second. First-step values are stored separately;
 second-step values never read final light. This bounds spill at Dim (63), avoids
 query-order dependence, and prevents repeated-query creep. Lighting retains sky
 and per-source patches; changed sources recombine affected chunks, while optical
-or residency changes rebuild full shadow footprints. See [surface lighting](surface_lighting.md)
+or residency changes rebuild affected shadow footprints. `World::GetLightingInputRevision(ChunkCoord)`
+tracks local lighting inputs; `LightingField::GetChunkRevision` and `ChangedChunks()`
+track recombined output and let observers invalidate locally. `ChangedChunks()` is
+borrowed until the next rebuild and includes removed chunks. See [surface lighting](surface_lighting.md)
 for invalidation and the observer-facing opaque-face rule. Terrain perception uses
 that face illumination; actor exposure uses transported space light. Opaque faces
 receive light without relaying it.
@@ -54,9 +59,9 @@ and sight at residency boundaries. See [sight defaults](sight_defaults.md).
 
 Call `World::UpdatePlayerObservations` explicitly after an action/event boundary.
 It visits resident active nonparked players in persistent-ID order and observes
-perceivable tiles within the configured 3D sight sphere, clipped to residency and
-independently of viewport. Bulk visibility shares exact 3D occlusion work with
-projections while retaining `LineVisible` as a point-query oracle; see
+perceivable tiles within the configured horizontal sight circle, projected downward
+and clipped to residency independently of viewport. Bulk visibility reuses planar
+optics and a workspace for downward projection; see
 [bulk perception](bulk_perception.md) for cache lifetimes and invalidation.
 Neither perception queries nor arbitrary low-level edits perform observations.
 The server invokes it on construction and player activation, after each successful

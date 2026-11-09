@@ -53,12 +53,10 @@ state consequence, not an actor action or a source of extra action cost.
 
 ## Sight and presentation
 
-Line of sight is a 3D spherical range, using deterministic integer voxel traversal.
-Closed floor bottom faces block vertical sight. Open-space columns transmit sight;
-matched adjacent stairs permit vertical sight through their shared connection.
-The projected map remains an X/Z grid. For each horizontal cell, terrain is
-projected downward from the observer's Y through open space, and each candidate
-tile must independently pass straight 3D line of sight. The first non-open-space
+Sight uses planar FOV at the observer's Y and horizontal range. The projected map
+remains an X/Z grid. For each visible horizontal cell, terrain is projected
+downward from the observer's Y through open space; targets above the observer are
+not projected. The first non-open-space
 tile ends the projection. Terrain depth and overlay depth are independent: the
 view reports the selected terrain layer's depth and, separately, the nearest
 visible actor/item/object layer's depth.
@@ -79,7 +77,7 @@ raised platform; nearby open air forms a pit.
 Y-layer support was originally introduced in save/protocol version 6. The current
 save schema is version 7 and stores Y, lighting sources, skylight, semantic object
 appearance, and per-player observations; versions 1–6 are rejected and migrations
-are not implemented. The current LAN protocol is version 7 (`0x43584e07`),
+are not implemented. The current LAN protocol is version 9 (`0x43584e09`),
 incompatible with earlier versions. It carries Y, vertical command `dy`, view depth,
 independent terrain/overlay visibility, and light bands. Content format version
 remains 1. See [lighting, perception, and player memory](perception.md),

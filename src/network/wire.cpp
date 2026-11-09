@@ -10,10 +10,12 @@ static_assert(static_cast<unsigned>(ObjectKind::None) == 0 && static_cast<unsign
     static_cast<unsigned>(ObjectKind::Chair) == 2 && static_cast<unsigned>(ObjectKind::Table) == 3 &&
     static_cast<unsigned>(ObjectKind::Lamp) == 4);
 bool ValidViewBounds(const WorldView& view) {
-    return view.width >= 1 && view.width <= 25 && view.height == view.width && (view.width & 1) != 0 &&
+    return view.width >= 1 && view.width <= maxViewDimension && view.height == view.width && (view.width & 1) != 0 &&
         ValidPosition(view.player_position) && view.origin.y == view.player_position.y &&
         static_cast<std::int64_t>(view.origin.x) + view.width / 2 == view.player_position.x &&
-        static_cast<std::int64_t>(view.origin.z) + view.height / 2 == view.player_position.z;
+        static_cast<std::int64_t>(view.origin.z) + view.height / 2 == view.player_position.z &&
+        static_cast<std::int64_t>(view.origin.x) + view.width - 1 <= INT32_MAX &&
+        static_cast<std::int64_t>(view.origin.z) + view.height - 1 <= INT32_MAX;
 }
 bool ValidCell(const ViewCell& cell, const WorldView& view, std::size_t index) {
     if (cell.terrainVisibility > Visibility::Visible || cell.overlayVisibility > Visibility::Visible ||
@@ -294,7 +296,11 @@ bool Writer::View(const WorldView& v) {
     U32(v.pacing.ticksPerSecond); U8(v.pacing.rateLimited ? 1 : 0);
     U8(v.pacing.pauseWhenIdle ? 1 : 0); U8(v.commandQueued ? 1 : 0);
     U16(static_cast<std::uint16_t>(v.cells.size()));
-    for (const ViewCell& c : v.cells) {
+    for (std::size_t i = 0; i < v.cells.size();) {
+        const ViewCell& c = v.cells[i];
+        std::size_t run = 1;
+        while (i + run < v.cells.size() && v.cells[i + run] == c) { ++run; }
+        U16(static_cast<std::uint16_t>(run));
         U8(static_cast<std::uint8_t>(c.terrainVisibility));
         U32(c.tile.terrain.value); U8(c.tile.damage); U64(c.actor); U8(c.player ? 1 : 0);
         U32(c.ground_items); U64(c.object);
@@ -304,6 +310,7 @@ bool Writer::View(const WorldView& v) {
         U8(static_cast<std::uint8_t>(c.terrainDepth)); U8(static_cast<std::uint8_t>(c.overlayDepth));
         U8(static_cast<std::uint8_t>(c.overlayVisibility));
         U8(static_cast<std::uint8_t>(c.terrainLight)); U8(static_cast<std::uint8_t>(c.overlayLight));
+        i += run;
     }
     if (!WriteEntries(*this, v.inventory) || !WriteEntries(*this, v.groundItems)) return false;
     U64(v.carriedMassGrams); U64(v.carryCapacityGrams);
@@ -362,7 +369,7 @@ bool Reader::View(WorldView& v) {
     if (bytes.size() > maxPacket) return false;
     std::uint8_t w, h, rate, pause, queued; std::uint16_t count;
     if (!I32(v.origin.x) || !I32(v.origin.z) || !I32(v.origin.y) || !U8(w) || !U8(h) || w == 0 ||
-        w > 25 || h != w || (w & 1) == 0 ||
+        w > maxViewDimension || h != w || (w & 1) == 0 ||
         !I32(v.player_position.x) || !I32(v.player_position.z) || !I32(v.player_position.y) || !U64(v.tick) ||
         !U64(v.playerId) || !U64(v.revision) || !U64(v.opportunity) || !U64(v.lastInputSequence) ||
         !U64(v.remainingTicks) || !U32(v.speed) || !U32(v.pacing.ticksPerSecond) ||
@@ -373,7 +380,10 @@ bool Reader::View(WorldView& v) {
     if (!ValidViewBounds(v)) return false;
     v.commandQueued = queued;
     v.cells.clear();
-    for (unsigned i = 0; i < count; ++i) {
+    v.cells.reserve(count);
+    while (v.cells.size() < count) {
+        std::uint16_t run;
+        if (!U16(run) || run == 0 || run > count - v.cells.size()) return false;
         ViewCell c;
         std::uint8_t terrainVisibility, overlayVisibility, terrainLight, overlayLight, kind, facing, active, broken;
         if (!U8(terrainVisibility)) return false;
@@ -389,8 +399,12 @@ bool Reader::View(WorldView& v) {
         c.terrainDepth = terrainDepth; c.overlayDepth = overlayDepth;
         c.overlayVisibility = static_cast<Visibility>(overlayVisibility);
         c.terrainLight = static_cast<LightBand>(terrainLight); c.overlayLight = static_cast<LightBand>(overlayLight);
-        if (!ValidCell(c, v, i)) return false;
-        v.cells.push_back(c);
+        for (unsigned i = 0; i < run; ++i) {
+            // A run may cross row/world boundaries. Validate each expanded
+            // position, not just the first coordinate carrying this payload.
+            if (!ValidCell(c, v, v.cells.size())) return false;
+            v.cells.push_back(c);
+        }
     }
     if (!ReadEntries(*this, v.inventory) || !ReadEntries(*this, v.groundItems) || !ValidLists(v) ||
         !U64(v.carriedMassGrams) || !U64(v.carryCapacityGrams)) return false;

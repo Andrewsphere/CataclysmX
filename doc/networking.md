@@ -60,15 +60,16 @@ newer revisions supersede the unsent state and are encoded after the ack. Sends
 are throttled to at most roughly 20 Hz. Five seconds without a snapshot ack
 disconnects a stalled guest; unencodable snapshots return `SnapshotTooLarge`
 instead of silently freezing. Each item list supports up to 2048 flattened entries,
-subject to the 32 KiB packet bound. Control packets and inputs carry a fresh
+subject to the 1 MiB packet bound. Control packets and inputs carry a fresh
 per-connection nonce; the host checks ENet connection generation and nonce before
 assigning an actor. Joining has a five-second
 explicit-elapsed timeout. The server does not use wall time or RNG for gameplay;
 network-only tokens and discovery identifiers use OS entropy.
 
-## World and item protocol (version 7, `0x43584e07`)
+## World and item protocol (version 9, `0x43584e09`)
 
-Version 7 is wire-incompatible with earlier versions. Coordinates encode signed
+Version 9 is wire-incompatible with earlier versions and supports maps up to
+129×129 cells with lossless run-length encoding. Coordinates encode signed
 32-bit X/Z/Y. Commands append signed `dy` after their item arguments; movement,
 interaction and directional item use accept six axial directions. Snapshot
 cells carry terrain and overlay depth as bytes, bounded to `0..20` and to the
@@ -101,9 +102,13 @@ must check encoding failures before sending. Invalid receipt encoding reports
 
 ### Lighting and memory cell record
 
-The view header remains 87 bytes through its u16 cell count. Each row-major cell
-is a fixed 36-byte record. Fixed fields make independent channels explicit and
-allow default-payload validation without conditional interpretation:
+The view header remains 87 bytes through its u16 **expanded** cell count. The
+row-major map is encoded as `(u16 run length, 36-byte cell payload)` records until
+that count is reached. Runs repeat identical cell values and may cross row
+boundaries. Zero runs and runs exceeding the remaining count are invalid. Every
+expanded position is validated, including coordinate bounds; repeated values do
+not exempt later cells from checks. The fixed payload makes independent channels
+explicit. Offsets below are relative to the payload, after the run length:
 
 | Offset | Field | Encoding |
 | --- | --- | --- |
@@ -129,8 +134,11 @@ Non-Unknown channels must refer to in-world columns even when the projection bou
 extend beyond the world. Terrain IDs are checked against the admitted catalog at
 the client boundary for both Visible and Remembered terrain, before publication.
 All enum values, state booleans and depth bounds are checked on decode; the encoder
-also rejects noncanonical states. A 25×25 map consumes 22,500 bytes before header,
-items and player statuses; the existing packet limit still applies.
+also rejects noncanonical states. A uniform 129×129 map uses one 38-byte run;
+the worst case of distinct adjacent cells uses 632,358 bytes before header,
+items and player statuses. The 1 MiB packet limit still applies. Compressing
+repeated unknown/empty tiles avoids filling ENet's reliable window with redundant
+snapshot data during admission and delaying the first command opportunity.
 `wire::ValidTerrainDefinitions(view, content)` performs the catalog-dependent
 terrain check after structural decoding, alongside `ValidItemDefinitions`.
 

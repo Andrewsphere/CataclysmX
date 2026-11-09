@@ -104,8 +104,8 @@ bool Poll(LanHost& host, LanClient& a, LanClient& b, Predicate predicate) {
     return false;
 }
 
-TEST_CASE("Protocol seven preserves signed six-axis commands and authoritative shapes", "[network][codec][3d]") {
-    CHECK(wire::protocol == 0x43584e07);
+TEST_CASE("Current protocol preserves signed six-axis commands and authoritative shapes", "[network][codec][3d]") {
+    CHECK(wire::protocol == 0x43584e09);
     for (const auto kind : {CommandKind::move, CommandKind::interact}) {
         for (const TileCoord direction : {TileCoord{1, 0, 0}, {-1, 0, 0}, {0, 1, 0},
             {0, -1, 0}, {0, 0, 1}, {0, 0, -1}, {0, 0, 0}, {1, 0, 1}, {0, 1, -1}, {0, 0, INT_MIN}}) {
@@ -124,6 +124,99 @@ TEST_CASE("Protocol seven preserves signed six-axis commands and authoritative s
             CHECK_FALSE(malformed.CommandValue(decoded));
         }
     }
+}
+
+TEST_CASE("Radius 64 snapshots roundtrip and reject oversized dimensions counts packets and coordinate overflow", "[network][codec][view]") {
+    Server server(TestContent());
+    auto view = server.View(0);
+    const auto player = view.cells[0];
+    view.width = 129; view.height = 129;
+    view.origin = {-64, -64, view.player_position.y};
+    view.cells.assign(129 * 129, ViewCell{});
+    view.cells[64 * 129 + 64] = player;
+    wire::Writer writer;
+    REQUIRE(writer.View(view));
+    CHECK(writer.bytes.size() < 1024); // Two unknown runs around the player cell.
+    CHECK(writer.bytes.size() < wire::maxPacket);
+    wire::Reader reader{{writer.bytes.data(), writer.bytes.size()}};
+    WorldView decoded;
+    REQUIRE(reader.View(decoded)); REQUIRE(reader.Done());
+    CHECK(decoded.width == 129); CHECK(decoded.height == 129);
+    CHECK(decoded.origin == view.origin); CHECK(decoded.cells == view.cells);
+    for (const auto dimension : {130, 131, INT_MAX}) {
+        auto invalid = view; invalid.width = dimension; invalid.height = dimension;
+        wire::Writer rejected; CHECK_FALSE(rejected.View(invalid));
+    }
+    auto invalid = view;
+    invalid.cells.pop_back();
+    wire::Writer wrongCount; CHECK_FALSE(wrongCount.View(invalid));
+    invalid = view; invalid.player_position.x = INT_MAX; invalid.origin.x = INT_MAX - 64;
+    wire::Writer overflow; CHECK_FALSE(overflow.View(invalid));
+    for (const int offset : {12, 13}) {
+        auto bad = writer.bytes; bad[offset] = 131;
+        wire::Reader rejected{{bad.data(), bad.size()}};
+        CHECK_FALSE(rejected.View(decoded));
+    }
+    auto bad = writer.bytes;
+    bad[85] = 0; bad[86] = 0; // u16 cell count after pacing and command flags
+    wire::Reader badCount{{bad.data(), bad.size()}};
+    CHECK_FALSE(badCount.View(decoded));
+    bad = writer.bytes; bad.resize(wire::maxPacket + 1);
+    wire::Reader oversized{{bad.data(), bad.size()}};
+    CHECK_FALSE(oversized.View(decoded));
+}
+
+TEST_CASE("Run encoded snapshots bound expansion and preserve repeated and varying cells", "[network][codec][view]") {
+    Server server(TestContent());
+    auto view = server.View(0);
+    view.width = 129; view.height = 129; view.origin = {-64, -64};
+    view.cells.assign(129 * 129, ViewCell{});
+    wire::Writer compact; REQUIRE(compact.View(view));
+    CHECK(compact.bytes.size() < 1024);
+    WorldView decoded;
+    wire::Reader reader{{compact.bytes.data(), compact.bytes.size()}};
+    REQUIRE(reader.View(decoded)); REQUIRE(reader.Done());
+    CHECK(decoded.cells == view.cells);
+    CHECK(decoded.opportunity == view.opportunity);
+    for (const std::size_t cut : {std::size_t{0}, std::size_t{86}, std::size_t{87}, std::size_t{88},
+        std::size_t{89}, std::size_t{124}, compact.bytes.size() - 1}) {
+        wire::Reader truncated{{compact.bytes.data(), cut}};
+        CHECK_FALSE(truncated.View(decoded));
+    }
+    for (const std::uint16_t length : {std::uint16_t{0}, std::uint16_t{16642}, std::uint16_t{65535}}) {
+        auto bad = compact.bytes;
+        bad[87] = static_cast<std::uint8_t>(length >> 8); bad[88] = static_cast<std::uint8_t>(length);
+        wire::Reader invalid{{bad.data(), bad.size()}};
+        CHECK_FALSE(invalid.View(decoded));
+        CHECK(decoded.cells.size() <= 129 * 129);
+    }
+    // Worst case: every cell starts a run. This still fits the packet cap and
+    // retains all fields, rather than truncating perception to reduce traffic.
+    for (std::size_t i = 0; i < view.cells.size(); ++i) {
+        auto& cell = view.cells[i];
+        cell.tile = {TestTerrain("floor"), static_cast<std::uint8_t>(i % 256)};
+        cell.terrainVisibility = Visibility::Visible; cell.terrainLight = LightBand::Ordinary;
+        cell.terrainDepth = static_cast<unsigned>(i % 3);
+        cell.overlayVisibility = Visibility::Visible; cell.actor = 77;
+        cell.overlayDepth = static_cast<unsigned>(i % 2); cell.overlayLight = LightBand::Dim;
+    }
+    wire::Writer varied; REQUIRE(varied.View(view));
+    CHECK(varied.bytes.size() > 32768); // Cannot collapse into a small uniform run.
+    CHECK(varied.bytes.size() <= wire::maxPacket);
+    wire::Reader variedReader{{varied.bytes.data(), varied.bytes.size()}};
+    REQUIRE(variedReader.View(decoded)); CHECK(variedReader.Done());
+    CHECK(decoded.cells == view.cells);
+
+    // A repeated visible payload must be checked at every expanded coordinate.
+    view.width = 3; view.height = 3; view.origin = {-1, -1};
+    view.cells.assign(9, view.cells[0]);
+    wire::Writer edge; REQUIRE(edge.View(view));
+    wire::Writer coordinate; coordinate.I32(world_coordinate_limit - 1);
+    for (int i = 0; i < 4; ++i) { edge.bytes[i] = coordinate.bytes[i]; }
+    coordinate.bytes.clear(); coordinate.I32(world_coordinate_limit);
+    for (int i = 0; i < 4; ++i) { edge.bytes[14 + i] = coordinate.bytes[i]; }
+    wire::Reader outside{{edge.bytes.data(), edge.bytes.size()}};
+    CHECK_FALSE(outside.View(decoded));
 }
 
 TEST_CASE("Actual elevated server projections roundtrip independent terrain and overlay depths", "[network][codec][3d]") {
@@ -179,8 +272,9 @@ TEST_CASE("Snapshot codecs reject invalid elevation, source depths and visible b
     const auto baseline = SingleCellView();
     auto invalid = baseline;
     wire::Writer writer; REQUIRE(writer.View(baseline));
-    // Protocol-seven header is unchanged; each cell is now a fixed 36-byte record.
-    constexpr std::size_t originY = 8, playerY = 22, firstCell = 87;
+    // Protocol-nine header ends at byte 87, followed by the u16 run length
+    // and the run's 36-byte cell payload. This fixture contains one cell.
+    constexpr std::size_t originY = 8, playerY = 22, firstCell = 89;
     constexpr std::size_t terrainDepth = firstCell + 31, overlayDepth = firstCell + 32;
     std::size_t offset = 0;
     wire::Writer replacement;
@@ -221,7 +315,7 @@ TEST_CASE("Snapshot codecs reject invalid elevation, source depths and visible b
     WorldView decoded; CHECK_FALSE(reader.View(decoded));
 }
 
-TEST_CASE("Protocol seven roundtrips independent memory and live contributions", "[network][codec][perception]") {
+TEST_CASE("Snapshot runs roundtrip independent memory and live contributions", "[network][codec][perception]") {
     auto view = SingleCellView(2);
     auto& cell = view.cells[0];
     cell.terrainDepth = 3;
@@ -251,7 +345,7 @@ TEST_CASE("Protocol seven roundtrips independent memory and live contributions",
     CHECK(decoded.cells == view.cells); CHECK(decoded.playerLight == LightBand::Dim);
 }
 
-TEST_CASE("Protocol seven rejects hidden information and malformed perception states", "[network][codec][perception]") {
+TEST_CASE("Snapshot runs reject hidden information and malformed perception states", "[network][codec][perception]") {
     auto view = SingleCellView();
     auto& cell = view.cells[0];
     cell.terrainVisibility = Visibility::Remembered;
@@ -259,7 +353,7 @@ TEST_CASE("Protocol seven rejects hidden information and malformed perception st
     cell.objectAppearance = {ObjectKind::Lamp, ObjectFacing::East, true, false};
     wire::Writer writer; REQUIRE(writer.View(view));
     std::size_t field = 0; std::uint8_t value = 0;
-    // Cell offsets are explicit protocol-seven fields, not native structure offsets.
+    // Cell payload offsets exclude the u16 run length and are not native structure offsets.
     SECTION("terrain visibility") { cell.terrainVisibility = static_cast<Visibility>(3); field = 0; value = 3; }
     SECTION("overlay visibility") { cell.overlayVisibility = static_cast<Visibility>(3); field = 33; value = 3; }
     SECTION("terrain band") { cell.terrainLight = static_cast<LightBand>(4); field = 34; value = 4; }
@@ -281,12 +375,12 @@ TEST_CASE("Protocol seven rejects hidden information and malformed perception st
     if (field != 29 && field != 30) {
         wire::Writer invalid; CHECK_FALSE(invalid.View(view));
     }
-    writer.bytes[87 + field] = value;
+    writer.bytes[89 + field] = value;
     wire::Reader reader{{writer.bytes.data(), writer.bytes.size()}};
     WorldView decoded; CHECK_FALSE(reader.View(decoded));
 }
 
-TEST_CASE("Protocol seven validates the appended player light band", "[network][codec][perception]") {
+TEST_CASE("Snapshot runs validate the appended player light band", "[network][codec][perception]") {
     auto view = SingleCellView();
     wire::Writer writer; REQUIRE(writer.View(view));
     writer.bytes.back() = 4;
@@ -315,7 +409,7 @@ TEST_CASE("Hidden cells are default and projection origins may extend past horiz
     wire::Writer deepest; REQUIRE(deepest.View(view));
     wire::Reader deepestReader{{deepest.bytes.data(), deepest.bytes.size()}};
     WorldView decoded; REQUIRE(deepestReader.View(decoded)); CHECK(decoded.cells == view.cells);
-    auto leaked = deepest.bytes; leaked[87] = 0; // Unknown terrain must have a default payload.
+    auto leaked = deepest.bytes; leaked[89] = 0; // Unknown terrain must have a default payload.
     wire::Reader leakedReader{{leaked.data(), leaked.size()}};
     CHECK_FALSE((leakedReader.View(decoded) && leakedReader.Done()));
     view = SingleCellView(world_min_y);
@@ -338,13 +432,16 @@ TEST_CASE("Hidden cells are default and projection origins may extend past horiz
     wire::Writer edge; REQUIRE(edge.View(view));
     view.cells[5] = SingleCellView().cells[0];
     wire::Writer outside; CHECK_FALSE(outside.View(view));
-    // Move a valid center-cell payload to the adjacent, out-of-world column on the wire.
+    // Move the visible run from center cell 4 to out-of-world cell 5 by shifting
+    // one unknown cell from the final run into the first run (4,1,4 -> 5,1,3).
     view.cells[4] = view.cells[5]; view.cells[5] = {};
     wire::Writer centered; REQUIRE(centered.View(view));
-    for (std::size_t i = 0; i < 36; ++i) {
-        centered.bytes[87 + 5 * 36 + i] = centered.bytes[87 + 4 * 36 + i];
-        centered.bytes[87 + 4 * 36 + i] = 0;
-    }
+    constexpr std::size_t firstRun = 87, runRecordSize = 38;
+    REQUIRE(centered.bytes[firstRun + 1] == 4);
+    REQUIRE(centered.bytes[firstRun + runRecordSize + 1] == 1);
+    REQUIRE(centered.bytes[firstRun + 2 * runRecordSize + 1] == 4);
+    centered.bytes[firstRun + 1] = 5;
+    centered.bytes[firstRun + 2 * runRecordSize + 1] = 3;
     wire::Reader malformed{{centered.bytes.data(), centered.bytes.size()}};
     CHECK_FALSE((malformed.View(decoded) && malformed.Done()));
     view = SingleCellView(); view.cells[0] = {};
@@ -383,7 +480,7 @@ TEST_CASE("Terrain fingerprint includes floor support and stair connectivity", "
     CHECK(fingerprint("light:{intensity:120,range:4}") != fingerprint("light:{intensity:120,range:5}"));
 }
 
-TEST_CASE("Loopback rejects protocol-six hello before admission", "[network][loopback][perception]") {
+TEST_CASE("Loopback rejects protocol-eight hello before admission", "[network][loopback][view]") {
     auto runtime = NetworkRuntime::Create(); REQUIRE(runtime);
     Server server(TestContent()); LanHost host(**runtime, server, TestContent()); REQUIRE(host.Open({0, 0, "Protocol"}));
     ENetHost* client = enet_host_create(nullptr, 1, 2, 0, 0); REQUIRE(client);
@@ -396,7 +493,7 @@ TEST_CASE("Loopback rejects protocol-six hello before admission", "[network][loo
         ENetEvent event{};
         while (enet_host_service(client, &event, 0) > 0) {
             if (event.type == ENET_EVENT_TYPE_CONNECT) {
-                wire::Writer hello; hello.U32(0x43584e06); hello.U8(static_cast<std::uint8_t>(wire::Type::Hello));
+                wire::Writer hello; hello.U32(0x43584e08); hello.U8(static_cast<std::uint8_t>(wire::Type::Hello));
                 hello.U64(ContentFingerprint(TestContent())); REQUIRE(hello.Text("Old guest", 32)); hello.U64(0);
                 auto* packet = enet_packet_create(hello.bytes.data(), hello.bytes.size(), ENET_PACKET_FLAG_RELIABLE);
                 REQUIRE(packet); REQUIRE(enet_peer_send(event.peer, 0, packet) == 0); enet_host_flush(client);
@@ -414,6 +511,81 @@ TEST_CASE("Loopback rejects protocol-six hello before admission", "[network][loo
     CHECK(rejected); CHECK(server.GetPlayers().size() == 1);
 }
 
+TEST_CASE("Host close cancels a partially sent large snapshot before disconnect notification", "[network][loopback][view]") {
+    auto runtime = NetworkRuntime::Create(); REQUIRE(runtime);
+    Server server(TestContent());
+    // Alternating visible payloads keep this a genuinely fragmented snapshot
+    // even after run compression; the unknown joining view now fits one run.
+    for (int z = -32; z <= 32; ++z) {
+        for (int x = -32; x <= 32; ++x) {
+            REQUIRE(server.GetWorld().SetTile({x, z}, {TestTerrain("floor"), static_cast<std::uint8_t>(x & 1)}));
+        }
+    }
+    LanHost host(**runtime, server, TestContent()); REQUIRE(host.Open({0, 0, "Closing snapshot"}));
+    ENetHost* client = enet_host_create(nullptr, 1, 2, 0, 0); REQUIRE(client);
+    struct Cleanup { ENetHost* host; ~Cleanup() { enet_host_destroy(host); } } cleanup{client};
+    client->maximumPacketSize = wire::maxPacket;
+    client->maximumWaitingData = 2 * wire::maxPacket;
+    ENetAddress address{}; address.port = host.GetPort();
+    REQUIRE(enet_address_set_host(&address, "127.0.0.1") == 0);
+    REQUIRE(enet_host_connect(client, &address, 2, 0));
+    bool helloSent = false;
+    std::uint64_t nonce = 0;
+    const auto send = [](ENetPeer* peer, wire::Writer& message) {
+        auto* packet = enet_packet_create(message.bytes.data(), message.bytes.size(), ENET_PACKET_FLAG_RELIABLE);
+        REQUIRE(packet); REQUIRE(enet_peer_send(peer, 0, packet) == 0);
+        enet_host_flush(peer->host);
+    };
+    for (int i = 0; i < 500; ++i) {
+        const auto update = host.Pump(0); REQUIRE_FALSE(update.networkError);
+        // Stop before servicing/ACKing the active view queued by Ready handling.
+        if (server.GetPlayers().size() == 2 && server.GetPlayers()[1].state == PlayerConnectionState::Active) { break; }
+        ENetEvent event{};
+        while (enet_host_service(client, &event, 0) > 0) {
+            if (event.type == ENET_EVENT_TYPE_CONNECT) {
+                wire::Writer hello; hello.U32(wire::protocol);
+                hello.U8(static_cast<std::uint8_t>(wire::Type::Hello));
+                hello.U64(ContentFingerprint(TestContent()));
+                REQUIRE(hello.Text("Closing guest", 32)); hello.U64(0);
+                send(event.peer, hello); helloSent = true;
+            } else if (event.type == ENET_EVENT_TYPE_RECEIVE) {
+                wire::Reader reader{{event.packet->data, event.packet->dataLength}};
+                std::uint32_t protocol; std::uint8_t type;
+                REQUIRE(reader.U32(protocol)); REQUIRE(protocol == wire::protocol); REQUIRE(reader.U8(type));
+                if (type == static_cast<std::uint8_t>(wire::Type::Accepted)) {
+                    std::uint64_t player, token;
+                    REQUIRE(reader.U64(player)); REQUIRE(reader.U64(token)); REQUIRE(reader.U64(nonce));
+                } else if (type == static_cast<std::uint8_t>(wire::Type::Snapshot)) {
+                    std::uint64_t receivedNonce; REQUIRE(reader.U64(receivedNonce)); REQUIRE(receivedNonce == nonce);
+                    WorldView view; REQUIRE(reader.View(view)); REQUIRE(reader.Done());
+                    wire::Writer ack; ack.U32(wire::protocol); ack.U8(static_cast<std::uint8_t>(wire::Type::SnapshotAck));
+                    ack.U64(nonce); ack.U64(view.revision); send(event.peer, ack);
+                    wire::Writer ready; ready.U32(wire::protocol); ready.U8(static_cast<std::uint8_t>(wire::Type::Ready));
+                    ready.U64(nonce); ready.U64(view.playerId); send(event.peer, ready);
+                }
+                enet_packet_destroy(event.packet);
+            }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    REQUIRE(helloSent); REQUIRE(server.GetPlayers().size() == 2);
+    REQUIRE(server.GetPlayers()[1].state == PlayerConnectionState::Active);
+    wire::Writer snapshot;
+    REQUIRE(snapshot.View(server.ViewForPlayer(server.GetPlayers()[1].id, 64)));
+    REQUIRE(snapshot.bytes.size() > ENET_PROTOCOL_MAXIMUM_WINDOW_SIZE);
+    host.Close(); REQUIRE_FALSE(host.IsOpen());
+    bool disconnected = false;
+    for (int i = 0; i < 100 && !disconnected; ++i) {
+        ENetEvent event{};
+        while (enet_host_service(client, &event, 0) > 0) {
+            if (event.type == ENET_EVENT_TYPE_DISCONNECT) { disconnected = true; }
+            else if (event.type == ENET_EVENT_TYPE_RECEIVE) { enet_packet_destroy(event.packet); }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(disconnected);
+}
+
 TEST_CASE("Real loopback joins two guests and preserves identity across reconnect", "[network][loopback]") {
     auto runtime = NetworkRuntime::Create(); REQUIRE(runtime);
     Server server(TestContent(), 73);
@@ -424,6 +596,9 @@ TEST_CASE("Real loopback joins two guests and preserves identity across reconnec
     REQUIRE(b.Connect({"127.0.0.1", host.GetPort(), "Bob", 0}));
     REQUIRE(Poll(host, a, b, [&] { return a.HasView() && b.HasView() &&
         a.GetState() == ConnectionState::Active && b.GetState() == ConnectionState::Active; }));
+    CHECK(a.View().width == 129); CHECK(a.View().height == 129);
+    CHECK(b.View().width == 129); CHECK(b.View().height == 129);
+    CHECK(a.View().cells.size() == 129 * 129);
     const auto alice = a.View().playerId;
     const auto bob = b.View().playerId;
     REQUIRE(alice != bob);
@@ -493,6 +668,55 @@ TEST_CASE("Real loopback joins two guests and preserves identity across reconnec
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     CHECK(b.GetState() == ConnectionState::Disconnected);
+}
+
+TEST_CASE("Full radius LAN admission and reconnect deliver successful first inputs at frontend poll cadence", "[network][loopback][view][receipt]") {
+    auto runtime = NetworkRuntime::Create(); REQUIRE(runtime);
+    Server server(TestContent());
+    LanHost host(**runtime, server, TestContent()); REQUIRE(host.Open({0, 0, "Frontend cadence"}));
+    LanClient guest(**runtime, TestContent());
+    std::uint64_t token = 0;
+    PersistentId player = 0;
+    for (int round = 0; round < 2; ++round) {
+        REQUIRE(guest.Connect({"127.0.0.1", host.GetPort(), "Alice", token}));
+        const auto started = std::chrono::steady_clock::now();
+        const auto deadline = started + std::chrono::milliseconds(2500);
+        auto previous = started;
+        std::uint64_t sequence = 0;
+        eastl::optional<Outcome> outcome;
+        while (std::chrono::steady_clock::now() < deadline && !outcome) {
+            const auto now = std::chrono::steady_clock::now();
+            const auto elapsed = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(now - previous).count());
+            previous = now;
+            const auto update = host.Pump(elapsed); REQUIRE_FALSE(update.networkError);
+            guest.Pump(elapsed);
+            if (!sequence && guest.GetState() == ConnectionState::Active) {
+                REQUIRE(guest.View().width == 129); REQUIRE(guest.View().height == 129);
+                if (round == 0) { player = guest.View().playerId; token = guest.GetReconnectToken(); }
+                CHECK(guest.View().playerId == player);
+                const auto sent = guest.Submit({CommandKind::wait}); REQUIRE(sent); sequence = *sent;
+            }
+            for (const auto& receipt : guest.TakeResults()) {
+                REQUIRE(receipt.sequence == sequence);
+                if (receipt.result.outcome != Outcome::queued) { outcome = receipt.result.outcome; }
+            }
+            // Match the frontend's normal service cadence rather than a tight
+            // loop that hides multi-window snapshot admission latency.
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        INFO("round=" << round << " submitted=" << sequence);
+        REQUIRE(outcome); CHECK(*outcome == Outcome::waited);
+        guest.Disconnect();
+        bool parked = false;
+        for (int i = 0; i < 100 && !parked; ++i) {
+            host.Pump(10000);
+            for (const auto& status : server.GetPlayers()) {
+                if (status.id == player) { parked = status.state == PlayerConnectionState::Parked; }
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        REQUIRE(parked);
+    }
 }
 
 TEST_CASE("Reconnected guest input waits for the idle host's full grace", "[network][loopback][receipt]") {

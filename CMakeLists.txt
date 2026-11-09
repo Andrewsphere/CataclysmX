@@ -91,6 +91,7 @@ add_library(cataclysmx_engine STATIC
     src/core/integration.cpp src/core/world.cpp src/core/simulation.cpp src/core/server.cpp
     src/core/light_types.h src/core/perception_types.h
     src/core/lighting.cpp src/core/lighting.h src/core/perception.cpp src/core/perception.h
+    src/core/planar_visibility.cpp src/core/planar_visibility.h
     src/core/pacing.cpp src/core/pacing.h src/core/timing.h
     src/core/save_database.cpp src/core/save_database.h src/core/save_result.h src/core/world_archive.h
     src/worldgen/worldgen.cpp src/worldgen/worldgen.h

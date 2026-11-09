@@ -256,8 +256,22 @@ TEST_CASE("Item snapshot rejects broken trees, ordering and packet budget", "[ne
     SECTION("too many entries") { invalid.groundItems.resize(2049); }
     SECTION("packet budget before entry bound") {
         invalid.inventory.clear(); invalid.groundItems.clear();
-        auto entry = baseline.inventory[0]; entry.parent = 0; entry.contained_items = 0;
-        for (unsigned i = 1; i <= 700; ++i) { entry.id = i; invalid.inventory.push_back(entry); }
+        // A full-radius uniform map compresses to one run; the byte-budget
+        // refusal must come from bounded metadata, not an assumed raw map size.
+        invalid.width = 129; invalid.height = 129; invalid.origin = {-64, -64};
+        invalid.cells.assign(129 * 129, ViewCell{});
+        // The radius-64 protocol allows 1 MiB, so the old 700 small bags fit.
+        // Keep every individual entry valid and stay below the entry-count cap,
+        // but include enough bounded action text to exceed the total byte cap.
+        auto entry = baseline.inventory[1]; entry.parent = 0; entry.contained_items = 0;
+        for (auto& action : entry.actions) { action.label.fallback.assign(maxItemText, 'a'); }
+        for (unsigned i = 1; i <= 2000; ++i) { entry.id = i; invalid.inventory.push_back(entry); }
+        REQUIRE(invalid.inventory.size() < wire::maxItemEntries);
+        auto single = baseline; single.inventory = {entry}; single.groundItems.clear();
+        wire::Writer validEntry; REQUIRE(validEntry.View(single));
+        wire::Writer budget;
+        CHECK_FALSE(budget.View(invalid));
+        CHECK(budget.bytes.size() > wire::maxPacket);
     }
     SECTION("excessive parent depth") {
         invalid.inventory.clear(); invalid.groundItems.clear();
@@ -285,7 +299,8 @@ TEST_CASE("Item decoder rejects malformed bounded fields before catalog lookup",
     REQUIRE(cursor.U32(number)); REQUIRE(cursor.U32(number));
     for (int i = 0; i < 3; ++i) REQUIRE(cursor.U8(byte));
     REQUIRE(cursor.U16(shortValue));
-    // Protocol seven uses a fixed 36-byte cell, including default unknown channels.
+    // This single-cell snapshot has one u16 run length before its 36-byte payload.
+    REQUIRE(cursor.U16(shortValue)); REQUIRE(shortValue == 1);
     for (int i = 0; i < 36; ++i) REQUIRE(cursor.U8(byte));
     const auto countOffset = cursor.offset;
     REQUIRE(cursor.U16(shortValue));

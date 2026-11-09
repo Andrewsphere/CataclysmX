@@ -230,6 +230,7 @@ int main(int argc, char** argv) {
         if (debugOpen) { return debugMenu->Render(); }
         const auto state = guest.GetState();
         GameplayPresentation presentation;
+        presentation.viewRadius = settings.Effective().viewRadius;
         const char* sessionKey = state == cataclysmx::network::ConnectionState::Active ? "game.ui.guest"
             : state == cataclysmx::network::ConnectionState::Connecting || state == cataclysmx::network::ConnectionState::Joining
                 ? "game.ui.joining" : host.IsOpen() ? "game.ui.host" : "game.ui.local";

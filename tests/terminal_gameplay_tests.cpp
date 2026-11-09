@@ -1,5 +1,7 @@
 #include "terminal/gameplay_screen.h"
 #include "terminal/keyboard.h"
+#include "terminal/render.h"
+#include "client/text.h"
 #include "network/network.h"
 #include "content_fixture.h"
 
@@ -178,7 +180,7 @@ TEST_CASE("Gameplay reuses prepared map across status redraws and refreshes chan
     CHECK(Find(status, "Updated status"));
     CHECK(Find(status, "@"));
     CHECK(f.ui.MapPreparations() == 1);
-    // The crop anchor is recomputed independently of the cached terrain tree.
+    // The crop anchor is recomputed independently of cached visible appearances.
     f.view.player_position.x += 1;
     f.Draw(120, 24);
     CHECK(f.ui.MapPreparations() == 1);
@@ -197,6 +199,170 @@ TEST_CASE("Gameplay reuses prepared map across status redraws and refreshes chan
     f.view = f.server.View(0);
     f.Draw(120, 40);
     CHECK(f.ui.MapPreparations() == 4);
+}
+
+TEST_CASE("Large map rasterizes only visible panel and preserves appearance across resize and preferences", "[terminal][gameplay][render]") {
+    Fixture f;
+    const auto center = f.server.View(0).cells[0];
+    f.view.width = 129; f.view.height = 129;
+    f.view.origin = {-64, -64, f.view.player_position.y};
+    ViewCell floor;
+    floor.terrainVisibility = Visibility::Visible;
+    floor.tile.terrain = TestTerrain("floor");
+    floor.terrainLight = LightBand::Ordinary;
+    f.view.cells.assign(129 * 129, floor);
+    const std::size_t centerIndex = 64 * 129 + 64;
+    f.view.cells[centerIndex] = center;
+    auto& neighbor = f.view.cells[centerIndex + 1];
+    neighbor.actor = 77; neighbor.overlayVisibility = Visibility::Visible;
+    neighbor.overlayLight = LightBand::Dim;
+    auto expected = ftxui::Screen::Create(ftxui::Dimension::Fixed(1), ftxui::Dimension::Fixed(1));
+    ftxui::Render(expected, RenderTerrainCell(CellAppearance(neighbor, TestContent())));
+    for (const int width : {80, 120, 40, 120, 80}) {
+        const int height = width == 120 ? 40 : 24;
+        const auto screen = f.Draw(width, height);
+        const auto player = Find(screen, "@"); REQUIRE(player);
+        REQUIRE(player->x + 1 < screen.dimx());
+        const auto& actual = screen.PixelAt(player->x + 1, player->y);
+        CHECK(actual.character == expected.PixelAt(0, 0).character);
+        CHECK(actual.foreground_color == expected.PixelAt(0, 0).foreground_color);
+        CHECK(actual.background_color == expected.PixelAt(0, 0).background_color);
+        CHECK(screen.PixelAt(player->x, player->y).foreground_color == ftxui::Color::RGB(255, 255, 255));
+        CHECK(Find(screen, "Map cropped"));
+        CHECK(f.ui.MapRasterizedCells() > 1);
+        CHECK(f.ui.MapRasterizedCells() < static_cast<std::size_t>(width * height));
+        CHECK(f.ui.MapPreparations() == 1);
+        CHECK(Find(screen, "Latest outcome."));
+    }
+    const auto large = f.ui.MapRasterizedCells();
+    f.Draw(40, 16);
+    CHECK(f.ui.MapRasterizedCells() < large);
+    f.presentation.viewRadius = 0;
+    auto screen = f.Draw(80, 24);
+    CHECK(Find(screen, "@")); CHECK_FALSE(Find(screen, "z"));
+    CHECK_FALSE(Find(screen, "Map cropped"));
+    CHECK(f.ui.MapRasterizedCells() == 1);
+    CHECK(f.ui.MapPreparations() == 1);
+    f.presentation.viewRadius = 1;
+    screen = f.Draw(80, 24);
+    CHECK(Find(screen, "z"));
+    CHECK(f.ui.MapRasterizedCells() == 9);
+    CHECK(f.view.width == 129); CHECK(f.view.cells.size() == 129 * 129);
+
+    // A parent clip must bound direct rasterization as well as DOM children.
+    f.presentation.viewRadius = 64;
+    auto root = f.ui.Render(f.view, TestContent(), f.localization, f.keys, f.presentation);
+    auto full = ftxui::Screen::Create(ftxui::Dimension::Fixed(120), ftxui::Dimension::Fixed(40));
+    ftxui::Render(full, root);
+    const auto player = Find(full, "@"); REQUIRE(player);
+    auto clipped = ftxui::Screen::Create(ftxui::Dimension::Fixed(120), ftxui::Dimension::Fixed(40));
+    for (int y = 0; y < clipped.dimy(); ++y) {
+        for (int x = 0; x < clipped.dimx(); ++x) { clipped.PixelAt(x, y).character = "!"; }
+    }
+    const ftxui::Box clip{player->x - 2, player->x + 2, player->y - 2, player->y + 2};
+    clipped.stencil = clip;
+    root->Render(clipped);
+    CHECK(f.ui.MapRasterizedCells() == 25);
+    CHECK(f.ui.MapResolvedCells() <= 25);
+    CHECK(clipped.stencil == clip);
+    // PixelAt outside the current stencil returns FTXUI's shared discard pixel,
+    // not screen storage. Restore full access before inspecting painted pixels.
+    clipped.stencil = {0, clipped.dimx() - 1, 0, clipped.dimy() - 1};
+    // Check the clipped map and a one-cell map-only guard ring, without making
+    // assumptions about unrelated border/text nodes elsewhere in the UI.
+    for (int y = player->y - 3; y <= player->y + 3; ++y) {
+        for (int x = player->x - 3; x <= player->x + 3; ++x) {
+            if (clip.Contain(x, y)) {
+                CHECK(clipped.PixelAt(x, y).character == full.PixelAt(x, y).character);
+                CHECK(clipped.PixelAt(x, y).foreground_color == full.PixelAt(x, y).foreground_color);
+                CHECK(clipped.PixelAt(x, y).background_color == full.PixelAt(x, y).background_color);
+            } else { CHECK(clipped.PixelAt(x, y).character == "!"); }
+        }
+    }
+}
+
+TEST_CASE("Changed large snapshots resolve only clipped cells and unchanged redraws reuse them", "[terminal][gameplay][render]") {
+    Fixture f;
+    ViewCell floor;
+    floor.tile.terrain = TestTerrain("floor");
+    floor.terrainVisibility = Visibility::Visible;
+    floor.terrainLight = LightBand::Ordinary;
+    f.view.width = 129; f.view.height = 129; f.view.origin = {-64, -64};
+    f.view.cells.assign(129 * 129, floor);
+    f.Draw(80, 24);
+    const auto visible = f.ui.MapRasterizedCells();
+    REQUIRE(visible > 0); REQUIRE(visible < 80 * 24);
+    CHECK(f.ui.MapResolvedCells() == visible);
+    CHECK(f.ui.MapPreparations() == 1);
+    // All 16,641 inputs change, but neither comparison nor shading scans the map.
+    for (auto& cell : f.view.cells) { cell.terrainLight = LightBand::Dim; }
+    f.Draw(80, 24);
+    CHECK(f.ui.MapResolvedCells() == visible);
+    CHECK(f.ui.MapPreparations() == 2);
+    f.view.tick += 1; f.presentation.message = "Only status changed";
+    f.Draw(80, 24);
+    CHECK(f.ui.MapResolvedCells() == 0);
+    CHECK(f.ui.MapPreparations() == 2);
+    // An offscreen change is not prepared until a layout actually exposes it.
+    f.view.cells[0].terrainLight = LightBand::Bright;
+    f.Draw(80, 24);
+    CHECK(f.ui.MapResolvedCells() == 0);
+    CHECK(f.ui.MapPreparations() == 2);
+    f.Draw(120, 40);
+    CHECK(f.ui.MapResolvedCells() > 0);
+    CHECK(f.ui.MapResolvedCells() <= f.ui.MapRasterizedCells());
+    f.view.player_position = f.view.origin;
+    const auto corner = f.Draw(80, 24);
+    CHECK(f.ui.MapResolvedCells() > 0);
+    CHECK(f.ui.MapResolvedCells() <= f.ui.MapRasterizedCells());
+    const auto dot = Find(corner, "."); REQUIRE(dot);
+    const auto expected = CellAppearance(f.view.cells[0], TestContent());
+    CHECK(corner.PixelAt(dot->x, dot->y).foreground_color == ftxui::Color::RGB(
+        expected.foreground.red, expected.foreground.green, expected.foreground.blue));
+}
+
+TEST_CASE("Map nodes own temporary snapshot cells until deferred rasterization", "[terminal][gameplay][render]") {
+    Fixture f;
+    auto root = f.ui.Render(f.server.View(0), TestContent(), f.localization, f.keys, f.presentation);
+    // Allocate/overwrite other snapshots before drawing the returned tree.
+    f.view.cells.assign(129 * 129, ViewCell{});
+    auto screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(80), ftxui::Dimension::Fixed(24));
+    ftxui::Render(screen, root);
+    REQUIRE(Find(screen, "@"));
+    CHECK(f.ui.MapRasterizedCells() == 1);
+    CHECK(f.ui.MapResolvedCells() == 1);
+}
+
+TEST_CASE("Clipped appearance resolution preserves Unicode single-column fallback and colors", "[terminal][gameplay][render]") {
+    struct Glyph { const char* symbol; const char* expected; };
+    const Glyph glyphs[] = {{"#", "#"}, {"\xe2\x94\x82", "\xe2\x94\x82"},
+        {"\xe7\x95\x8c", "?"}, {"\xcc\x81", "?"}, {"\xf0\x9f\x98\x80", "?"}};
+    for (const auto& glyph : glyphs) {
+        Fixture f;
+        String text = "{format_version:1,definitions:[{type:'terrain',id:'glyph',name:'Glyph',movement:{passable:true},blocks_sight:false,appearance:{symbol:'";
+        text += glyph.symbol; text += "',foreground:'#123456',background:'#789abc'}}]}";
+        const ContentSource source{"glyph.json5", {text.data(), text.size()}};
+        auto content = LoadContent({&source, 1}); REQUIRE(content);
+        f.view = f.server.View(0);
+        ViewCell cell; cell.terrainVisibility = Visibility::Visible;
+        cell.terrainLight = LightBand::Ordinary; cell.tile.terrain = content->FindTerrain("glyph");
+        f.view.cells = {cell};
+        auto screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(80), ftxui::Dimension::Fixed(24));
+        ftxui::Render(screen, f.ui.Render(std::move(f.view), *content, f.localization, f.keys, f.presentation));
+        CHECK(f.ui.MapResolvedCells() == 1);
+        // The foreground color identifies the map cell even for a border glyph.
+        std::size_t matches = 0;
+        for (int y = 0; y < screen.dimy(); ++y) {
+            for (int x = 0; x < screen.dimx(); ++x) {
+                const auto& pixel = screen.PixelAt(x, y);
+                if (pixel.foreground_color != ftxui::Color::RGB(18, 52, 86)) { continue; }
+                ++matches;
+                CHECK(pixel.character == glyph.expected);
+                CHECK(pixel.background_color == ftxui::Color::RGB(120, 154, 188));
+            }
+        }
+        CHECK(matches == 1);
+    }
 }
 
 TEST_CASE("Status groups readiness location and pacing with aligned values and complete large numbers", "[terminal][gameplay][layout]") {

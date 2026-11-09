@@ -1,10 +1,11 @@
 # Perception benchmark matrix
 
-`cataclysmx_perception_benchmark [samples] [sight] [resident] [scene]`
+`cataclysmx_perception_benchmark [samples] [sight] [resident] [scene] [viewport]`
 accepts 2–10000 samples (default 100), sight `12` or `64` (default 12),
 resident chunk radius `2` or `5` (default 2), and `flat` or `mixed` (default
-`flat`). Arguments are positional. Active radius remains 1. Sight is set on the
-actual world vision profile; the server view remains radius 12 (25×25). Sight
+`flat`), and viewport radius `12` or `64` (default 64). Arguments are positional.
+Active radius remains 1. Sight is set on the actual world vision profile; the
+viewport controls both server snapshots and terminal presentation (25×25 or 129×129). Sight
 64 with resident 2 intentionally measures residency-clipped perception.
 
 Build the benchmark target with both
@@ -27,8 +28,8 @@ foreach ($config in @('win-msvc-debug', 'win-msvc-release')) {
 ```
 
 Run sequentially without concurrent builds or benchmarks; record machine,
-toolchain, revision and uncommitted changes with output. Radius 64 point LOS
-sweeps and flat-scene setup can be expensive, especially in Debug.
+toolchain, revision and uncommitted changes with output. Flat-scene setup and
+radius-64 planar queries can be expensive, especially in Debug.
 
 ## Method
 
@@ -50,7 +51,7 @@ frames. No timing threshold is asserted.
   demand shift but loads prepared archived chunks, not freshly generated chunks.
   `crossing_cached_alternating` warms both directions first.
 - Mixed setup retains the original baseline patch: floor x=-12..28, z=-12..12,
-  air at y=1..2, generated terrain elsewhere. Use `100 12 2 mixed` for the
+  air at y=1..2, generated terrain elsewhere. Use `100 12 2 mixed 12` for the
   closest comparison with the historical scene. The constructor initially uses
   its production resident radius before the requested radius is applied: if it
   already materialized incoming columns, the first crossing reloads archived
@@ -58,11 +59,15 @@ frames. No timing threshold is asserted.
   counters, and timing boundaries can differ from the historical run, so compare
   individual rows with those caveats. The historical document remains the source
   of BEFORE data.
-- `geometry_bulk_visibility_mask` calls the actual `BuildVisibilityMask` at the
-  origin for each sample, rebuilding standalone optics and reusing its output buffer. This deliberately includes cold optical preparation; ordinary movement reuses World's optics. Its explicit stats are
-  combined with any world LOS counters. `geometry_point_los_sphere` separately
-  sweeps point queries over the spherical sight range, clamped to world Y bounds.
-  These are geometry-only paths, not isolated lighting-filter timings.
+- `geometry_bulk_standalone` calls `BuildVisibilityMask` at the origin with
+  standalone optics and a reused output buffer. `geometry_bulk_warm_optics_workspace`
+  uses an explicitly prepared `OpticalField` and warmed `VisibilityWorkspace` in
+  the same unchanged scene. Explicit stats are combined with world counters.
+  `geometry_point_planar_8` calls `LineVisible` at four cardinal and four diagonal
+  targets on the observer plane, each coordinate offset by half the sight radius.
+  Each point query builds a planar FOV; this bounded row is **not comparable** to
+  the historical sphere sweep below. These are geometry-only paths, not isolated
+  lighting-filter timings.
 - `lighting_unchanged_refresh` refreshes a separate warmed field;
   `lighting_fresh_rebuild` constructs a new field for each sample. Neither uses
   the world's cache, so these explicit calls do not increment its lighting counter.
@@ -88,14 +93,87 @@ traversed voxels, changed memory tiles, observation scans, lighting rebuilds and
 demand reconciliations; Server `ViewStats` requests, full view constructions and
 map constructions; and the change in terminal `GameplayUi::MapPreparations()`.
 Additional columns count optical/working-volume rebuilds, lighting filter
-rebuilds and sampled tiles, and memory tiles actually examined.
+rebuilds and sampled tiles, memory tiles actually examined, and `projectedCells`
+(downward projection residency probes).
 They count instrumented engine work, not inferred call counts. In particular,
 explicit standalone lighting rebuilds are counted by their row's sample count.
 Scenario counters exclude setup and resets do not invalidate caches. Sink, tick,
 and final invariants help check repeatability; no keyboard queue, terminal output,
 network, or allocation profiling is measured.
 
-## Integrated results — 2026-11-09
+## Planar implementation results — 2026-11-10
+
+Measured the integrated, uncommitted implementation with the normal
+`win-msvc-debug` preset (MSVC 14.51, exceptions disabled), after builds/tests
+finished. Runs were sequential, seed 42, resident radius 5 (2,541 chunks), sight
+64, **129×129 snapshots**, and a 120×40 terminal. Each ordinary row has 30 samples
+and eight warmup frames; p95 uses nearest rank, and p99 is the maximum at this
+sample count. These are full synchronous preparation timings, not keyboard/OS
+queue or terminal-emulator latency.
+
+```powershell
+./out/build/win-msvc-debug/cataclysmx_perception_benchmark.exe 30 64 5 flat 64
+./out/build/win-msvc-debug/cataclysmx_perception_benchmark.exe 30 64 5 mixed 64
+```
+
+| Operation | Flat median / p95 ms | Mixed median / p95 ms |
+| --- | ---: | ---: |
+| Standalone bulk geometry including optical snapshot | 4.516 / 4.785 | 4.625 / 4.965 |
+| Bulk geometry with warm optics/workspace | 0.735 / 0.758 | 0.525 / 0.555 |
+| Unchanged lighting refresh | 0.469 / 0.511 | 0.471 / 0.496 |
+| Fresh full lighting rebuild | 44.454 / 45.333 | 28.820 / 29.702 |
+| Unchanged observation | 0.002 / 0.003 | 0.002 / 0.003 |
+| Idle update + view + terminal | 3.201 / 3.717 | 3.118 / 3.644 |
+| Loaded movement, server only | 1.249 / 1.301 | 1.463 / 1.620 |
+| Loaded movement + view | 3.253 / 3.313 | 3.876 / 4.156 |
+| Loaded movement + view + terminal | **6.423 / 7.033** | **7.169 / 7.923** |
+| Facade walking + view + terminal | **6.901 / 7.457** | **7.053 / 7.531** |
+| Door toggle + view + terminal | **9.527 / 9.967** | **8.470 / 9.010** |
+| Moving source, loaded + view + terminal | **7.572 / 7.924** | **8.084 / 8.735** |
+| Eight-command batch + eight frames | 52.329 / 54.496 | 57.577 / 60.655 |
+| Cached chunk crossing + view + terminal | 195.674 / 204.244 | 180.589 / 187.560 |
+| Multilayer chunk crossing + view + terminal | 199.399 / 205.743 | 185.589 / 190.726 |
+
+Flat and mixed runs reported `invariants=ok`, tick `55400`, and sinks
+`28380048` / `31035230` respectively. Flat loaded movement visits 16,897 planar
+scan cells per FOV build, performs **zero downward probes**, and examines 129
+new-footprint memory cells per move. It performs no optical snapshots, workspace
+refreshes, lighting rebuilds, or per-tile light filtering after warmup. The mixed
+fixture retains generated walls and does filter visible targets, without returning
+to per-target 3D rays.
+
+The default-64 renderer resolves appearances and rasterizes only panel-visible
+cells. Server projection borrows one prepared visibility mask and reuses
+chunk-contiguous lighting and empty-overlay summaries across horizontal runs.
+These changes prevent the enlarged viewport from moving the bottleneck into
+snapshot construction or offscreen FTXUI elements.
+
+**Remaining limitation:** chunk-boundary streaming still synchronously reconciles,
+archives/restores/settles chunks and rebuilds resident lighting. First genuinely
+ungenerated crossings were 176.575 / 177.341 ms (one event per run, no tail claim).
+The loaded movement/building/light cases meet the 16 ms Debug preparation goal in
+these measurements; streaming does not. Historical numbers below use a smaller
+viewport and different visibility semantics, so they are not identical-workload
+speedup ratios.
+
+### Final validation
+
+- Debug production targets built, followed by `ctest --preset win-msvc-debug -j 4`:
+  **492/492 passed**, including frontend, replay, save/load, LAN admission and
+  restart/reconnect. During integration the raw enlarged LAN snapshots delayed
+  admission; protocol 9's lossless cell runs fixed that without changing pacing
+  or increasing smoke-test time budgets.
+- Release production targets built. The focused Catch filter
+  `[bulk],[lighting],[memory],[perception],[settings],[terminal],[network],[view]`
+  passed **192 cases / 3,675,901 assertions**. Full Release CTest was not run.
+- Both explicit Debug benchmark commands above completed successfully.
+
+## Historical integrated results — 2026-11-09
+
+The following records the implementation and benchmark as they existed on that
+date, including a 25×25 viewport and a 3D point-ray sphere sweep. It does not
+measure the current planar FOV, downward projection, lighting, or protocol, and
+its point-query row is not comparable to the current bounded eight-query row.
 
 Same machine/toolchain as the [baseline](perception_benchmark_baseline.md): AMD
 Ryzen 9 9950X3D, Windows 11 Pro, VS 2026 Community 18.11.2, MSVC toolset
@@ -246,6 +324,6 @@ Regional sky/geometry streaming work is the main remaining performance follow-up
 
 The bounded timer gate prevents accumulating timer-only wakeups; command input is
 not discarded or merged beyond existing queued-intent semantics. This tool does
-not measure OS key delivery, live event-queue residence, terminal writes/emulator
-painting, or allocation call stacks. No larger viewport or new packet format was
-introduced. Save and wire versions remain **7**.
+did not measure OS key delivery, live event-queue residence, terminal writes/emulator
+painting, or allocation call stacks. At the time no larger viewport or new packet
+format was introduced; save and wire versions were **7**.

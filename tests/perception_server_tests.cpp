@@ -142,7 +142,7 @@ TEST_CASE("Timed world effects teach observations inside a still-busy action",
     CHECK(world.GetRememberedTile(server.GetHostPlayerId(), {2, 0}).object.kind == ObjectKind::Table);
 }
 
-TEST_CASE("Projected live actors can stand over independently remembered lower terrain",
+TEST_CASE("A visible open column reveals lower terrain past a neighboring platform",
     "[server][perception][3d]") {
     Server server(TestContent());
     World& world = server.GetWorld();
@@ -160,12 +160,156 @@ TEST_CASE("Projected live actors can stand over independently remembered lower t
     REQUIRE(world.SetTile({2, 0, 0}, {TestTerrain("grass"), 73}));
     const auto projected = server.View();
     const auto& cell = Cell(projected, 2, 0);
-    CHECK(cell.terrainVisibility == Visibility::Remembered);
-    CHECK(cell.tile == Tile{TestTerrain("floor"), 0});
+    CHECK(cell.terrainVisibility == Visibility::Visible);
+    CHECK(cell.tile == Tile{TestTerrain("grass"), 73});
     CHECK(cell.terrainDepth == 1);
     CHECK(cell.overlayVisibility == Visibility::Visible);
     CHECK(cell.actor == world.GetActor(*upper)->id);
     CHECK(cell.overlayDepth == 0);
+    CHECK(world.GetRememberedTile(server.GetHostPlayerId(), {2, 0, 0}).terrain == TestTerrain("floor"));
+}
+
+TEST_CASE("Balcony columns reveal lit grass and actors through dark air until a roof",
+    "[server][perception][columns][memory]") {
+    Server server(TestContent());
+    World& world = server.GetWorld();
+    for (int y = 1; y <= 3; ++y) {
+        for (int x = 0; x <= 2; ++x) {
+            REQUIRE(world.SetTile({x, 0, y}, {TestTerrain("air"), 0}));
+        }
+    }
+    REQUIRE(world.SetTile({0, 0, 3}, {TestTerrain("floor"), 0}));
+    REQUIRE(world.SetTile({1, 0, 3}, {TestTerrain("floor"), 0}));
+    REQUIRE(world.SetTile({2, 0, 0}, {TestTerrain("grass"), 0}));
+    REQUIRE(world.MoveActor(server.GetPlayer(), {0, 0, 3}));
+    const auto zombie = world.CreateActor({2, 0, 0});
+    REQUIRE(zombie);
+    REQUIRE(world.SetActorLight(*zombie, {64, 1}));
+    world.SetSkyLight(0);
+    REQUIRE(world.GetLightLevel({2, 0, 3}) == 0);
+    const auto before = world.GetPlayerMemories();
+    const auto view = server.View(64);
+    REQUIRE(view.width == 129);
+    const auto& cell = Cell(view, 2, 0);
+    CHECK(cell.terrainVisibility == Visibility::Visible);
+    CHECK(cell.tile.terrain == TestTerrain("grass"));
+    CHECK(cell.terrainDepth == 3);
+    CHECK(cell.overlayVisibility == Visibility::Visible);
+    CHECK(cell.actor == world.GetActor(*zombie)->id);
+    CHECK(cell.overlayDepth == 3);
+    CHECK(world.GetPlayerMemories() == before);
+    world.UpdatePlayerObservations();
+    CHECK(world.GetRememberedTile(server.GetHostPlayerId(), {2, 0, 0}).terrain == TestTerrain("grass"));
+    REQUIRE(world.SetTile({2, 0, 2}, {TestTerrain("floor"), 0}));
+    CHECK_FALSE(world.CanPlayerSee(server.GetPlayer(), {2, 0, 0}));
+    CHECK(Cell(server.View(64), 2, 0).actor == 0);
+}
+
+TEST_CASE("Distant optical edits and lights leave unrelated observer caches warm",
+    "[perception][cache][lighting]") {
+    World world(TestContent());
+    for (int chunkX : {0, 4}) {
+        REQUIRE(world.RequestChunks({{chunkX, 0}, 0}, LoadMode::active));
+    }
+    REQUIRE(world.ReconcileChunks());
+    VisionProfile vision;
+    vision.range = 6;
+    REQUIRE(world.SetVisionProfile(vision));
+    for (int chunkX : {0, 4}) {
+        for (int z = 0; z < chunk_size; ++z) {
+            for (int x = chunkX * chunk_size; x < (chunkX + 1) * chunk_size; ++x) {
+                for (int y = 0; y <= world_max_y; ++y) {
+                    REQUIRE(world.SetTile({x, z, y}, {TestTerrain(y == 0 ? "floor" : "air"), 0}));
+                }
+            }
+        }
+    }
+    const auto first = world.CreateActor({4, 4, 0}, true);
+    const auto second = world.CreateActor({68, 4, 0}, true);
+    REQUIRE(first);
+    REQUIRE(second);
+    REQUIRE(world.CanPlayerSee(*first, {6, 4, 0}));
+    REQUIRE(world.CanPlayerSee(*second, {70, 4, 0}));
+    world.ResetPerceptionStats();
+    REQUIRE(world.SetTile({69, 4, 0}, {TestTerrain("wall"), 0}));
+    CHECK(world.CanPlayerSee(*first, {6, 4, 0}));
+    CHECK(world.GetPerceptionStats().geometryRebuilds == 0);
+    CHECK(world.GetPerceptionStats().filterRebuilds == 0);
+    CHECK_FALSE(world.CanPlayerSee(*second, {70, 4, 0}));
+    CHECK(world.GetPerceptionStats().geometryRebuilds == 1);
+    CHECK(world.GetPerceptionStats().filterRebuilds == 1);
+    const auto lamp = world.CreateObject({70, 5, 0}, true);
+    REQUIRE(lamp);
+    REQUIRE(world.SetObjectLight(*lamp, {192, 2}));
+    world.ResetPerceptionStats();
+    CHECK(world.CanPlayerSee(*first, {6, 4, 0}));
+    CHECK(world.GetPerceptionStats().geometryRebuilds == 0);
+    CHECK(world.GetPerceptionStats().filterRebuilds == 0);
+    CHECK(world.CanPlayerSee(*second, {68, 4, 0}));
+    CHECK(world.GetPerceptionStats().geometryRebuilds == 0);
+    CHECK(world.GetPerceptionStats().filterRebuilds == 1);
+}
+
+TEST_CASE("Upper-plane lamp spill invalidates cached receiving visibility without revealing upward",
+    "[server][perception][cache][lighting][memory]") {
+    Server server(TestContent());
+    World& world = server.GetWorld();
+    const auto observer = server.GetPlayer();
+    const auto observerId = server.GetHostPlayerId();
+    const TileCoord target{8, 0, 0};
+    const TileCoord source{8, 0, 1};
+    for (int x = 0; x <= 8; ++x) {
+        REQUIRE(world.SetTile({x, 0, 0}, {TestTerrain("floor"), 0}));
+        REQUIRE(world.SetTile({x, 0, 1}, {TestTerrain("floor"), 0}));
+    }
+    REQUIRE(world.SetTile(target, {TestTerrain("stairs"), 0}));
+    REQUIRE(world.SetTile(source, {TestTerrain("stairs"), 0}));
+    const auto lamp = world.CreateObject(source, true);
+    REQUIRE(lamp);
+    REQUIRE(world.SetObjectLight(*lamp, {255, 1}));
+    world.SetSkyLight(0);
+    VisionProfile vision;
+    vision.range = 12;
+    vision.dimRange = 12;
+    REQUIRE(world.SetVisionProfile(vision));
+    REQUIRE(world.GetLightLevel(target) == 63); // One vertical spill hop, not direct light.
+    REQUIRE(world.GetLightLevel({0, 0, 0}) == 0);
+    REQUIRE(world.CanPlayerSee(observer, target));
+    REQUIRE_FALSE(world.CanPlayerSee(observer, source));
+    world.UpdatePlayerObservations();
+    REQUIRE(world.GetRememberedTile(observerId, target).terrain == TestTerrain("stairs"));
+    const auto memories = world.GetPlayerMemories();
+    REQUIRE(Cell(server.View(12), target.x, target.z).terrainVisibility == Visibility::Visible);
+    const auto receivingInput = world.GetLightingInputRevision(ChunkOf(target));
+    auto sourceInput = world.GetLightingInputRevision(ChunkOf(source));
+
+    for (const bool enabled : {false, true}) {
+        CAPTURE(enabled);
+        world.ResetPerceptionStats();
+        REQUIRE(world.SetObjectEnabled(*lamp, enabled));
+        CHECK(world.GetLightingInputRevision(ChunkOf(target)) == receivingInput);
+        const auto nextSourceInput = world.GetLightingInputRevision(ChunkOf(source));
+        CHECK(nextSourceInput > sourceInput);
+        // Resolve the pending light separately: observer invalidation must survive
+        // until a later perception/view query, despite unchanged receiving inputs.
+        REQUIRE(world.GetLightLevel(target) == (enabled ? 63 : 0));
+        CHECK(world.GetPerceptionStats().filterRebuilds == 0);
+        CHECK(world.CanPlayerSee(observer, target) == enabled);
+        CHECK_FALSE(world.CanPlayerSee(observer, source));
+        const auto view = server.View(12);
+        const auto& cell = Cell(view, target.x, target.z);
+        CHECK(cell.terrainVisibility == (enabled ? Visibility::Visible : Visibility::Remembered));
+        CHECK(cell.tile.terrain == TestTerrain("stairs"));
+        CHECK(cell.terrainDepth == 0);
+        CHECK(cell.terrainLight == (enabled ? LightBand::Dim : LightBand::Dark));
+        CHECK(cell.object == 0); // The lamp's own plane is never projected upward.
+        CHECK(world.GetPerceptionStats().geometryRebuilds == 0);
+        CHECK(world.GetPerceptionStats().filterRebuilds == 1);
+        CHECK(world.GetPerceptionStats().lightingRebuilds == 1);
+        CHECK(world.GetPerceptionStats().observationScans == 0);
+        CHECK(world.GetPlayerMemories() == memories);
+        sourceInput = nextSourceInput;
+    }
 }
 
 TEST_CASE("Hidden geometry changes cannot alter the depth of remembered projection",

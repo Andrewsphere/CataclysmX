@@ -72,6 +72,7 @@ struct PerceptionStats {
     std::uint64_t lightingRebuilds = 0;
     std::uint64_t pointLosCalls = 0;
     std::uint64_t traversedVoxels = 0;
+    std::uint64_t projectedCells = 0;
     std::uint64_t observationScans = 0;
     std::uint64_t memoryTilesChanged = 0;
     std::uint64_t demandReconciliations = 0;

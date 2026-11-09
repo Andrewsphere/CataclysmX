@@ -2,17 +2,43 @@
 
 #include "client/text.h"
 #include "terminal/keyboard.h"
-#include "terminal/render.h"
 
 #include <ftxui/dom/node.hpp>
+#include <ftxui/screen/string.hpp>
 
 #include <algorithm>
 #include <initializer_list>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace cataclysmx {
+
+struct TerminalMapCache {
+    struct Cell {
+        ViewCell source;
+        std::string glyph;
+        ftxui::Color foreground;
+        ftxui::Color background;
+    };
+    Vector<Cell> cells;
+    const ContentCatalog* content = nullptr;
+    int mapWidth = 0;
+    int mapHeight = 0;
+    int sourceX = 0;
+    int sourceY = 0;
+    int width = 0;
+    int height = 0;
+    std::uint64_t preparations = 0;
+    std::size_t rasterizedCells = 0;
+    std::size_t resolvedCells = 0;
+};
+
+std::uint64_t GameplayUi::MapPreparations() const { return mapCache_ ? mapCache_->preparations : 0; }
+std::size_t GameplayUi::MapRasterizedCells() const { return mapCache_ ? mapCache_->rasterizedCells : 0; }
+std::size_t GameplayUi::MapResolvedCells() const { return mapCache_ ? mapCache_->resolvedCells : 0; }
+
 namespace {
 
 constexpr InputAction quickActions[] = {
@@ -43,51 +69,135 @@ void Flexible(ftxui::Requirement& requirement) {
 // consistent with the actual terminal; no physical screen query is needed.
 class MapViewport final : public ftxui::Node {
 public:
-    MapViewport(const WorldView& view, ftxui::Element terrain, const String& cropped)
+    MapViewport(const WorldView& view, Vector<ViewCell> cells, const ContentCatalog& content,
+        std::shared_ptr<TerminalMapCache> cache, int radius, const String& cropped)
         : Node(ftxui::Elements{}), width_(view.width), height_(view.height),
           playerX_(static_cast<int>(std::clamp<std::int64_t>(
               static_cast<std::int64_t>(view.player_position.x) - view.origin.x, 0, std::max(0, view.width - 1)))),
           playerY_(static_cast<int>(std::clamp<std::int64_t>(
-              static_cast<std::int64_t>(view.player_position.z) - view.origin.z, 0, std::max(0, view.height - 1)))) {
-        children_ = {std::move(terrain), Text(cropped)};
+              static_cast<std::int64_t>(view.player_position.z) - view.origin.z, 0, std::max(0, view.height - 1)))),
+          cells_(std::move(cells)), content_(content), cache_(std::move(cache)) {
+        const int boundedRadius = std::clamp(radius, 0, 64);
+        left_ = std::max(0, playerX_ - boundedRadius);
+        top_ = std::max(0, playerY_ - boundedRadius);
+        right_ = std::min(width_, playerX_ + boundedRadius + 1);
+        bottom_ = std::min(height_, playerY_ + boundedRadius + 1);
+        children_ = {Text(cropped)};
     }
     void ComputeRequirement() override { Node::ComputeRequirement(); Flexible(requirement_); }
     void SetBox(ftxui::Box box) override {
         Node::SetBox(box);
         const int width = std::max(0, box.x_max - box.x_min + 1);
         const int height = std::max(0, box.y_max - box.y_min + 1);
-        cropped_ = width_ > width || height_ > height;
+        cropped_ = right_ - left_ > width || bottom_ - top_ > height;
         mapBox_ = box;
         if (cropped_ && height > 1) { --mapBox_.y_max; }
-        const int visibleWidth = std::min(width_, width);
+        visibleWidth_ = std::min(right_ - left_, width);
         const int mapHeight = std::max(0, mapBox_.y_max - mapBox_.y_min + 1);
-        const int visibleHeight = std::min(height_, mapHeight);
-        const int startX = std::clamp(playerX_ - visibleWidth / 2, 0, std::max(0, width_ - visibleWidth));
-        const int startY = std::clamp(playerY_ - visibleHeight / 2, 0, std::max(0, height_ - visibleHeight));
-        auto terrain = mapBox_;
-        terrain.x_min += (width - visibleWidth) / 2 - startX;
-        terrain.y_min += (mapHeight - visibleHeight) / 2 - startY;
-        terrain.x_max = terrain.x_min + width_ - 1;
-        terrain.y_max = terrain.y_min + height_ - 1;
-        children_[0]->SetBox(terrain);
+        visibleHeight_ = std::min(bottom_ - top_, mapHeight);
+        startX_ = std::clamp(playerX_ - visibleWidth_ / 2, left_, right_ - visibleWidth_);
+        startY_ = std::clamp(playerY_ - visibleHeight_ / 2, top_, bottom_ - visibleHeight_);
+        drawX_ = mapBox_.x_min + (width - visibleWidth_) / 2;
+        drawY_ = mapBox_.y_min + (mapHeight - visibleHeight_) / 2;
         auto indicator = box; indicator.y_min = box.y_max;
-        children_[1]->SetBox(indicator);
+        children_[0]->SetBox(indicator);
     }
     void Render(ftxui::Screen& screen) override {
+        cache_->rasterizedCells = 0;
+        cache_->resolvedCells = 0;
         const auto previous = screen.stencil;
         screen.stencil = ftxui::Box::Intersection(previous, mapBox_);
-        if (!screen.stencil.IsEmpty()) { children_[0]->Render(screen); }
+        // Iterate only the intersection with the real screen and parent clip.
+        // There is no per-cell DOM, layout traversal, or offscreen raster work.
+        const auto clip = ftxui::Box::Intersection(screen.stencil,
+            ftxui::Box{0, screen.dimx() - 1, 0, screen.dimy() - 1});
+        const int xMin = std::max(drawX_, clip.x_min);
+        const int yMin = std::max(drawY_, clip.y_min);
+        const int xMax = std::min(drawX_ + visibleWidth_ - 1, clip.x_max);
+        const int yMax = std::min(drawY_ + visibleHeight_ - 1, clip.y_max);
+        if (xMin <= xMax && yMin <= yMax) { PrepareVisible(xMin, yMin, xMax, yMax); }
+        for (int y = yMin; y <= yMax; ++y) {
+            for (int x = xMin; x <= xMax; ++x) {
+                const auto index = static_cast<std::size_t>(startY_ + y - drawY_) * width_
+                    + static_cast<std::size_t>(startX_ + x - drawX_);
+                if (index >= cells_.size()) { continue; }
+                const auto& appearance = cache_->cells[static_cast<std::size_t>(y - yMin) * cache_->width + x - xMin];
+                ++cache_->rasterizedCells;
+                auto& pixel = screen.PixelAt(x, y);
+                pixel.character = appearance.glyph;
+                pixel.foreground_color = appearance.foreground;
+                pixel.background_color = appearance.background;
+            }
+        }
         if (cropped_ && box_.y_max > box_.y_min) {
             screen.stencil = ftxui::Box::Intersection(previous, box_);
-            if (!screen.stencil.IsEmpty()) { children_[1]->Render(screen); }
+            if (!screen.stencil.IsEmpty()) { children_[0]->Render(screen); }
         }
         screen.stencil = previous;
     }
 private:
+    void PrepareVisible(int xMin, int yMin, int xMax, int yMax) {
+        auto& cache = *cache_;
+        const int sourceX = startX_ + xMin - drawX_;
+        const int sourceY = startY_ + yMin - drawY_;
+        const int width = xMax - xMin + 1;
+        const int height = yMax - yMin + 1;
+        const bool sourceChanged = cache.content != &content_ || cache.mapWidth != width_ || cache.mapHeight != height_;
+        const bool layoutChanged = sourceX != cache.sourceX || sourceY != cache.sourceY
+            || width != cache.width || height != cache.height;
+        Vector<TerminalMapCache::Cell> previous;
+        if (sourceChanged || layoutChanged) {
+            previous = std::move(cache.cells);
+            cache.cells.resize(static_cast<std::size_t>(width) * height);
+        }
+        bool changed = sourceChanged;
+        for (int y = 0; y < height; ++y) {
+            for (int x = 0; x < width; ++x) {
+                const int cellX = sourceX + x;
+                const int cellY = sourceY + y;
+                const auto sourceIndex = static_cast<std::size_t>(cellY) * width_ + cellX;
+                if (sourceIndex >= cells_.size()) { continue; }
+                auto& cached = cache.cells[static_cast<std::size_t>(y) * width + x];
+                const bool reused = !sourceChanged && cellX >= cache.sourceX && cellX < cache.sourceX + cache.width
+                    && cellY >= cache.sourceY && cellY < cache.sourceY + cache.height;
+                if (reused && layoutChanged) {
+                    cached = std::move(previous[static_cast<std::size_t>(cellY - cache.sourceY) * cache.width
+                        + cellX - cache.sourceX]);
+                }
+                const auto& source = cells_[sourceIndex];
+                if (reused && cached.source == source) { continue; }
+                if (reused) { changed = true; }
+                cached.source = source;
+                const auto appearance = CellAppearance(source, content_);
+                const std::string_view symbol(appearance.symbol.data(), appearance.symbol.size());
+                cached.glyph = ftxui::string_width(symbol) == 1 ? std::string(symbol) : "?";
+                cached.foreground = ftxui::Color::RGB(appearance.foreground.red, appearance.foreground.green, appearance.foreground.blue);
+                cached.background = ftxui::Color::RGB(appearance.background.red, appearance.background.green, appearance.background.blue);
+                ++cache.resolvedCells;
+            }
+        }
+        if (changed) { ++cache.preparations; }
+        cache.content = &content_; cache.mapWidth = width_; cache.mapHeight = height_;
+        cache.sourceX = sourceX; cache.sourceY = sourceY; cache.width = width; cache.height = height;
+    }
+
     int width_;
     int height_;
     int playerX_;
     int playerY_;
+    Vector<ViewCell> cells_;
+    const ContentCatalog& content_;
+    std::shared_ptr<TerminalMapCache> cache_;
+    int left_ = 0;
+    int top_ = 0;
+    int right_ = 0;
+    int bottom_ = 0;
+    int startX_ = 0;
+    int startY_ = 0;
+    int drawX_ = 0;
+    int drawY_ = 0;
+    int visibleWidth_ = 0;
+    int visibleHeight_ = 0;
     bool cropped_ = false;
     ftxui::Box mapBox_;
 };
@@ -291,7 +401,7 @@ void GameplayUi::ReconcileInventory(const WorldView& view) {
     selectedItem_ = ItemAt(view, selectedIndex_).id;
 }
 
-ftxui::Element GameplayUi::Render(const WorldView& view, const ContentCatalog& content,
+ftxui::Element GameplayUi::Render(WorldView view, const ContentCatalog& content,
     const Localization& localization, const Keymap& keys, const GameplayPresentation& presentation) {
     const auto t = [&](eastl::string_view key) { return localization.Text(key); };
     const auto on = [&](bool value) { return t(value ? "game.on" : "game.off"); };
@@ -335,23 +445,10 @@ ftxui::Element GameplayUi::Render(const WorldView& view, const ContentCatalog& c
     }
     compact += compactPacing;
     compact += " | "; compact += t("game.ui.light"); compact += ' '; compact += light;
-    if (!presentation.lan && (!mapElements_ || mapContent_ != &content || mapWidth_ != view.width
-        || mapHeight_ != view.height || mapCells_ != view.cells)) {
-        ftxui::Elements rows;
-        for (int y = 0; y < view.height; ++y) {
-            ftxui::Elements cells;
-            for (int x = 0; x < view.width; ++x) {
-                cells.push_back(RenderTerrainCell(CellAppearance(
-                    view.cells[static_cast<std::size_t>(y * view.width + x)], content)));
-            }
-            rows.push_back(ftxui::hbox(std::move(cells)));
-        }
-        mapElements_ = ftxui::vbox(std::move(rows));
-        mapCells_ = view.cells; mapWidth_ = view.width; mapHeight_ = view.height;
-        mapContent_ = &content; ++mapPreparations_;
-    }
+    if (!presentation.lan && !mapCache_) { mapCache_ = std::make_shared<TerminalMapCache>(); }
     auto world = presentation.lan ? presentation.lan
-        : std::make_shared<MapViewport>(view, mapElements_, t("game.ui.cropped"));
+        : std::make_shared<MapViewport>(view, std::move(view.cells), content, mapCache_,
+            presentation.viewRadius, t("game.ui.cropped"));
     auto body = std::make_shared<GameplayBody>(Panel(t(presentation.lan ? "game.ui.lan" : "game.ui.world"), world),
         Panel(t("game.ui.status"), ftxui::vbox(std::move(status))), Padded(ftxui::paragraph(Frontend(compact))));
     auto background = ftxui::vbox({Padded(ftxui::hbox({Text(t("game.title")) | ftxui::bold,

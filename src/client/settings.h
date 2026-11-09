@@ -15,7 +15,7 @@ enum class SettingsField {
 };
 struct Settings {
     String language = "en";
-    int viewRadius = 8;
+    int viewRadius = 64;
     std::uint64_t autosaveInterval = 1000;
     int activeRadius = 1;
     int residentRadius = 5;
