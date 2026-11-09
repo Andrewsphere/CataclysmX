@@ -17,7 +17,8 @@ int FloorDiv(int value, int divisor) {
 }
 void CheckPosition(TileCoord p) {
     Require(p.x >= -world_coordinate_limit && p.x <= world_coordinate_limit
-        && p.z >= -world_coordinate_limit && p.z <= world_coordinate_limit);
+        && p.z >= -world_coordinate_limit && p.z <= world_coordinate_limit
+        && p.y >= world_min_y && p.y <= world_max_y);
 }
 void CheckRegion(RegionCoord r) {
     constexpr int minimum = -world_coordinate_limit / region_size - 1;
@@ -62,6 +63,35 @@ int Noise(std::uint64_t seed, TileCoord p, int scale, std::uint64_t domain) {
     return Lerp(Lerp(a, b, fx), Lerp(c, d, fx), fz);
 }
 
+ContentResult<void> ValidatePalette(const ContentCatalog& content, Diagnostics* diagnostics, bool requireAir) {
+    for (const char* name : {"floor", "wall", "grass", "road", "rubble", "air", "stairs"}) {
+        const auto role = eastl::string_view(name);
+        const auto* terrain = content.TryGetTerrain(content.FindTerrain(name));
+        const bool required = role == "floor" || role == "wall" || (role == "air" && requireAir);
+        const bool missing = terrain == nullptr && required;
+        bool invalid = false;
+        const char* requirement = "' must be passable floor support without stairs";
+        if (role == "air") {
+            invalid = terrain && !terrain->openSpace;
+            requirement = "' must be open_space";
+        } else if (role == "stairs") {
+            invalid = terrain && !terrain->stairs;
+            requirement = "' must have stairs=true";
+        } else if (role != "wall") {
+            invalid = terrain && (!terrain->passable || terrain->openSpace || terrain->stairs);
+        }
+        if (!missing && !invalid) { continue; }
+        if (diagnostics) {
+            String message = "World generation terrain '";
+            message += name;
+            message += missing ? "' is required" : requirement;
+            diagnostics->Add(eastl::string_view(message.data(), message.size()));
+        }
+        return eastl::unexpected(ContentError::InvalidData);
+    }
+    return {};
+}
+
 struct Palette {
     TerrainId floor;
     TerrainId wall;
@@ -71,7 +101,7 @@ struct Palette {
     TerrainId rubble;
 };
 Palette GetPalette(const ContentCatalog& content) {
-    Require(ValidateWorldgenContent(content).has_value());
+    Require(ValidatePalette(content, nullptr, false).has_value());
     Palette p{};
     p.floor = content.FindTerrain("floor");
     p.wall = content.FindTerrain("wall");
@@ -244,21 +274,7 @@ Vector<Tile> MaterializeBuilding(const ContentCatalog& content, const Palette& p
 }
 
 ContentResult<void> ValidateWorldgenContent(const ContentCatalog& content, Diagnostics* diagnostics) {
-    for (const char* name : {"floor", "wall", "grass", "road", "rubble"}) {
-        const auto* terrain = content.TryGetTerrain(content.FindTerrain(name));
-        const bool required = eastl::string_view(name) == "floor" || eastl::string_view(name) == "wall";
-        const bool missing = terrain == nullptr && required;
-        const bool blocked = terrain && eastl::string_view(name) != "wall" && !terrain->passable;
-        if (!missing && !blocked) { continue; }
-        if (diagnostics) {
-            String message = "World generation terrain '";
-            message += name;
-            message += missing ? "' is required" : "' must be passable";
-            diagnostics->Add(eastl::string_view(message.data(), message.size()));
-        }
-        return eastl::unexpected(ContentError::InvalidData);
-    }
-    return {};
+    return ValidatePalette(content, diagnostics, true);
 }
 
 RegionCoord RegionOf(TileCoord position) {
@@ -268,6 +284,7 @@ RegionCoord RegionOf(TileCoord position) {
 
 EnvironmentSample SampleEnvironment(std::uint64_t seed, TileCoord position) {
     CheckPosition(position);
+    position.y = 0;
     EnvironmentSample sample;
     sample.moisture = (Noise(seed, position, 256, 21) + 2 * Noise(seed, position, 1024, 22)) / 3;
     sample.temperature = Noise(seed, position, 1024, 23);
@@ -380,20 +397,31 @@ eastl::array<Tile, chunk_size * chunk_size> GenerateChunk(
     const ContentCatalog& content, std::uint64_t seed, const RegionPlan& plan, ChunkCoord chunk) {
     constexpr int chunkLimit = world_coordinate_limit / chunk_size;
     Require(chunk.x >= -chunkLimit && chunk.x <= chunkLimit
-        && chunk.z >= -chunkLimit && chunk.z <= chunkLimit);
+        && chunk.z >= -chunkLimit && chunk.z <= chunkLimit
+        && chunk.y >= world_min_y && chunk.y <= world_max_y);
     CheckRegion(plan.region);
     Require(plan.seed == seed);
     const int x = chunk.x * chunk_size;
     const int z = chunk.z * chunk_size;
     Require((RegionCoord{FloorDiv(x, region_size), FloorDiv(z, region_size)}) == plan.region);
     const auto palette = GetPalette(content);
+    const auto air = content.FindTerrain("air");
+    if (chunk.y > 0) {
+        const auto* definition = content.TryGetTerrain(air);
+        Require(definition && definition->openSpace);
+    }
     eastl::array<Tile, chunk_size * chunk_size> tiles{};
     for (int dz = 0; dz < chunk_size; ++dz) {
         for (int dx = 0; dx < chunk_size; ++dx) {
-            const TileCoord p{x + dx, z + dz};
+            const TileCoord p{x + dx, z + dz, chunk.y};
             auto& tile = tiles[static_cast<std::size_t>(dz * chunk_size + dx)];
             tile = {palette.wall, 0};
             if (!Inside(plan.bounds, p)) { continue; }
+            if (chunk.y < 0) { continue; }
+            if (chunk.y > 0) {
+                tile.terrain = chunk.y == 1 && BuildingAt(plan, p) ? palette.floor : air;
+                continue;
+            }
             if (Demo(p)) { tile.terrain = palette.floor; continue; }
             const auto environment = SampleEnvironment(seed, p);
             const int treeThreshold = environment.woodland < 400 ? 15 : (environment.woodland - 350) / 2;
@@ -404,6 +432,7 @@ eastl::array<Tile, chunk_size * chunk_size> GenerateChunk(
             if (IsRoad(plan, p)) { tile.terrain = palette.road; }
         }
     }
+    if (chunk.y != 0) { return tiles; }
     const TileRect chunkBounds{{x, z}, {x + chunk_size, z + chunk_size}};
     for (const auto& building : plan.buildings) {
         if (!Intersects(building.bounds, chunkBounds)) { continue; }
@@ -411,7 +440,7 @@ eastl::array<Tile, chunk_size * chunk_size> GenerateChunk(
         const int width = building.bounds.max.x - building.bounds.min.x;
         for (int pz = Max(z, building.bounds.min.z); pz < Min(z + chunk_size, building.bounds.max.z); ++pz) {
             for (int px = Max(x, building.bounds.min.x); px < Min(x + chunk_size, building.bounds.max.x); ++px) {
-                const TileCoord p{px, pz};
+                const TileCoord p{px, pz, chunk.y};
                 if (!Inside(plan.bounds, p) || Demo(p)) { continue; }
                 // Driveway geometry includes the entrance; IsRoad excludes it.
                 // Street centerlines never enter a building's setback footprint.

@@ -343,20 +343,20 @@ TEST_CASE("World retains unloaded archives until checkpoint then reloads from di
     REQUIRE(world.RecordActorTurn(actor));
     REQUIRE(world.ReleaseRequest(request));
     REQUIRE(world.ReconcileChunks());
-    CHECK(world.ArchivedChunkCount() == 1);
+    CHECK(world.ArchivedChunkCount() == world_layer_count);
     CHECK(world.GetActor(actor) == nullptr);
     CHECK(world.GetItem(child) == nullptr);
     auto invalid = session;
     invalid.playerPosition = {2, 1};
     CHECK(world.Save(invalid) == eastl::unexpected(SaveError::InvalidData));
-    CHECK(world.ArchivedChunkCount() == 1);
+    CHECK(world.ArchivedChunkCount() == world_layer_count);
     {
         SaveDatabase competing(TestContent());
         const auto snapshot = Take(competing.Open(files.database.c_str()));
         REQUIRE(competing.Begin());
         REQUIRE(competing.WriteSnapshot(snapshot)); // Hold an actual SQLite writer lock.
         CHECK(world.Save(session) == eastl::unexpected(SaveError::Busy));
-        CHECK(world.ArchivedChunkCount() == 1);
+        CHECK(world.ArchivedChunkCount() == world_layer_count);
         CHECK(world.LoadedChunks().empty());
         CHECK(world.GetActor(actor) == nullptr);
         CHECK(world.CheckInvariants());
@@ -488,7 +488,7 @@ TEST_CASE("World checkpoints both sides of cross chunk moves and ownership chang
         REQUIRE(world.RecordObjectUpdate(object));
         REQUIRE(world.ReleaseRequest(origin));
         REQUIRE(world.ReconcileChunks());
-        CHECK(world.ArchivedChunkCount() == 1);
+        CHECK(world.ArchivedChunkCount() == world_layer_count);
         REQUIRE(world.Save({}));
         CHECK(world.ArchivedChunkCount() == 0);
         CHECK(world.GetActor(actor));
@@ -618,7 +618,7 @@ ChunkArchive ActorChunk(ChunkCoord position, PersistentId id) {
     ChunkArchive chunk{};
     chunk.tiles.fill(Tile{TestTerrain("floor"), 0});
     chunk.position = position;
-    chunk.actors.push_back({id, {position.x * chunk_size, position.z * chunk_size}, false, 0});
+    chunk.actors.push_back({id, {position.x * chunk_size, position.z * chunk_size, position.y}, false, 0});
     return chunk;
 }
 
@@ -636,7 +636,9 @@ TEST_CASE("Failed reconciliation preserves live keys activity and loaded set", "
     Diagnostics diagnostics;
     CHECK(world.ReconcileChunks(&diagnostics) == eastl::unexpected(SaveError::InvalidData));
     CHECK_FALSE(diagnostics.Empty());
-    CHECK(world.LoadedChunks() == Vector<ChunkCoord>{{0, 0}});
+    CHECK(world.LoadedChunks().size() == world_layer_count);
+    CHECK(world.LoadedChunks().front() == ChunkCoord{0, 0, world_min_y});
+    CHECK(world.LoadedChunks().back() == ChunkCoord{0, 0, world_max_y});
     CHECK(world.IsActive({0, 0}));
     CHECK(world.GetActor(actor));
     CHECK(world.FindActor(1) == actor);
@@ -664,7 +666,9 @@ TEST_CASE("Reconciliation validates all staged disk chunks before activity chang
     Take(world.RequestChunks({{1, 0}, 0}, LoadMode::active));
     Take(world.RequestChunks({{2, 0}, 0}, LoadMode::active));
     CHECK(world.ReconcileChunks() == eastl::unexpected(SaveError::InvalidData));
-    CHECK(world.LoadedChunks() == Vector<ChunkCoord>{{0, 0}});
+    CHECK(world.LoadedChunks().size() == world_layer_count);
+    CHECK(world.LoadedChunks().front() == ChunkCoord{0, 0, world_min_y});
+    CHECK(world.LoadedChunks().back() == ChunkCoord{0, 0, world_max_y});
     CHECK(world.IsActive({0, 0}));
     CHECK(world.FindActor(1) == actor);
     CHECK(world.FindActor(2) == ActorHandle{});
@@ -682,11 +686,11 @@ TEST_CASE("Incoming disk chunks cannot alias IDs in pending RAM archives", "[wor
     const auto request = Load(world);
     REQUIRE(world.ReleaseRequest(request));
     REQUIRE(world.ReconcileChunks());
-    REQUIRE(world.ArchivedChunkCount() == 1);
+    REQUIRE(world.ArchivedChunkCount() == world_layer_count);
     Take(world.RequestChunks({{1, 0}, 0}, LoadMode::active));
     CHECK(world.ReconcileChunks() == eastl::unexpected(SaveError::InvalidData));
     CHECK(world.LoadedChunks().empty());
-    CHECK(world.ArchivedChunkCount() == 1);
+    CHECK(world.ArchivedChunkCount() == world_layer_count);
     CHECK(world.CheckInvariants());
 }
 

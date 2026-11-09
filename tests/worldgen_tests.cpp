@@ -30,17 +30,17 @@ TileImage Materialize(const ContentCatalog& content, const RegionPlan& plan,
     TileImage image{bounds, Vector<Tile>(static_cast<std::size_t>(
         (bounds.max.x - bounds.min.x) * (bounds.max.z - bounds.min.z)))};
     const auto first = ChunkOf(bounds.min);
-    const auto last = ChunkOf({bounds.max.x - 1, bounds.max.z - 1});
+    const auto last = ChunkOf({bounds.max.x - 1, bounds.max.z - 1, bounds.min.y});
     Vector<ChunkCoord> chunks;
     for (int z = first.z; z <= last.z; ++z) {
-        for (int x = first.x; x <= last.x; ++x) { chunks.push_back({x, z}); }
+        for (int x = first.x; x <= last.x; ++x) { chunks.push_back({x, z, first.y}); }
     }
     for (std::size_t i = 0; i < chunks.size(); ++i) {
         const auto chunk = chunks[reverse ? chunks.size() - 1 - i : i];
         const auto tiles = GenerateChunk(content, plan.seed, plan, chunk);
         for (int z = 0; z < chunk_size; ++z) {
             for (int x = 0; x < chunk_size; ++x) {
-                const TileCoord p{chunk.x * chunk_size + x, chunk.z * chunk_size + z};
+                const TileCoord p{chunk.x * chunk_size + x, chunk.z * chunk_size + z, chunk.y};
                 if (!ValidPosition(p) || !Contains(bounds, p)) { continue; }
                 const int width = bounds.max.x - bounds.min.x;
                 image.tiles[static_cast<std::size_t>((p.z - bounds.min.z) * width
@@ -73,8 +73,8 @@ Vector<std::uint8_t> Reachable(const TileImage& image, const ContentCatalog& con
     seen[index(start)] = 1;
     for (std::size_t head = 0; head < queue.size(); ++head) {
         const auto p = queue[head];
-        for (const TileCoord next : {TileCoord{p.x, p.z - 1}, {p.x + 1, p.z},
-                                     {p.x, p.z + 1}, {p.x - 1, p.z}}) {
+        for (const TileCoord next : {TileCoord{p.x, p.z - 1, p.y}, {p.x + 1, p.z, p.y},
+                                     {p.x, p.z + 1, p.y}, {p.x - 1, p.z, p.y}}) {
             if (!ValidPosition(next) || !Contains(image.bounds, next) || seen[index(next)]) { continue; }
             const auto terrain = image.At(next).terrain;
             if (roadsOnly ? terrain != content.FindTerrain("road") : !Accessible(content, terrain)) { continue; }
@@ -115,7 +115,7 @@ void CheckAuthored(const ContentCatalog& content, const BuildingPlan& building,
 
 eastl::string_view View(const String& text) { return {text.data(), text.size()}; }
 
-ContentCatalog CustomContent(eastl::string_view patterns) {
+ContentCatalog CustomContent(eastl::string_view patterns, bool vertical = true) {
     String text = R"({format_version:1,definitions:[
         {type:'terrain',id:'floor',name:'Floor',movement:{passable:true},blocks_sight:false,
          appearance:{symbol:'.',foreground:'white'}},
@@ -125,6 +125,12 @@ ContentCatalog CustomContent(eastl::string_view patterns) {
          opens_to:'floor',looks_like:'wall'},
         {type:'terrain',id:'marker',name:'Marker',movement:{passable:true},blocks_sight:false,
          looks_like:'floor'},)";
+    if (vertical) {
+        text += R"({type:'terrain',id:'air',name:'Air',movement:{passable:true},blocks_sight:false,
+            open_space:true,looks_like:'floor'},
+            {type:'terrain',id:'stairs',name:'Stairs',movement:{passable:true},blocks_sight:false,
+            stairs:true,looks_like:'floor'},)";
+    }
     text.append(patterns.data(), patterns.size());
     text += "]}";
     const ContentSource source{"worldgen-test.json5", View(text)};
@@ -265,10 +271,33 @@ TEST_CASE("Generation content validates passable roles and supports terrain-only
     }
     CHECK(floor);
     CHECK(wall);
+    // Legacy surface generation is still usable without an air role; the 3D
+    // application boundary rejects that catalog rather than inventing sky floors.
+    const auto legacy = CustomContent({}, false);
+    diagnostics.Clear();
+    CHECK(ValidateWorldgenContent(legacy, &diagnostics)
+          == eastl::unexpected(ContentError::InvalidData));
+    CHECK(FormatDiagnostics(diagnostics).find("air") != String::npos);
+    const auto legacyPlan = GenerateRegionPlan(legacy, 42, {1, 1});
+    const auto legacyTiles = GenerateChunk(legacy, 42, legacyPlan, {16, 16});
+    CHECK(legacy.TryGetTerrain(legacyTiles[0].terrain) != nullptr);
+    for (const char* role : {"air", "stairs"}) {
+        String definition = "{type:'terrain',id:'";
+        definition += role;
+        definition += "',name:'Wrong vertical role',movement:{passable:true},blocks_sight:false,looks_like:'floor'}";
+        if (eastl::string_view(role) == "stairs") {
+            definition += R"(,{type:'terrain',id:'air',name:'Air',movement:{passable:true},
+                blocks_sight:false,open_space:true,looks_like:'floor'})";
+        }
+        const auto invalid = CustomContent(View(definition), false);
+        diagnostics.Clear();
+        CHECK_FALSE(ValidateWorldgenContent(invalid, &diagnostics));
+        CHECK(FormatDiagnostics(diagnostics).find(role) != String::npos);
+    }
 }
 
-TEST_CASE("Generation version two preserves frozen terrain and damage output", "[worldgen][determinism]") {
-    REQUIRE(world_generation_version == 2);
+TEST_CASE("Generation version three preserves version two surface terrain and damage output", "[worldgen][determinism]") {
+    REQUIRE(world_generation_version == 3);
     // Environmental seam, rotated divided house, and abandoned cross-chunk long house.
     const ChunkCoord chunks[] = {{-17, 20}, {-16, 20}, {5, 4}, {9, 7}, {10, 7}};
     const std::uint32_t expected[] = {2483476373U, 3666744973U, 2506376988U, 2959312743U, 518236207U};
@@ -287,6 +316,57 @@ TEST_CASE("Generation version two preserves frozen terrain and damage output", "
         }
         CAPTURE(chunk.x, chunk.z);
         CHECK(checksum == expected[i]);
+    }
+}
+
+TEST_CASE("Vertical generation has solid depths open sky and coherent building roofs", "[worldgen][vertical]") {
+    const auto plan = GenerateRegionPlan(TestContent(), 42, {0, 0});
+    REQUIRE_FALSE(plan.buildings.empty());
+    for (int y : {world_min_y, -1, 1, 2, world_max_y}) {
+        const TileRect bounds{{0, 0, y}, {256, 256, y}};
+        const auto image = Materialize(TestContent(), plan, bounds);
+        const auto reverse = Materialize(TestContent(), plan, bounds, true);
+        CHECK(image.tiles == reverse.tiles);
+        for (int z = 0; z < 256; ++z) {
+            for (int x = 0; x < 256; ++x) {
+                const TileCoord p{x, z, y};
+                bool roof = false;
+                for (const auto& building : plan.buildings) {
+                    // Independent footprint oracle, including abandoned roofs.
+                    if (x >= building.bounds.min.x && x < building.bounds.max.x
+                        && z >= building.bounds.min.z && z < building.bounds.max.z) { roof = true; }
+                }
+                const auto expected = TestTerrain(y < 0 ? "wall" : y == 1 && roof ? "floor" : "air");
+                REQUIRE(image.At(p) == Tile{expected, 0});
+            }
+        }
+    }
+    for (int y : {world_min_y, 0, world_max_y}) {
+        CHECK(RegionOf({-257, 256, y}) == RegionCoord{-2, 1});
+        CHECK(SampleEnvironment(42, {-257, 256, y}) == SampleEnvironment(42, {-257, 256, 0}));
+        const auto& building = plan.buildings.front();
+        const TileCoord p{building.entrance.x, building.entrance.z, y};
+        CHECK(BuildingAt(plan, p) == &building);
+    }
+}
+
+TEST_CASE("Vertical terrain-only generation uses air without requiring stairs or patterns", "[worldgen][vertical][content]") {
+    const auto content = CustomContent(R"({type:'terrain',id:'air',name:'Air',movement:{passable:true},
+        blocks_sight:false,open_space:true,looks_like:'floor'})", false);
+    REQUIRE(ValidateWorldgenContent(content));
+    const auto plan = GenerateRegionPlan(content, 19, {-1, -1});
+    for (int y : {-1, 1, world_max_y}) {
+        const auto tiles = GenerateChunk(content, 19, plan, {-1, -1, y});
+        for (const auto tile : tiles) {
+            CHECK(tile == Tile{content.FindTerrain(y < 0 ? "wall" : "air"), 0});
+        }
+    }
+    const TileCoord corner{world_coordinate_limit, world_coordinate_limit, world_max_y};
+    const auto edgePlan = GenerateRegionPlan(content, 19, RegionOf(corner));
+    const auto edge = GenerateChunk(content, 19, edgePlan, ChunkOf(corner));
+    CHECK(edge[0] == Tile{content.FindTerrain("air"), 0});
+    for (std::size_t i = 1; i < edge.size(); ++i) {
+        CHECK(edge[i] == Tile{content.FindTerrain("wall"), 0});
     }
 }
 
@@ -628,12 +708,14 @@ TEST_CASE("Default World generation matches public plans regardless of streaming
     constexpr std::uint32_t seed = 31415;
     World forward(TestContent(), seed);
     World reverse(TestContent(), seed);
-    const Vector<ChunkCoord> chunks{{20, 21}, {21, 21}, {-17, -1}, {-16, -1}, {0, 0}};
+    const Vector<ChunkCoord> chunks{{20, 21}, {21, 21}, {-17, -1}, {-16, -1}, {0, 0},
+                                  {20, 21, 1}, {-17, -1, -1}, {0, 0, world_max_y}};
+    constexpr std::size_t loadedSlices = 5 * world_layer_count; // Five distinct horizontal columns.
     Vector<LoadRequest> requests;
     for (const auto chunk : chunks) { requests.push_back(Request(forward, chunk)); }
     for (std::size_t i = chunks.size(); i > 0; --i) { Request(reverse, chunks[i - 1]); }
     CHECK(forward.LoadedChunks() == reverse.LoadedChunks());
-    REQUIRE(forward.LoadedChunks().size() == chunks.size());
+    REQUIRE(forward.LoadedChunks().size() == loadedSlices);
     CHECK(forward.ArchivedChunkCount() == 0);
     for (const auto chunk : chunks) {
         const auto* first = forward.GetChunk(chunk);
@@ -641,7 +723,7 @@ TEST_CASE("Default World generation matches public plans regardless of streaming
         REQUIRE(first != nullptr);
         REQUIRE(second != nullptr);
         const auto plan = GenerateRegionPlan(TestContent(), seed,
-            RegionOf({chunk.x * chunk_size, chunk.z * chunk_size}));
+            RegionOf({chunk.x * chunk_size, chunk.z * chunk_size, chunk.y}));
         CHECK(first->tiles == GenerateChunk(TestContent(), seed, plan, chunk));
         CHECK(first->tiles == second->tiles);
         CHECK(first->actors.empty());
@@ -658,10 +740,10 @@ TEST_CASE("Default World generation matches public plans regardless of streaming
     for (const auto request : requests) { REQUIRE(forward.ReleaseRequest(request)); }
     REQUIRE(forward.ReconcileChunks());
     CHECK(forward.LoadedChunks().empty());
-    CHECK(forward.ArchivedChunkCount() == chunks.size());
+    CHECK(forward.ArchivedChunkCount() == loadedSlices);
     for (std::size_t i = chunks.size(); i > 0; --i) { Request(forward, chunks[i - 1]); }
     CHECK(forward.ArchivedChunkCount() == 0);
-    CHECK(forward.LoadedChunks().size() == chunks.size());
+    CHECK(forward.LoadedChunks().size() == loadedSlices);
     CHECK(forward.GetChunk(chunks[0])->tiles == modified);
     REQUIRE(forward.GetTile(edited) != nullptr);
     CHECK(*forward.GetTile(edited) == manual);

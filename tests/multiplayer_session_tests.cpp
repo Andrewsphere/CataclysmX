@@ -13,6 +13,32 @@ PersistentId Join(Server& server, const char* name, std::uint64_t token) {
     return joined->player;
 }
 
+TEST_CASE("Joining and occupied reconnect fallback preserve the saved layer", "[multiplayer][server][3d]") {
+    Server server(TestContent());
+    World& world = server.GetWorld();
+    for (int z = -2; z <= 2; ++z) {
+        for (int x = -2; x <= 2; ++x) {
+            REQUIRE(world.SetTile({x, z, 3}, {TestTerrain("floor"), 0}));
+        }
+    }
+    REQUIRE(world.MoveActor(server.GetPlayer(), {0, 0, 3}));
+    REQUIRE(server.SetBubbleRadii(0, 1));
+    const auto guest = Join(server, "Elevated", 399);
+    const auto original = server.ViewForPlayer(guest).player_position;
+    CHECK(original.y == 3);
+    CHECK(server.ViewForPlayer(guest).origin.y == 3);
+    REQUIRE(server.DisconnectPlayer(guest));
+    REQUIRE(world.CreateActor(original));
+    REQUIRE(server.JoinPlayer("Elevated", 399, 0));
+    REQUIRE(server.ActivatePlayer(guest));
+    const auto resumed = server.ViewForPlayer(guest);
+    CHECK(resumed.player_position != original);
+    CHECK(resumed.player_position.y == 3);
+    CHECK(resumed.origin.y == 3);
+    CHECK(world.FindPlayerPosition(guest)->y == 3);
+    CHECK(world.CheckInvariants());
+}
+
 TEST_CASE("Rounds resolve reverse arrival in persistent ID order and isolate personal views",
     "[multiplayer][server]") {
     Server server(TestContent());

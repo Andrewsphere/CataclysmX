@@ -50,7 +50,7 @@ TEST_CASE("Client text preserves complete Unicode scalars and textual status", "
     view.width = 4;
     view.height = 1;
     view.tick = 23;
-    view.player_position = {-4, 7};
+    view.player_position = {-4, 7, -2};
     for (const char* id : {"base", "wide", "combining", "supplementary"}) {
         ViewCell cell;
         cell.visible = true;
@@ -58,7 +58,7 @@ TEST_CASE("Client text preserves complete Unicode scalars and textual status", "
         view.cells.push_back(cell);
     }
     CHECK(render_text(view, content) ==
-        "tick=23 position=-4,7\n\xc3\xa9\xe7\x95\x8c\xcc\x81\xf0\x9f\x98\x80\nInventory: empty\n");
+        "tick=23 position=-4,7,-2\n\xc3\xa9\xe7\x95\x8c\xcc\x81\xf0\x9f\x98\x80\nInventory: empty\n");
     view.inventory.push_back({17, content.FindItem("rock"), 2});
     CHECK(render_text(view, content).find("Inventory: 17:rock(2 inside)\n") != String::npos);
 }
@@ -114,7 +114,40 @@ TEST_CASE("Client hidden cells reveal neither terrain nor overlays", "[client]")
     view.width = 1;
     view.height = 1;
     view.cells.push_back(cell);
-    CHECK(render_text(view, content) == "tick=0 position=0,0\n \nInventory: empty\n");
+    CHECK(render_text(view, content) == "tick=0 position=0,0,0\n \nInventory: empty\n");
+}
+
+TEST_CASE("Depth tint distinguishes terrain background and overlay depth", "[client]") {
+    const auto content = AppearanceContent();
+    ViewCell cell;
+    cell.visible = true;
+    cell.tile.terrain = content.FindTerrain("base");
+    cell.terrainDepth = 1;
+    auto terrain = CellAppearance(cell, content);
+    CHECK(terrain.foreground == RgbColor{25, 63, 112});
+    CHECK(terrain.background == RgbColor{111, 147, 188});
+    cell.actor = 1;
+    cell.overlayDepth = 0;
+    auto overlay = CellAppearance(cell, content);
+    CHECK(overlay.foreground == RgbColor{0, 255, 0});
+    CHECK(overlay.background == terrain.background);
+    cell.overlayDepth = 1;
+    CHECK(CellAppearance(cell, content).foreground == RgbColor{12, 215, 48});
+    cell.overlayDepth = 20;
+    auto deepest = CellAppearance(cell, content);
+    CHECK(deepest.foreground == RgbColor{33, 143, 134});
+    cell.overlayDepth = 100;
+    CHECK(CellAppearance(cell, content).foreground == deepest.foreground);
+}
+
+TEST_CASE("Item command parser accepts vertical direction symbols", "[client]") {
+    Command command;
+    REQUIRE(ParseItemCommand("use 1 2 activate <", command));
+    CHECK(command.dy == -1);
+    CHECK(command.dx == 0);
+    CHECK(command.dz == 0);
+    REQUIRE(ParseItemCommand("use 1 2 activate up", command));
+    CHECK(command.dy == 1);
 }
 
 }

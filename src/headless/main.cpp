@@ -46,6 +46,8 @@ bool Direction(eastl::string_view text, Command& command) {
     } else if (text == "s") { command.dz = 1;
     } else if (text == "e") { command.dx = 1;
     } else if (text == "w") { command.dx = -1;
+    } else if (text == "down" || text == "<") { command.dy = -1;
+    } else if (text == "up" || text == ">") { command.dy = 1;
     } else { return false; }
     return true;
 }
@@ -68,13 +70,13 @@ void Inspect(const Server& server) {
     for (ChunkCoord coord : world.LoadedChunks()) {
         const Chunk* chunk = world.GetChunk(coord);
         if (chunk->actors.empty() && chunk->ground_items.empty() && chunk->objects.empty()) { continue; }
-        std::printf("chunk %d %d %s actors=%zu ground=%zu objects=%zu\n", coord.x, coord.z,
+        std::printf("chunk %d %d y=%d %s actors=%zu ground=%zu objects=%zu\n", coord.x, coord.z, coord.y,
             chunk->active ? "active" : "resident", chunk->actors.size(), chunk->ground_items.size(),
             chunk->objects.size());
         for (ActorHandle handle : chunk->actors) {
             const Actor* actor = world.GetActor(handle);
-            std::printf("actor id=%llu position=%d,%d turns=%llu inventory=%zu\n",
-                static_cast<unsigned long long>(actor->id), actor->position.x, actor->position.z,
+            std::printf("actor id=%llu position=%d,%d,%d turns=%llu inventory=%zu\n",
+                static_cast<unsigned long long>(actor->id), actor->position.x, actor->position.z, actor->position.y,
                 static_cast<unsigned long long>(actor->turns), actor->inventory.size());
         }
     }
@@ -307,7 +309,7 @@ int main(int argc, char** argv) {
         } else if (argument == "--user-dir" && i + 1 < argc) { configuration.userRoot = argv[++i]; configuration.enabled = true;
         } else if (argument == "--world-dir" && i + 1 < argc) { configuration.worldDirectory = argv[++i]; configuration.enabled = true;
         } else {
-            std::fputs("Usage: cataclysmx_headless [--content path] [--user-dir path] [--world-dir path] [--save path | --load path] [--script | --host | --join address[:port] | --discover] [--port n] [--discovery-port n] [--discovery-address address] [--name name] [--profile path] [--new-character] [--run-for ms] [--command 'move e'] | --probe | --fail-log\n", stderr);
+            std::fputs("Usage: cataclysmx_headless [--content path] [--user-dir path] [--world-dir path] [--save path | --load path] [--script | --host | --join address[:port] | --discover] [--port n] [--discovery-port n] [--discovery-address address] [--name name] [--profile path] [--new-character] [--run-for ms] [--command 'move e'] | --probe | --fail-log\nMovement: move n/s/e/w, move down or move < (downstairs), move up or move > (upstairs).\n", stderr);
             return 2;
         }
     }

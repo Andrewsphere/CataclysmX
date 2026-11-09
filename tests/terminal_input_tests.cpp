@@ -5,6 +5,18 @@
 namespace {
 using namespace cataclysmx;
 
+TEST_CASE("Stair bindings use requested symbols in directional contexts", "[terminal][input]") {
+    const auto keys = DefaultKeymap();
+    REQUIRE(ValidateKeymap(keys));
+    for (auto context : {InputContext::Gameplay, InputContext::Interaction, InputContext::Items}) {
+        const auto down = DecodeTerminalInput("<");
+        const auto up = DecodeTerminalInput(">");
+        REQUIRE(down); REQUIRE(up);
+        CHECK(ResolveAction(keys, context, *down) == InputAction::MoveDown);
+        CHECK(ResolveAction(keys, context, *up) == InputAction::MoveUp);
+    }
+}
+
 TEST_CASE("Terminal decoder preserves character case and distinguishes enhanced Ctrl case", "[terminal][input]") {
     CHECK(DecodeTerminalInput("t") == KeyChord{"t", false});
     CHECK(DecodeTerminalInput("T") == KeyChord{"T", false});

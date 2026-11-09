@@ -12,13 +12,14 @@ void Require(bool condition) {
 bool ValidArguments(ItemActionArgument argument, const ItemUseRequest& request) {
     switch (argument) {
     case ItemActionArgument::None:
-        return !request.otherItem.value && request.dx == 0 && request.dz == 0;
+        return !request.otherItem.value && request.dx == 0 && request.dz == 0 && request.dy == 0;
     case ItemActionArgument::Item:
-        return request.otherItem.value && request.dx == 0 && request.dz == 0;
+        return request.otherItem.value && request.dx == 0 && request.dz == 0 && request.dy == 0;
     case ItemActionArgument::Direction:
         return !request.otherItem.value
-            && ((request.dx == 0 && (request.dz == -1 || request.dz == 1))
-                || (request.dz == 0 && (request.dx == -1 || request.dx == 1)));
+            && ((request.dy == 0 && request.dx == 0 && (request.dz == -1 || request.dz == 1))
+                || (request.dy == 0 && request.dz == 0 && (request.dx == -1 || request.dx == 1))
+                || (request.dx == 0 && request.dz == 0 && (request.dy == -1 || request.dy == 1)));
     }
     std::abort();
 }

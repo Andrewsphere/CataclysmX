@@ -40,7 +40,7 @@ public:
             ftxui::text(F("debug.seed", "Seed: " + std::to_string(world_.GetSeed()) + " | Generation version: "
                 + std::to_string(world_.GetGenerationVersion()), {{"seed", UnsignedText(world_.GetSeed())},
                     {"version", UnsignedText(world_.GetGenerationVersion())}})),
-            ftxui::text(T("debug.baseline", "Generated preview: excludes saved edits and entities")),
+            ftxui::text(T("debug.baseline", "Surface (Y=0) generated preview: excludes saved edits and entities")),
         };
         if (!Available()) {
             lines.push_back(ftxui::text(F("debug.unavailable", "Generated preview unavailable for generation "

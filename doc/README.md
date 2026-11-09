@@ -6,9 +6,10 @@
   selection, cancellation, and modal input behavior.
 - [Settings, input, and localization](settings_api.md): sparse global/world
   overrides, the F2 editor, case-sensitive Ctrl bindings, and text catalogs.
-6
 - [World API](world_api.md): identity, ownership, coordinates, chunk demand and
   in-memory archives. Start here for scenario setup and administrative tools.
+- [Y layers](y_layers.md): bounded elevation, whole-height chunk columns, stairs,
+  gravity, 3D sight, and layered generation/persistence contracts.
 - [Items API](items_api.md): physical properties, volume-limited containment,
   installed batteries, explicit use actions, charging and timed door controllers.
 - [Adding item behaviors](item_behaviors.md): virtual interfaces, explicit factories,
@@ -25,7 +26,7 @@
   crossings, parcels/buildings, terrain materialization and debug inspection.
 - [Diagnostics](diagnostics.md): structured error causes and contextual frames.
 - [Terrain rendering](terrain_rendering.md): UTF-8 symbols, colors, and frontend behavior.
-- [Save format](save_format.md): SQLite v5, snapshots, validation and checkpoints.
+- [Save format](save_format.md): SQLite v6, snapshots, validation and checkpoints.
 - [LAN networking](networking.md): ENet hosting, joining, authoritative messages and discovery.
 - [LAN client profile](lan_profile.md): endpoint identities, typed errors and durability.
 - [Project README](../README.md): build instructions and dependencies.

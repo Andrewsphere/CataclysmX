@@ -10,8 +10,9 @@ changed or destroyed.
 
 ## Space and region plans
 
-Tiles use X/Z horizontal coordinates, chunks are 16×16, and each region covers
-256×256 tiles. `RegionOf` uses mathematical floor division (including negative
+Tiles use X/Z horizontal coordinates and Y elevation (`-10..10`); coordinate
+fields are ordered `{x,z,y}`. Chunks are single-layer 16×16 X/Z tiles, and each
+region covers 256×256 tiles. `RegionOf` uses mathematical floor division (including negative
 coordinates). Valid tiles are `[-1,000,000, 1,000,000]` per axis; plans are
 half-open and clipped to this world range. Nominal edge geometry can extend past
 the world and is clipped during rasterization. Invalid public coordinates abort
@@ -49,7 +50,9 @@ crops that buffer to the requested chunk. It never reads adjacent live chunks,
 so chunk load order cannot change the result. No-fit parcels simply have no
 building plan.
 
-`GenerateChunk` lays out row-major tiles (`z * 16 + x`). Partial edge-chunk slots
+`GenerateChunk` lays out row-major tiles (`z * 16 + x`). Generation version 3
+preserves the legacy surface at Y=0, uses solid rock below it and air above it,
+with building roofs at Y=1. Partial edge-chunk slots
 outside valid world bounds are undamaged wall. `ValidateWorldgenContent` returns
 `ContentResult<void>` and optional diagnostics for missing `floor`/`wall` or
 impassable `floor`, `grass`, `road`, or `rubble`. Applications validate before
@@ -61,10 +64,11 @@ queries; no town or building intersects it.
 
 ## World integration and debug inspection
 
-`World` owns only a one-region plan cache while generating version-2 chunks. It
+`World` owns only a one-region plan cache while generating version-3 chunks. It
 regenerates that plan when moving to another region; the pure generator itself
-has no cache. Version-1 saves continue to use the legacy generator byte for
-byte for unexplored chunks. Generated tiles become ordinary world chunk tiles
+has no cache. Supported generation metadata values 1 and 2 retain their legacy
+surface generation; nonsurface slices use the layered terrain rules. This does
+not make old save formats readable: disk saves require format 6. Generated tiles become ordinary world chunk tiles
 and are thereafter saved as terrain IDs/damage.
 
 The in-game F11 world-generation debug menu previews a plan using the current

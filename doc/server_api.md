@@ -49,7 +49,9 @@ Network token generation and elapsed wall time live outside this deterministic A
 `Server(content, seed)` defaults to seed `42`, starts at tick `0`, and builds a small demo:
 player at `{0, 0}`, a backpack containing a bandage there, a rock at `{1, 0}`,
 an initially disabled object at `{2, 0}`, a closed door at `{3, 0}`, a wall at
-`{3, 1}`, and an NPC at `{5, 5}`. World terrain generation itself creates no actors.
+`{3, 1}`, and an NPC at `{5, 5}`. When `air` and `stairs` roles exist, the demo
+also builds a basement/surface/raised-platform stairwell near `x=-3` and a pit
+with a ground item below. World terrain generation itself creates no actors.
 The immutable catalog must outlive the server. At the application boundary, call
 `ValidateServerContent(content, diagnostics)` before construction: the demo
 requires `floor`, `wall`, and `closed_door`, and its floor must be passable.
@@ -76,7 +78,11 @@ world's `eastl::expected` errors.
 | `use_item` | Execute a capability's explicit action on an accessible item |
 | `store_item` | Move an accessible item into an accessible container, or extract to direct inventory |
 
-Move and interact require `(dx, dz)` equal to `(±1, 0)` or `(0, ±1)`.
+Move and interact require one cardinal direction in X, Z, or Y. Horizontal
+movement is `(dx,dz)=(±1,0)` or `(0,±1)` with `dy=0`; vertical movement is
+`dx=dz=0`, `dy=±1`, and requires stairs on both endpoint tiles at the same X/Z.
+The standard client binds `<` to down and `>` to up. Horizontal walking into
+open space can immediately cause a fall under the deterministic gravity rules.
 Pickup/drop use `Command::item`, a **persistent ID**, not a handle. Zero selects
 the lowest-ID eligible item. Nested contents cannot be selected directly;
 moving a backpack preserves its contents. Fields irrelevant to a command are
@@ -84,7 +90,7 @@ ignored. Closing a door occupied by an actor fails with `occupied`.
 
 Item use requires nonzero `item` and definition-local `capability` IDs, plus
 `itemAction`, a behavior-local string ID. The action schema declares `None`,
-`Item` (a nonzero persistent `otherItem` ID), or `Direction` (cardinal `dx`/`dz`).
+`Item` (a nonzero persistent `otherItem` ID), or `Direction` (six-axis `dx`/`dz`/`dy`).
 Frontends accept generic command shapes; the authoritative behavior schema
 determines the required argument and validates its target.
 `ValidCommandShape` shares shape validation between local and LAN admission.
@@ -235,12 +241,16 @@ active player and bubble assumptions. It is not a second gameplay command API.
 
 `View(radius = 8)` returns an independent `WorldView` value and does not load
 chunks, advance turns or consume RNG. Radius is clamped to `0..12`. The square
-has width and height `2 * radius + 1`, with `origin` at its minimum world X/Z.
+has width and height `2 * radius + 1`, with `origin` at its minimum world X/Z
+and the observer's Y.
 Cells are row-major: `cells[row_z * width + column_x]`. Display rows follow world
 Z, not elevation.
 
-Visibility uses circular range and integer Bresenham line of sight. Terrain with
-`blocks_sight` is visible itself but blocks cells beyond it; unavailable
+Visibility uses a 3D spherical range and deterministic integer voxel line of
+sight. Closed floor bottoms block sight; open-space columns and matched stairs
+provide the documented vertical openings. Each projected terrain candidate has
+an independent straight LOS check. `terrainDepth` and `overlayDepth` independently
+describe the projected terrain and nearest visible overlay layers. Unavailable
 tiles stop sight without loading. Hidden cells are default/empty and convey no
 world information: always check `visible` before drawing terrain. There is no
 remembered exploration map in the snapshot.
@@ -309,11 +319,11 @@ delimited command per line from standard input. Its grammar is:
 
 ```text
 wait [positive-base-cost]
-move <n|s|e|w>
+move <n|s|e|w|up|down>
 pickup [persistent-id]
 drop [persistent-id]
-interact <n|s|e|w>
-use <item-id> <capability-id> <action> [item-id|n/s/e/w]
+interact <n|s|e|w|up|down>
+use <item-id> <capability-id> <action> [item-id|n/s/e/w/up/down]
 store <item-id> <container-id|0>
 items
 view
@@ -386,11 +396,21 @@ recreated on load, while guests return parked until activated again. Checkpoints
 read guest positions from live or archived world state, including administrative
 relocations of a parked character; a parked host is an invalid session.
 
-Save format **version 5** persists the player roster and reconnect tokens, actor speed, carrying mass limit and remaining cooldown, object
+Loading stages all roster guest regions together with the host bubble and
+reconciles once, retaining that demand until every roster actor has been checked
+against its saved position. Guests are then parked through `World::ParkActors`
+as one gravity-deferred operation. This keeps stacked guests at their saved
+positions independent of roster order. Staging demand is released and reconciled
+after parking; storage failures return a typed save error. Removing guest support
+can legitimately drop the active host, so authoritative roster positions and the
+host bubble center are refreshed from the settled world before returning. No
+simulation time elapses during restoration.
+
+Save format **version 6** persists Y coordinates as well as the player roster and reconnect tokens, actor speed, carrying mass limit and remaining cooldown, object
 interval and remaining timer, simulation tick/RNG, and session pacing settings.
 A checkpoint can therefore resume mid-action or partway through an object
 interval. Item definition/capability names, installations, charge fractions and
-remaining door delays are persisted as well. Versions 1–4 are rejected explicitly.
+remaining door delays are persisted as well. Versions 1–5 are rejected explicitly.
 Pending input intents, tick credit, fractional credit, readiness snapshots, and partially
 spent input deadlines are transient: load resets them and gives ready players
 fresh grace. Frontends reset their elapsed-time baseline; offline time is never

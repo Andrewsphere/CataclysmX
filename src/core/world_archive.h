@@ -46,7 +46,7 @@ struct ChunkArchive {
 
 struct SaveSnapshot {
     std::uint32_t seed = 42;
-    std::uint32_t generationVersion = 1;
+    std::uint32_t generationVersion = 3;
     PersistentId nextId = 1;
     SessionState session;
 };

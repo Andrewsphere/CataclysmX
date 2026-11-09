@@ -17,6 +17,7 @@ bool ValidName(eastl::string_view name) {
 }
 ItemBehaviorSchema MakeSchema(DoorConfig config) {
     ItemBehaviorSchema schema;
+    schema.implementationVersion = 2;
     schema.hasActivity = true; schema.countdown = true; schema.maximumDelay = config.delay;
     schema.actions = {
         {"arm", ItemActionArgument::Direction, ItemActionCategory::Operate, config.cost, {"item.action.4", "Arm door controller"}},
@@ -30,6 +31,19 @@ bool Deployed(const ItemReadContext& context, ActorHandle actor) {
     const auto* item = context.GetWorld().GetItem(context.Self());
     const auto* owner = context.GetWorld().GetActor(actor);
     return item && owner && item->location.kind == LocationKind::ground && item->location.position == owner->position;
+}
+bool Adjacent(TileCoord a, TileCoord b) {
+    return std::abs(a.x - b.x) + std::abs(a.z - b.z) + std::abs(a.y - b.y) == 1;
+}
+bool Reachable(const World& world, TileCoord from, TileCoord target) {
+    if (!Adjacent(from, target)) { return false; }
+    if (from.y == target.y) { return true; }
+    const Tile* upper = world.GetTile(from.y > target.y ? from : target);
+    const Tile* lower = world.GetTile(from.y > target.y ? target : from);
+    if (!upper || !lower) { return false; }
+    const auto& upperTerrain = world.GetContent().GetTerrain(upper->terrain);
+    const auto& lowerTerrain = world.GetContent().GetTerrain(lower->terrain);
+    return upperTerrain.openSpace || (upperTerrain.stairs && lowerTerrain.stairs);
 }
 class DoorBehavior final : public ItemBehavior {
 public:
@@ -50,15 +64,17 @@ public:
         } else if (request.action == "arm") {
             if (armed_) { return {}; }
             if (!Deployed(context.Read(), actor)) { return {ItemUseOutcome::Refused, 0, NotDeployed()}; }
-            if (!((request.dx == 0 && (request.dz == 1 || request.dz == -1))
-                || (request.dz == 0 && (request.dx == 1 || request.dx == -1)))) {
+            if (!((request.dy == 0 && request.dx == 0 && (request.dz == 1 || request.dz == -1))
+                || (request.dy == 0 && request.dz == 0 && (request.dx == 1 || request.dx == -1))
+                || (request.dx == 0 && request.dz == 0 && (request.dy == 1 || request.dy == -1)))) {
                 return {ItemUseOutcome::Refused, 0, InvalidTarget()};
             }
             const auto& world = context.Read().GetWorld();
             const auto position = world.GetItem(context.Read().Self())->location.position;
-            const TileCoord target{position.x + request.dx, position.z + request.dz};
+            const TileCoord target{position.x + request.dx, position.z + request.dz, position.y + request.dy};
             const auto* tile = world.GetTile(target);
-            if (!world.IsActive(target) || !tile || !world.GetContent().GetTerrain(tile->terrain).opensTo.value) {
+            if (!world.IsActive(target) || !tile || !Reachable(world, position, target)
+                || !world.GetContent().GetTerrain(tile->terrain).opensTo.value) {
                 return {ItemUseOutcome::Refused, 0, InvalidTarget()};
             }
             armed_ = true; remaining_ = config_.delay; target_ = target;
@@ -75,7 +91,7 @@ public:
         const auto* item = world.GetItem(context.Read().Self());
         const auto* tile = world.GetTile(target_);
         if (item && item->location.kind == LocationKind::ground && world.IsActive(target_) && tile
-            && std::abs(item->location.position.x - target_.x) + std::abs(item->location.position.z - target_.z) == 1) {
+            && Reachable(world, item->location.position, target_)) {
             const auto opensTo = world.GetContent().GetTerrain(tile->terrain).opensTo;
             if (opensTo.value) {
                 Tile changed = *tile; changed.terrain = opensTo;
@@ -89,8 +105,8 @@ public:
     }
     DataObject SaveState() const override {
         DataObject result;
-        result.SetUnsigned("version", 1); result.SetBoolean("armed", armed_); result.SetUnsigned("remaining_ticks", remaining_);
-        DataObject target; target.SetSigned("x", target_.x); target.SetSigned("z", target_.z);
+        result.SetUnsigned("version", 2); result.SetBoolean("armed", armed_); result.SetUnsigned("remaining_ticks", remaining_);
+        DataObject target; target.SetSigned("x", target_.x); target.SetSigned("z", target_.z); target.SetSigned("y", target_.y);
         result.Set("target", eastl::move(target));
         return result;
     }
@@ -110,7 +126,7 @@ public:
         bool armed = false; Tick remaining = 0; TileCoord target{};
         if (archive) {
             const auto version = archive->GetUnsigned("version");
-            if (version && *version != 1) {
+            if (version && *version != 2) {
                 if (diagnostics) { diagnostics->Add("Unsupported door controller state version"); }
                 return eastl::unexpected(StateError::UnsupportedVersion);
             }
@@ -119,9 +135,11 @@ public:
             bool valid = archive->Type() == DataType::Object && version && a && r && t && archive->Size() == 4;
             if (valid) {
                 const auto x = (*t)->GetSigned("x"); const auto z = (*t)->GetSigned("z");
-                valid = x && z && (*t)->Size() == 2 && *x >= -world_coordinate_limit && *x <= world_coordinate_limit
-                    && *z >= -world_coordinate_limit && *z <= world_coordinate_limit && *r <= config_.delay;
-                if (valid) { armed = *a; remaining = *r; target = {static_cast<int>(*x), static_cast<int>(*z)}; }
+                const auto y = (*t)->GetSigned("y");
+                valid = x && z && y && (*t)->Size() == 3 && *x >= -world_coordinate_limit && *x <= world_coordinate_limit
+                    && *z >= -world_coordinate_limit && *z <= world_coordinate_limit
+                    && *y >= world_min_y && *y <= world_max_y && *r <= config_.delay;
+                if (valid) { armed = *a; remaining = *r; target = {static_cast<int>(*x), static_cast<int>(*z), static_cast<int>(*y)}; }
                 valid = valid && (armed || (!remaining && target == TileCoord{}));
             }
             if (!valid) {
@@ -140,9 +158,10 @@ public:
         if (!*state->GetBoolean("armed")) { return {}; }
         const auto* item = context.FindItem(self);
         const auto* target = state->Find("target");
-        const TileCoord position{static_cast<int>(*target->GetSigned("x")), static_cast<int>(*target->GetSigned("z"))};
+        const TileCoord position{static_cast<int>(*target->GetSigned("x")), static_cast<int>(*target->GetSigned("z")),
+            static_cast<int>(*target->GetSigned("y"))};
         if (!item || item->location != LocationKind::ground
-            || std::abs(position.x - item->position.x) + std::abs(position.z - item->position.z) != 1) {
+            || !Adjacent(position, item->position)) {
             if (diagnostics) { diagnostics->Add("Armed door controller must be deployed beside its target"); }
             return eastl::unexpected(StateError::InvalidData);
         }

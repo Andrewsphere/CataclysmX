@@ -58,6 +58,34 @@ TEST_CASE("Parked players retain inventory and timing without occupying active t
     CHECK(world.CheckInvariants());
 }
 
+TEST_CASE("Parked players freeze in air and stop blocking falling actors", "[world][parking][gravity]") {
+    World world(TestContent());
+    REQUIRE(world.RequestChunks({{0, 0}, 0}, LoadMode::active));
+    REQUIRE(world.ReconcileChunks());
+    REQUIRE(world.SetTile({2, 2, 2}, {TestTerrain("floor"), 0}));
+    REQUIRE(world.SetTile({2, 2, -1}, {TestTerrain("floor"), 0}));
+    const auto guest = world.CreateActor({2, 2, 2}, true);
+    REQUIRE(guest);
+    REQUIRE(world.ScheduleActorAction(*guest, 71));
+    REQUIRE(world.SetActorParked(*guest, true));
+    for (int y = 0; y <= 3; ++y) {
+        REQUIRE(world.SetTile({2, 2, y}, {TestTerrain("air"), 0}));
+    }
+    const auto falling = world.CreateActor({2, 2, 3});
+    REQUIRE(falling);
+    CHECK(world.GetActor(*falling)->position == TileCoord{2, 2, -1});
+    world.SettleGravity();
+    CHECK(world.GetActor(*guest)->position == TileCoord{2, 2, 2});
+    CHECK(world.ActorAt({2, 2, 2}) == ActorHandle{});
+    REQUIRE(world.SetActorParked(*guest, false));
+    CHECK(world.GetActor(*guest)->position == TileCoord{2, 2, 0});
+    CHECK(world.GetActor(*guest)->remainingTicks == 71);
+    REQUIRE(world.SetActorParked(*falling, true) == eastl::unexpected(WorldError::invalid_request));
+    REQUIRE(world.DestroyActor(*falling));
+    CHECK(world.GetActor(*guest)->position == TileCoord{2, 2, -1});
+    CHECK(world.CheckInvariants());
+}
+
 TEST_CASE("Only player actors can be parked and unparking validates terrain", "[world][parking]") {
     World world(TestContent());
     REQUIRE(world.RequestChunks({{0, 0}, 0}, LoadMode::active));

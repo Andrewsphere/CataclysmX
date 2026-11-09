@@ -56,8 +56,8 @@ function Wait-SmokeProcess($Entry, [int] $TimeoutMs = 10000) {
 }
 
 function Get-GuestResult([string] $Output, [string] $Label) {
-    $joined = [regex]::Match($Output, '(?m)^joined player=(\d+) token=(\d+) position=(-?\d+,-?\d+) tick=\d+\r?$')
-    $final = [regex]::Match($Output, '(?m)^final player=(\d+) token=(\d+) position=(-?\d+,-?\d+) tick=\d+ resolved=1/1\r?$')
+    $joined = [regex]::Match($Output, '(?m)^joined player=(\d+) token=(\d+) position=(-?\d+,-?\d+,-?\d+) tick=\d+\r?$')
+    $final = [regex]::Match($Output, '(?m)^final player=(\d+) token=(\d+) position=(-?\d+,-?\d+,-?\d+) tick=\d+ resolved=1/1\r?$')
     if (-not $joined.Success -or -not $final.Success) { throw "$Label did not join and resolve its command" }
     $id = $joined.Groups[1].Value
     $token = $joined.Groups[2].Value

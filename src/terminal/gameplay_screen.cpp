@@ -310,8 +310,9 @@ ftxui::Element GameplayUi::Render(const WorldView& view, const ContentCatalog& c
     if (!presentation.pending.empty() || view.commandQueued || view.remainingTicks != 0) {
         stateField = stateField | ftxui::color(ftxui::Color::Yellow);
     }
-    const String position = localization.Format("game.ui.coordinates", {
+    String position = localization.Format("game.ui.coordinates", {
         {"x", NumberText(view.player_position.x)}, {"z", NumberText(view.player_position.z)}});
+    position += ", y="; position += NumberText(view.player_position.y);
     ftxui::Elements status{stateField,
         StatusField(t("game.ui.cooldown"), localization.Format("game.ui.ticks", {{"ticks", UnsignedText(view.remainingTicks)}})),
         StatusField(t("game.ui.speed"), UnsignedText(view.speed)), ftxui::separatorLight(),
@@ -459,7 +460,7 @@ ftxui::Element GameplayUi::Render(const WorldView& view, const ContentCatalog& c
         group("game.ui.windows", {InputAction::QuickActions, InputAction::Inventory, InputAction::Players,
             InputAction::Settings, InputAction::Help});
         group("game.ui.actions", {InputAction::Use, InputAction::PickUp, InputAction::Drop, InputAction::Interact, InputAction::Wait});
-        group("game.ui.movement", {InputAction::West, InputAction::North, InputAction::South, InputAction::East});
+        group("game.ui.movement", {InputAction::West, InputAction::North, InputAction::South, InputAction::East, InputAction::MoveDown, InputAction::MoveUp});
         group("game.ui.pacing", {InputAction::RateDown, InputAction::RateUp, InputAction::ToggleRate, InputAction::ToggleIdle});
         group("game.ui.system", {InputAction::Save, InputAction::Debug, InputAction::Quit, InputAction::Cancel});
         rows.push_back(ftxui::text("")); rows.push_back(Text(t("context.interaction")) | ftxui::bold);
@@ -528,8 +529,11 @@ bool GameplayUi::HandleEvent(const ftxui::Event& event, const WorldView& view, c
     }
     const auto chord = DecodeTerminalInput({event.input().data(), event.input().size()});
     auto action = chord ? ResolveAction(keys, InputContext::Menu, *chord) : eastl::optional<InputAction>{};
-    if (modal_ == Modal::Inventory && itemStage_ == ItemStage::Browse && chord) {
-        if (auto itemAction = ResolveAction(keys, InputContext::Items, *chord)) { action = itemAction; }
+    if (modal_ == Modal::Inventory && chord) {
+        if (auto itemAction = ResolveAction(keys, InputContext::Items, *chord)) {
+            if (itemStage_ == ItemStage::Browse || (itemStage_ == ItemStage::Direction
+                && (*itemAction == InputAction::MoveDown || *itemAction == InputAction::MoveUp))) { action = itemAction; }
+        }
     }
     if (action == InputAction::Cancel) {
         if (modal_ == Modal::Inventory && itemStage_ != ItemStage::Browse) { itemStage_ = ItemStage::Browse; feedback_.clear(); }
@@ -586,6 +590,8 @@ bool GameplayUi::HandleEvent(const ftxui::Event& event, const WorldView& view, c
             else if (action == InputAction::South) { command.dz = 1; }
             else if (action == InputAction::West) { command.dx = -1; }
             else if (action == InputAction::East) { command.dx = 1; }
+            else if (action == InputAction::MoveDown) { command.dy = -1; }
+            else if (action == InputAction::MoveUp) { command.dy = 1; }
             else { return true; }
             send(command); return true;
         }

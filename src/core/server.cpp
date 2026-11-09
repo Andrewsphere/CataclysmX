@@ -29,9 +29,24 @@ T Take(WorldResult<T> result) {
     return *result;
 }
 
-bool Cardinal(int dx, int dz) {
-    return (dz == 0 && (dx == -1 || dx == 1))
-        || (dx == 0 && (dz == -1 || dz == 1));
+bool Cardinal(int dx, int dz, int dy) {
+    return (dy == 0 && dz == 0 && (dx == -1 || dx == 1))
+        || (dy == 0 && dx == 0 && (dz == -1 || dz == 1))
+        || (dx == 0 && dz == 0 && (dy == -1 || dy == 1));
+}
+
+ChunkCoord BubbleCenter(TileCoord position) {
+    const ChunkCoord chunk = ChunkOf(position);
+    return {chunk.x, chunk.z, 0};
+}
+
+bool OpenVerticalFace(const World& world, TileCoord first, TileCoord second) {
+    const Tile* a = world.GetTile(first);
+    const Tile* b = world.GetTile(second);
+    if (!a || !b) { return false; }
+    const auto& upper = world.GetContent().GetTerrain((first.y > second.y ? a : b)->terrain);
+    const auto& lower = world.GetContent().GetTerrain((first.y > second.y ? b : a)->terrain);
+    return upper.openSpace || (upper.stairs && lower.stairs);
 }
 
 bool BubbleFits(TileCoord position, int radius) {
@@ -115,34 +130,57 @@ Outcome MovementFailure(WorldError error) {
 }
 
 bool LineVisible(const World& world, TileCoord origin, TileCoord target) {
-    // Integer Bresenham ray. A blocking target is visible; cells beyond it are
-    // not. Unavailable tiles also stop the ray, without loading anything.
-    const int dx = std::abs(target.x - origin.x);
-    const int dz = -std::abs(target.z - origin.z);
-    const int sx = origin.x < target.x ? 1 : -1;
-    const int sz = origin.z < target.z ? 1 : -1;
-    int error = dx + dz;
+    // Center-to-center rational voxel DDA. Crossing times are odd/(2*delta);
+    // compare by integer cross products, never floating point. At a tie every
+    // touched voxel and every vertical edge of that supercover must be open.
+    // A blocking target itself is visible, but its bottom face is checked first.
+    const int delta[] = {std::abs(target.x - origin.x), std::abs(target.z - origin.z),
+        std::abs(target.y - origin.y)};
+    const int step[] = {target.x > origin.x ? 1 : -1, target.z > origin.z ? 1 : -1,
+        target.y > origin.y ? 1 : -1};
+    int numerator[] = {1, 1, 1};
     TileCoord cursor = origin;
     for (;;) {
         const Tile* tile = world.GetTile(cursor);
-        if (!tile) {
-            return false;
-        }
-        if (cursor == target) {
-            return true;
-        }
+        if (!tile) { return false; }
+        if (cursor == target) { return true; }
         if (cursor != origin && world.GetContent().GetTerrain(tile->terrain).blocksSight) {
             return false;
         }
-        const int twice = 2 * error;
-        if (twice >= dz) {
-            error += dz;
-            cursor.x += sx;
+        int axis = -1;
+        for (int i = 0; i < 3; ++i) {
+            if (delta[i] != 0 && (axis < 0
+                || numerator[i] * delta[axis] < numerator[axis] * delta[i])) { axis = i; }
         }
-        if (twice <= dx) {
-            error += dx;
-            cursor.z += sz;
+        Require(axis >= 0);
+        unsigned int mask = 0;
+        for (int i = 0; i < 3; ++i) {
+            if (delta[i] != 0 && numerator[i] * delta[axis] == numerator[axis] * delta[i]) {
+                mask |= 1U << i;
+            }
         }
+        for (unsigned int subset = 1; subset <= 7; ++subset) {
+            if ((subset & mask) != subset) { continue; }
+            const TileCoord touched{cursor.x + ((subset & 1) ? step[0] : 0),
+                cursor.z + ((subset & 2) ? step[1] : 0),
+                cursor.y + ((subset & 4) ? step[2] : 0)};
+            const Tile* touchedTile = world.GetTile(touched);
+            if (!touchedTile) { return false; }
+            if ((mask & 4) != 0) {
+                TileCoord other = touched;
+                other.y += (subset & 4) ? -step[2] : step[2];
+                if (!OpenVerticalFace(world, touched, other)) { return false; }
+            }
+            if (touched != target && world.GetContent().GetTerrain(touchedTile->terrain).blocksSight) {
+                return false;
+            }
+        }
+        // Include the vertical face at the unshifted horizontal corner too.
+        if ((mask & 4) && !OpenVerticalFace(world, cursor,
+            {cursor.x, cursor.z, cursor.y + step[2]})) { return false; }
+        if (mask & 1) { cursor.x += step[0]; numerator[0] += 2; }
+        if (mask & 2) { cursor.z += step[1]; numerator[1] += 2; }
+        if (mask & 4) { cursor.y += step[2]; numerator[2] += 2; }
     }
 }
 
@@ -152,7 +190,7 @@ bool ValidCommandShape(const Command& command) {
     switch (command.kind) {
     case CommandKind::wait: return command.waitCost != 0;
     case CommandKind::move:
-    case CommandKind::interact: return Cardinal(command.dx, command.dz);
+    case CommandKind::interact: return Cardinal(command.dx, command.dz, command.dy);
     case CommandKind::pick_up:
     case CommandKind::drop: return true;
     case CommandKind::store_item:
@@ -163,8 +201,9 @@ bool ValidCommandShape(const Command& command) {
             || !ValidItemActionId(command.itemAction) || command.otherItem == command.item) { return false; }
         // Admission checks the generic argument envelope. The selected behavior's
         // declaration is checked against current authoritative state at execution.
-        if (command.otherItem != 0) { return command.dx == 0 && command.dz == 0; }
-        return (command.dx == 0 && command.dz == 0) || Cardinal(command.dx, command.dz);
+        if (command.otherItem != 0) { return command.dx == 0 && command.dz == 0 && command.dy == 0; }
+        return (command.dx == 0 && command.dz == 0 && command.dy == 0)
+            || Cardinal(command.dx, command.dz, command.dy);
     }
     return false;
 }
@@ -259,6 +298,29 @@ Server::Server(const ContentCatalog& content, std::uint32_t seed) : world_(conte
             Take(world_.CreateItem(type, ItemLocation::Ground({0, 1})));
         }
     }
+    const TerrainId air = content.FindTerrain("air");
+    const TerrainId stairs = content.FindTerrain("stairs");
+    if (air.value != 0 && stairs.value != 0 && content.GetTerrain(air).openSpace
+        && content.GetTerrain(stairs).stairs && content.GetTerrain(stairs).passable) {
+        // West of the original demo: stairs connect a basement, ground, and a
+        // raised platform. Its hole drops through ground air into the basement.
+        // Terrain edits allocate no entity IDs; the extra rock follows all of
+        // the original equipment so replay identities remain stable.
+        for (int z = 0; z <= 2; ++z) {
+            for (int x = -5; x <= -3; ++x) {
+                for (int y = -1; y <= 1; ++y) {
+                    Require(world_.SetTile({x, z, y}, {content.FindTerrain("floor"), 0}).has_value());
+                }
+            }
+        }
+        for (int y = -1; y <= 1; ++y) {
+            Require(world_.SetTile({-3, 0, y}, {stairs, 0}).has_value());
+        }
+        Require(world_.SetTile({-5, 2, -1}, {content.FindTerrain("wall"), 0}).has_value());
+        Require(world_.SetTile({-4, 1, 0}, {air, 0}).has_value());
+        Require(world_.SetTile({-4, 1, 1}, {air, 0}).has_value());
+        Take(world_.CreateItem(content.FindItem("rock"), ItemLocation::Ground({-4, 1, -1})));
+    }
     SynchronizePacing();
 }
 
@@ -315,21 +377,21 @@ CommandResult Server::Execute(ActorHandle handle, PlayerSlot& slot, Command comm
         outcome = Outcome::waited;
         break;
     case CommandKind::move: {
-        if (!Cardinal(command.dx, command.dz)) {
+        if (!Cardinal(command.dx, command.dz, command.dy)) {
             return failed(Outcome::invalid_command);
         }
-        const TileCoord destination{position.x + command.dx, position.z + command.dz};
+        const TileCoord destination{position.x + command.dx, position.z + command.dz, position.y + command.dy};
         // Validate the complete future bubble before acquiring any demand.
         if (!BubbleFits(destination, resident_radius_)) {
             return failed(Outcome::unavailable);
         }
         LoadRequest temporary{};
-        const ChunkCoord center = ChunkOf(destination);
+        const ChunkCoord center = BubbleCenter(destination);
         bool complete = true;
         for (int z = center.z - resident_radius_; z <= center.z + resident_radius_; ++z) {
             for (int x = center.x - resident_radius_; x <= center.x + resident_radius_; ++x) {
-                if (!world_.GetChunk({x, z})) {
-                    complete = false;
+                for (int y = world_min_y; y <= world_max_y; ++y) {
+                    if (!world_.GetChunk({x, z, y})) { complete = false; }
                 }
             }
         }
@@ -341,6 +403,18 @@ CommandResult Server::Execute(ActorHandle handle, PlayerSlot& slot, Command comm
             if (!loaded) {
                 Require(world_.ReleaseRequest(temporary).has_value());
                 return {Outcome::unavailable, false, tick_, loaded.error()};
+            }
+        }
+        if (command.dy != 0) {
+            const Tile* source = world_.GetTile(position);
+            const Tile* target = world_.GetTile(destination);
+            if (!source || !target || !world_.GetContent().GetTerrain(source->terrain).stairs
+                || !world_.GetContent().GetTerrain(target->terrain).stairs) {
+                if (temporary.value != 0) {
+                    Require(world_.ReleaseRequest(temporary).has_value());
+                    Require(world_.ReconcileChunks().has_value());
+                }
+                return failed(Outcome::blocked);
             }
         }
         const auto moved = world_.MoveActor(handle, destination);
@@ -386,7 +460,7 @@ CommandResult Server::Execute(ActorHandle handle, PlayerSlot& slot, Command comm
     case CommandKind::use_item: {
         const ItemHandle item = world_.FindItem(command.item);
         const ItemUseResult used = world_.UseItem(handle, item,
-            {command.capability, command.itemAction, world_.FindItem(command.otherItem), command.dx, command.dz});
+            {command.capability, command.itemAction, world_.FindItem(command.otherItem), command.dx, command.dz, command.dy});
         if (used.outcome != ItemUseOutcome::Succeeded) {
             auto result = failed(Outcome::item_use_failed);
             result.itemOutcome = used.outcome;
@@ -413,13 +487,16 @@ CommandResult Server::Execute(ActorHandle handle, PlayerSlot& slot, Command comm
         break;
     }
     case CommandKind::interact: {
-        if (!Cardinal(command.dx, command.dz)) {
+        if (!Cardinal(command.dx, command.dz, command.dy)) {
             return failed(Outcome::invalid_command);
         }
-        const TileCoord destination{position.x + command.dx, position.z + command.dz};
+        const TileCoord destination{position.x + command.dx, position.z + command.dz, position.y + command.dy};
         const Tile* tile = world_.GetTile(destination);
         if (!tile) {
             return failed(Outcome::unavailable);
+        }
+        if (command.dy != 0 && !OpenVerticalFace(world_, position, destination)) {
+            return failed(Outcome::blocked);
         }
         const TerrainDefinition& terrain = world_.GetContent().GetTerrain(tile->terrain);
         if (terrain.opensTo.value != 0 || terrain.closesTo.value != 0) {
@@ -517,9 +594,9 @@ SessionResult<PlayerJoin> Server::JoinPlayer(eastl::string_view name,
             const auto position = world_.FindPlayerPosition(slot.id);
             if (!position) { return eastl::unexpected(SessionError::Unavailable); }
             slot.position = *position;
-            slot.center = ChunkOf(*position);
+            slot.center = BubbleCenter(*position);
             slot.residentRequest = Take(world_.RequestChunks(
-                {ChunkOf(slot.position), 0}, LoadMode::resident));
+                {BubbleCenter(slot.position), 0}, LoadMode::resident));
             if (!world_.ReconcileChunks()) {
                 Require(world_.ReleaseRequest(slot.residentRequest).has_value());
                 slot.residentRequest = {};
@@ -551,7 +628,7 @@ SessionResult<PlayerJoin> Server::JoinPlayer(eastl::string_view name,
         for (int dz = -radius; dz <= radius && !found; ++dz) {
             for (int dx = -radius; dx <= radius; ++dx) {
                 if (eastl::max(std::abs(dx), std::abs(dz)) != radius) { continue; }
-                const TileCoord candidate{origin.x + dx, origin.z + dz};
+                const TileCoord candidate{origin.x + dx, origin.z + dz, origin.y};
                 const Tile* tile = world_.GetTile(candidate);
                 if (tile && Passable(world_.GetContent(), tile->terrain)
                     && world_.ActorAt(candidate).value == 0
@@ -570,8 +647,8 @@ SessionResult<PlayerJoin> Server::JoinPlayer(eastl::string_view name,
     slot.id = world_.GetActor(actor)->id;
     slot.name = String(name.data(), name.size());
     slot.token = newToken;
-    slot.position = spawn;
-    slot.center = ChunkOf(spawn);
+    slot.position = world_.GetActor(actor)->position;
+    slot.center = BubbleCenter(slot.position);
     slot.state = PlayerConnectionState::Joining;
     slot.residentRequest = Take(world_.RequestChunks({slot.center, 0}, LoadMode::resident));
     const PlayerJoin joined{slot.id, slot.token};
@@ -586,7 +663,7 @@ SessionResult<void> Server::ActivatePlayer(PersistentId id) {
     if (slot->state != PlayerConnectionState::Joining) {
         return eastl::unexpected(SessionError::AlreadyConnected);
     }
-    const ChunkCoord center = ChunkOf(slot->position);
+    const ChunkCoord center = BubbleCenter(slot->position);
     if (!BubbleFits(slot->position, resident_radius_)) {
         return eastl::unexpected(SessionError::Unavailable);
     }
@@ -622,9 +699,9 @@ SessionResult<void> Server::ActivatePlayer(PersistentId id) {
         for (int dz = -radius; dz <= radius && !found; ++dz) {
             for (int dx = -radius; dx <= radius; ++dx) {
                 if (eastl::max(std::abs(dx), std::abs(dz)) != radius) { continue; }
-                const TileCoord candidate{slot->position.x + dx, slot->position.z + dz};
+                const TileCoord candidate{slot->position.x + dx, slot->position.z + dz, slot->position.y};
                 if (!BubbleFits(candidate, resident_radius_)) { continue; }
-                const ChunkCoord candidateCenter = ChunkOf(candidate);
+                const ChunkCoord candidateCenter = BubbleCenter(candidate);
                 if (candidateCenter != center &&
                     (!temporary.value || candidateCenter != temporaryCenter)) {
                     if (temporary.value) {
@@ -655,7 +732,7 @@ SessionResult<void> Server::ActivatePlayer(PersistentId id) {
     }
     // Every chunk of the destination bubble is resident before relocating or
     // unparking the actor. Updating the permanent requests cannot need I/O.
-    if (ChunkOf(spawn) != center && !temporary.value) {
+    if (BubbleCenter(spawn) != center && !temporary.value) {
         std::abort();
     }
     Require(world_.MoveActor(actor, spawn).has_value());
@@ -830,7 +907,7 @@ WorldView Server::View(int radius) const {
 
 WorldView Server::ViewForPlayer(PersistentId id, int radius) const {
     // Public presentation input is clamped to [0, 12]. The square, row-major
-    // snapshot has circular sight range; out-of-range corners stay empty.
+    // snapshot has spherical 3D sight range; out-of-range candidates stay empty.
     radius = eastl::clamp(radius, 0, 12);
     const PlayerSlot* slot = FindPlayer(id);
     if (!slot) { return {}; }
@@ -840,7 +917,7 @@ WorldView Server::ViewForPlayer(PersistentId id, int radius) const {
     Require(actor != nullptr);
     WorldView result;
     result.player_position = actor->position;
-    result.origin = {actor->position.x - radius, actor->position.z - radius};
+    result.origin = {actor->position.x - radius, actor->position.z - radius, actor->position.y};
     result.width = 2 * radius + 1;
     result.height = result.width;
     result.tick = tick_;
@@ -856,24 +933,40 @@ WorldView Server::ViewForPlayer(PersistentId id, int radius) const {
     result.cells.resize(static_cast<std::size_t>(result.width * result.height));
     for (int z = 0; z < result.height; ++z) {
         for (int x = 0; x < result.width; ++x) {
-            const TileCoord position{result.origin.x + x, result.origin.z + z};
+            TileCoord position{result.origin.x + x, result.origin.z + z, result.origin.y};
             const int dx = x - radius;
             const int dz = z - radius;
-            if (dx * dx + dz * dz > radius * radius
-                || !LineVisible(world_, actor->position, position)) {
+            if (dx * dx + dz * dz > radius * radius) {
                 continue;
             }
             ViewCell& cell = result.cells[static_cast<std::size_t>(z * result.width + x)];
-            cell.visible = true;
-            cell.tile = *world_.GetTile(position);
-            if (const Actor* occupant = world_.GetActor(world_.ActorAt(position))) {
-                cell.actor = occupant->id;
-                cell.player = occupant->player;
-            }
-            cell.ground_items = static_cast<unsigned int>(world_.ItemsAt(position).size());
-            if (const InteractiveObject* object = world_.GetObject(world_.ObjectAt(position))) {
-                cell.object = object->id;
-                cell.object_enabled = object->enabled;
+            bool overlayFound = false;
+            for (unsigned int depth = 0; position.y >= world_min_y; ++depth, --position.y) {
+                if (dx * dx + dz * dz + static_cast<int>(depth * depth) > radius * radius) { break; }
+                const Tile* tile = world_.GetTile(position);
+                // Projection follows only the air column, but each candidate
+                // must have its own straight LOS from the player (no bent ray).
+                if (!tile) { break; }
+                const bool visible = LineVisible(world_, actor->position, position);
+                if (visible) {
+                    cell.visible = true;
+                    cell.tile = *tile;
+                    cell.terrainDepth = depth;
+                    if (!overlayFound) {
+                        if (const Actor* occupant = world_.GetActor(world_.ActorAt(position))) {
+                            cell.actor = occupant->id;
+                            cell.player = occupant->player;
+                        }
+                        cell.ground_items = static_cast<unsigned int>(world_.ItemsAt(position).size());
+                        if (const InteractiveObject* object = world_.GetObject(world_.ObjectAt(position))) {
+                            cell.object = object->id;
+                            cell.object_enabled = object->enabled;
+                        }
+                        overlayFound = cell.actor != 0 || cell.ground_items != 0 || cell.object != 0;
+                        if (overlayFound) { cell.overlayDepth = depth; }
+                    }
+                }
+                if (!world_.GetContent().GetTerrain(tile->terrain).openSpace) { break; }
             }
         }
     }
@@ -905,7 +998,7 @@ WorldResult<void> Server::SetBubbleRadii(int active_radius, int resident_radius,
     for (PlayerSlot& slot : players_) {
         if (slot.state != PlayerConnectionState::Active) { continue; }
         const Actor* participant = world_.GetActor(PlayerActor(slot));
-        const ChunkCoord center = ChunkOf(participant->position);
+        const ChunkCoord center = BubbleCenter(participant->position);
         const LoadRequest active = slot.id == GetHostPlayerId() ? active_request_ : slot.activeRequest;
         const LoadRequest resident = slot.id == GetHostPlayerId() ? resident_request_ : slot.residentRequest;
         Require(world_.UpdateRequest(active, {center, active_radius}, LoadMode::active).has_value());
@@ -925,7 +1018,7 @@ WorldResult<void> Server::SetBubbleRadii(int active_radius, int resident_radius,
         if (slot.state != PlayerConnectionState::Active) { continue; }
         const Actor* participant = world_.GetActor(PlayerActor(slot));
         Require(participant);
-        slot.center = ChunkOf(participant->position);
+        slot.center = BubbleCenter(participant->position);
         slot.position = participant->position;
     }
     bubbleCenter_ = FindPlayer(GetHostPlayerId())->center;
@@ -939,7 +1032,7 @@ SaveResult<void> Server::UpdatePlayerBubble(PlayerSlot& slot, int activeRadius, 
     Diagnostics* diagnostics) {
     const Actor* actor = world_.GetActor(PlayerActor(slot));
     Require(actor != nullptr);
-    const ChunkCoord center = ChunkOf(actor->position);
+    const ChunkCoord center = BubbleCenter(actor->position);
     LoadRequest active = slot.id == GetHostPlayerId() ? active_request_ : slot.activeRequest;
     LoadRequest resident = slot.id == GetHostPlayerId() ? resident_request_ : slot.residentRequest;
     Require(world_.UpdateRequest(active, {center, activeRadius}, LoadMode::active).has_value());
@@ -1007,13 +1100,23 @@ SaveResult<eastl::unique_ptr<Server>> Server::LoadSave(const ContentCatalog& con
         }
         return eastl::unexpected(SaveError::InvalidData);
     }
-    server->bubbleCenter_ = ChunkOf(session.playerPosition);
+    server->bubbleCenter_ = BubbleCenter(session.playerPosition);
     server->active_radius_ = session.activeRadius;
     server->resident_radius_ = session.residentRadius;
     server->active_request_ = Take(server->world_.RequestChunks(
         {server->bubbleCenter_, session.activeRadius}, LoadMode::active));
     server->resident_request_ = Take(server->world_.RequestChunks(
         {server->bubbleCenter_, session.residentRadius}, LoadMode::resident));
+    // Materialize the whole roster together: reconciliation settles gravity,
+    // and guests may support each other or the host across saved layers.
+    Vector<LoadRequest> staging;
+    for (const SavedPlayer& saved : session.players) {
+        if (saved.actor == session.player) { continue; }
+        const auto request = server->world_.RequestChunks(
+            {BubbleCenter(saved.position), 0}, LoadMode::resident);
+        if (!request) { return eastl::unexpected(SaveError::InvalidData); }
+        staging.push_back(*request);
+    }
     const auto reconciled = server->world_.ReconcileChunks(diagnostics);
     if (!reconciled) {
         return eastl::unexpected(reconciled.error());
@@ -1026,6 +1129,7 @@ SaveResult<eastl::unique_ptr<Server>> Server::LoadSave(const ContentCatalog& con
         }
         return eastl::unexpected(SaveError::InvalidData);
     }
+    Vector<ActorHandle> guests;
     if (session.players.empty()) {
         server->players_.push_back({session.player, "Host", 0, session.playerPosition,
             PlayerConnectionState::Active, {}, {}, server->bubbleCenter_});
@@ -1036,26 +1140,36 @@ SaveResult<eastl::unique_ptr<Server>> Server::LoadSave(const ContentCatalog& con
             slot.name = saved.name;
             slot.token = saved.reconnectToken;
             slot.position = saved.position;
-            slot.center = ChunkOf(saved.position);
+            slot.center = BubbleCenter(saved.position);
             slot.state = saved.actor == session.player
                 ? PlayerConnectionState::Active : PlayerConnectionState::Parked;
+            const ActorHandle handle = server->world_.FindActor(slot.id);
+            const Actor* value = server->world_.GetActor(handle);
+            if (!value || !value->player || value->position != slot.position) {
+                if (diagnostics) { diagnostics->Add("Saved player does not match roster"); }
+                return eastl::unexpected(SaveError::InvalidData);
+            }
             if (slot.state == PlayerConnectionState::Parked) {
-                const LoadRequest staging = Take(server->world_.RequestChunks(
-                    {slot.center, 0}, LoadMode::resident));
-                const auto staged = server->world_.ReconcileChunks(diagnostics);
-                if (!staged) { return eastl::unexpected(staged.error()); }
-                const ActorHandle guest = server->world_.FindActor(slot.id);
-                const Actor* value = server->world_.GetActor(guest);
-                if (!value || !value->player || value->position != slot.position) {
-                    return eastl::unexpected(SaveError::InvalidData);
-                }
-                Require(server->world_.SetActorParked(guest, true).has_value());
-                Require(server->world_.ReleaseRequest(staging).has_value());
-                Require(server->world_.ReconcileChunks().has_value());
+                guests.push_back(handle);
             }
             server->players_.push_back(eastl::move(slot));
         }
     }
+    // Validate every saved position before removing any guest support. Parking
+    // is gravity-deferred so an upper guest cannot fall before it is parked.
+    Require(server->world_.ParkActors({guests.data(), guests.size()}).has_value());
+    for (LoadRequest request : staging) {
+        Require(server->world_.ReleaseRequest(request).has_value());
+    }
+    const auto released = server->world_.ReconcileChunks(diagnostics);
+    if (!released) { return eastl::unexpected(released.error()); }
+    for (PlayerSlot& slot : server->players_) {
+        const auto position = server->world_.FindPlayerPosition(slot.id);
+        Require(position.has_value());
+        slot.position = *position;
+        slot.center = BubbleCenter(*position);
+    }
+    server->bubbleCenter_ = BubbleCenter(server->world_.GetActor(server->player_)->position);
     eastl::sort(server->players_.begin(), server->players_.end(),
         [](const PlayerSlot& a, const PlayerSlot& b) { return a.id < b.id; });
     server->tick_ = session.tick;

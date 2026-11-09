@@ -11,6 +11,7 @@
 #include <EASTL/array.h>
 #include <EASTL/expected.h>
 #include <EASTL/optional.h>
+#include <EASTL/span.h>
 #include <EASTL/unique_ptr.h>
 
 #include <cstdint>
@@ -110,6 +111,7 @@ struct Chunk {
 
 enum class LoadMode { resident, active };
 struct ChunkRegion {
+    // Horizontal columns through every world layer; center.y is ignored.
     ChunkCoord center{};
     int radius = 0;
 };
@@ -118,8 +120,9 @@ struct ChunkRegion {
 // reacquire after mutation, and never retain them across unloading/deletion.
 class World {
 public:
-    // Content must outlive the World and remain unchanged. New worlds use regional
-    // generation; generation-version-1 saves retain legacy generation. Both require floor/wall.
+    // Content must outlive the World and remain unchanged. New worlds use layered
+    // regional generation; versions 1/2 retain their surface generation. All
+    // layers require floor/wall/air terrain roles.
     explicit World(const ContentCatalog& content, std::uint32_t seed = 42);
     ~World();
     World(const World&) = delete;
@@ -163,11 +166,17 @@ public:
     ObjectHandle ObjectAt(TileCoord position) const;
 
     WorldResult<void> SetTile(TileCoord position, Tile tile);
+    // Bottom-up settlement without damage, RNG, or elapsed time. Spatial edits
+    // also settle affected resident columns; parked actors remain frozen.
+    void SettleGravity();
     WorldResult<ActorHandle> CreateActor(TileCoord position, bool player = false);
     WorldResult<void> MoveActor(ActorHandle actor, TileCoord destination);
     // Parked players remain owned but do not occupy tiles or advance time.
     // Unparking requires an unoccupied passable tile.
     WorldResult<void> SetActorParked(ActorHandle actor, bool parked);
+    // Validate all players first, then park all before settling gravity so
+    // stacked players retain their positions regardless of input order.
+    WorldResult<void> ParkActors(eastl::span<const ActorHandle> actors);
     // Actor destruction drops possessions at its last position.
     WorldResult<void> DestroyActor(ActorHandle actor);
     WorldResult<ItemHandle> CreateItem(ItemTypeId type, ItemLocation location);
@@ -213,6 +222,7 @@ private:
     void MarkItemDirty(ItemHandle item);
     bool ItemEligible(ItemHandle item) const;
     WorldResult<void> CheckItemTransfer(ItemHandle item, ItemLocation destination) const;
+    void FlushGravity();
     class Impl;
     eastl::unique_ptr<Impl> impl_;
 };

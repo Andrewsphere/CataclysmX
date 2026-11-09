@@ -67,7 +67,7 @@ TEST_CASE("Worldgen debug modal renders metadata and navigates cached regional p
     World world(TestContent(), 987654);
     auto menu = CreateWorldgenDebugMenu(world, {250, -1}, [] {});
     Has(menu, "Debug menu | World generation");
-    Has(menu, "Seed: 987654 | Generation version: 2");
+    Has(menu, "Seed: 987654 | Generation version: 3");
     Has(menu, "excludes saved edits and entities");
     Has(menu, "Layer: Roads | Scale: 8 | Cursor: 250,-1");
     Has(menu, "Region: 0,-1");

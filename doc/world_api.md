@@ -40,13 +40,16 @@ not ownership or lifetime guarantees.
 
 ## Coordinates and availability
 
-- `TileCoord{x, z}` is a two-dimensional tile position; Z is the map's second
-  horizontal axis, not elevation. Each axis is valid in `[-1'000'000, 1'000'000]`.
-- Chunks are `16 × 16` tiles. `ChunkOf` uses floor division, so tile `{-1, -1}`
-  belongs to chunk `{-1, -1}`. `TileIndex` is row-major (`local_z * 16 + local_x`)
-  and gives `255` for that tile.
+- `TileCoord{x, z, y}` uses X/Z horizontally and Y for elevation. Fields are
+  ordered `{x, z, y}` so `{x, z}` remains a surface (`y=0`) aggregate. X/Z are
+  valid in `[-1'000'000, 1'000'000]`; Y is `[-10, 10]`.
+- Chunks are single-layer `16 × 16` X/Z tiles, with Y as the chunk layer.
+  `ChunkOf` uses floor division horizontally, so surface tile `{-1, -1}` belongs to
+  chunk `{-1, -1, 0}`. `TileIndex` is row-major (`local_z * 16 + local_x`) and
+  gives `255` for that tile.
 - `ChunkRegion{center, radius}` is an inclusive square in **chunk units**, with
-  radius `0..8`. The entire square must fit chunk coordinates `[-62'500, 62'500]`.
+  radius `0..8`. Every request covers full-height columns, and `center.y` is
+  ignored. The entire square must fit horizontal chunk coordinates `[-62'500, 62'500]`.
   Edge chunks still contain slots outside valid tile coordinates; use
   `ValidPosition`/`GetTile` for tile access.
 - Spatial mutations require loaded destination chunks. A valid but unloaded
@@ -72,6 +75,15 @@ Explicit inventory operations remain available. `MoveActor` can relocate a
 parked actor to a loaded passable occupied tile without occupying it. Unparking
 requires a passable unoccupied tile (`blocked`/`occupied` otherwise). Unload and
 reload preserve parked state and possessions but retire runtime handles.
+
+`ParkActors(eastl::span<const ActorHandle>)` first validates every handle as a
+resident player, returning `invalid_handle` or `invalid_request` without changing
+any actor on failure. It then parks the whole set before settling gravity once.
+Empty sets, duplicate handles, and already parked players are accepted. This
+narrow batch operation preserves stacked players' positions regardless of input
+order: sequential parking would remove a lower player's support and drop an upper
+player before it could be parked. Other unsupported actors and items settle after
+the batch; this is a parking operation rather than a general transaction API.
 
 `SessionState::players` is a connection-independent roster of at most 32
 `SavedPlayer` entries: player actor ID, last tile, 1–32 byte name and reconnect
@@ -111,7 +123,7 @@ Reconciliation takes the union of all requests:
 Active demand includes residency and wins overlaps. Releasing one request
 cannot cancel another request's demand. Residency does not prohibit explicit
 administrative mutations. Reconciliation itself never advances turns.
-`LoadedChunks()` includes both modes in lexicographic `(x, z)` order.
+`LoadedChunks()` includes both modes in lexicographic `(x, z, y)` order.
 
 ```cpp
 #include "core/world.h"
@@ -184,6 +196,15 @@ mount returns `occupied`. World delegates item action dispatch and time processi
 to `ItemSystem`; individual behavior implementations apply effects through checked
 mutation contexts. See [items API](items_api.md) for actions and activities, and
 [adding item behaviors](item_behaviors.md) for the extension contracts.
+
+## Support and gravity
+
+Terrain with `open_space` provides no floor support; all other terrain supports
+a floor. `SettleGravity()` settles unsupported actors and complete ground-item
+trees deterministically, bottom-up, without RNG, damage, or elapsed time. It
+stops above a supporting tile, actor, or the world bottom. Parked actors remain
+frozen. Spatial terrain edits also settle affected resident columns. See
+[Y layers](y_layers.md) for terrain flag constraints, stairs, and sight rules.
 
 ## Relative timing
 

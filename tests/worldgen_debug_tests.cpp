@@ -180,6 +180,8 @@ TEST_CASE("Biome debug cells classify their clipped centers", "[client][worldgen
 TEST_CASE("Terrain debug samples match generated chunks including full Unicode appearance", "[client][worldgen-debug]") {
     // A wide Unicode symbol must reach the renderer intact, with both colors.
     const ContentSource source{"debug-unicode.json5", R"({format_version:1,definitions:[
+        {type:'terrain',id:'air',name:'Air',movement:{passable:true},blocks_sight:false,open_space:true,
+         appearance:{symbol:' ',foreground:'white'}},
         {type:'terrain',id:'floor',name:'Floor',movement:{passable:true},blocks_sight:false,
          appearance:{symbol:'\u754c',foreground:'#123456',background:'#654321'}},
         {type:'terrain',id:'wall',name:'Wall',movement:{passable:false},blocks_sight:true,

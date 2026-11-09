@@ -193,8 +193,8 @@ int main(int argc, char** argv) {
         bool accepted = false;
         const std::string actionDescription = [&] {
             switch (command.kind) {
-            case cataclysmx::CommandKind::move: return std::string("move ") + (command.dx < 0 ? "west" : command.dx > 0 ? "east" : command.dz < 0 ? "north" : "south");
-            case cataclysmx::CommandKind::interact: return std::string("interact ") + (command.dx < 0 ? "west" : command.dx > 0 ? "east" : command.dz < 0 ? "north" : "south");
+            case cataclysmx::CommandKind::move: return std::string("move ") + (command.dy < 0 ? "down" : command.dy > 0 ? "up" : command.dx < 0 ? "west" : command.dx > 0 ? "east" : command.dz < 0 ? "north" : "south");
+            case cataclysmx::CommandKind::interact: return std::string("interact ") + (command.dy < 0 ? "down" : command.dy > 0 ? "up" : command.dx < 0 ? "west" : command.dx > 0 ? "east" : command.dz < 0 ? "north" : "south");
             case cataclysmx::CommandKind::wait: return std::string("wait");
             case cataclysmx::CommandKind::pick_up: return std::string("pick up");
             case cataclysmx::CommandKind::drop: return std::string("drop");
@@ -484,6 +484,8 @@ int main(int argc, char** argv) {
         case InputAction::East: command.dx = 1; break;
         case InputAction::North: command.dz = -1; break;
         case InputAction::South: command.dz = 1; break;
+        case InputAction::MoveDown: command.dy = -1; break;
+        case InputAction::MoveUp: command.dy = 1; break;
         default: directional = false; break;
         }
         if (directional) { command.kind = interacting ? CommandKind::interact : CommandKind::move; }

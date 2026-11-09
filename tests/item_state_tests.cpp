@@ -93,6 +93,7 @@ TEST_CASE("Capability state uses stable names and stores only mutable state", "[
     initial.Find("timer")->SetBoolean("armed", true);
     initial.Find("timer")->Find("target")->SetSigned("x", -1);
     initial.Find("timer")->Find("target")->SetSigned("z", 2);
+    initial.Find("timer")->Find("target")->SetSigned("y", -3);
     auto modified = ReadItemState(definition, initial);
     REQUIRE(modified);
     state = eastl::move(*modified);
@@ -134,6 +135,10 @@ TEST_CASE("State validation rejects missing extra duplicate and mismatched entri
     SECTION("disarmed nonzero target") { state.Find("timer")->Find("target")->SetSigned("x", 1); }
     SECTION("armed delay exceeds config") { state.Find("timer")->SetBoolean("armed", true); state.Find("timer")->SetUnsigned("remaining_ticks", 301); }
     SECTION("target out of bounds") { state.Find("timer")->SetBoolean("armed", true); state.Find("timer")->Find("target")->SetSigned("x", world_coordinate_limit + 1); }
+    SECTION("target below world") { state.Find("timer")->SetBoolean("armed", true); state.Find("timer")->Find("target")->SetSigned("y", world_min_y - 1); }
+    SECTION("target above world") { state.Find("timer")->SetBoolean("armed", true); state.Find("timer")->Find("target")->SetSigned("y", world_max_y + 1); }
+    SECTION("missing target elevation") { *state.Find("timer")->Find("target") = Without(*state.Find("timer")->Find("target"), "y"); }
+    SECTION("unsigned target elevation") { state.Find("timer")->Find("target")->SetUnsigned("y", 0); }
     CHECK_FALSE(ReadItemState(definition, state).has_value());
 }
 
@@ -149,13 +154,14 @@ TEST_CASE("State readers reject malformed data rather than initializing defaults
     SECTION("unknown field") { saved.Find("power")->SetBoolean("extra", true); }
     SECTION("current capacity policy rejects rather than clamps") { saved.Find("power")->SetUnsigned("energy", 101); }
     SECTION("unsupported version") { saved.Find("power")->SetUnsigned("version", 2); expected = StateError::UnsupportedVersion; }
+    SECTION("old two-dimensional door state") { saved.Find("timer")->SetUnsigned("version", 1); expected = StateError::UnsupportedVersion; }
     Diagnostics diagnostics;
     auto result = ReadItemState(definition, saved, &diagnostics);
     REQUIRE_FALSE(result);
     CHECK(result.error() == expected);
     REQUIRE_FALSE(diagnostics.Empty());
-    REQUIRE(diagnostics.Frames().front().location);
-    CHECK(diagnostics.Frames().front().location->path.find("device.state") != String::npos);
+    REQUIRE(diagnostics.Frames().back().location);
+    CHECK(diagnostics.Frames().back().location->path.find("device.state") != String::npos);
     ItemDefinition generic;
     CHECK(Snapshot(generic, MakeItemState(generic)) == DataObject{});
     CHECK(ReadItemState(generic, DataObject{}).has_value());

@@ -259,6 +259,8 @@ ContentResult<ParsedItemBehavior> ParseCounter(const DataObject& input,
 }
 
 constexpr char behaviorContent[] = R"({format_version:1,definitions:[
+    {type:'terrain',id:'air',name:'Air',movement:{passable:true},blocks_sight:false,open_space:true,
+      appearance:{symbol:' ',foreground:'white'}},
     {type:'terrain',id:'floor',name:'Floor',movement:{passable:true},blocks_sight:false,
       appearance:{symbol:'.',foreground:'white'}},
     {type:'terrain',id:'wall',name:'Wall',movement:{passable:false},blocks_sight:true,

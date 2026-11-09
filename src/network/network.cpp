@@ -113,6 +113,7 @@ std::uint64_t ContentFingerprint(const ContentCatalog& content) {
         HashNumber(hash, t.appearance.foreground.blue); HashNumber(hash, t.appearance.background.red);
         HashNumber(hash, t.appearance.background.green); HashNumber(hash, t.appearance.background.blue);
         HashNumber(hash, t.passable); HashNumber(hash, t.blocksSight);
+        HashNumber(hash, t.openSpace); HashNumber(hash, t.stairs);
         HashNumber(hash, t.opensTo.value); HashNumber(hash, t.closesTo.value);
     }
     HashNumber(hash, content.BuildingPatternCount());

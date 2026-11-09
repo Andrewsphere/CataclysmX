@@ -63,13 +63,13 @@ instances. This keeps archive copies independent of runtime ownership and lets a
 new behavior own its schema without extending persistence dispatch.
 
 Each object member is the stable capability name. Common energy has unsigned
-`version` 1 and `energy`; existing behaviors retain these exact version 1 fields:
+`version` 1 and `energy`; each behavior owns its state version:
 
-| Capability | Fields besides `version` |
-| --- | --- |
-| energy store | unsigned `energy` |
-| charger | boolean `enabled`, unsigned `remainder` |
-| door controller | boolean `armed`, unsigned `remaining_ticks`, object `target` with signed `x`, `z` |
+| Capability | Version | Fields besides `version` |
+| --- | --- | --- |
+| energy store | 1 | unsigned `energy` |
+| charger | 1 | boolean `enabled`, unsigned `remainder` |
+| door controller | 2 | boolean `armed`, unsigned `remaining_ticks`, object `target` with signed `x`, `z`, `y` |
 
 Definitions (capacity, recharge policy, rates, costs, source capability and delay
 configuration) are never serialized as state. The explicit schemas keep

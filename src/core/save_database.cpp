@@ -3,7 +3,6 @@
 #include "items/item_behavior.h"
 #include "items/item_snapshot.h"
 #include "content/content.h"
-#include "worldgen/worldgen.h"
 
 #include <EASTL/algorithm.h>
 #include <EASTL/sort.h>
@@ -134,6 +133,7 @@ struct JsonWriter {
         auto* value = Object();
         Integer(value, "x", position.x);
         Integer(value, "z", position.z);
+        Integer(value, "y", position.y);
         Add(object, "position", value);
     }
     String Finish(yyjson_mut_val* root) {
@@ -197,8 +197,9 @@ bool Unsigned32(yyjson_val* value, std::uint32_t& result) {
 }
 
 bool Position(yyjson_val* value, TileCoord& position) {
-    return Fields(value, {"x", "z"}) && Integer(Get(value, "x"), position.x)
-        && Integer(Get(value, "z"), position.z) && ValidPosition(position);
+    return Fields(value, {"x", "z", "y"}) && Integer(Get(value, "x"), position.x)
+        && Integer(Get(value, "z"), position.z) && Integer(Get(value, "y"), position.y)
+        && ValidPosition(position);
 }
 
 // Positive JSON integers are unsigned. Signed integers use a tagged decimal
@@ -289,7 +290,8 @@ DataResult<DataObject> DecodeValue(yyjson_val* value, unsigned depth = 0, bool e
 bool ValidChunk(ChunkCoord position) {
     constexpr int limit = world_coordinate_limit / chunk_size;
     return position.x >= -limit && position.x <= limit
-        && position.z >= -limit && position.z <= limit;
+        && position.z >= -limit && position.z <= limit
+        && position.y >= world_min_y && position.y <= world_max_y;
 }
 
 bool Unique(Vector<PersistentId>& ids);
@@ -332,7 +334,7 @@ void ChunkContext(Diagnostics* diagnostics, ChunkCoord position, const char* ope
     frame.message = operation;
     DiagnosticLocation location;
     char path[128];
-    std::snprintf(path, sizeof(path), "chunks[%d,%d]", position.x, position.z);
+    std::snprintf(path, sizeof(path), "chunks[%d,%d,%d]", position.x, position.z, position.y);
     location.path = path;
     frame.location = eastl::move(location);
     diagnostics->Add(eastl::move(frame));
@@ -346,7 +348,7 @@ void TerrainDiagnostic(Diagnostics* diagnostics, ChunkCoord position, std::size_
     frame.message.append(id.data(), id.size());
     DiagnosticLocation location;
     char path[128];
-    std::snprintf(path, sizeof(path), "chunks[%d,%d].tiles[%zu].terrain", position.x, position.z, index);
+    std::snprintf(path, sizeof(path), "chunks[%d,%d,%d].tiles[%zu].terrain", position.x, position.z, position.y, index);
     location.path = path;
     frame.location = eastl::move(location);
     diagnostics->Add(eastl::move(frame));
@@ -380,8 +382,8 @@ bool ValidateChunk(const ContentCatalog& content, const ChunkArchive& chunk,
                 frame.message = "Invalid runtime terrain ID";
                 DiagnosticLocation location;
                 char path[128];
-                std::snprintf(path, sizeof(path), "chunks[%d,%d].tiles[%zu].terrain",
-                    chunk.position.x, chunk.position.z, index);
+                std::snprintf(path, sizeof(path), "chunks[%d,%d,%d].tiles[%zu].terrain",
+                    chunk.position.x, chunk.position.z, chunk.position.y, index);
                 location.path = path;
                 frame.location = eastl::move(location);
                 diagnostics->Add(eastl::move(frame));
@@ -468,7 +470,7 @@ SaveResult<SaveSnapshot> DecodeSnapshot(const char* text, std::size_t length, Di
         || !Counter(Get(root, "next_id"), snapshot.nextId)) {
         return Failure(SaveError::InvalidData, "Invalid world_state fields", diagnostics);
     }
-    if (snapshot.generationVersion != 1 && snapshot.generationVersion != world_generation_version) {
+    if (snapshot.generationVersion < 1 || snapshot.generationVersion > 3) {
         return Failure(SaveError::UnsupportedVersion, "Unsupported generation version", diagnostics);
     }
     auto* session = Get(root, "session");
@@ -939,7 +941,8 @@ SaveResult<void> CheckSchema(sqlite3* db, Diagnostics* diagnostics) {
         {"singleton", "payload"}, {"INTEGER", "TEXT"}, {0, 1}, {1, 0}, diagnostics);
     if (!result) { return result; }
     result = CheckTable(db, "PRAGMA table_info(chunks)",
-        {"x", "z", "payload"}, {"INTEGER", "INTEGER", "TEXT"}, {1, 1, 1}, {1, 2, 0}, diagnostics);
+        {"x", "z", "y", "payload"}, {"INTEGER", "INTEGER", "INTEGER", "TEXT"},
+        {1, 1, 1, 1}, {1, 2, 3, 0}, diagnostics);
     if (!result) { return result; }
     Statement tables;
     code = tables.Prepare(db,
@@ -983,7 +986,7 @@ SaveResult<SaveSnapshot> ReadSnapshot(sqlite3* db, Diagnostics* diagnostics) {
 SaveResult<void> ValidateDatabase(const ContentCatalog& content, sqlite3* db,
     const SaveSnapshot& snapshot, Diagnostics* diagnostics) {
     Statement statement;
-    int code = statement.Prepare(db, "SELECT x,z,payload FROM chunks ORDER BY x,z");
+    int code = statement.Prepare(db, "SELECT x,z,y,payload FROM chunks ORDER BY x,z,y");
     if (code != SQLITE_OK) { return Failure(SqlError(code), sqlite3_errmsg(db), diagnostics); }
     Vector<PersistentId> ids;
     bool playerFound = snapshot.session.player == 0;
@@ -993,16 +996,19 @@ SaveResult<void> ValidateDatabase(const ContentCatalog& content, sqlite3* db,
     ChunkCoord previous{};
     while ((code = sqlite3_step(statement.value)) == SQLITE_ROW) {
         if (sqlite3_column_type(statement.value, 0) != SQLITE_INTEGER
-            || sqlite3_column_type(statement.value, 1) != SQLITE_INTEGER) {
+            || sqlite3_column_type(statement.value, 1) != SQLITE_INTEGER
+            || sqlite3_column_type(statement.value, 2) != SQLITE_INTEGER) {
             return Failure(SaveError::InvalidData, "Invalid chunk coordinates", diagnostics);
         }
         const auto x = sqlite3_column_int64(statement.value, 0);
         const auto z = sqlite3_column_int64(statement.value, 1);
+        const auto y = sqlite3_column_int64(statement.value, 2);
         constexpr int limit = world_coordinate_limit / chunk_size;
-        if (x < -limit || x > limit || z < -limit || z > limit) {
+        if (x < -limit || x > limit || z < -limit || z > limit
+            || y < world_min_y || y > world_max_y) {
             return Failure(SaveError::InvalidData, "Chunk coordinates out of range", diagnostics);
         }
-        const ChunkCoord position{static_cast<int>(x), static_cast<int>(z)};
+        const ChunkCoord position{static_cast<int>(x), static_cast<int>(z), static_cast<int>(y)};
         if (havePrevious && previous == position) {
             return Failure(SaveError::InvalidData, "Duplicate chunk coordinates", diagnostics);
         }
@@ -1010,7 +1016,7 @@ SaveResult<void> ValidateDatabase(const ContentCatalog& content, sqlite3* db,
         havePrevious = true;
         const char* text = nullptr;
         std::size_t length = 0;
-        if (!TextColumn(statement.value, 2, text, length)) {
+        if (!TextColumn(statement.value, 3, text, length)) {
             return Failure(SaveError::InvalidData, "Chunk payload must be text", diagnostics);
         }
         auto chunk = DecodeChunk(content, text, length, position, snapshot.nextId, diagnostics);
@@ -1112,9 +1118,9 @@ SaveResult<void> SaveDatabase::Create(const char* path, Diagnostics* diagnostics
         "BEGIN IMMEDIATE;"
         "CREATE TABLE metadata(singleton INTEGER PRIMARY KEY CHECK(singleton=1),"
         "format_version INTEGER NOT NULL,game_version TEXT NOT NULL);"
-        "INSERT INTO metadata VALUES(1,5,'0.1.0');"
+        "INSERT INTO metadata VALUES(1,6,'0.1.0');"
         "CREATE TABLE world_state(singleton INTEGER PRIMARY KEY CHECK(singleton=1),payload TEXT NOT NULL);"
-        "CREATE TABLE chunks(x INTEGER NOT NULL,z INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(x,z));"
+        "CREATE TABLE chunks(x INTEGER NOT NULL,z INTEGER NOT NULL,y INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(x,z,y));"
         "COMMIT;", diagnostics);
     if (!created) {
         (void)Execute(candidate->connection.value, "ROLLBACK", nullptr);
@@ -1172,9 +1178,10 @@ SaveResult<eastl::optional<ChunkArchive>> SaveDatabase::ReadChunk(ChunkCoord pos
     }
     auto* db = impl_->connection.value;
     Statement statement;
-    int code = statement.Prepare(db, "SELECT payload FROM chunks WHERE x=?1 AND z=?2");
+    int code = statement.Prepare(db, "SELECT payload FROM chunks WHERE x=?1 AND z=?2 AND y=?3");
     if (code == SQLITE_OK) { code = sqlite3_bind_int(statement.value, 1, position.x); }
     if (code == SQLITE_OK) { code = sqlite3_bind_int(statement.value, 2, position.z); }
+    if (code == SQLITE_OK) { code = sqlite3_bind_int(statement.value, 3, position.y); }
     if (code != SQLITE_OK) { return Failure(SqlError(code), sqlite3_errmsg(db), diagnostics); }
     code = sqlite3_step(statement.value);
     if (code == SQLITE_DONE) { return eastl::optional<ChunkArchive>{}; }
@@ -1224,10 +1231,11 @@ SaveResult<void> SaveDatabase::WriteChunk(const ChunkArchive& chunk, Diagnostics
     auto* db = impl_->connection.value;
     Statement statement;
     int code = statement.Prepare(db,
-        "INSERT INTO chunks(x,z,payload) VALUES(?1,?2,?3) ON CONFLICT(x,z) DO UPDATE SET payload=excluded.payload");
+        "INSERT INTO chunks(x,z,y,payload) VALUES(?1,?2,?3,?4) ON CONFLICT(x,z,y) DO UPDATE SET payload=excluded.payload");
     if (code == SQLITE_OK) { code = sqlite3_bind_int(statement.value, 1, chunk.position.x); }
     if (code == SQLITE_OK) { code = sqlite3_bind_int(statement.value, 2, chunk.position.z); }
-    if (code == SQLITE_OK) { code = BindText(statement.value, 3, payload); }
+    if (code == SQLITE_OK) { code = sqlite3_bind_int(statement.value, 3, chunk.position.y); }
+    if (code == SQLITE_OK) { code = BindText(statement.value, 4, payload); }
     if (code != SQLITE_OK) { return impl_->WriteFailure(code, diagnostics); }
     code = sqlite3_step(statement.value);
     if (code != SQLITE_DONE) { return impl_->WriteFailure(code, diagnostics); }
@@ -1237,8 +1245,7 @@ SaveResult<void> SaveDatabase::WriteChunk(const ChunkArchive& chunk, Diagnostics
 SaveResult<void> SaveDatabase::WriteSnapshot(const SaveSnapshot& snapshot, Diagnostics* diagnostics) {
     if (!impl_) { return Failure(SaveError::NotOpen, "Database is not open", diagnostics); }
     if (!impl_->transaction) { return Failure(SaveError::InvalidState, "No active transaction", diagnostics); }
-    const bool supported = snapshot.generationVersion == 1
-        || snapshot.generationVersion == world_generation_version;
+    const bool supported = snapshot.generationVersion >= 1 && snapshot.generationVersion <= 3;
     if (!supported || !ValidSnapshot(snapshot)) {
         impl_->Rollback();
         return Failure(!supported ? SaveError::UnsupportedVersion : SaveError::InvalidData,

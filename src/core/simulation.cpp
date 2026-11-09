@@ -24,9 +24,11 @@ void ActNpc(World& world, ActorHandle handle, std::uint32_t& rngState) {
     // Unsigned overflow is the specified, portable modulo-2^32 LCG. Even a
     // blocked action consumes its one draw and its full scheduling cost.
     rngState = rngState * 1'664'525U + 1'013'904'223U;
+    // NPCs wander horizontally on their current layer. Keep this four-way
+    // mapping and its single draw stable; stairs are a player command only.
     constexpr TileCoord directions[] = {{1, 0}, {0, 1}, {-1, 0}, {0, -1}};
     const TileCoord direction = directions[rngState >> 30];
-    const TileCoord destination{position.x + direction.x, position.z + direction.z};
+    const TileCoord destination{position.x + direction.x, position.z + direction.z, position.y};
     const Tile* tile = world.GetTile(destination);
     if (!world.IsActive(destination) || !tile || !Passable(world.GetContent(), tile->terrain)
         || world.ActorAt(destination).value != 0) {

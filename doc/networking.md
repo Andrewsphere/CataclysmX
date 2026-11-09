@@ -66,15 +66,20 @@ assigning an actor. Joining has a five-second
 explicit-elapsed timeout. The server does not use wall time or RNG for gameplay;
 network-only tokens and discovery identifiers use OS entropy.
 
-## Item protocol (version 5, `0x43584e05`)
+## World and item protocol (version 6, `0x43584e06`)
 
-Version 5 is wire-incompatible with version 4. Inputs append a definition-local
+Version 6 is wire-incompatible with earlier versions. Coordinates encode signed
+32-bit X/Z/Y. Commands append signed `dy` after their item arguments; movement,
+interaction and directional item use accept six axial directions. Visible snapshot
+cells append terrain and overlay depth as bytes, bounded to `0..20` and to the
+distance from the player layer to the bottom of the world. View origin Y must equal
+player Y; hidden cells are entirely default. Inputs include a definition-local
 `ItemCapabilityId` (u16), local action ID (bounded string), and secondary persistent
 item ID (u64) after the existing command fields. Action IDs and reason codes use
 `[a-z][a-z0-9_]*`, with at most 64 bytes. All strings have a u8 byte-length prefix.
 `use_item` requires an explicit source item, valid capability and nonempty action
 ID. A secondary item must differ from the source and cannot accompany a direction;
-a direction must be cardinal. Shape validation deliberately accepts unknown local
+a direction must be a six-axis unit step. Shape validation deliberately accepts unknown local
 action IDs and does not infer arguments from their spelling. `ItemSystem::Use`
 validates the selected behavior's declaration and returns `InvalidAction` for
 unknown actions or incorrect declared argument forms. Non-use commands may have an

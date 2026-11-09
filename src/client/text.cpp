@@ -2,6 +2,7 @@
 
 #include <charconv>
 #include <cstdlib>
+#include <algorithm>
 
 namespace cataclysmx {
 namespace {
@@ -13,6 +14,15 @@ void append_number(String& text, T value) {
     const auto result = std::to_chars(buffer, buffer + sizeof(buffer), value);
     if (result.ec != std::errc{}) { std::abort(); }
     text.append(buffer, static_cast<String::size_type>(result.ptr - buffer));
+}
+
+RgbColor DepthTint(RgbColor color, unsigned int depth, bool background) {
+    const unsigned int percent = depth == 0 ? 0 : std::min(70U, 15U + std::min(depth, 20U) * 10U);
+    const unsigned int strength = background ? percent / 2 : percent;
+    const auto blend = [strength](unsigned int value, unsigned int target) {
+        return static_cast<unsigned char>((value * (100U - strength) + target * strength) / 100U);
+    };
+    return {blend(color.red, 48), blend(color.green, 96), blend(color.blue, 192)};
 }
 
 }
@@ -30,6 +40,9 @@ TerminalAppearance CellAppearance(const ViewCell& cell, const ContentCatalog& co
         appearance.symbol = cell.object_enabled ? "*" : "&";
         appearance.foreground = cell.object_enabled ? RgbColor{0, 255, 255} : RgbColor{0, 128, 128};
     }
+    const bool overlay = cell.actor != 0 || cell.ground_items != 0 || cell.object != 0;
+    appearance.foreground = DepthTint(appearance.foreground, overlay ? cell.overlayDepth : cell.terrainDepth, false);
+    appearance.background = DepthTint(appearance.background, cell.terrainDepth, true);
     return appearance;
 }
 
@@ -40,6 +53,8 @@ String render_text(const WorldView& view, const ContentCatalog& content) {
     append_number(result, view.player_position.x);
     result += ',';
     append_number(result, view.player_position.z);
+    result += ',';
+    append_number(result, view.player_position.y);
     result += '\n';
     for (int row = 0; row < view.height; ++row) {
         for (int column = 0; column < view.width; ++column) {
@@ -140,6 +155,8 @@ bool ParseItemCommand(eastl::string_view text, Command& command) {
             else if (words[4] == "s") { candidate.dz = 1; }
             else if (words[4] == "w") { candidate.dx = -1; }
             else if (words[4] == "e") { candidate.dx = 1; }
+            else if (words[4] == "down" || words[4] == "<") { candidate.dy = -1; }
+            else if (words[4] == "up" || words[4] == ">") { candidate.dy = 1; }
             else if (!number(words[4], candidate.otherItem) || candidate.otherItem == 0) { return false; }
         }
     } else { return false; }

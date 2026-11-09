@@ -211,7 +211,7 @@ bool MissingReference(const PendingTerrain& terrain, eastl::string_view field,
 bool ParseTerrain(yyjson_val* object, PendingTerrain& terrain) {
     const auto& context = terrain.context;
     if (!CheckObject(object, {"type", "id", "name", "movement", "blocks_sight", "appearance",
-                               "looks_like", "opens_to", "closes_to"}, context)) { return false; }
+                               "looks_like", "opens_to", "closes_to", "open_space", "stairs"}, context)) { return false; }
     if (!ReadId(yyjson_obj_get(object, "id"), terrain.definition.id, context.Child("id"))
         || !ReadString(yyjson_obj_get(object, "name"), terrain.definition.name, context.Child("name"))) {
         return false;
@@ -222,6 +222,19 @@ bool ParseTerrain(yyjson_val* object, PendingTerrain& terrain) {
                      context.Child("movement").Child("passable"))
         || !ReadBool(yyjson_obj_get(object, "blocks_sight"), terrain.definition.blocksSight,
                      context.Child("blocks_sight"))) { return false; }
+    if (auto* openSpace = yyjson_obj_get(object, "open_space")) {
+        if (!ReadBool(openSpace, terrain.definition.openSpace, context.Child("open_space"))) { return false; }
+    }
+    if (auto* stairs = yyjson_obj_get(object, "stairs")) {
+        if (!ReadBool(stairs, terrain.definition.stairs, context.Child("stairs"))) { return false; }
+    }
+    if (terrain.definition.openSpace && (!terrain.definition.passable
+        || terrain.definition.blocksSight || terrain.definition.stairs)) {
+        return context.Child("open_space").Fail("open_space requires passable, non-sight-blocking terrain without stairs");
+    }
+    if (terrain.definition.stairs && (!terrain.definition.passable || terrain.definition.blocksSight)) {
+        return context.Child("stairs").Fail("stairs requires passable, non-sight-blocking terrain without open_space");
+    }
     auto* looksLike = yyjson_obj_get(object, "looks_like");
     auto* opensTo = yyjson_obj_get(object, "opens_to");
     auto* closesTo = yyjson_obj_get(object, "closes_to");

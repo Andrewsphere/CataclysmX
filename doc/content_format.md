@@ -2,7 +2,7 @@
 
 `content/content.h` provides an immutable, owning `ContentCatalog`. The loader
 accepts JSON5, including comments, unquoted keys, single-quoted strings, and trailing
-commas. `data/terrain.json5` bundles eight terrains, three house patterns, and eleven items. Content may define
+commas. `data/terrain.json5` bundles ten terrains, three house patterns, and eleven items. Content may define
 terrain, building patterns, and items in the same catalog; terrain-only catalogs remain
 valid and generate terrain/roads without buildings.
 
@@ -48,7 +48,14 @@ Definitions is an array (possibly empty). Each definition requires `type` and
 | `movement` | Object with the required boolean `passable` |
 | `blocks_sight` | Boolean |
 
-Optional fields are `appearance`, `looks_like`, `opens_to`, and `closes_to`.
+Optional fields are `appearance`, `looks_like`, `opens_to`, `closes_to`,
+`open_space`, and `stairs`. The latter two are booleans defaulting to false.
+`open_space: true` requires passable terrain that does not block sight and is
+not stairs. `stairs: true` requires passable terrain that does not block sight
+and is not open space. Open space has no floor support and transmits downward;
+ordinary terrain, including walls, provides support. Stairs connect matching
+stairs one Y layer apart at the same X/Z. See [Y layers](y_layers.md) for
+movement, gravity, sight, and generation behavior.
 Unknown fields and duplicate keys are errors at every object level, even when
 duplicate values agree. Unknown definition types and duplicate IDs across any
 input sources and definition types are errors. `movement.cost` is intentionally unsupported until its

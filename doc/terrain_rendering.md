@@ -27,6 +27,12 @@ Every overlay preserves the terrain background. Hidden cells return a space with
 black foreground and background before inspecting terrain or overlays, so no
 appearance information escapes visibility filtering.
 
+Projected cells may represent terrain below the observer. Foreground tint uses
+overlay depth when an actor/item/object is present, otherwise terrain depth;
+background always uses terrain depth. Positive depth blends toward blue
+`(48,96,192)` at `min(70%, 15% + 10% × depth)`; background applies half that
+strength. See [Y layers](y_layers.md) for projection and visibility rules.
+
 `render_text` preserves the tick/position header, row-major map and inventory
 footer. It emits complete UTF-8 symbols without ANSI colors or display-width
 substitution. A wide or combining scalar therefore survives headless output

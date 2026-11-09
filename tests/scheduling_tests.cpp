@@ -22,7 +22,7 @@ LoadRequest LoadFloor(World& world, ChunkCoord chunk = {}) {
     REQUIRE(world.ReconcileChunks());
     for (int z = 0; z < chunk_size; ++z) {
         for (int x = 0; x < chunk_size; ++x) {
-            REQUIRE(world.SetTile({chunk.x * chunk_size + x, chunk.z * chunk_size + z},
+            REQUIRE(world.SetTile({chunk.x * chunk_size + x, chunk.z * chunk_size + z, chunk.y},
                 {TestTerrain("floor"), 0}));
         }
     }
@@ -64,6 +64,68 @@ void SameScheduledState(const Server& first, const Server& second) {
     }
     CHECK(a.CheckInvariants());
     CHECK(b.CheckInvariants());
+}
+
+TEST_CASE("NPC horizontal wandering preserves elevation and the legacy draw policy", "[scheduling][3d][determinism]") {
+    World world(TestContent());
+    LoadFloor(world, {0, 0, 2});
+    const auto npc = Take(world.CreateActor({5, 5, 2}));
+    const auto player = Take(world.CreateActor({1, 1, 2}, true));
+    std::uint32_t rng = 0;
+    cataclysmx::Advance(world, player, rng);
+    CHECK(world.GetActor(npc)->position == TileCoord{6, 5, 2});
+    CHECK(world.GetActor(npc)->turns == 1);
+    CHECK(rng == 1'013'904'223U);
+    CHECK(world.CheckInvariants());
+}
+
+TEST_CASE("Walking into a deep hole settles immediately for only the walking cost", "[scheduling][server][3d]") {
+    Server server(TestContent());
+    World& world = server.GetWorld();
+    REQUIRE(world.SetTile({0, 0, 2}, {TestTerrain("floor"), 0}));
+    REQUIRE(world.SetTile({1, 0, 0}, {TestTerrain("floor"), 0}));
+    REQUIRE(world.SetTile({1, 0, 1}, {TestTerrain("air"), 0}));
+    REQUIRE(world.SetTile({1, 0, 2}, {TestTerrain("air"), 0}));
+    REQUIRE(world.MoveActor(server.GetPlayer(), {0, 0, 2}));
+    REQUIRE(server.SetBubbleRadii(0, 0));
+    const auto chunks = world.LoadedChunks();
+    REQUIRE(world.SetActorSpeed(server.GetPlayer(), 70));
+    REQUIRE(server.SetPacing({100, true, true}));
+    const auto result = server.Send({CommandKind::move, 1, 0});
+    CHECK(result.outcome == Outcome::moved);
+    CHECK(result.advanced);
+    CHECK(result.cost == 70);
+    CHECK(result.tick == 0);
+    CHECK(world.GetActor(server.GetPlayer())->position == TileCoord{1, 0, 0});
+    CHECK(world.GetActor(server.GetPlayer())->turns == 1);
+    CHECK(world.GetActor(server.GetPlayer())->remainingTicks == 70);
+    CHECK(world.LoadedChunks() == chunks);
+    CHECK(server.Update(700'000).tick == 70);
+    CHECK(server.View().remainingTicks == 0);
+    CHECK(world.CheckInvariants());
+}
+
+TEST_CASE("Buffered stairs resolve from current elevation and validate the current pair", "[scheduling][server][3d]") {
+    Server server(TestContent());
+    World& world = server.GetWorld();
+    for (int y = 0; y <= 2; ++y) {
+        REQUIRE(world.SetTile({0, 0, y}, {TestTerrain("stairs"), 0}));
+    }
+    REQUIRE(server.SetPacing({100, true, true}));
+    Command up{CommandKind::move};
+    up.dy = 1;
+    REQUIRE(server.Send(up).advanced);
+    CHECK(server.Send(up).outcome == Outcome::queued);
+    REQUIRE(world.SetTile({0, 0, 2}, {TestTerrain("floor"), 0}));
+    const auto update = server.Update(1'000'000);
+    REQUIRE(update.commandResult);
+    CHECK(update.commandResult->outcome == Outcome::blocked);
+    CHECK_FALSE(update.commandResult->advanced);
+    CHECK(update.commandResult->cost == 0);
+    CHECK(server.View().player_position == TileCoord{0, 0, 1});
+    CHECK(server.View().origin.y == 1);
+    CHECK(server.View().remainingTicks == 0);
+    CHECK(server.GetTick() == 100);
 }
 
 TEST_CASE("Player durations scale waits while object time stays independent", "[scheduling][simulation]") {

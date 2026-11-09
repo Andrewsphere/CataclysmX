@@ -1,22 +1,22 @@
 # Save format
 
-CataclysmX saves are SQLite database files. The strict v5 format is governed by
-one authoritative `metadata.format_version = 5` for both SQL and JSON. The
+CataclysmX saves are SQLite database files. The strict v6 format is governed by
+one authoritative `metadata.format_version = 6` for both SQL and JSON. The
 `metadata` columns are `singleton INTEGER PRIMARY KEY CHECK(singleton=1)`,
 `format_version INTEGER NOT NULL`, and `game_version TEXT NOT NULL`; its single
-row is `(1, 5, "0.1.0")`. The other tables are
+row is `(1, 6, "0.1.0")`. The other tables are
 `world_state(singleton INTEGER PRIMARY KEY CHECK(singleton=1), payload TEXT NOT
-NULL)` and `chunks(x INTEGER NOT NULL, z INTEGER NOT NULL, payload TEXT NOT NULL,
-PRIMARY KEY(x,z))`. Extra application tables/schema objects are rejected.
+NULL)` and `chunks(x INTEGER NOT NULL, z INTEGER NOT NULL, y INTEGER NOT NULL,
+payload TEXT NOT NULL, PRIMARY KEY(x,z,y))`. Extra application tables/schema objects are rejected.
 
 ## JSON payloads
 
 The single `world_state.payload` object has exactly `seed`,
 `generation_version`, `next_id`, and `session`. The session object has exactly
-`tick`, `rng_state`, `player`, `position` (`x`, `z`), `active_radius`,
+`tick`, `rng_state`, `player`, `position` (`x`, `z`, `y`), `active_radius`,
 `resident_radius`, `autosave_interval`, `pacing`, and `players`. `players` is an
 array of at most 32 exact objects `{ "actor": decimal-string,
-"position": {"x": int, "z": int}, "name": string,
+"position": {"x": int, "z": int, "y": int}, "name": string,
 "reconnect_token": decimal-string }`. Names contain 1–32 bytes and no NUL;
 actor IDs and nonzero guest tokens are unique. Every entry refers to a
 player-marked actor at its recorded position, including unloaded chunks. The
@@ -36,7 +36,8 @@ unsigned 64-bit **decimal strings** (digits only, no leading zeroes except
 `"0"`). JSON objects require exact field sets; unknown and duplicate keys are
 invalid.
 
-Every row in `chunks` stores a complete snapshot of one 16×16 chunk, not a delta.
+Every row in `chunks` stores a complete snapshot of one single-layer 16×16 X/Z
+chunk, not a delta. Chunk Y is in `[-10,10]`.
 The root object has exactly `tiles`, `actors`, `objects`, and `ground_items`:
 
 - `tiles`: exactly 256 row-major `{ "terrain": string, "damage": integer }`
@@ -44,17 +45,18 @@ The root object has exactly `tiles`, `actors`, `objects`, and `ground_items`:
   content catalog (including custom terrain); damage is 0–255. Runtime
   `TerrainId` numeric values are never persisted. Every tile must resolve in that
   catalog; unknown strings, embedded NULs and numeric terrain values are invalid.
-- `actors`: `{ "id": decimal-string, "position": {"x": int, "z": int},
+- `actors`: `{ "id": decimal-string, "position": {"x": int, "z": int, "y": int},
   "player": boolean, "parked": boolean, "turns": decimal-string, "inventory": [...],
   "speed": positive-uint32, "remaining_ticks": decimal-string,
   "carry_capacity_g": decimal-string }`. Carry capacity preserves the full uint64 range.
-- `objects`: `{ "id": decimal-string, "position": {"x": int, "z": int},
+- `objects`: `{ "id": decimal-string, "position": {"x": int, "z": int, "y": int},
   "enabled": boolean, "updates": decimal-string, "contents": [...],
   "update_interval": positive-uint32, "remaining_ticks": decimal-string }`.
 - `ground_items` and nested `inventory`/`contents` arrays use exact item objects
   with `id` (decimal string), `type` (stable content item ID), `state` (structured
   capability object), `installation` (stable **parent** behavior capability name,
-  or empty string), and recursive `contents`. Ground items also have `position`;
+  or empty string), and recursive `contents`. Ground items also have `position`
+  (`x`, `z`, `y`);
   contained items do not. Runtime type/capability ordinals are never persisted.
   Maximum nesting depth is 64 items including the root. Ordinary children require
   a container; their direct external volumes must fit its configured capacity.
@@ -65,7 +67,8 @@ The root object has exactly `tiles`, `actors`, `objects`, and `ground_items`:
   consume ordinary container volume. Actor/object/ground roots cannot specify an
   installation. Every descendant's mass counts against actor carrying capacity.
 
-State entries use stable capability names and their own version 1 schemas; see
+State entries use stable capability names and capability-local schemas (energy
+and chargers version 1, door controllers version 2); see
 [data_object.md](data_object.md) for exact fields and integer encoding. Rock,
 bandage, and backpack have empty state objects. Missing required saved state is
 invalid, rather than initialized from defaults. Unknown item/capability names,
@@ -73,18 +76,19 @@ duplicate fields and unsupported state versions fail with diagnostic context.
 Parents are decoded before children so installation names resolve in the parent's
 definition. Enabled chargers require an installed compatible nonfull battery and
 positive source energy. Armed door controllers must be directly on the ground,
-target a cardinal adjacent coordinate and retain a delay no greater than the
+target one of the six axially adjacent coordinates and retain a delay no greater than the
 configured delay (including zero). Disarmed controllers have zero delay/target.
 
 RAM archives store item state as a plain owned `DataObject` (defaulting to an empty
 root object). Runtime capture/restore uses common typed energy state and each
 behavior's factory/`SaveState`; the database writes and decodes the generic value
-tree directly. `ValidateItemSnapshot` is the shared item-state and ownership-tree
+tree directly. The controller target is a world position and includes its Y
+coordinate in the v6 state representation. `ValidateItemSnapshot` is the shared item-state and ownership-tree
 validator for both archive paths, dispatching behavior-owned local and relational
 validation. Installation names resolve against the parent definition and its
-`AcceptsInstallation` policy. This is an in-memory ownership refactor only:
-metadata remains version 5, item fields and existing version 1 energy/charger/timer
-payloads are unchanged, including unsigned JSON numbers and signed `$i64` target
+`AcceptsInstallation` policy. Metadata is version 6. Energy and charger state
+remain version 1; door state version 2 adds required signed Y. These schemas use
+unsigned JSON numbers and signed `$i64` target
 coordinates. No capacity clamping or implicit state migration is introduced.
 
 Parked actors must be player-marked. They retain position, inventory and delay
@@ -96,15 +100,15 @@ keeps their identities and tokens independently of transient connections.
 IDs must be unique across all chunks and less than `next_id`; entity positions,
 ownership, chunks and session player identity/position are validated. Generic
 `World` saves allow session player ID zero; `Server` requires a nonzero player.
-`generation_version` accepts 1 (legacy) and 2 (current); other values fail with
-`SaveError::UnsupportedVersion`. New worlds use generation version 2. Version 1
-continues to generate unexplored chunks byte-for-byte as before, while version 2
-uses the region planner. The SQL/JSON save schema is version 5: save formats
-v1, v2, v3, v4 and all other schema versions are rejected, with no migrations or backup
+`generation_version` accepts 1 and 2 (legacy) and 3 (current); other values fail with
+`SaveError::UnsupportedVersion`. New worlds use generation version 3. Versions 1
+and 2 retain their prior surface generation; nonsurface slices use the layered
+terrain rules. The SQL/JSON save schema is version 6: save formats v1 through v5
+and all other schema versions are rejected, with no migrations or backup
 files. In particular, v2 command-count ticks are not silently reinterpreted as
 simulation ticks. Content's own format version is independent of both versions.
-This is an explicit schema break for typed item IDs, structured state, installed
-batteries and actor mass capacity. Individual state migrations are a separate,
+This is an explicit schema break for three-dimensional chunk keys, positions,
+and item targets. Individual state migrations are a separate,
 explicit capability-version policy; no generic auto-clamp or fallback applies.
 
 `session.tick` counts global simulation ticks (100 per standard turn), while
@@ -138,7 +142,7 @@ Save operations similarly return typed `SaveResult<T>` errors; optional
 `Diagnostics*` appends structured diagnostic frames; `FormatDiagnostics` renders
 them for display. Caller context is retained and outer boundary contexts are
 appended as failures propagate. Unknown terrain diagnostics include the missing
-string and a location path such as `chunks[-3,2].tiles[37].terrain`. SQLite and
+string and a location path such as `chunks[-3,2,0].tiles[37].terrain`. SQLite and
 JSON internals are not public simulation APIs.
 
 `SaveDatabase(const ContentCatalog&)` retains a nonowning catalog reference;

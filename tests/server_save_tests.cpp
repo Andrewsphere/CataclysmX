@@ -210,6 +210,72 @@ TEST_CASE("Server manual checkpoints reset autosave cadence and rejected command
     CHECK(ReadSession(file).tick == 900);
 }
 
+TEST_CASE("Server checkpoints retain dirty layered archives after eviction and disk reload",
+    "[server][save][streaming][layers]") {
+    SaveFile file;
+    Server server(TestContent());
+    REQUIRE(server.SetBubbleRadii(0, 0));
+    World& world = server.GetWorld();
+    const auto request = Take(world.RequestChunks({{10, 10}, 0}, LoadMode::resident));
+    REQUIRE(world.ReconcileChunks());
+    const TileCoord below{160, 160, -1};
+    const TileCoord above{160, 160, 1};
+    REQUIRE(world.SetTile(below, {TestTerrain("floor"), 17}));
+    REQUIRE(world.SetTile(above, {TestTerrain("floor"), 29}));
+    const auto lowerItem = Take(world.CreateItem(TestItem("rock"), ItemLocation::Ground(below)));
+    const auto upperItem = Take(world.CreateItem(TestItem("bandage"), ItemLocation::Ground(above)));
+    const PersistentId lowerId = world.GetItem(lowerItem)->id;
+    const PersistentId upperId = world.GetItem(upperItem)->id;
+    REQUIRE(server.CreateSave(file.path.c_str()));
+
+    // Change both slices after the initial checkpoint, then archive them together.
+    REQUIRE(world.SetTile(below, {TestTerrain("floor"), 31}));
+    REQUIRE(world.SetTile(above, {TestTerrain("floor"), 43}));
+    REQUIRE(world.ReleaseRequest(request));
+    REQUIRE(world.ReconcileChunks());
+    CHECK(world.GetChunk({10, 10, -1}) == nullptr);
+    CHECK(world.GetChunk({10, 10, 1}) == nullptr);
+    CHECK(world.ArchivedChunkCount() >= world_layer_count);
+    REQUIRE(server.Save());
+    CHECK(world.ArchivedChunkCount() == 0);
+
+    auto restored = Take(Server::LoadSave(TestContent(), file.path.c_str()));
+    World& loaded = restored->GetWorld();
+    REQUIRE(loaded.RequestChunks({{10, 10}, 0}, LoadMode::resident));
+    REQUIRE(loaded.ReconcileChunks());
+    REQUIRE(loaded.GetTile(below));
+    REQUIRE(loaded.GetTile(above));
+    CHECK(loaded.GetTile(below)->damage == 31);
+    CHECK(loaded.GetTile(above)->damage == 43);
+    REQUIRE(loaded.GetItem(loaded.FindItem(lowerId)));
+    REQUIRE(loaded.GetItem(loaded.FindItem(upperId)));
+    CHECK(loaded.GetItem(loaded.FindItem(lowerId))->location == ItemLocation::Ground(below));
+    CHECK(loaded.GetItem(loaded.FindItem(upperId))->location == ItemLocation::Ground(above));
+    CHECK(loaded.CheckInvariants());
+}
+
+TEST_CASE("Server restores a nonsurface host and its session roster on the recorded layer",
+    "[server][save][players][layers]") {
+    SaveFile file;
+    Server server(TestContent());
+    REQUIRE(server.SetBubbleRadii(0, 0));
+    int y = -1;
+    SECTION("underground") { y = -1; }
+    SECTION("elevated") { y = 1; }
+    const TileCoord position{0, 0, y};
+    REQUIRE(server.GetWorld().SetTile(position, {TestTerrain("floor"), 0}));
+    REQUIRE(server.GetWorld().MoveActor(server.GetPlayer(), position));
+    REQUIRE(server.CreateSave(file.path.c_str()));
+    const auto session = ReadSession(file);
+    CHECK(session.playerPosition == position);
+    REQUIRE_FALSE(session.players.empty());
+    CHECK(session.players[0].position == position);
+    auto restored = Take(Server::LoadSave(TestContent(), file.path.c_str()));
+    CHECK(restored->View().player_position == position);
+    CHECK(restored->GetWorld().GetActor(restored->GetPlayer())->position == position);
+    CHECK(restored->GetWorld().CheckInvariants());
+}
+
 TEST_CASE("Server saves partial cooldowns object timers and pacing for deterministic continuation",
     "[server][save][scheduling][determinism]") {
     SaveFile file;
@@ -366,7 +432,7 @@ TEST_CASE("Streaming movement preflights the full future bubble before moving or
     const auto checkpoint = ReadSession(file);
     {
         RawDatabase raw(file.path.c_str());
-        raw.Exec("UPDATE chunks SET payload='{}' WHERE x=2 AND z=0");
+        raw.Exec("UPDATE chunks SET payload='{}' WHERE x=2 AND z=0 AND y=0");
     }
     const auto player = server.GetPlayer();
     const auto before = world.LoadedChunks();
@@ -397,7 +463,7 @@ TEST_CASE("Streaming movement preflights the full future bubble before moving or
     CHECK_FALSE(world.IsActive({16, 0}));
     {
         RawDatabase raw(file.path.c_str());
-        raw.Exec("DELETE FROM chunks WHERE x=2 AND z=0");
+        raw.Exec("DELETE FROM chunks WHERE x=2 AND z=0 AND y=0");
     }
     REQUIRE(server.Save());
     CHECK(ReadSession(file).rngState == checkpoint.rngState);
@@ -409,7 +475,7 @@ TEST_CASE("Streaming movement preflights the full future bubble before moving or
     CHECK_FALSE(moved.storageError);
     CHECK(server.GetPlayer() == player);
     CHECK(world.GetActor(player)->position == TileCoord{16, 0});
-    CHECK(world.LoadedChunks().size() == 9);
+    CHECK(world.LoadedChunks().size() == 9 * world_layer_count);
     CHECK(world.GetChunk({2, 0}));
     CHECK(world.GetChunk({-1, 0}) == nullptr);
     CHECK(world.IsActive({16, 0}));
@@ -454,7 +520,7 @@ TEST_CASE("Buffered movement reports storage failures at execution and clears th
     REQUIRE(server.CreateSave(file.path.c_str()));
     {
         RawDatabase raw(file.path.c_str());
-        raw.Exec("UPDATE chunks SET payload='{}' WHERE x=2 AND z=0");
+        raw.Exec("UPDATE chunks SET payload='{}' WHERE x=2 AND z=0 AND y=0");
     }
     const auto before = world.LoadedChunks();
     const auto accepted = server.Send({CommandKind::move, 1, 0});
@@ -505,7 +571,7 @@ TEST_CASE("Server load rejects unsupported schema and invalid or missing session
     SECTION("Parked host is not a valid server session") {
         RawDatabase raw(file.path.c_str());
         raw.Exec("UPDATE chunks SET payload=json_set(payload, '$.actors[0].parked', json('true')) "
-            "WHERE x=0 AND z=0");
+            "WHERE x=0 AND z=0 AND y=0");
         const auto result = Server::LoadSave(TestContent(), file.path.c_str());
         REQUIRE_FALSE(result);
         CHECK(result.error() == SaveError::InvalidData);
@@ -552,6 +618,125 @@ TEST_CASE("Guest checkpoint keeps parked inventory and reconnect identity", "[se
     CHECK(view.inventory[0].id == itemId);
     CHECK(view.inventory[0].type == TestItem("bandage"));
     CHECK(restored->GetWorld().CheckInvariants());
+}
+
+TEST_CASE("Batch parking validates every player before removing support",
+    "[server][save][players][layers][gravity]") {
+    Server server(TestContent());
+    World& world = server.GetWorld();
+    const TileCoord bottom{8, 8, 0};
+    const TileCoord top{8, 8, 1};
+    REQUIRE(world.SetTile(bottom, {TestTerrain("floor"), 0}));
+    REQUIRE(world.SetTile(top, {TestTerrain("air"), 0}));
+    const ActorHandle lower = Take(world.CreateActor(bottom, true));
+    const ActorHandle upper = Take(world.CreateActor(top, true));
+    ActorHandle invalid{};
+    WorldError error = WorldError::invalid_handle;
+    SECTION("invalid handle") {}
+    SECTION("nonplayer") {
+        invalid = world.ActorAt({5, 5});
+        REQUIRE(invalid.value != 0);
+        error = WorldError::invalid_request;
+    }
+    const ActorHandle rejected[]{lower, invalid};
+    CHECK(world.ParkActors(rejected) == eastl::unexpected(error));
+    CHECK_FALSE(world.GetActor(lower)->parked);
+    CHECK_FALSE(world.GetActor(upper)->parked);
+    CHECK(world.GetActor(upper)->position == top);
+    REQUIRE(world.ParkActors({}));
+    const ActorHandle accepted[]{lower, upper, lower};
+    REQUIRE(world.ParkActors(accepted));
+    REQUIRE(world.ParkActors(accepted));
+    CHECK(world.GetActor(lower)->parked);
+    CHECK(world.GetActor(upper)->parked);
+    CHECK(world.GetActor(lower)->position == bottom);
+    CHECK(world.GetActor(upper)->position == top);
+    CHECK(world.CheckInvariants());
+}
+
+TEST_CASE("Loading stacked active guests parks them together before gravity",
+    "[server][save][multiplayer][layers][gravity]") {
+    SaveFile file;
+    Server original(TestContent());
+    REQUIRE(original.SetBubbleRadii(0, 0));
+    const auto lower = Take(original.JoinPlayer("Lower", 0, 881));
+    REQUIRE(original.ActivatePlayer(lower.player));
+    const auto upper = Take(original.JoinPlayer("Upper", 0, 882));
+    REQUIRE(original.ActivatePlayer(upper.player));
+    World& world = original.GetWorld();
+    const TileCoord bottom{8, 8, 0};
+    const TileCoord top{8, 8, 1};
+    REQUIRE(world.SetTile(bottom, {TestTerrain("floor"), 0}));
+    REQUIRE(world.SetTile(top, {TestTerrain("air"), 0}));
+    REQUIRE(world.MoveActor(world.FindActor(lower.player), bottom));
+    REQUIRE(world.MoveActor(world.FindActor(upper.player), top));
+    REQUIRE(world.GetActor(world.FindActor(upper.player))->position == top);
+    REQUIRE(original.CreateSave(file.path.c_str()));
+    SECTION("lower guest first") {}
+    SECTION("upper guest first") {
+        SaveDatabase database(TestContent());
+        auto snapshot = Take(database.Open(file.path.c_str()));
+        REQUIRE(snapshot.session.players.size() == 3);
+        eastl::swap(snapshot.session.players[1], snapshot.session.players[2]);
+        REQUIRE(database.Begin());
+        REQUIRE(database.WriteSnapshot(snapshot));
+        REQUIRE(database.Commit());
+    }
+    auto restored = Take(Server::LoadSave(TestContent(), file.path.c_str()));
+    World& loaded = restored->GetWorld();
+    for (const auto& guest : {lower, upper}) {
+        const Actor* actor = loaded.GetActor(loaded.FindActor(guest.player));
+        REQUIRE(actor);
+        CHECK(actor->parked);
+        CHECK(actor->position == (guest.player == lower.player ? bottom : top));
+    }
+    REQUIRE(restored->GetPlayers().size() == 3);
+    CHECK(restored->GetPlayers()[1].state == PlayerConnectionState::Parked);
+    CHECK(restored->GetPlayers()[2].state == PlayerConnectionState::Parked);
+    REQUIRE(restored->Save());
+    // With the lower guest still parked, the upper guest has lost its support.
+    REQUIRE(restored->JoinPlayer("Upper", upper.reconnectToken, 0));
+    REQUIRE(restored->ActivatePlayer(upper.player));
+    CHECK(loaded.GetActor(loaded.FindActor(upper.player))->position == bottom);
+    CHECK_FALSE(loaded.GetActor(loaded.FindActor(upper.player))->parked);
+    CHECK(loaded.GetActor(loaded.FindActor(lower.player))->position == bottom);
+    CHECK(loaded.GetActor(loaded.FindActor(lower.player))->parked);
+    CHECK(loaded.CheckInvariants());
+    REQUIRE(restored->Save());
+}
+
+TEST_CASE("Loading parks guest support and refreshes the fallen host position",
+    "[server][save][multiplayer][layers][gravity]") {
+    SaveFile file;
+    Server original(TestContent());
+    REQUIRE(original.SetBubbleRadii(0, 0));
+    const auto guest = Take(original.JoinPlayer("Support", 0, 883));
+    REQUIRE(original.ActivatePlayer(guest.player));
+    World& world = original.GetWorld();
+    const TileCoord bottom{8, 8, 0};
+    const TileCoord top{8, 8, 1};
+    REQUIRE(world.SetTile(bottom, {TestTerrain("floor"), 0}));
+    REQUIRE(world.SetTile(top, {TestTerrain("air"), 0}));
+    REQUIRE(world.MoveActor(world.FindActor(guest.player), bottom));
+    REQUIRE(world.MoveActor(original.GetPlayer(), top));
+    REQUIRE(original.CreateSave(file.path.c_str()));
+    REQUIRE(ReadSession(file).playerPosition == top);
+    auto restored = Take(Server::LoadSave(TestContent(), file.path.c_str()));
+    const World& loaded = restored->GetWorld();
+    CHECK(loaded.GetActor(restored->GetPlayer())->position == bottom);
+    CHECK(restored->View().player_position == bottom);
+    REQUIRE(restored->GetPlayers().size() == 2);
+    const Actor* support = loaded.GetActor(loaded.FindActor(guest.player));
+    REQUIRE(support);
+    CHECK(support->parked);
+    CHECK(support->position == bottom);
+    REQUIRE(restored->Save());
+    const auto session = ReadSession(file);
+    CHECK(session.playerPosition == bottom);
+    CHECK(session.players[0].position == bottom);
+    auto reopened = Take(Server::LoadSave(TestContent(), file.path.c_str()));
+    CHECK(reopened->View().player_position == bottom);
+    CHECK(reopened->GetWorld().CheckInvariants());
 }
 
 TEST_CASE("Shuffled persisted roster resolves rounds by ID with independent opportunities",
@@ -611,7 +796,7 @@ TEST_CASE("Checkpoint reads administratively moved archived parked player positi
     const TileCoord original = server.GetWorld().GetActor(guest)->position;
     const ChunkCoord chunk = ChunkOf(original);
     const TileCoord moved{chunk.x * chunk_size
-        + (original.x == chunk.x * chunk_size ? 1 : 0), original.z};
+        + (original.x == chunk.x * chunk_size ? 1 : 0), original.z, original.y};
     REQUIRE(ChunkOf(original) == ChunkOf(moved));
     REQUIRE(server.GetWorld().SetTile(moved, {TestTerrain("floor"), 0}));
     REQUIRE(server.GetWorld().MoveActor(guest, moved));
@@ -649,7 +834,7 @@ TEST_CASE("Reconnect staging failure leaves parked guest joining without relocat
     REQUIRE(server.CreateSave(file.path.c_str()));
     {
         RawDatabase raw(file.path.c_str());
-        raw.Exec("UPDATE chunks SET payload='{}' WHERE x=1 AND z=0");
+        raw.Exec("UPDATE chunks SET payload='{}' WHERE x=1 AND z=0 AND y=0");
     }
     REQUIRE(server.JoinPlayer("Guest", 872, 0));
     CHECK(server.ActivatePlayer(joined->player)

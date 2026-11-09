@@ -66,7 +66,7 @@ ChunkArchive SampleChunk(ChunkCoord position = {0, 0}) {
     ChunkArchive chunk{};
     chunk.tiles.fill(Tile{TestTerrain("floor"), 0});
     chunk.position = position;
-    const TileCoord tile{position.x * chunk_size, position.z * chunk_size};
+    const TileCoord tile{position.x * chunk_size, position.z * chunk_size, position.y};
     chunk.tiles[255] = {TestTerrain("closed_door"), 255};
     chunk.actors.push_back({1, tile, true, UINT64_MAX, 173, UINT64_MAX});
     chunk.objects.push_back({2, tile, true, UINT64_MAX - 1, 217, 176});
@@ -151,7 +151,7 @@ TEST_CASE("Save terrain names survive catalog renumbering and missing content fa
     }
     {
         RawDatabase raw(file.path.c_str());
-        CHECK(raw.Text("SELECT format_version FROM metadata") == "5");
+        CHECK(raw.Text("SELECT format_version FROM metadata") == "6");
         const auto payload = raw.Text("SELECT payload FROM chunks");
         CHECK(payload.find("\"terrain\":\"moss\"") != std::string::npos);
         CHECK(payload.find("\"terrain\":\"floor\"") != std::string::npos);
@@ -183,7 +183,7 @@ TEST_CASE("Save terrain names survive catalog renumbering and missing content fa
         const auto& terrainFrame = diagnostics.Frames()[1];
         CHECK(terrainFrame.message.find("moss") != String::npos);
         REQUIRE(terrainFrame.location);
-        CHECK(terrainFrame.location->path == "chunks[-3,2].tiles[37].terrain");
+        CHECK(terrainFrame.location->path == "chunks[-3,2,0].tiles[37].terrain");
         CHECK(diagnostics.Frames().back().message == "Opening save: validating saved world");
         CHECK(database.Begin() == eastl::unexpected(SaveError::NotOpen));
     }
@@ -218,7 +218,7 @@ TEST_CASE("Save database validates terrain again on chunk reads and checkpoint c
     REQUIRE_FALSE(diagnostics.Empty());
     CHECK(diagnostics.Frames()[0].message.find("removed_terrain") != String::npos);
     REQUIRE(diagnostics.Frames()[0].location);
-    CHECK(diagnostics.Frames()[0].location->path == "chunks[0,0].tiles[0].terrain");
+    CHECK(diagnostics.Frames()[0].location->path == "chunks[0,0,0].tiles[0].terrain");
 }
 
 TEST_CASE("Save database refuses existing files and never creates on Open", "[save][database]") {
@@ -263,7 +263,7 @@ TEST_CASE("Save database stores nested standard JSON and round trips full width 
         CHECK(payload.find("\"ground_items\":[{\"id\":\"18446744073709551614\"") != std::string::npos);
         CHECK(payload.find("\"carry_capacity_g\":\"100000\"") != std::string::npos);
         CHECK(payload.find("\"type\":\"backpack\",\"state\":{},\"installation\":\"\"") != std::string::npos);
-        CHECK(payload.find("\"position\":{\"x\":-16,\"z\":-16}") != std::string::npos);
+        CHECK(payload.find("\"position\":{\"x\":-16,\"z\":-16,\"y\":0}") != std::string::npos);
         CHECK(payload.find("\"owner\"") == std::string::npos);
         raw.Exec("UPDATE metadata SET game_version='future informational label'");
     }
@@ -295,6 +295,106 @@ TEST_CASE("Save database stores nested standard JSON and round trips full width 
     auto absent = database.ReadChunk({1, 0}, opened->nextId);
     REQUIRE(absent);
     CHECK_FALSE(*absent);
+}
+
+TEST_CASE("Save database keeps same XZ slices independent through updates and reload", "[save][database][layers]") {
+    SaveFile file;
+    auto snapshot = SampleSnapshot();
+    snapshot.session.playerPosition = {-16, 32, world_min_y};
+    snapshot.session.players.push_back({1, snapshot.session.playerPosition, "host", 0});
+    {
+        SaveDatabase database(TestContent());
+        REQUIRE(database.Create(file.path.c_str()));
+        REQUIRE(database.Begin());
+        REQUIRE(database.WriteChunk(SampleChunk({-1, 2, world_min_y})));
+        for (int y : {0, world_max_y}) {
+            ChunkArchive chunk{};
+            chunk.position = {-1, 2, y};
+            chunk.tiles.fill({TestTerrain("floor"), static_cast<std::uint8_t>(y + 20)});
+            REQUIRE(database.WriteChunk(chunk));
+        }
+        REQUIRE(database.WriteSnapshot(snapshot));
+        REQUIRE(database.Commit());
+        REQUIRE(database.Begin());
+        auto lower = SampleChunk({-1, 2, world_min_y});
+        lower.tiles[0].damage = 77;
+        REQUIRE(database.WriteChunk(lower));
+        REQUIRE(database.Commit());
+    }
+    SaveDatabase database(TestContent());
+    auto opened = database.Open(file.path.c_str());
+    REQUIRE(opened);
+    CHECK(opened->session.playerPosition == snapshot.session.playerPosition);
+    CHECK(opened->session.players[0].position == snapshot.session.playerPosition);
+    for (int y : {world_min_y, 0, world_max_y}) {
+        auto loaded = database.ReadChunk({-1, 2, y}, snapshot.nextId);
+        REQUIRE(loaded);
+        REQUIRE(*loaded);
+        const auto& chunk = **loaded;
+        CHECK(chunk.position == ChunkCoord{-1, 2, y});
+        CHECK(chunk.tiles[0].damage == (y == world_min_y ? 77 : y + 20));
+        if (y == world_min_y) {
+            CHECK(chunk.actors[0].position.y == y);
+            CHECK(chunk.objects[0].position.y == y);
+            CHECK(chunk.items.back().position.y == y);
+        }
+    }
+    auto absent = database.ReadChunk({-1, 2, 1}, snapshot.nextId);
+    REQUIRE(absent);
+    CHECK_FALSE(*absent);
+    CHECK(database.ReadChunk({-1, 2, -11}, snapshot.nextId)
+        == eastl::unexpected(SaveError::InvalidData));
+}
+
+TEST_CASE("Save database supports generation versions one through three", "[save][database][layers]") {
+    SaveFile file;
+    SaveDatabase database(TestContent());
+    REQUIRE(database.Create(file.path.c_str()));
+    for (std::uint32_t version : {1U, 2U, 3U}) {
+        SaveSnapshot snapshot;
+        snapshot.generationVersion = version;
+        REQUIRE(database.Begin());
+        REQUIRE(database.WriteSnapshot(snapshot));
+        REQUIRE(database.Commit());
+        SaveDatabase observer(TestContent());
+        auto opened = observer.Open(file.path.c_str());
+        REQUIRE(opened);
+        CHECK(opened->generationVersion == version);
+    }
+}
+
+TEST_CASE("Save database rejects corrupt SQL Y coordinates", "[save][database][layers]") {
+    SaveFile file;
+    Populate(file.path.c_str());
+    {
+        RawDatabase raw(file.path.c_str());
+        SECTION("below minimum") { raw.Exec("UPDATE chunks SET y=-11"); }
+        SECTION("above maximum") { raw.Exec("UPDATE chunks SET y=11"); }
+        SECTION("overflow") { raw.Exec("UPDATE chunks SET y=4294967296"); }
+        SECTION("fraction") { raw.Exec("UPDATE chunks SET y=0.5"); }
+        SECTION("text") { raw.Exec("UPDATE chunks SET y='surface'"); }
+    }
+    SaveDatabase database(TestContent());
+    CHECK(database.Open(file.path.c_str()) == eastl::unexpected(SaveError::InvalidData));
+}
+
+TEST_CASE("Save database commit rejects duplicate complete slice coordinates", "[save][database][layers]") {
+    SaveFile file;
+    Populate(file.path.c_str());
+    SaveDatabase database(TestContent());
+    REQUIRE(database.Open(file.path.c_str()));
+    {
+        // Simulate external damage after Open to exercise the row validator too.
+        RawDatabase raw(file.path.c_str());
+        raw.Exec("ALTER TABLE chunks RENAME TO original_chunks;"
+            "CREATE TABLE chunks(x INTEGER,z INTEGER,y INTEGER,payload TEXT);"
+            "INSERT INTO chunks SELECT * FROM original_chunks;"
+            "INSERT INTO chunks SELECT * FROM original_chunks;"
+            "DROP TABLE original_chunks;");
+    }
+    REQUIRE(database.Begin());
+    CHECK(database.Commit() == eastl::unexpected(SaveError::InvalidData));
+    CHECK(database.Commit() == eastl::unexpected(SaveError::InvalidState));
 }
 
 TEST_CASE("Save database rolls back failed checkpoints including previously written chunks", "[save][database]") {
@@ -400,7 +500,8 @@ TEST_CASE("Save database rejects unknown versions and incomplete or extended sch
     Populate(file.path.c_str());
     {
         RawDatabase raw(file.path.c_str());
-        SECTION("future version") { raw.Exec("UPDATE metadata SET format_version=6"); }
+        SECTION("future version") { raw.Exec("UPDATE metadata SET format_version=7"); }
+        SECTION("previous v5 format") { raw.Exec("UPDATE metadata SET format_version=5"); }
         SECTION("previous v4 format") { raw.Exec("UPDATE metadata SET format_version=4"); }
         SECTION("previous v3 format") { raw.Exec("UPDATE metadata SET format_version=3"); }
         SECTION("command count ticks version") { raw.Exec("UPDATE metadata SET format_version=2"); }
@@ -417,6 +518,11 @@ TEST_CASE("Save database rejects damaged metadata and schemas", "[save][database
         RawDatabase raw(file.path.c_str());
         SECTION("missing metadata") { raw.Exec("DELETE FROM metadata"); }
         SECTION("extra columns") { raw.Exec("ALTER TABLE chunks ADD COLUMN future TEXT"); }
+        SECTION("v5 chunks schema with v6 metadata") {
+            raw.Exec("ALTER TABLE chunks RENAME TO old_chunks;"
+                "CREATE TABLE chunks(x INTEGER NOT NULL,z INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(x,z));"
+                "INSERT INTO chunks SELECT x,z,payload FROM old_chunks; DROP TABLE old_chunks;");
+        }
         SECTION("missing world_state") { raw.Exec("DELETE FROM world_state"); }
         SECTION("unknown tables") { raw.Exec("CREATE TABLE future(value TEXT)"); }
         SECTION("malformed chunk") { raw.Exec("UPDATE chunks SET payload='{}'"); }
@@ -448,6 +554,12 @@ TEST_CASE("Save database strictly validates nested JSON and coordinates", "[save
         SECTION("damage overflow") { Replace(payload, "\"damage\":0", "\"damage\":256"); }
         SECTION("wrong chunk position") { Replace(payload, "\"x\":0", "\"x\":16"); }
         SECTION("position overflow") { Replace(payload, "\"x\":0", "\"x\":2147483648"); }
+        SECTION("missing Y") { Replace(payload, ",\"y\":0", ""); }
+        SECTION("duplicate Y") { Replace(payload, "\"y\":0", "\"y\":0,\"y\":0"); }
+        SECTION("Y below world") { Replace(payload, "\"y\":0", "\"y\":-11"); }
+        SECTION("Y above world") { Replace(payload, "\"y\":0", "\"y\":11"); }
+        SECTION("Y overflow") { Replace(payload, "\"y\":0", "\"y\":4294967296"); }
+        SECTION("wrong layer") { Replace(payload, "\"y\":0", "\"y\":1"); }
         SECTION("zero actor speed") { Replace(payload, "\"speed\":173", "\"speed\":0"); }
         SECTION("negative actor speed") { Replace(payload, "\"speed\":173", "\"speed\":-1"); }
         SECTION("overflow actor speed") { Replace(payload, "\"speed\":173", "\"speed\":4294967296"); }
@@ -471,9 +583,9 @@ TEST_CASE("Save database strictly validates nested JSON and coordinates", "[save
         SECTION("missing ground position") {
             const auto ground = payload.find("\"ground_items\"");
             REQUIRE(ground != std::string::npos);
-            const auto position = payload.find(",\"position\":{\"x\":0,\"z\":0}", ground);
+            const auto position = payload.find(",\"position\":{\"x\":0,\"z\":0,\"y\":0}", ground);
             REQUIRE(position != std::string::npos);
-            payload.erase(position, std::string(",\"position\":{\"x\":0,\"z\":0}").size());
+            payload.erase(position, std::string(",\"position\":{\"x\":0,\"z\":0,\"y\":0}").size());
         }
         raw.SetText("UPDATE chunks SET payload=?1", payload);
     }
@@ -489,7 +601,7 @@ TEST_CASE("Save database validates session, counters and generator version", "[s
         RawDatabase raw(file.path.c_str());
         auto payload = raw.Text("SELECT payload FROM world_state");
         SECTION("unknown generator") {
-            Replace(payload, "\"generation_version\":1", "\"generation_version\":3");
+            Replace(payload, "\"generation_version\":3", "\"generation_version\":4");
             expected = SaveError::UnsupportedVersion;
         }
         SECTION("numeric counter") { Replace(payload, "\"tick\":\"18446744073709551615\"", "\"tick\":1"); }
@@ -497,6 +609,9 @@ TEST_CASE("Save database validates session, counters and generator version", "[s
         SECTION("invalid next ID") { Replace(payload, "\"next_id\":\"8\"", "\"next_id\":\"7\""); }
         SECTION("player is an object") { Replace(payload, "\"player\":\"1\"", "\"player\":\"2\""); }
         SECTION("player position mismatch") { Replace(payload, "\"x\":0", "\"x\":1"); }
+        SECTION("missing session Y") { Replace(payload, ",\"y\":0", ""); }
+        SECTION("session Y out of range") { Replace(payload, "\"y\":0", "\"y\":-11"); }
+        SECTION("player layer mismatch") { Replace(payload, "\"y\":0", "\"y\":1"); }
         SECTION("duplicate session key") { Replace(payload, "\"rng_state\":4294967295", "\"rng_state\":0,\"rng_state\":1"); }
         SECTION("zero pacing rate") { Replace(payload, "\"ticks_per_second\":37", "\"ticks_per_second\":0"); }
         SECTION("overflow pacing rate") { Replace(payload, "\"ticks_per_second\":37", "\"ticks_per_second\":4294967296"); }
@@ -535,7 +650,7 @@ TEST_CASE("Save database rejects cross chunk duplicate IDs on Open and Commit", 
                 payload.replace(offset, 5, "\"x\":16");
                 offset += 6;
             }
-            raw.SetText("INSERT INTO chunks(x,z,payload) VALUES(1,0,?1)", payload);
+            raw.SetText("INSERT INTO chunks(x,z,y,payload) VALUES(1,0,0,?1)", payload);
         }
         SaveDatabase database(TestContent());
         CHECK(database.Open(file.path.c_str()) == eastl::unexpected(SaveError::InvalidData));
@@ -592,6 +707,10 @@ TEST_CASE("Save database validates flat archive owners before encoding", "[save]
     SECTION("duplicate actor position") { chunk.actors.push_back({20, {}, false, 0}); }
     SECTION("duplicate object position") { chunk.objects.push_back({20, {}, false, 0}); }
     SECTION("ground wrong chunk") { chunk.items.back().position = {16, 0}; }
+    SECTION("ground wrong layer") { chunk.items.back().position.y = 1; }
+    SECTION("actor wrong layer") { chunk.actors[0].position.y = 1; }
+    SECTION("object wrong layer") { chunk.objects[0].position.y = 1; }
+    SECTION("chunk Y out of range") { chunk.position.y = 11; }
     SECTION("unknown item type") { chunk.items[0].type = ItemTypeId{UINT32_MAX}; }
     SECTION("unknown location") { chunk.items[0].location = static_cast<LocationKind>(255); }
     SECTION("unknown terrain") { chunk.tiles[0].terrain = TerrainId{UINT32_MAX}; }
@@ -621,17 +740,17 @@ TEST_CASE("Save database validates player rosters against every chunk", "[save][
     SaveDatabase database(TestContent());
     REQUIRE(database.Create(file.path.c_str()));
     auto host = SampleChunk();
-    auto guest = SampleChunk({1, 0});
+    auto guest = SampleChunk({0, 0, 1});
     guest.actors.clear();
     guest.objects.clear();
     guest.items.clear();
-    guest.actors.push_back({8, {16, 0}, true, 7, 100, 42, true});
+    guest.actors.push_back({8, {0, 0, 1}, true, 7, 100, 42, true});
     guest.items.push_back({9, TestItem("backpack"), LocationKind::actor, {}, 8});
     guest.items.push_back({10, TestItem("rock"), LocationKind::item, {}, 9});
     auto snapshot = SampleSnapshot();
     snapshot.nextId = 11;
     snapshot.session.players.push_back({1, {0, 0}, "host", 0});
-    snapshot.session.players.push_back({8, {16, 0}, "guest", UINT64_MAX});
+    snapshot.session.players.push_back({8, {0, 0, 1}, "guest", UINT64_MAX});
     REQUIRE(database.Begin());
     REQUIRE(database.WriteChunk(host));
     REQUIRE(database.WriteChunk(guest));
@@ -642,7 +761,8 @@ TEST_CASE("Save database validates player rosters against every chunk", "[save][
     REQUIRE(opened);
     REQUIRE(opened->session.players.size() == 2);
     CHECK(opened->session.players[1].reconnectToken == UINT64_MAX);
-    auto restored = observer.ReadChunk({1, 0}, 11);
+    CHECK(opened->session.players[1].position == TileCoord{0, 0, 1});
+    auto restored = observer.ReadChunk({0, 0, 1}, 11);
     REQUIRE(restored);
     REQUIRE(*restored);
     CHECK((**restored).actors[0].parked);
@@ -657,6 +777,9 @@ TEST_CASE("Save database validates player rosters against every chunk", "[save][
     SECTION("duplicate actor") { snapshot.session.players[1].actor = 1; }
     SECTION("missing actor") { snapshot.session.players[1].actor = 7; checkCommit = true; }
     SECTION("position mismatch") { snapshot.session.players[1].position = {17, 0}; checkCommit = true; }
+    SECTION("layer mismatch") { snapshot.session.players[1].position.y = 0; checkCommit = true; }
+    SECTION("roster Y below world") { snapshot.session.players[1].position.y = -11; }
+    SECTION("roster Y above world") { snapshot.session.players[1].position.y = 11; }
     SECTION("guest omitted from roster") { snapshot.session.players.pop_back(); checkCommit = true; }
     SECTION("implicit host cannot omit guest") { snapshot.session.players.clear(); checkCommit = true; }
     SECTION("empty name") { snapshot.session.players[1].name.clear(); }
@@ -694,7 +817,7 @@ TEST_CASE("Save database rejects corrupt roster JSON on open", "[save][database]
         SECTION("invalid roster type") { Replace(payload, "\"players\":[]", "\"players\":{}"); }
         SECTION("roster missing actor") {
             Replace(payload, "\"players\":[]",
-                "\"players\":[{\"actor\":\"99\",\"position\":{\"x\":0,\"z\":0},\"name\":\"guest\",\"reconnect_token\":\"1\"}]");
+                "\"players\":[{\"actor\":\"99\",\"position\":{\"x\":0,\"z\":0,\"y\":0},\"name\":\"guest\",\"reconnect_token\":\"1\"}]");
         }
         raw.SetText("UPDATE world_state SET payload=?1", payload);
     }

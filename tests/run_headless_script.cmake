@@ -7,9 +7,9 @@ if(INVALID)
     endif()
 else()
     if(NOT result EQUAL 0
-        OR NOT output MATCHES "tick=5400 position=16,2"
+        OR NOT output MATCHES "tick=5400 position=16,2,0"
         OR NOT output MATCHES "Inventory: 2:backpack\\(1 inside\\)"
-        OR NOT output MATCHES "inspect tick=5400 loaded=3 active=2 archived=24 invariants=ok")
+        OR NOT output MATCHES "inspect tick=5400 loaded=63 active=42 archived=504 invariants=ok")
         message(FATAL_ERROR "Streaming script failed (${result}): ${output}${error}")
     endif()
 endif()

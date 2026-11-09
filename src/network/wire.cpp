@@ -5,6 +5,23 @@
 
 namespace cataclysmx::network::wire {
 namespace {
+bool ValidViewBounds(const WorldView& view) {
+    return view.width >= 1 && view.width <= 25 && view.height == view.width && (view.width & 1) != 0 &&
+        ValidPosition(view.player_position) && view.origin.y == view.player_position.y &&
+        static_cast<std::int64_t>(view.origin.x) + view.width / 2 == view.player_position.x &&
+        static_cast<std::int64_t>(view.origin.z) + view.height / 2 == view.player_position.z;
+}
+bool ValidCell(const ViewCell& cell, const WorldView& view, std::size_t index) {
+    if (!cell.visible) return cell == ViewCell{};
+    const auto maxDepth = static_cast<unsigned>(view.player_position.y - world_min_y);
+    const bool overlay = cell.actor != 0 || cell.ground_items != 0 || cell.object != 0;
+    return cell.tile.terrain.value != 0 && cell.terrainDepth < world_layer_count &&
+        cell.overlayDepth < world_layer_count && cell.terrainDepth <= maxDepth && cell.overlayDepth <= maxDepth &&
+        (overlay || cell.overlayDepth == 0) && (!cell.player || cell.actor != 0) &&
+        (!cell.object_enabled || cell.object != 0) &&
+        ValidPosition({view.origin.x + static_cast<int>(index % view.width),
+            view.origin.z + static_cast<int>(index / view.width), view.origin.y});
+}
 bool ValidCapability(ItemCapabilityId id) {
     return id.value != 0 && id.value <= maxItemCapabilities;
 }
@@ -221,7 +238,7 @@ bool Writer::CommandValue(const Command& v) {
     U8(static_cast<std::uint8_t>(v.kind)); I32(v.dx); I32(v.dz); U64(v.item); U32(v.waitCost);
     U16(v.capability.value);
     if (!Text(v.itemAction, maxItemActionName)) return false;
-    U64(v.otherItem);
+    U64(v.otherItem); I32(v.dy);
     return bytes.size() <= maxPacket;
 }
 bool Writer::Result(const PlayerCommandResult& v) {
@@ -238,14 +255,15 @@ bool Writer::Result(const PlayerCommandResult& v) {
     return WriteReason(*this, v.result.itemReason) && bytes.size() <= maxPacket;
 }
 bool Writer::View(const WorldView& v) {
-    if (v.width < 1 || v.width > 25 || v.height != v.width || (v.width & 1) == 0 ||
+    if (!ValidViewBounds(v) ||
         v.cells.size() != static_cast<std::size_t>(v.width * v.height) ||
         !ValidLists(v) || v.players.size() > 32 ||
-        v.playerId == 0 || v.opportunity == 0 || v.speed == 0 ||
-        static_cast<std::int64_t>(v.origin.x) + v.width / 2 != v.player_position.x ||
-        static_cast<std::int64_t>(v.origin.z) + v.height / 2 != v.player_position.z) return false;
-    I32(v.origin.x); I32(v.origin.z); U8(static_cast<std::uint8_t>(v.width)); U8(static_cast<std::uint8_t>(v.height));
-    I32(v.player_position.x); I32(v.player_position.z); U64(v.tick);
+        v.playerId == 0 || v.opportunity == 0 || v.speed == 0 || v.pacing.ticksPerSecond == 0) return false;
+    for (std::size_t i = 0; i < v.cells.size(); ++i)
+        if (!ValidCell(v.cells[i], v, i)) return false;
+    I32(v.origin.x); I32(v.origin.z); I32(v.origin.y);
+    U8(static_cast<std::uint8_t>(v.width)); U8(static_cast<std::uint8_t>(v.height));
+    I32(v.player_position.x); I32(v.player_position.z); I32(v.player_position.y); U64(v.tick);
     U64(v.playerId); U64(v.revision); U64(v.opportunity); U64(v.lastInputSequence);
     U64(v.remainingTicks); U32(v.speed);
     U32(v.pacing.ticksPerSecond); U8(v.pacing.rateLimited ? 1 : 0);
@@ -256,6 +274,7 @@ bool Writer::View(const WorldView& v) {
         if (c.visible) {
             U32(c.tile.terrain.value); U8(c.tile.damage); U64(c.actor); U8(c.player ? 1 : 0);
             U32(c.ground_items); U64(c.object); U8(c.object_enabled ? 1 : 0);
+            U8(static_cast<std::uint8_t>(c.terrainDepth)); U8(static_cast<std::uint8_t>(c.overlayDepth));
         }
     }
     if (!WriteEntries(*this, v.inventory) || !WriteEntries(*this, v.groundItems)) return false;
@@ -285,7 +304,7 @@ bool Reader::CommandValue(Command& v) {
     if (bytes.size() > maxPacket || !U8(kind) || kind > static_cast<std::uint8_t>(CommandKind::store_item) ||
         !I32(v.dx) || !I32(v.dz) || !U64(v.item) || !U32(v.waitCost) ||
         !U16(v.capability.value) || v.capability.value > maxItemCapabilities ||
-        !Text(v.itemAction, maxItemActionName) || !U64(v.otherItem)) return false;
+        !Text(v.itemAction, maxItemActionName) || !U64(v.otherItem) || !I32(v.dy)) return false;
     v.kind = static_cast<CommandKind>(kind);
     return (v.itemAction.empty() || ValidItemActionId(v.itemAction)) && ValidCommandShape(v);
 }
@@ -313,17 +332,16 @@ bool Reader::Result(PlayerCommandResult& v) {
 bool Reader::View(WorldView& v) {
     if (bytes.size() > maxPacket) return false;
     std::uint8_t w, h, rate, pause, queued; std::uint16_t count;
-    if (!I32(v.origin.x) || !I32(v.origin.z) || !U8(w) || !U8(h) || w == 0 ||
+    if (!I32(v.origin.x) || !I32(v.origin.z) || !I32(v.origin.y) || !U8(w) || !U8(h) || w == 0 ||
         w > 25 || h != w || (w & 1) == 0 ||
-        !I32(v.player_position.x) || !I32(v.player_position.z) || !U64(v.tick) ||
+        !I32(v.player_position.x) || !I32(v.player_position.z) || !I32(v.player_position.y) || !U64(v.tick) ||
         !U64(v.playerId) || !U64(v.revision) || !U64(v.opportunity) || !U64(v.lastInputSequence) ||
         !U64(v.remainingTicks) || !U32(v.speed) || !U32(v.pacing.ticksPerSecond) ||
         !v.playerId || !v.opportunity || !v.speed || !v.pacing.ticksPerSecond ||
-        static_cast<std::int64_t>(v.origin.x) + w / 2 != v.player_position.x ||
-        static_cast<std::int64_t>(v.origin.z) + h / 2 != v.player_position.z ||
-        !ValidPosition(v.player_position) || !U8(rate) || rate > 1 || !U8(pause) || pause > 1 ||
+        !U8(rate) || rate > 1 || !U8(pause) || pause > 1 ||
         !U8(queued) || queued > 1 || !U16(count) || count != w * h) return false;
     v.width = w; v.height = h; v.pacing.rateLimited = rate; v.pacing.pauseWhenIdle = pause;
+    if (!ValidViewBounds(v)) return false;
     v.commandQueued = queued;
     v.cells.clear();
     for (unsigned i = 0; i < count; ++i) {
@@ -331,12 +349,14 @@ bool Reader::View(WorldView& v) {
         if (!U8(visible) || visible > 1) return false;
         c.visible = visible;
         if (c.visible) {
-            std::uint8_t player, enabled;
+            std::uint8_t player, enabled, terrainDepth, overlayDepth;
             if (!U32(c.tile.terrain.value) || !U8(c.tile.damage) || !U64(c.actor) ||
                 !U8(player) || player > 1 || !U32(c.ground_items) || !U64(c.object) ||
-                !U8(enabled) || enabled > 1) return false;
+                !U8(enabled) || enabled > 1 || !U8(terrainDepth) || !U8(overlayDepth)) return false;
             c.player = player; c.object_enabled = enabled;
+            c.terrainDepth = terrainDepth; c.overlayDepth = overlayDepth;
         }
+        if (!ValidCell(c, v, i)) return false;
         v.cells.push_back(c);
     }
     if (!ReadEntries(*this, v.inventory) || !ReadEntries(*this, v.groundItems) || !ValidLists(v) ||

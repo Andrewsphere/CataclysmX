@@ -23,7 +23,7 @@ enum class InputAction {
     Accept, Next, Previous, JumpWest, JumpEast, JumpNorth, JumpSouth,
     Recenter, Layer1, Layer2, Layer3, Layer4, Layer5, ZoomIn, ZoomOut,
     DetailsUp, DetailsDown, Apply, SaveSettings, Reload, Inspect, AddBinding, Unbind, Reset,
-    Inventory, Players, Help, QuickActions, Use
+    Inventory, Players, Help, QuickActions, Use, MoveDown, MoveUp
 };
 struct InputBinding {
     InputContext context = InputContext::Gameplay;

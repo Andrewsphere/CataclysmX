@@ -177,6 +177,10 @@ if(CATACLYSMX_BUILD_TESTS)
         "-DHEADLESS=$<TARGET_FILE:cataclysmx_headless>"
         "-DSCENARIO=${CMAKE_CURRENT_SOURCE_DIR}/tests/scenarios/items.txt"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/run_item_script.cmake")
+    add_test(NAME headless_y_layers_script COMMAND ${CMAKE_COMMAND}
+        "-DHEADLESS=$<TARGET_FILE:cataclysmx_headless>"
+        "-DSCENARIO=${CMAKE_CURRENT_SOURCE_DIR}/tests/scenarios/y_layers.txt"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/run_y_layers_script.cmake")
     set(save_client_terminal_arg)
     if(CATACLYSMX_BUILD_TERMINAL)
         set(save_client_terminal_arg "-DTERMINAL=$<TARGET_FILE:cataclysmx_game>")

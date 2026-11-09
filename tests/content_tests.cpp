@@ -89,10 +89,61 @@ TEST_CASE("Content parses real JSON5 and owns its catalog strings", "[content]")
     CHECK(floor.appearance.background == RgbColor{});
     CHECK(floor.passable);
     CHECK_FALSE(floor.blocksSight);
+    CHECK_FALSE(floor.openSpace);
+    CHECK_FALSE(floor.stairs);
     CHECK(floor.opensTo == TerrainId{});
     CHECK(floor.closesTo == TerrainId{});
     CHECK(Take(Load("{format_version:1,definitions:[]}")).TerrainCount() == 0);
     CHECK(Take(LoadContent({})).TerrainCount() == 0);
+}
+
+TEST_CASE("Vertical terrain flags are optional local booleans with strict invariants", "[content][vertical]") {
+    const auto catalog = Take(Load(View(Document(View(
+        Terrain("air", "open_space:true") + ',' + Terrain("stairs", "stairs:true") + ','
+        + Terrain("child", "looks_like:'air'", "{}") + ','
+        + Terrain("floor", "open_space:false,stairs:false"))))));
+    CHECK(Get(catalog, "air").openSpace);
+    CHECK_FALSE(Get(catalog, "air").stairs);
+    CHECK(Get(catalog, "stairs").stairs);
+    CHECK_FALSE(Get(catalog, "stairs").openSpace);
+    CHECK_FALSE(Get(catalog, "child").openSpace);
+    CHECK_FALSE(Get(catalog, "child").stairs);
+    CHECK_FALSE(Get(catalog, "floor").openSpace);
+    const auto airDocument = Document(View(Terrain("air", "open_space:true")));
+    const auto stairDocument = Document(View(Terrain("stairs", "stairs:true")));
+    const ContentSource sources[] = {{"air", View(airDocument)}, {"stairs", View(stairDocument)}};
+    const ContentSource reversed[] = {sources[1], sources[0]};
+    const auto first = Take(LoadContent({sources, 2}));
+    const auto second = Take(LoadContent({reversed, 2}));
+    for (const char* id : {"air", "stairs"}) {
+        CHECK(first.FindTerrain(id) == second.FindTerrain(id));
+        CHECK(Get(first, id).openSpace == Get(second, id).openSpace);
+        CHECK(Get(first, id).stairs == Get(second, id).stairs);
+    }
+    for (const char* extra : {"open_space:null", "open_space:1", "open_space:'true'",
+                              "stairs:null", "stairs:1", "stairs:'true'",
+                              "open_space:true,stairs:true", "open_space:false,open_space:true",
+                              "stairs:false,stairs:true"}) {
+        CAPTURE(extra);
+        Invalid(View(Document(View(Terrain("invalid", extra)))));
+    }
+    for (const char* flag : {"open_space", "stairs"}) {
+        for (const char* fields : {"movement:{passable:false},blocks_sight:false",
+                                   "movement:{passable:true},blocks_sight:true"}) {
+            String definition = "{type:'terrain',id:'invalid',name:'Invalid',";
+            definition += fields;
+            definition += ',';
+            definition += flag;
+            definition += ":true,appearance:{symbol:'.',foreground:'white'}}";
+            const auto text = Document(View(definition));
+            Invalid(View(text));
+            Diagnostics diagnostics;
+            REQUIRE_FALSE(Load(View(text), &diagnostics));
+            String path = "definitions[0].";
+            path += flag;
+            CHECK(diagnostics.Frames().front().location->path == path);
+        }
+    }
 }
 
 TEST_CASE("Content color palette and strict RGB hexadecimal are deterministic", "[content]") {
@@ -408,15 +459,23 @@ TEST_CASE("Bundled terrain content loads from stdio with door transitions", "[co
     path.resize(separator);
     path += "/../data/terrain.json5";
     const auto catalog = Take(LoadContentFile(path.c_str()));
-    CHECK(catalog.TerrainCount() == 8);
-    CHECK(catalog.FindTerrain("closed_door") == TerrainId{1});
-    CHECK(catalog.FindTerrain("floor") == TerrainId{2});
-    CHECK(catalog.FindTerrain("grass") == TerrainId{3});
-    CHECK(catalog.FindTerrain("open_door") == TerrainId{4});
-    CHECK(catalog.FindTerrain("road") == TerrainId{5});
-    CHECK(catalog.FindTerrain("rubble") == TerrainId{6});
-    CHECK(catalog.FindTerrain("tree") == TerrainId{7});
-    CHECK(catalog.FindTerrain("wall") == TerrainId{8});
+    CHECK(catalog.TerrainCount() == 10);
+    CHECK(catalog.FindTerrain("air") == TerrainId{1});
+    CHECK(catalog.FindTerrain("closed_door") == TerrainId{2});
+    CHECK(catalog.FindTerrain("floor") == TerrainId{3});
+    CHECK(catalog.FindTerrain("grass") == TerrainId{4});
+    CHECK(catalog.FindTerrain("open_door") == TerrainId{5});
+    CHECK(catalog.FindTerrain("road") == TerrainId{6});
+    CHECK(catalog.FindTerrain("rubble") == TerrainId{7});
+    CHECK(catalog.FindTerrain("stairs") == TerrainId{8});
+    CHECK(catalog.FindTerrain("tree") == TerrainId{9});
+    CHECK(catalog.FindTerrain("wall") == TerrainId{10});
+    CHECK(Get(catalog, "air").openSpace);
+    CHECK(Get(catalog, "air").passable);
+    CHECK_FALSE(Get(catalog, "air").blocksSight);
+    CHECK(Get(catalog, "stairs").stairs);
+    CHECK(Get(catalog, "stairs").passable);
+    CHECK_FALSE(Get(catalog, "stairs").blocksSight);
     CHECK(Get(catalog, "floor").appearance.symbol == ".");
     CHECK(Get(catalog, "wall").appearance.symbol == "#");
     CHECK(Get(catalog, "closed_door").appearance.symbol == "+");

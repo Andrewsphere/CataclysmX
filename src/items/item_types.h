@@ -70,6 +70,7 @@ struct ItemUseRequest {
     ItemHandle otherItem{};
     int dx = 0;
     int dz = 0;
+    int dy = 0;
 };
 struct ItemUseResult {
     ItemUseOutcome outcome = ItemUseOutcome::InvalidAction;

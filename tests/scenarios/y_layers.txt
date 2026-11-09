@@ -1,0 +1,18 @@
+# Go downstairs and back up using the requested symbols.
+move w
+move w
+move w
+move <
+view
+move >
+move up
+view
+# An unmatched stair cannot ascend again and spends no time.
+move >
+# Leave the platform into the two-layer hole.
+move w
+move s
+view
+pickup
+inspect
+quit

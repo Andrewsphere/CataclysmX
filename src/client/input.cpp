@@ -15,7 +15,7 @@ constexpr eastl::string_view actionNames[] = {
     "accept", "next", "previous", "jump_west", "jump_east", "jump_north", "jump_south",
     "recenter", "layer_1", "layer_2", "layer_3", "layer_4", "layer_5", "zoom_in", "zoom_out",
     "details_up", "details_down", "apply", "save_settings", "reload", "inspect", "add_binding", "unbind", "reset",
-    "inventory", "players", "help", "quick_actions", "use"
+    "inventory", "players", "help", "quick_actions", "use", "move_down", "move_up"
 };
 constexpr eastl::string_view contextNames[] = {"gameplay", "interaction", "menu", "debug", "items"};
 constexpr eastl::string_view namedKeys[] = {
@@ -115,6 +115,8 @@ Keymap DefaultKeymap() {
     add(game, InputAction::RateDown, {"["}); add(game, InputAction::RateUp, {"]"});
     add(game, InputAction::ToggleRate, {"r"}); add(game, InputAction::ToggleIdle, {"p"});
     for (auto context : {InputContext::Gameplay, InputContext::Interaction}) {
+        add(context, InputAction::MoveDown, {"<"});
+        add(context, InputAction::MoveUp, {">"});
         add(context, InputAction::Inventory, {"i"});
         add(context, InputAction::Use, {"u"});
         add(context, InputAction::Players, {"P"});
@@ -135,6 +137,8 @@ Keymap DefaultKeymap() {
     add(InputContext::Menu, InputAction::Unbind, {"u"});
     add(InputContext::Items, InputAction::Use, {"u"});
     add(InputContext::Items, InputAction::Apply, {"a"});
+    add(InputContext::Items, InputAction::MoveDown, {"<"});
+    add(InputContext::Items, InputAction::MoveUp, {">"});
     add(InputContext::Menu, InputAction::Reset, {"Backspace"});
     const auto debug = InputContext::Debug;
     add(debug, InputAction::Debug, {"F11", "q"});

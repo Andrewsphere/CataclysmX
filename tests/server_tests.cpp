@@ -84,7 +84,7 @@ TEST_CASE("Server creates the deterministic demo and advances only successful co
     CHECK(world.GetActor(server.GetPlayer())->position == TileCoord{0, 0});
     CHECK(world.GetActor(server.GetPlayer())->player);
     CHECK(server.GetTick() == 0);
-    CHECK(world.LoadedChunks().size() == 25);
+    CHECK(world.LoadedChunks().size() == 25 * world_layer_count);
     CHECK(world.IsActive({-16, -16}));
     CHECK_FALSE(world.IsActive({-32, -32}));
     const auto backpack = world.ItemsAt({0, 0});
@@ -351,7 +351,11 @@ TEST_CASE("Zero-radius movement loads before crossing and restores frozen archiv
     REQUIRE(world.GetActor(player) != nullptr);
     CHECK(world.GetActor(player)->position == TileCoord{16, 0});
     CHECK(world.GetActor(player)->turns == 2);
-    CHECK(world.LoadedChunks() == Vector<ChunkCoord>{{1, 0}});
+    CHECK(world.LoadedChunks().size() == world_layer_count);
+    for (ChunkCoord chunk : world.LoadedChunks()) {
+        CHECK(chunk.x == 1);
+        CHECK(chunk.z == 0);
+    }
     CHECK(world.GetActor(old_npc) == nullptr);
     CHECK(world.GetObject(old_object) == nullptr);
     CHECK(world.FindItem(bag_id) == bag);
@@ -376,7 +380,11 @@ TEST_CASE("Zero-radius movement loads before crossing and restores frozen archiv
     CHECK(world.GetActor(player)->inventory == Vector<ItemHandle>{bag});
     REQUIRE(world.ReleaseRequest(inspect));
     world.ReconcileChunks();
-    CHECK(world.LoadedChunks() == Vector<ChunkCoord>{{0, 0}});
+    CHECK(world.LoadedChunks().size() == world_layer_count);
+    for (ChunkCoord chunk : world.LoadedChunks()) {
+        CHECK(chunk.x == 0);
+        CHECK(chunk.z == 0);
+    }
     CHECK(world.CheckInvariants());
 }
 
@@ -551,6 +559,150 @@ TEST_CASE("Simulation replay is independent of arbitrary chunk reload order", "[
     }
     CHECK(first.CheckInvariants());
     CHECK(second.CheckInvariants());
+}
+
+TEST_CASE("Six axial commands require exact paired stairs and respect layer bounds", "[server][3d][commands]") {
+    Server server(TestContent());
+    World& world = server.GetWorld();
+    Command up{CommandKind::move};
+    up.dy = 1;
+    Command down = up;
+    down.dy = -1;
+    CHECK(ValidCommandShape(up));
+    CHECK(ValidCommandShape(down));
+    Command diagonal = up;
+    diagonal.dx = 1;
+    CHECK_FALSE(ValidCommandShape(diagonal));
+    diagonal.dx = 0;
+    diagonal.dy = INT_MIN;
+    CHECK_FALSE(ValidCommandShape(diagonal));
+    Command directedUse{CommandKind::use_item};
+    directedUse.item = 1;
+    directedUse.capability = {1};
+    directedUse.itemAction = "arm";
+    directedUse.dy = -1;
+    CHECK(ValidCommandShape(directedUse));
+    directedUse.dx = 1;
+    CHECK_FALSE(ValidCommandShape(directedUse));
+    directedUse.dx = 0;
+    directedUse.otherItem = 2;
+    CHECK_FALSE(ValidCommandShape(directedUse));
+    REQUIRE(world.SetTile({0, 0, 1}, {TestTerrain("stairs"), 0}));
+    expect(server, up, Outcome::blocked, false); // Source is ordinary floor.
+    REQUIRE(world.SetTile({0, 0, 0}, {TestTerrain("stairs"), 0}));
+    REQUIRE(world.SetTile({0, 0, 1}, {TestTerrain("floor"), 0}));
+    expect(server, up, Outcome::blocked, false); // Target must be stairs too.
+    REQUIRE(world.SetTile({0, 0, 1}, {TestTerrain("stairs"), 0}));
+    const auto occupied = take(world.CreateActor({0, 0, 1}));
+    expect(server, up, Outcome::occupied, false);
+    REQUIRE(world.DestroyActor(occupied));
+    const auto chunks = world.LoadedChunks();
+    expect(server, up, Outcome::moved, true);
+    CHECK(world.GetActor(server.GetPlayer())->position == TileCoord{0, 0, 1});
+    CHECK(world.LoadedChunks() == chunks);
+    CHECK(server.View().origin.y == 1);
+    REQUIRE(world.SetTile({1, 0, 1}, {TestTerrain("floor"), 0}));
+    expect(server, {CommandKind::move, 1, 0}, Outcome::moved, true);
+    CHECK(server.View().player_position == TileCoord{1, 0, 1});
+    expect(server, {CommandKind::move, -1, 0}, Outcome::moved, true);
+    expect(server, down, Outcome::moved, true);
+    for (int y : {world_min_y, world_max_y}) {
+        REQUIRE(world.SetTile({0, 0, y}, {TestTerrain("stairs"), 0}));
+        REQUIRE(world.MoveActor(server.GetPlayer(), {0, 0, y}));
+        expect(server, y == world_min_y ? down : up, Outcome::unavailable, false);
+        CHECK(server.View().player_position.y == y);
+    }
+}
+
+TEST_CASE("Vertical interaction checks the shared face before exposing an object", "[server][3d][commands]") {
+    Server server(TestContent());
+    World& world = server.GetWorld();
+    REQUIRE(world.SetTile({0, 0, 1}, {TestTerrain("stairs"), 0}));
+    const auto object = take(world.CreateObject({0, 0, 1}));
+    Command interact{CommandKind::interact};
+    interact.dy = 1;
+    expect(server, interact, Outcome::blocked, false);
+    CHECK_FALSE(world.GetObject(object)->enabled);
+    REQUIRE(world.SetTile({0, 0}, {TestTerrain("stairs"), 0}));
+    expect(server, interact, Outcome::toggled, true);
+    CHECK(world.GetObject(object)->enabled);
+    REQUIRE(world.SetTile({0, 0, 1}, {TestTerrain("air"), 0}));
+    expect(server, interact, Outcome::toggled, true); // Upper air opens its bottom.
+    CHECK_FALSE(world.GetObject(object)->enabled);
+}
+
+TEST_CASE("Downward projection uses straight spherical LOS and isolates lower items", "[server][3d][view]") {
+    Server server(TestContent());
+    World& world = server.GetWorld();
+    REQUIRE(world.DestroyObject(world.ObjectAt({2, 0})));
+    for (int x = 1; x <= 2; ++x) {
+        REQUIRE(world.SetTile({x, 0, -1}, {TestTerrain("floor"), 41}));
+        REQUIRE(world.SetTile({x, 0, 0}, {TestTerrain("air"), 0}));
+    }
+    const auto rock = take(world.CreateItem(TestItem("rock"), ItemLocation::Ground({2, 0, -1})));
+    const auto id = world.GetItem(rock)->id;
+    const auto old = server.View(4);
+    const auto& below = cell_at(old, {2, 0});
+    CHECK(below.visible);
+    CHECK(below.tile == Tile{TestTerrain("floor"), 41});
+    CHECK(below.terrainDepth == 1);
+    CHECK(below.overlayDepth == 1);
+    CHECK(below.ground_items == 1); // Original rock fell into the other hole, at x=1.
+    CHECK(world.ItemsAt({2, 0, -1}).size() == below.ground_items);
+    expect(server, {CommandKind::pick_up, 0, 0, id}, Outcome::nothing_here, false);
+    CHECK_FALSE(world.CanAccessItem(server.GetPlayer(), rock));
+    CHECK(server.View().groundItems[0].id != id);
+    CHECK(cell_at(server.View(2), {2, 0}).terrainDepth == 0); // sqrt(5) exceeds radius 2.
+    REQUIRE(world.SetTile({1, 0, 0}, {TestTerrain("floor"), 0}));
+    const auto closed = server.View(4);
+    CHECK(cell_at(closed, {2, 0}).tile.terrain == TestTerrain("air"));
+    CHECK(cell_at(closed, {2, 0}).ground_items == 0);
+    CHECK(cell_at(closed, {2, 0}).terrainDepth == 0);
+    CHECK(cell_at(old, {2, 0}).terrainDepth == 1); // Value snapshot remains isolated.
+    REQUIRE(world.SetTile({1, 0, 0}, {TestTerrain("wall"), 0}));
+    CHECK(cell_at(server.View(4), {2, 0}) == ViewCell{});
+    CHECK(world.CheckInvariants());
+}
+
+TEST_CASE("Air retains a foreground actor over lower terrain and stops at the first floor", "[server][3d][view]") {
+    Server server(TestContent());
+    World& world = server.GetWorld();
+    REQUIRE(world.DestroyObject(world.ObjectAt({2, 0})));
+    for (int x = 1; x <= 2; ++x) {
+        REQUIRE(world.SetTile({x, 0, -1}, {TestTerrain("floor"), 19}));
+        REQUIRE(world.SetTile({x, 0, 0}, {TestTerrain("air"), 0}));
+    }
+    const auto support = take(world.CreateActor({2, 0, -1}));
+    const auto foreground = take(world.CreateActor({2, 0, 0}));
+    REQUIRE(world.SetTile({2, 0, -2}, {TestTerrain("floor"), 0}));
+    take(world.CreateItem(TestItem("rock"), ItemLocation::Ground({2, 0, -2})));
+    const auto foregroundView = server.View(4);
+    const auto& cell = cell_at(foregroundView, {2, 0});
+    CHECK(cell.tile == Tile{TestTerrain("floor"), 19});
+    CHECK(cell.terrainDepth == 1);
+    CHECK(cell.actor == world.GetActor(foreground)->id);
+    CHECK(cell.overlayDepth == 0);
+    CHECK(cell.ground_items == 0);
+    REQUIRE(world.DestroyActor(foreground));
+    const auto view = server.View(4);
+    CHECK(cell_at(view, {2, 0}).actor == world.GetActor(support)->id);
+    CHECK(cell_at(view, {2, 0}).overlayDepth == 1);
+    CHECK(cell_at(view, {2, 0}).ground_items == 0); // Opaque-bottom floor stops deeper content.
+}
+
+TEST_CASE("Voxel corner ties conservatively block walls and closed floor edges", "[server][3d][view]") {
+    Server server(TestContent());
+    World& world = server.GetWorld();
+    REQUIRE(world.SetTile({1, 1}, {TestTerrain("floor"), 0}));
+    REQUIRE(world.SetTile({0, 1}, {TestTerrain("floor"), 0}));
+    REQUIRE(world.SetTile({1, 0}, {TestTerrain("wall"), 0}));
+    CHECK(cell_at(server.View(4), {1, 1}) == ViewCell{});
+    REQUIRE(world.SetTile({1, 0, -1}, {TestTerrain("floor"), 11}));
+    REQUIRE(world.SetTile({1, 0}, {TestTerrain("air"), 0}));
+    // The exact diagonal to (1,0,-1) touches the origin's closed bottom edge.
+    const auto view = server.View(4);
+    CHECK(cell_at(view, {1, 0}).terrainDepth == 0);
+    CHECK(cell_at(view, {1, 0}).ground_items == 0);
 }
 
 TEST_CASE("Local server command replay returns identical outcomes and snapshots", "[server][determinism]") {

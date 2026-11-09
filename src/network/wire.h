@@ -6,7 +6,7 @@
 
 namespace cataclysmx::network::wire {
 
-inline constexpr std::uint32_t protocol = 0x43584e05;
+inline constexpr std::uint32_t protocol = 0x43584e06;
 inline constexpr std::size_t maxPacket = 32768;
 inline constexpr std::size_t maxItemEntries = 2048;
 inline constexpr std::size_t maxItemActions = maxItemActionsPerItem;

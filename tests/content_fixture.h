@@ -12,6 +12,8 @@ inline const cataclysmx::ContentCatalog& TestContent() {
         auto result = cataclysmx::LoadContentFile(CATACLYSMX_TERRAIN_FILE, &diagnostics);
         INFO(cataclysmx::FormatDiagnostics(diagnostics).c_str());
         REQUIRE(result.has_value());
+        REQUIRE(result->GetTerrain(result->FindTerrain("air")).openSpace);
+        REQUIRE(result->GetTerrain(result->FindTerrain("stairs")).stairs);
         return eastl::move(*result);
     }();
     return content;

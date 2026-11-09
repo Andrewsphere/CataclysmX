@@ -41,6 +41,16 @@
       ],
     },
     {
+      type: 'terrain', id: 'air', name: 'open air',
+      movement: {passable: true}, blocks_sight: false, open_space: true,
+      appearance: {symbol: ' ', foreground: 'light_cyan', background: 'black'},
+    },
+    {
+      type: 'terrain', id: 'stairs', name: 'stairs',
+      movement: {passable: true}, blocks_sight: false, stairs: true,
+      appearance: {symbol: '>', foreground: 'white', background: 'black'},
+    },
+    {
       type: 'terrain', id: 'floor', name: 'floor',
       movement: {passable: true}, blocks_sight: false,
       appearance: {symbol: '.', foreground: 'light_gray', background: 'black'},

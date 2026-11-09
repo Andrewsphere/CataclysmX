@@ -44,6 +44,12 @@ TEST_CASE("World coordinates use floor division and bounded positions", "[world]
     CHECK(ChunkOf({15, 16}) == ChunkCoord{0, 1});
     CHECK(ChunkOf({-1, -16}) == ChunkCoord{-1, -1});
     CHECK(ChunkOf({-17, 31}) == ChunkCoord{-2, 1});
+    CHECK(ChunkOf({-17, 31, -10}) == ChunkCoord{-2, 1, -10});
+    CHECK(TileIndex({-17, 31, 10}) == TileIndex({-17, 31, -10}));
+    CHECK(ValidPosition({0, 0, world_min_y}));
+    CHECK(ValidPosition({0, 0, world_max_y}));
+    CHECK_FALSE(ValidPosition({0, 0, world_min_y - 1}));
+    CHECK_FALSE(ValidPosition({0, 0, world_max_y + 1}));
     CHECK(TileIndex({-1, -1}) == 255);
     CHECK(TileIndex({-16, -16}) == 0);
     CHECK(TileIndex({-17, 16}) == 15);
@@ -93,9 +99,9 @@ TEST_CASE("Chunk requests combine demand and reject invalid updates atomically",
     const LoadRequest overlap = take(world.RequestChunks({{1, 0}, 0}, LoadMode::active));
     CHECK(world.LoadedChunks().empty());
     world.ReconcileChunks();
-    REQUIRE(world.LoadedChunks().size() == 9);
-    CHECK(world.LoadedChunks().front() == ChunkCoord{-1, -1});
-    CHECK(world.LoadedChunks().back() == ChunkCoord{1, 1});
+    REQUIRE(world.LoadedChunks().size() == 9 * world_layer_count);
+    CHECK(world.LoadedChunks().front() == ChunkCoord{-1, -1, world_min_y});
+    CHECK(world.LoadedChunks().back() == ChunkCoord{1, 1, world_max_y});
     CHECK(world.IsActive({0, 0}));
     CHECK(world.IsActive({16, 0}));
     CHECK_FALSE(world.IsActive({-1, -1}));
@@ -104,7 +110,7 @@ TEST_CASE("Chunk requests combine demand and reject invalid updates atomically",
     CHECK(world.UpdateRequest(active, {{0, 0}, 0}, static_cast<LoadMode>(99))
         == eastl::unexpected(WorldError::invalid_request));
     world.ReconcileChunks();
-    CHECK(world.LoadedChunks().size() == 9);
+    CHECK(world.LoadedChunks().size() == 9 * world_layer_count);
     REQUIRE(world.ReleaseRequest(active));
     world.ReconcileChunks();
     CHECK_FALSE(world.IsActive({0, 0}));
@@ -117,17 +123,20 @@ TEST_CASE("Chunk requests combine demand and reject invalid updates atomically",
         == eastl::unexpected(WorldError::invalid_request));
     REQUIRE(world.UpdateRequest(overlap, {{-2, 0}, 0}, LoadMode::resident));
     world.ReconcileChunks();
-    CHECK(world.LoadedChunks().size() == 10);
-    CHECK(world.LoadedChunks().front() == ChunkCoord{-2, 0});
+    CHECK(world.LoadedChunks().size() == 10 * world_layer_count);
+    CHECK(world.LoadedChunks().front() == ChunkCoord{-2, 0, world_min_y});
     CHECK_FALSE(world.IsActive({16, 0}));
     REQUIRE(world.ReleaseRequest(resident));
     world.ReconcileChunks();
-    CHECK(world.LoadedChunks() == Vector<ChunkCoord>{{-2, 0}});
-    CHECK(world.ArchivedChunkCount() == 9);
+    CHECK(world.LoadedChunks().size() == world_layer_count);
+    for (int y = world_min_y; y <= world_max_y; ++y) {
+        CHECK(world.LoadedChunks()[y - world_min_y] == ChunkCoord{-2, 0, y});
+    }
+    CHECK(world.ArchivedChunkCount() == 9 * world_layer_count);
     REQUIRE(world.ReleaseRequest(overlap));
     world.ReconcileChunks();
     CHECK(world.LoadedChunks().empty());
-    CHECK(world.ArchivedChunkCount() == 10);
+    CHECK(world.ArchivedChunkCount() == 10 * world_layer_count);
     CHECK(world.CheckInvariants());
 
     // Exercise SlotMap request recycling, not just never-reused indices.
@@ -363,7 +372,7 @@ TEST_CASE("Chunk archives preserve values and nested ownership with fresh runtim
     CHECK(world.CheckInvariants());
     REQUIRE(world.ReleaseRequest(origin));
     world.ReconcileChunks();
-    CHECK(world.ArchivedChunkCount() == 1);
+    CHECK(world.ArchivedChunkCount() == world_layer_count);
     CHECK(world.GetActor(actor) == nullptr);
     CHECK(world.GetObject(object) == nullptr);
     CHECK(world.FindActor(actor_id) == ActorHandle{});
@@ -552,6 +561,117 @@ TEST_CASE("Full unload preserves moved item roots and never resets entity slot m
     const auto newer = take(world.CreateItem(TestItem("bandage"), ItemLocation::Ground({0, 0})));
     CHECK(world.GetItem(newer)->id > child_id);
     CHECK(world.CheckInvariants());
+}
+
+TEST_CASE("Layered requests overlap through full height and occupancy is layer local", "[world][layers]") {
+    World world(TestContent());
+    const auto resident = load(world, {{-1, -1, INT_MIN}, 0}, LoadMode::resident);
+    const auto active = load(world, {{-1, -1, INT_MAX}, 0});
+    REQUIRE(world.LoadedChunks().size() == world_layer_count);
+    for (int y = world_min_y; y <= world_max_y; ++y) {
+        CHECK(world.LoadedChunks()[y - world_min_y] == ChunkCoord{-1, -1, y});
+        CHECK(world.IsActive({-1, -1, y}));
+    }
+    REQUIRE(world.SetTile({-1, -1, -1}, {TestTerrain("floor"), 0}));
+    REQUIRE(world.SetTile({-1, -1, 1}, {TestTerrain("floor"), 0}));
+    const auto below = take(world.CreateActor({-1, -1, -1}));
+    const auto above = take(world.CreateActor({-1, -1, 1}));
+    const auto objectBelow = take(world.CreateObject({-1, -1, -1}));
+    const auto objectAbove = take(world.CreateObject({-1, -1, 1}));
+    const auto itemBelow = take(world.CreateItem(TestItem("rock"), ItemLocation::Ground({-1, -1, -1})));
+    const auto itemAbove = take(world.CreateItem(TestItem("rock"), ItemLocation::Ground({-1, -1, 1})));
+    CHECK(world.ActorAt({-1, -1, -1}) == below);
+    CHECK(world.ActorAt({-1, -1, 1}) == above);
+    CHECK(world.ObjectAt({-1, -1, -1}) == objectBelow);
+    CHECK(world.ObjectAt({-1, -1, 1}) == objectAbove);
+    CHECK(world.ItemsAt({-1, -1, -1}) == Vector<ItemHandle>{itemBelow});
+    CHECK(world.ItemsAt({-1, -1, 1}) == Vector<ItemHandle>{itemAbove});
+    CHECK(world.GetTile({-1, -1, world_min_y - 1}) == nullptr);
+    CHECK(world.CreateActor({-1, -1, world_max_y + 1})
+        == eastl::unexpected(WorldError::invalid_position));
+    REQUIRE(world.ReleaseRequest(active));
+    REQUIRE(world.ReconcileChunks());
+    CHECK(world.ActiveActors().empty());
+    CHECK(world.LoadedChunks().size() == world_layer_count);
+    REQUIRE(world.ReleaseRequest(resident));
+    REQUIRE(world.ReconcileChunks());
+    CHECK(world.ArchivedChunkCount() == world_layer_count);
+    CHECK(world.CheckInvariants());
+}
+
+TEST_CASE("Gravity settles actors bottom up and retries after blockers move or disappear", "[world][gravity]") {
+    World world(TestContent());
+    load(world);
+    const Tile floor{TestTerrain("floor"), 0};
+    const Tile air{TestTerrain("air"), 0};
+    REQUIRE(world.SetTile({1, 1, -3}, floor));
+    REQUIRE(world.SetTile({2, 1, -3}, floor));
+    for (int y = -2; y <= 3; ++y) { REQUIRE(world.SetTile({1, 1, y}, air)); }
+    REQUIRE(world.SetTile({1, 1, 1}, floor));
+    REQUIRE(world.SetTile({1, 1, 0}, floor));
+    const auto upper = take(world.CreateActor({1, 1, 1}, true));
+    const auto lower = take(world.CreateActor({1, 1, 0}));
+    const auto carried = take(world.CreateItem(TestItem("backpack"), ItemLocation::Carried(upper)));
+    REQUIRE(world.ScheduleActorAction(upper, 37));
+    const auto id = world.GetActor(upper)->id;
+    REQUIRE(world.SetTile({1, 1, 1}, air));
+    CHECK(world.GetActor(upper)->position == TileCoord{1, 1, 1});
+    // Lower has the larger ID: height takes precedence over persistent ID.
+    REQUIRE(world.SetTile({1, 1, 0}, air));
+    CHECK(world.GetActor(lower)->position == TileCoord{1, 1, -3});
+    CHECK(world.GetActor(upper)->position == TileCoord{1, 1, -2});
+    REQUIRE(world.MoveActor(lower, {2, 1, -3}));
+    CHECK(world.GetActor(upper)->position == TileCoord{1, 1, -3});
+    CHECK(world.FindPlayerPosition(id) == TileCoord{1, 1, -3});
+    CHECK(world.GetActor(upper)->turns == 1);
+    CHECK(world.GetActor(upper)->remainingTicks == 37);
+    CHECK(world.GetItem(carried)->location == ItemLocation::Carried(upper));
+    const auto blocked = take(world.CreateActor({1, 1, 3}));
+    CHECK(world.GetActor(blocked)->position == TileCoord{1, 1, -2});
+    REQUIRE(world.DestroyActor(upper));
+    CHECK(world.GetActor(blocked)->position == TileCoord{1, 1, -3});
+    world.SettleGravity();
+    CHECK(world.GetActor(blocked)->position == TileCoord{1, 1, -3});
+    CHECK(world.CheckInvariants());
+}
+
+TEST_CASE("Resident spatial edits settle through air but walls and the bottom bound support", "[world][gravity]") {
+    World world(TestContent());
+    load(world, {{0, 0}, 0}, LoadMode::resident);
+    const Tile air{TestTerrain("air"), 0};
+    for (int y = world_min_y; y <= world_max_y; ++y) {
+        REQUIRE(world.SetTile({3, 3, y}, air));
+    }
+    REQUIRE(world.SetTile({3, 3, -5}, {TestTerrain("wall"), 0}));
+    const auto actor = take(world.CreateActor({3, 3, world_max_y}));
+    CHECK(world.GetActor(actor)->position == TileCoord{3, 3, -4});
+    REQUIRE(world.SetTile({3, 3, -5}, air));
+    CHECK(world.GetActor(actor)->position == TileCoord{3, 3, world_min_y});
+    CHECK(world.ActiveActors().empty());
+    CHECK(world.CheckInvariants());
+}
+
+TEST_CASE("Equal height gravity ordering uses persistent IDs across actor and item roots", "[world][gravity][determinism]") {
+    for (bool itemFirst : {false, true}) {
+        World world(TestContent());
+        load(world);
+        REQUIRE(world.SetTile({4, 4, -2}, {TestTerrain("floor"), 0}));
+        REQUIRE(world.SetTile({4, 4, -1}, {TestTerrain("air"), 0}));
+        ActorHandle actor;
+        ItemHandle item;
+        if (itemFirst) {
+            item = take(world.CreateItem(TestItem("rock"), ItemLocation::Ground({4, 4})));
+            actor = take(world.CreateActor({4, 4}));
+        } else {
+            actor = take(world.CreateActor({4, 4}));
+            item = take(world.CreateItem(TestItem("rock"), ItemLocation::Ground({4, 4})));
+        }
+        REQUIRE(world.SetTile({4, 4}, {TestTerrain("air"), 0}));
+        CHECK(world.GetActor(actor)->position == TileCoord{4, 4, -2});
+        CHECK(world.GetItem(item)->location == ItemLocation::Ground({4, 4, itemFirst ? -2 : -1}));
+        world.SettleGravity();
+        CHECK(world.CheckInvariants());
+    }
 }
 
 TEST_CASE("Terrain generation depends only on seed and position and never issues entity IDs", "[world][determinism]") {

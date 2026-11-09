@@ -21,6 +21,7 @@ struct Command {
     String itemAction; // Stable action name local to the selected behavior.
     // Use: battery to install. Store: destination container; zero extracts to inventory.
     PersistentId otherItem = 0;
+    int dy = 0; // Vertical axial direction: down -1, up +1.
 };
 bool ValidCommandShape(const Command& command);
 enum class Outcome {
@@ -96,6 +97,8 @@ struct ViewCell {
     unsigned int ground_items = 0;
     PersistentId object = 0;
     bool object_enabled = false;
+    unsigned int terrainDepth = 0; // Layers below the view origin, in [0, 20].
+    unsigned int overlayDepth = 0; // Nearest visible actor/items/object layer, independently tinted.
     bool operator==(const ViewCell&) const = default;
 };
 struct InventoryEntry {

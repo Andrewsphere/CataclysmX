@@ -65,7 +65,7 @@ order, then lexical local action ID order. `ItemSystem` verifies emitted action
 descriptors against their declared schema and rejects duplicate identities as
 broken invariants. Chargers display start/stop and install/remove according to current
 state; door controllers display arm/disarm. Install requests supply `otherItem`;
-arm requests supply a cardinal `dx,dz`. Query results are snapshots. `UseItem`
+arm requests supply one of six axial `dx,dz,dy` directions. Query results are snapshots. `UseItem`
 revalidates access, arguments and world state immediately before execution.
 `None` arguments require an empty `otherItem` and zero direction; `Item` requires
 a nonzero `otherItem` and zero direction; `Direction` requires an empty
@@ -138,7 +138,8 @@ processing is harmless and cannot leave a zero-delay retry loop.
 ## Delayed door attempts and simulation integration
 
 Arming requires the device directly on the acting actor's ground tile and an
-active cardinal neighbor whose terrain has `opensTo`. The definition supplies
+active axial neighbor whose terrain has `opensTo`. Vertical targets additionally
+require an open shared face (open space above, or paired stairs). The definition supplies
 the delay. Disarm clears target and remaining delay. At the deadline, the world
 rechecks deployment, adjacency, target activity and the target's current terrain;
 it applies that terrain's `opensTo` when available, then always disarms the
@@ -214,11 +215,13 @@ generic outcome fallback text; detailed refusal text comes from the result.
 `MakeItemState` initializes energy and calls each definition's factory.
 `ReadItemState` is a pure constructor from a complete `DataObject`; it rejects
 missing, unknown and malformed capability state. `WriteItemState` captures energy
-plus each runtime behavior's `SaveState`, in stable capability-name order. SaveV5
-payloads are unchanged: energy stores use `{version:1, energy}`, chargers use
+plus each runtime behavior's `SaveState`, in stable capability-name order. SaveV6
+energy stores use `{version:1, energy}`, chargers use
 `{version:1, enabled, remainder}`, and door controllers use
-`{version:1, armed, remaining_ticks, target:{x,z}}`. Target coordinates retain
-their signed structured-value representation.
+`{version:2, armed, remaining_ticks, target:{x,z,y}}`. Target coordinates retain
+their signed structured-value representation. Door state version 1 is explicitly
+unsupported; its behavior implementation version is also 2 so content fingerprints
+include the changed targeting contract. All targets validate full 3D bounds and adjacency.
 
 `SavedItem::state` is plain `DataObject`. Shared `ValidateItemSnapshot` validates
 ownership and capacity rules and calls behavior-specific `ValidateSnapshot`

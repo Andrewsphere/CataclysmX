@@ -33,7 +33,12 @@ int FloorChunk(int coordinate) {
 }
 
 bool ChunkLess(ChunkCoord left, ChunkCoord right) {
-    return left.x < right.x || (left.x == right.x && left.z < right.z);
+    return left.x < right.x || (left.x == right.x
+        && (left.z < right.z || (left.z == right.z && left.y < right.y)));
+}
+
+bool ValidChunk(ChunkCoord position) {
+    return position.y >= world_min_y && position.y <= world_max_y;
 }
 
 bool ValidRegion(ChunkRegion region) {
@@ -99,7 +104,7 @@ SaveResult<void> SaveFailure(SaveError error, const char* message, Diagnostics* 
 // Append IDs to a shared list so the caller can also reject cross-chunk aliases.
 bool ValidateArchive(const ContentCatalog& content, const Archive& saved,
     PersistentId nextId, Vector<PersistentId>& ids) {
-    if (!ValidRegion({saved.position, 0})) {
+    if (!ValidRegion({saved.position, 0}) || !ValidChunk(saved.position)) {
         return false;
     }
     for (Tile tile : saved.tiles) {
@@ -190,7 +195,7 @@ struct PlayerLocation {
 }
 
 ChunkCoord ChunkOf(TileCoord position) {
-    return {FloorChunk(position.x), FloorChunk(position.z)};
+    return {FloorChunk(position.x), FloorChunk(position.z), position.y};
 }
 
 int TileIndex(TileCoord position) {
@@ -201,7 +206,8 @@ int TileIndex(TileCoord position) {
 
 bool ValidPosition(TileCoord position) {
     return position.x >= -world_coordinate_limit && position.x <= world_coordinate_limit
-        && position.z >= -world_coordinate_limit && position.z <= world_coordinate_limit;
+        && position.z >= -world_coordinate_limit && position.z <= world_coordinate_limit
+        && position.y >= world_min_y && position.y <= world_max_y;
 }
 
 bool Passable(const ContentCatalog& content, TerrainId terrain) {
@@ -250,12 +256,32 @@ public:
     dod::slot_map64<Item> items;
     dod::slot_map64<InteractiveObject> objects;
     dod::slot_map64<Request> requests;
-    Vector<Chunk> chunks; // Always lexicographic (x, z).
+    Vector<Chunk> chunks; // Always lexicographic (x, z, y).
     Vector<Archive> archives; // Only currently unloaded chunks.
     Vector<ChunkCoord> dirtyChunks; // Sorted, includes pending unloaded archives.
     Vector<PlayerLocation> playerPositions; // Sorted by ID; survives unload and archive eviction.
     ItemSystem itemSystem;
     eastl::unique_ptr<SaveDatabase> database;
+    Vector<TileCoord> gravityColumns; // X/Z tile columns, normalized Y.
+    unsigned gravityDepth = 0;
+    bool settlingGravity = false;
+
+    // Keep callbacks and compound destruction inside a single spatial boundary.
+    struct GravityBatch {
+        World& world;
+        explicit GravityBatch(World& value) : world(value) { ++world.impl_->gravityDepth; }
+        ~GravityBatch() {
+            --world.impl_->gravityDepth;
+            world.FlushGravity();
+        }
+    };
+
+    void QueueGravity(TileCoord position) {
+        position.y = 0;
+        if (eastl::find(gravityColumns.begin(), gravityColumns.end(), position) == gravityColumns.end()) {
+            gravityColumns.push_back(position);
+        }
+    }
 
     explicit Impl(World& world, const ContentCatalog& catalog, std::uint32_t value)
         : content(catalog), floor(catalog.FindTerrain("floor")),
@@ -548,7 +574,11 @@ public:
     }
 
     void Generate(Chunk& value) {
-        if (generationVersion == world_generation_version) {
+        Require(generationVersion == 1 || generationVersion == 2
+            || generationVersion == world_generation_version);
+        // Version 3 retains version 2's surface raster. Older worlds acquire
+        // the layered extension only outside their original surface layer.
+        if (generationVersion != 1 || value.position.y != 0) {
             const auto region = RegionOf({value.position.x * chunk_size, value.position.z * chunk_size});
             if (!generationPlan || generationPlan->region != region) {
                 generationPlan = GenerateRegionPlan(content, seed, region);
@@ -810,6 +840,7 @@ WorldResult<LoadRequest> World::RequestChunks(ChunkRegion region, LoadMode mode)
     if (!ValidMode(mode)) {
         return eastl::unexpected(WorldError::invalid_request);
     }
+    region.center.y = 0;
     return LoadRequest{impl_->requests.emplace(Request{region, mode}).raw};
 }
 
@@ -824,6 +855,7 @@ WorldResult<void> World::UpdateRequest(LoadRequest handle, ChunkRegion region, L
     if (!ValidMode(mode)) {
         return eastl::unexpected(WorldError::invalid_request);
     }
+    region.center.y = 0;
     *request = {region, mode};
     return {};
 }
@@ -842,7 +874,9 @@ SaveResult<void> World::ReconcileChunks(Diagnostics* diagnostics) {
         const ChunkRegion region = request.region;
         for (int x = region.center.x - region.radius; x <= region.center.x + region.radius; ++x) {
             for (int z = region.center.z - region.radius; z <= region.center.z + region.radius; ++z) {
-                demand.push_back({{x, z}, request.mode == LoadMode::active});
+                for (int y = world_min_y; y <= world_max_y; ++y) {
+                    demand.push_back({{x, z, y}, request.mode == LoadMode::active});
+                }
             }
         }
     }
@@ -900,6 +934,7 @@ SaveResult<void> World::ReconcileChunks(Diagnostics* diagnostics) {
         return SaveFailure(SaveError::InvalidData, "Duplicate persistent ID in incoming chunks", diagnostics);
     }
     // No live state, activity flags, archives, or keys change before this point.
+    Impl::GravityBatch batch(*this);
     for (auto current = impl_->chunks.begin(); current != impl_->chunks.end();) {
         const auto wanted = eastl::lower_bound(demand.begin(), demand.end(), current->position,
             [](const Demand& value, ChunkCoord key) { return ChunkLess(value.position, key); });
@@ -938,6 +973,7 @@ SaveResult<void> World::ReconcileChunks(Diagnostics* diagnostics) {
             impl_->archives.erase(saved);
         }
     }
+    SettleGravity();
     return {};
 }
 
@@ -978,6 +1014,7 @@ SaveResult<SessionState> World::LoadSave(const char* path, Diagnostics* diagnost
         return eastl::unexpected(snapshot.error());
     }
     const bool supported = snapshot->generationVersion == 1
+        || snapshot->generationVersion == 2
         || snapshot->generationVersion == world_generation_version;
     if (!supported || snapshot->nextId == 0) {
         const SaveError error = !supported
@@ -1100,7 +1137,92 @@ ObjectHandle World::ObjectAt(TileCoord position) const {
     return {};
 }
 
+void World::SettleGravity() {
+    for (const Chunk& chunk : impl_->chunks) {
+        if (!chunk.active) { continue; }
+        for (ActorHandle handle : chunk.actors) {
+            const Actor* actor = GetActor(handle);
+            if (!actor->parked) { impl_->QueueGravity(actor->position); }
+        }
+        for (ItemHandle handle : chunk.ground_items) {
+            impl_->QueueGravity(GetItem(handle)->location.position);
+        }
+    }
+    FlushGravity();
+}
+
+void World::FlushGravity() {
+    if (impl_->gravityDepth != 0 || impl_->settlingGravity
+        || impl_->itemSystem.callbackDepth_ != 0 || impl_->itemSystem.draining_) { return; }
+    impl_->settlingGravity = true;
+    struct Falling {
+        int y;
+        PersistentId id;
+        ActorHandle actor;
+        ItemHandle item;
+    };
+    while (!impl_->gravityColumns.empty()) {
+        Vector<TileCoord> columns;
+        columns.swap(impl_->gravityColumns);
+        Vector<Falling> falling;
+        for (TileCoord column : columns) {
+            for (int y = world_min_y; y <= world_max_y; ++y) {
+                column.y = y;
+                const Chunk* chunk = GetChunk(ChunkOf(column));
+                if (!chunk) { continue; }
+                for (ActorHandle handle : chunk->actors) {
+                    const Actor* actor = GetActor(handle);
+                    if (!actor->parked && actor->position == column) {
+                        falling.push_back({y, actor->id, handle, {}});
+                    }
+                }
+                for (ItemHandle handle : chunk->ground_items) {
+                    const Item* item = GetItem(handle);
+                    if (item->location.position == column) {
+                        falling.push_back({y, item->id, {}, handle});
+                    }
+                }
+            }
+        }
+        eastl::sort(falling.begin(), falling.end(), [](const Falling& left, const Falling& right) {
+            return left.y < right.y || (left.y == right.y && left.id < right.id);
+        });
+        for (const Falling& entry : falling) {
+            TileCoord position;
+            if (entry.actor.value) {
+                const Actor* actor = GetActor(entry.actor);
+                if (!actor || actor->parked) { continue; }
+                position = actor->position;
+            } else {
+                const Item* item = GetItem(entry.item);
+                if (!item || item->location.kind != LocationKind::ground) { continue; }
+                position = item->location.position;
+            }
+            TileCoord destination = position;
+            while (destination.y > world_min_y) {
+                const Tile* current = GetTile(destination);
+                if (!current || !impl_->content.GetTerrain(current->terrain).openSpace) { break; }
+                TileCoord below = destination;
+                --below.y;
+                const Tile* tile = GetTile(below);
+                if (!tile || !Passable(impl_->content, tile->terrain) || ActorAt(below).value) { break; }
+                destination = below;
+            }
+            if (destination == position) { continue; }
+            // Public mutation helpers retain indexes, player tracking, dirty
+            // chunks and item-tree notifications. The guard prevents recursion.
+            if (entry.actor.value) {
+                Require(MoveActor(entry.actor, destination).has_value());
+            } else {
+                Require(TransferItem(entry.item, ItemLocation::Ground(destination)).has_value());
+            }
+        }
+    }
+    impl_->settlingGravity = false;
+}
+
 WorldResult<void> World::SetTile(TileCoord position, Tile value) {
+    Impl::GravityBatch batch(*this);
     if (auto result = impl_->Available(position); !result) {
         return result;
     }
@@ -1109,10 +1231,12 @@ WorldResult<void> World::SetTile(TileCoord position, Tile value) {
     }
     impl_->GetChunk(ChunkOf(position))->tiles[TileIndex(position)] = value;
     impl_->MarkDirty(ChunkOf(position));
+    impl_->QueueGravity(position);
     return {};
 }
 
 WorldResult<ActorHandle> World::CreateActor(TileCoord position, bool player) {
+    Impl::GravityBatch batch(*this);
     if (auto result = impl_->Available(position); !result) {
         return eastl::unexpected(result.error());
     }
@@ -1127,10 +1251,12 @@ WorldResult<ActorHandle> World::CreateActor(TileCoord position, bool player) {
     impl_->GetChunk(ChunkOf(position))->actors.push_back(handle);
     if (player) { impl_->TrackPlayer(GetActor(handle)->id, position); }
     impl_->MarkDirty(ChunkOf(position));
+    impl_->QueueGravity(position);
     return handle;
 }
 
 WorldResult<void> World::MoveActor(ActorHandle handle, TileCoord destination) {
+    Impl::GravityBatch batch(*this);
     Actor* value = Live(impl_->actors, handle);
     if (!value) {
         return eastl::unexpected(WorldError::invalid_handle);
@@ -1139,6 +1265,7 @@ WorldResult<void> World::MoveActor(ActorHandle handle, TileCoord destination) {
         return result;
     }
     if (value->position == destination) {
+        impl_->QueueGravity(destination);
         return {};
     }
     if (!Passable(impl_->content, GetTile(destination)->terrain)) {
@@ -1147,6 +1274,8 @@ WorldResult<void> World::MoveActor(ActorHandle handle, TileCoord destination) {
     if (!value->parked && ActorAt(destination).value != 0) {
         return eastl::unexpected(WorldError::occupied);
     }
+    impl_->QueueGravity(value->position);
+    impl_->QueueGravity(destination);
     const ChunkCoord previous = ChunkOf(value->position);
     const ChunkCoord next = ChunkOf(destination);
     if (previous != next) {
@@ -1161,6 +1290,7 @@ WorldResult<void> World::MoveActor(ActorHandle handle, TileCoord destination) {
 }
 
 WorldResult<void> World::SetActorParked(ActorHandle handle, bool parked) {
+    Impl::GravityBatch batch(*this);
     Actor* value = Live(impl_->actors, handle);
     if (!value) { return eastl::unexpected(WorldError::invalid_handle); }
     if (!value->player) { return eastl::unexpected(WorldError::invalid_request); }
@@ -1175,15 +1305,31 @@ WorldResult<void> World::SetActorParked(ActorHandle handle, bool parked) {
     }
     value->parked = parked;
     impl_->MarkDirty(ChunkOf(value->position));
+    impl_->QueueGravity(value->position);
+    return {};
+}
+
+WorldResult<void> World::ParkActors(eastl::span<const ActorHandle> actors) {
+    for (ActorHandle handle : actors) {
+        const Actor* value = GetActor(handle);
+        if (!value) { return eastl::unexpected(WorldError::invalid_handle); }
+        if (!value->player) { return eastl::unexpected(WorldError::invalid_request); }
+    }
+    Impl::GravityBatch batch(*this);
+    for (ActorHandle handle : actors) {
+        Require(SetActorParked(handle, true).has_value());
+    }
     return {};
 }
 
 WorldResult<void> World::DestroyActor(ActorHandle handle) {
+    Impl::GravityBatch batch(*this);
     Actor* value = Live(impl_->actors, handle);
     if (!value) {
         return eastl::unexpected(WorldError::invalid_handle);
     }
     const TileCoord position = value->position;
+    impl_->QueueGravity(position);
     while (!value->inventory.empty()) {
         Require(TransferItem(value->inventory.back(), ItemLocation::Ground(position)).has_value());
         value = Live(impl_->actors, handle);
@@ -1197,6 +1343,7 @@ WorldResult<void> World::DestroyActor(ActorHandle handle) {
 }
 
 WorldResult<ItemHandle> World::CreateItem(ItemTypeId type, ItemLocation location) {
+    Impl::GravityBatch batch(*this);
     const ItemDefinition* definition = impl_->content.TryGetItem(type);
     if (!definition) { return eastl::unexpected(WorldError::invalid_request); }
     const auto destination = impl_->Destination(location);
@@ -1211,11 +1358,14 @@ WorldResult<ItemHandle> World::CreateItem(ItemTypeId type, ItemLocation location
     impl_->Collection(*destination).push_back(handle);
     impl_->itemSystem.Attach(handle);
     impl_->MarkDirty(impl_->RootChunk(*destination));
+    const auto root = impl_->Root(*destination);
+    if (root.kind == LocationKind::ground) { impl_->QueueGravity(root.position); }
     if (destination->kind == LocationKind::item) { impl_->itemSystem.Notify({ItemChangeKind::ContentsChanged, destination->item, destination->installation}); }
     return handle;
 }
 
 WorldResult<void> World::TransferItem(ItemHandle handle, ItemLocation location) {
+    Impl::GravityBatch batch(*this);
     Item* value = Live(impl_->items, handle);
     if (!value) {
         return eastl::unexpected(WorldError::invalid_handle);
@@ -1225,12 +1375,18 @@ WorldResult<void> World::TransferItem(ItemHandle handle, ItemLocation location) 
         return eastl::unexpected(destination.error());
     }
     if (value->location == *destination) {
+        const auto root = impl_->Root(*destination);
+        if (root.kind == LocationKind::ground) { impl_->QueueGravity(root.position); }
         return {};
     }
     if (auto fits = impl_->Fits(value->type, *destination, handle); !fits) { return fits; }
     impl_->MarkDirty(impl_->RootChunk(value->location));
     impl_->MarkDirty(impl_->RootChunk(*destination));
     const ItemLocation old = value->location;
+    const auto oldRoot = impl_->Root(old);
+    const auto newRoot = impl_->Root(*destination);
+    if (oldRoot.kind == LocationKind::ground) { impl_->QueueGravity(oldRoot.position); }
+    if (newRoot.kind == LocationKind::ground) { impl_->QueueGravity(newRoot.position); }
     Vector<ItemHandle> moved{handle};
     for (std::size_t i = 0; i < moved.size(); ++i) {
         for (ItemHandle child : GetItem(moved[i])->contents) { moved.push_back(child); }
@@ -1247,12 +1403,15 @@ WorldResult<void> World::TransferItem(ItemHandle handle, ItemLocation location) 
 }
 
 WorldResult<void> World::DestroyItem(ItemHandle handle) {
+    Impl::GravityBatch batch(*this);
     const Item* value = GetItem(handle);
     if (!value) {
         return eastl::unexpected(WorldError::invalid_handle);
     }
     impl_->MarkDirty(impl_->RootChunk(value->location));
     const ItemLocation old = value->location;
+    const auto root = impl_->Root(old);
+    if (root.kind == LocationKind::ground) { impl_->QueueGravity(root.position); }
     EraseOne(impl_->Collection(value->location), handle);
     Vector<ItemHandle> pending{handle};
     for (std::size_t index = 0; index < pending.size(); ++index) {
@@ -1306,10 +1465,12 @@ Vector<ItemActionInfo> World::QueryItemActions(ActorHandle actor, ItemHandle han
 }
 
 ItemUseResult World::UseItem(ActorHandle actor, ItemHandle handle, const ItemUseRequest& request) {
+    Impl::GravityBatch batch(*this);
     return impl_->itemSystem.Use(actor, handle, request);
 }
 
 WorldResult<void> World::SetItemEnergy(ItemHandle handle, ItemCapabilityId capability, std::uint32_t energy) {
+    Impl::GravityBatch batch(*this);
     return impl_->itemSystem.SetEnergy({handle, capability}, energy);
 }
 
@@ -1318,6 +1479,7 @@ eastl::optional<Tick> World::NextItemEventIn() const {
 }
 
 void World::ProcessItemEvents() {
+    Impl::GravityBatch batch(*this);
     impl_->itemSystem.ProcessEvents();
 }
 
@@ -1363,11 +1525,13 @@ WorldResult<ObjectHandle> World::CreateObject(TileCoord position, bool enabled) 
 }
 
 WorldResult<void> World::DestroyObject(ObjectHandle handle) {
+    Impl::GravityBatch batch(*this);
     InteractiveObject* value = Live(impl_->objects, handle);
     if (!value) {
         return eastl::unexpected(WorldError::invalid_handle);
     }
     const TileCoord position = value->position;
+    impl_->QueueGravity(position);
     while (!value->contents.empty()) {
         Require(TransferItem(value->contents.back(), ItemLocation::Ground(position)).has_value());
         value = Live(impl_->objects, handle);
@@ -1424,6 +1588,7 @@ WorldResult<void> World::SetObjectUpdateInterval(ObjectHandle handle, std::uint3
 }
 
 void World::ElapseTicks(Tick elapsed) {
+    Impl::GravityBatch batch(*this);
     if (elapsed == 0) { return; }
     impl_->itemSystem.Elapse(elapsed);
     for (const Chunk& chunk : impl_->chunks) {
@@ -1525,7 +1690,7 @@ bool World::CheckInvariants() const {
     };
     for (std::size_t index = 0; index < state.chunks.size(); ++index) {
         const Chunk& value = state.chunks[index];
-        if (!ValidRegion({value.position, 0})
+        if (!ValidRegion({value.position, 0}) || !ValidChunk(value.position)
             || (index != 0 && !ChunkLess(state.chunks[index - 1].position, value.position))) {
             return false;
         }
@@ -1636,7 +1801,7 @@ bool World::CheckInvariants() const {
     }
     Vector<ChunkCoord> archived_positions;
     for (const Archive& saved : state.archives) {
-        if (!ValidRegion({saved.position, 0}) || state.GetChunk(saved.position)
+        if (!ValidRegion({saved.position, 0}) || !ValidChunk(saved.position) || state.GetChunk(saved.position)
             || Occurrences(archived_positions, saved.position) != 0) {
             return false;
         }

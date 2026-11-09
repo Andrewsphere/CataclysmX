@@ -59,8 +59,10 @@ hosted again. Use matching content files at both ends.
 Press **F11** in-game for the world-generation debug menu; arrows/hjkl move its
 cursor, **HJKL** jump by region, **1–5/Tab/Shift+Tab** change layers, **+/-** zoom,
 **Home/c** recenter, **PageUp/PageDown** browse details, and **F11/Escape/q** close.
-The demo has a backpack containing a bandage, a toggleable machine, a door, and
-a wandering NPC. Simulation time uses 100 ticks per in-world second; default
+The demo has a backpack containing a bandage, a toggleable machine, a door, a
+wandering NPC, and a multi-level stairwell/pit west of the start. `<` descends
+and `>` ascends matching stairs; walking into open air falls immediately.
+Simulation time uses 100 ticks per in-world second; default
 actions cost 100 ticks. Successful actions spend their action cost; rejected
 actions spend none.
 During a cooldown you can queue the next action. The latest valid input replaces
@@ -78,18 +80,21 @@ Terrain definitions live in [`data/terrain.json5`](data/terrain.json5), with UTF
 symbols, named/RGB colors, appearance fallback, passability, sight blocking, and
 door transitions. Both clients accept `--content <path>` to load another JSON5
 document. The default path points to the bundled file in this source checkout.
-See [content format and APIs](doc/content_format.md). Save V5 stores terrain and
+See [content format and APIs](doc/content_format.md). Save V6 stores terrain and
 item stable string IDs, nested ownership, and versioned item capability state;
 older save versions are rejected and migrations are not implemented yet.
 
-The world has 16×16 XZ chunks, typed generational handles, nested item ownership,
+The world spans Y=-10..10 in single-layer 16×16 XZ chunks. Chunk requests cover
+whole-height columns. It uses typed generational handles, nested item ownership,
 resident/active load requests, and a following player reality bubble. Unloaded
 objects are destroyed; value snapshots restore their persistent IDs with fresh
 runtime handles. SQLite checkpoints persist full chunk snapshots and session
-state; unloaded archives remain in RAM until saved successfully. Offscreen actors
-freeze. See [save format and behavior](doc/save_format.md).
+state; unloaded archives remain in RAM until saved successfully. Actors outside
+active columns freeze; active actors above or below the player continue running.
+See [save format and behavior](doc/save_format.md).
 
-See [`doc/`](doc/README.md) for the world/server API and headless command grammar.
+See [`doc/`](doc/README.md) for the world/server API, [Y-layer rules](doc/y_layers.md),
+and headless command grammar.
 The dependency probes remain available separately below.
 Headless scripts can set `rate <ticks-per-second>`, `limit <on|off>`,
 `idle-pause <on|off>`, and supply deterministic elapsed time with
@@ -100,7 +105,7 @@ labels and typed refusal reasons. Item commands
 work in both `--script` and live `--command`:
 
 ```text
-use <item-id> <capability-id> <action> [item-id|n/s/e/w]
+use <item-id> <capability-id> <action> [item-id|n/s/e/w/up/down]
 store <item-id> <container-id|0>
 ```
 

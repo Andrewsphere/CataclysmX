@@ -114,20 +114,20 @@ void Mutate(const char* path, const char* before, const char* after) {
     WritePayload(path, text);
 }
 
-TEST_CASE("Pre-refactor V5 item payload loads without rewriting its state", "[save][item-save]") {
+TEST_CASE("Explicit V6 item payload loads without rewriting its state", "[save][item-save]") {
     const auto original = Catalog();
     const auto expanded = Catalog(true);
     ItemSaveFile file;
     Populate(original, file.path.c_str()); // Only provision the SQL schema and world metadata.
-    // Frozen pre-refactor Sample payload. No current item writer or value codec
-    // constructs these fields: signed targets use the original $i64 tags, while
+    // Explicit Sample payload. No current item writer or value codec constructs
+    // these fields: signed targets use $i64 tags for all three axes, while
     // versions, energy and timer/fraction values are unsigned JSON numbers.
     std::string payload = R"({"tiles":[)";
     for (unsigned i = 0; i < 256; ++i) {
         if (i) { payload += ','; }
         payload += R"({"terrain":"floor","damage":0})";
     }
-    payload += R"(],"actors":[{"id":"1","position":{"x":0,"z":0},"player":true,"parked":false,"turns":"0","speed":100,"remaining_ticks":"0","carry_capacity_g":"18446744073709551615","inventory":[{"id":"2","type":"bag","state":{},"installation":"","contents":[]}]}],"objects":[],"ground_items":[{"id":"3","type":"device","state":{"charger":{"version":1,"enabled":true,"remainder":87},"power":{"version":1,"energy":800},"timer":{"version":1,"armed":true,"remaining_ticks":123,"target":{"x":{"$i64":"1"},"z":{"$i64":"0"}}}},"installation":"","contents":[{"id":"4","type":"battery","state":{"cell":{"version":1,"energy":17}},"installation":"charger","contents":[]}],"position":{"x":0,"z":0}}]})";
+    payload += R"(],"actors":[{"id":"1","position":{"x":0,"z":0,"y":0},"player":true,"parked":false,"turns":"0","speed":100,"remaining_ticks":"0","carry_capacity_g":"18446744073709551615","inventory":[{"id":"2","type":"bag","state":{},"installation":"","contents":[]}]}],"objects":[],"ground_items":[{"id":"3","type":"device","state":{"charger":{"version":1,"enabled":true,"remainder":87},"power":{"version":1,"energy":800},"timer":{"version":2,"armed":true,"remaining_ticks":123,"target":{"x":{"$i64":"1"},"z":{"$i64":"0"},"y":{"$i64":"0"}}}},"installation":"","contents":[{"id":"4","type":"battery","state":{"cell":{"version":1,"energy":17}},"installation":"charger","contents":[]}],"position":{"x":0,"z":0,"y":0}}]})";
     WritePayload(file.path.c_str(), payload);
     SaveDatabase database(expanded);
     auto opened = database.Open(file.path.c_str()); REQUIRE(opened);
@@ -174,6 +174,7 @@ TEST_CASE("Item saves retain charge fractions timers capacity and stable catalog
     CHECK(timer->GetUnsigned("remaining_ticks") == 123);
     CHECK(timer->Find("target")->GetSigned("x") == 1);
     CHECK(timer->Find("target")->GetSigned("z") == 0);
+    CHECK(timer->Find("target")->GetSigned("y") == 0);
     CHECK(chunk.items[2].installation == charger);
     CHECK(chunk.items[2].owner == device.id);
     REQUIRE(database.Begin()); REQUIRE(database.WriteChunk(chunk)); REQUIRE(database.Commit());
@@ -191,6 +192,11 @@ TEST_CASE("Malformed saved item state type and installation produce contextual e
     SECTION("unsupported state version") { Mutate(file.path.c_str(), "\"cell\":{\"version\":1", "\"cell\":{\"version\":2"); expected = SaveError::UnsupportedVersion; }
     SECTION("unsupported behavior version") { Mutate(file.path.c_str(), "\"charger\":{\"version\":1", "\"charger\":{\"version\":2"); expected = SaveError::UnsupportedVersion; }
     SECTION("unsigned target is not signed state") { Mutate(file.path.c_str(), "\"x\":{\"$i64\":\"1\"}", "\"x\":1"); }
+    SECTION("missing target Y") { Mutate(file.path.c_str(), ",\"y\":{\"$i64\":\"0\"}", ""); }
+    SECTION("unsigned target Y") { Mutate(file.path.c_str(), "\"y\":{\"$i64\":\"0\"}", "\"y\":0"); }
+    SECTION("target Y out of bounds") { Mutate(file.path.c_str(), "\"y\":{\"$i64\":\"0\"}", "\"y\":{\"$i64\":\"-11\"}"); }
+    SECTION("target Y wrong layer") { Mutate(file.path.c_str(), "\"y\":{\"$i64\":\"0\"}", "\"y\":{\"$i64\":\"1\"}"); }
+    SECTION("duplicate target Y") { Mutate(file.path.c_str(), "\"y\":{\"$i64\":\"0\"}", "\"y\":{\"$i64\":\"0\"},\"y\":{\"$i64\":\"0\"}"); }
     SECTION("extra state entry") { Mutate(file.path.c_str(), "\"state\":{}", "\"state\":{\"storage\":{\"version\":1}}"); }
     SECTION("duplicate nested field") { Mutate(file.path.c_str(), "\"energy\":17", "\"energy\":17,\"energy\":18"); }
     SECTION("fraction out of range") { Mutate(file.path.c_str(), "\"remainder\":87", "\"remainder\":100"); }
@@ -206,6 +212,43 @@ TEST_CASE("Malformed saved item state type and installation produce contextual e
     CHECK_FALSE(diagnostics.Empty());
     CHECK(FormatDiagnostics(diagnostics).find("chunk") != String::npos);
     CHECK(database.Begin() == eastl::unexpected(SaveError::NotOpen));
+}
+
+TEST_CASE("Item saves preserve signed door targets on underground and elevated slices", "[save][item-save][layers]") {
+    const auto content = Catalog();
+    ItemSaveFile file;
+    SaveDatabase database(content);
+    REQUIRE(database.Create(file.path.c_str()));
+    REQUIRE(database.Begin());
+    for (int y : {world_min_y, world_max_y}) {
+        auto chunk = Sample(content);
+        chunk.position.y = y;
+        chunk.actors[0].position.y = y;
+        chunk.items[1].position.y = y;
+        chunk.items[1].state.Find("timer")->Find("target")->SetSigned("y", y);
+        if (y == world_max_y) {
+            chunk.actors[0].id += 4;
+            for (auto& item : chunk.items) {
+                item.id += 4;
+                if (item.owner) { item.owner += 4; }
+            }
+        }
+        REQUIRE(database.WriteChunk(chunk));
+    }
+    SaveSnapshot snapshot;
+    snapshot.nextId = 10;
+    REQUIRE(database.WriteSnapshot(snapshot));
+    REQUIRE(database.Commit());
+    SaveDatabase observer(content);
+    REQUIRE(observer.Open(file.path.c_str()));
+    for (int y : {world_min_y, world_max_y}) {
+        const auto loaded = observer.ReadChunk({0, 0, y}, snapshot.nextId);
+        REQUIRE(loaded);
+        REQUIRE(*loaded);
+        const auto& chunk = **loaded;
+        CHECK(chunk.items[1].position.y == y);
+        CHECK(chunk.items[1].state.Find("timer")->Find("target")->GetSigned("y") == y);
+    }
 }
 
 TEST_CASE("Item save validation rejects invalid ownership and rolls back the checkpoint", "[save][item-save]") {
@@ -269,7 +312,7 @@ TEST_CASE("Shared snapshot state errors preserve unsupported versions", "[save][
     const auto content = Catalog();
     auto chunk = Sample(content);
     SECTION("common energy") { chunk.items.back().state.Find("cell")->SetUnsigned("version", 2); }
-    SECTION("behavior factory") { chunk.items[1].state.Find("timer")->SetUnsigned("version", 2); }
+    SECTION("behavior factory") { chunk.items[1].state.Find("timer")->SetUnsigned("version", 3); }
     CHECK(ValidateItemSnapshot(content, chunk) == eastl::unexpected(StateError::UnsupportedVersion));
     ItemSaveFile file;
     SaveDatabase database(content);

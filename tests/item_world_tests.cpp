@@ -46,10 +46,10 @@ ChargingSnapshot ChargingState(const World& world, ItemHandle item) {
 }
 
 ItemUseResult Use(World& world, ActorHandle actor, ItemHandle item, const char* action,
-    ItemHandle other = {}, int dx = 0, int dz = 0) {
+    ItemHandle other = {}, int dx = 0, int dz = 0, int dy = 0) {
     const auto capability = Capability(world, item,
         eastl::string_view(action) == "arm" || eastl::string_view(action) == "disarm" ? "timer" : "charger");
-    return world.UseItem(actor, item, {capability, action, other, dx, dz});
+    return world.UseItem(actor, item, {capability, action, other, dx, dz, dy});
 }
 
 LoadRequest Load(World& world) {
@@ -71,6 +71,105 @@ struct ChargingRig {
         REQUIRE(Use(world, actor, charger, "start").outcome == ItemUseOutcome::Succeeded);
     }
 };
+
+TEST_CASE("Falling roots preserve nested handles and notify deployed devices", "[world][items][gravity]") {
+    World world(TestContent());
+    const auto request = Load(world);
+    const Tile air{TestTerrain("air"), 0};
+    REQUIRE(world.SetTile({1, 1, -3}, {TestTerrain("floor"), 0}));
+    for (int y = -2; y <= 2; ++y) { REQUIRE(world.SetTile({1, 1, y}, air)); }
+    REQUIRE(world.SetTile({1, 1, 2}, {TestTerrain("floor"), 0}));
+    const auto actor = Take(world.CreateActor({1, 1, -3}));
+    const auto pack = Take(world.CreateItem(Type("backpack"), ItemLocation::Ground({1, 1, 2})));
+    const auto nested = Take(world.CreateItem(Type("backpack"), ItemLocation::Inside(pack)));
+    const auto rock = Take(world.CreateItem(Type("rock"), ItemLocation::Inside(nested)));
+    const auto id = world.GetItem(rock)->id;
+    const auto packId = world.GetItem(pack)->id;
+    REQUIRE(world.SetTile({1, 1, 2}, air));
+    CHECK(world.GetItem(pack)->location == ItemLocation::Ground({1, 1, -2}));
+    CHECK(world.GetItem(nested)->location == ItemLocation::Inside(pack));
+    CHECK(world.GetItem(rock)->location == ItemLocation::Inside(nested));
+    CHECK(world.FindItem(id) == rock);
+    REQUIRE(world.DestroyActor(actor));
+    CHECK(world.GetItem(pack)->location == ItemLocation::Ground({1, 1, -3}));
+    CHECK(world.ItemsAt({1, 1, -3}) == Vector<ItemHandle>{pack});
+    REQUIRE(world.TransferItem(pack, ItemLocation::Ground({1, 1, 2})));
+    CHECK(world.GetItem(pack)->location == ItemLocation::Ground({1, 1, -3}));
+
+    // A deployed timer must receive the same movement notification when gravity
+    // relocates it as when an explicit transfer does.
+    REQUIRE(world.SetTile({2, 2, 0}, {TestTerrain("floor"), 0}));
+    REQUIRE(world.SetTile({2, 2, -1}, {TestTerrain("floor"), 0}));
+    REQUIRE(world.SetTile({3, 2, 0}, {TestTerrain("closed_door"), 0}));
+    const auto user = Take(world.CreateActor({2, 2}, true));
+    const auto timer = Take(world.CreateItem(Type("door_controller"), ItemLocation::Ground({2, 2})));
+    REQUIRE(Use(world, user, timer, "arm", {}, 1, 0).outcome == ItemUseOutcome::Succeeded);
+    REQUIRE(world.SetTile({2, 2, 0}, air));
+    CHECK(world.GetActor(user)->position == TileCoord{2, 2, -1});
+    // The actor blocks the next tile, so the item waits until it moves away.
+    CHECK(world.GetItem(timer)->location == ItemLocation::Ground({2, 2, 0}));
+    REQUIRE(world.SetTile({3, 2, -1}, {TestTerrain("floor"), 0}));
+    REQUIRE(world.MoveActor(user, {3, 2, -1}));
+    CHECK(world.GetItem(timer)->location == ItemLocation::Ground({2, 2, -1}));
+    CHECK(world.ActiveItemCount() == 0);
+    world.ElapseTicks(300);
+    world.ProcessItemEvents();
+    CHECK(world.GetTile({3, 2, 0})->terrain == TestTerrain("closed_door"));
+    CHECK(world.CheckInvariants());
+    REQUIRE(world.ReleaseRequest(request));
+    REQUIRE(world.ReconcileChunks());
+    Load(world);
+    const auto restoredPack = world.FindItem(packId);
+    const auto restoredRock = world.FindItem(id);
+    REQUIRE(world.GetItem(restoredPack));
+    REQUIRE(world.GetItem(restoredRock));
+    CHECK(restoredPack != pack);
+    CHECK(restoredRock != rock);
+    CHECK(world.GetItem(restoredPack)->location == ItemLocation::Ground({1, 1, -3}));
+    CHECK(world.GetItem(restoredRock)->location.item == world.GetItem(restoredPack)->contents.front());
+    CHECK(world.CheckInvariants());
+}
+
+TEST_CASE("Door controllers preserve elevation and cannot target through closed floor faces", "[world][items][layers]") {
+    World world(TestContent());
+    Load(world);
+    const TileCoord position{4, 4, 3};
+    const TileCoord horizontalDoor{5, 4, 3};
+    const TileCoord lowerDoor{4, 4, 2};
+    REQUIRE(world.SetTile(position, {TestTerrain("floor"), 0}));
+    REQUIRE(world.SetTile(horizontalDoor, {TestTerrain("closed_door"), 9}));
+    REQUIRE(world.SetTile(lowerDoor, {TestTerrain("closed_door"), 7}));
+    const auto actor = Take(world.CreateActor(position, true));
+    const auto timer = Take(world.CreateItem(Type("door_controller"), ItemLocation::Ground(position)));
+    REQUIRE(Use(world, actor, timer, "arm", {}, 1, 0).outcome == ItemUseOutcome::Succeeded);
+    const auto snapshot = world.CaptureItemState(timer);
+    CHECK(snapshot.Find("timer")->Find("target")->GetSigned("y") == 3);
+    world.ElapseTicks(300);
+    world.ProcessItemEvents();
+    CHECK(*world.GetTile(horizontalDoor) == Tile{TestTerrain("open_door"), 9});
+
+    const auto before = world.CaptureItemState(timer);
+    CHECK(Use(world, actor, timer, "arm", {}, 0, 0, -1).outcome == ItemUseOutcome::Refused);
+    CHECK(world.CaptureItemState(timer) == before);
+    REQUIRE(world.SetTile(position, {TestTerrain("air"), 0})); // Closed door below supports the user/device.
+    CHECK(world.GetActor(actor)->position == position);
+    REQUIRE(Use(world, actor, timer, "arm", {}, 0, 0, -1).outcome == ItemUseOutcome::Succeeded);
+    SECTION("open face permits the timed effect and resulting fall") {
+        world.ElapseTicks(300);
+        world.ProcessItemEvents();
+        CHECK(*world.GetTile(lowerDoor) == Tile{TestTerrain("open_door"), 7});
+        CHECK(world.GetActor(actor)->position == lowerDoor);
+    }
+    SECTION("closing the face before the deadline invalidates the target") {
+        REQUIRE(world.SetTile(position, {TestTerrain("floor"), 0}));
+        world.ElapseTicks(300);
+        world.ProcessItemEvents();
+        CHECK(world.GetTile(lowerDoor)->terrain == TestTerrain("closed_door"));
+        CHECK(world.GetActor(actor)->position == position);
+    }
+    CHECK(world.ActiveItemCount() == 0);
+    CHECK(world.CheckInvariants());
+}
 
 TEST_CASE("Charging partitions preserve fractional energy and source conservation", "[world][items]") {
     ChargingRig whole;
@@ -429,11 +528,15 @@ TEST_CASE("Item action argument shapes are validated before behavior mutation", 
     const ItemUseRequest malformed[] = {
         {charger, "start", battery},
         {charger, "start", {}, 1, 0},
+        {charger, "start", {}, 0, 0, 1},
         {charger, "install"},
         {charger, "install", battery, 1, 0},
+        {charger, "install", battery, 0, 0, -1},
         {timer, "arm", battery, 1, 0},
         {timer, "arm"},
         {timer, "arm", {}, 1, 1},
+        {timer, "arm", {}, 1, 0, 1},
+        {timer, "arm", {}, 0, 0, std::numeric_limits<int>::min()},
         {timer, "arm", {}, 2, 0},
         {timer, "arm", {}, std::numeric_limits<int>::min(), std::numeric_limits<int>::max()}
     };

@@ -28,11 +28,15 @@ bool ParseCommand(const std::string& text, Command& command) {
     if (text == "pickup") { command.kind = CommandKind::pick_up; return true; }
     if (text == "drop") { command.kind = CommandKind::drop; return true; }
     const auto space = text.find(' ');
-    if (space == std::string::npos || text.size() != space + 2) { return false; }
+    if (space == std::string::npos) { return false; }
     if (text.substr(0, space) == "move") { command.kind = CommandKind::move; }
     else if (text.substr(0, space) == "interact") { command.kind = CommandKind::interact; }
     else { return false; }
-    switch (text.back()) {
+    const auto direction = text.substr(space + 1);
+    if (direction == "down" || direction == "<") { command.dy = -1; return true; }
+    if (direction == "up" || direction == ">") { command.dy = 1; return true; }
+    if (direction.size() != 1) { return false; }
+    switch (direction[0]) {
     case 'n': command.dz = -1; break;
     case 's': command.dz = 1; break;
     case 'e': command.dx = 1; break;
@@ -143,9 +147,9 @@ int RunLan(Server& server, const ContentCatalog& content, const LanOptions& opti
             }
             if (client.GetState() == network::ConnectionState::Active && !accepted) {
                 accepted = true;
-                std::printf("joined player=%llu token=%llu position=%d,%d tick=%llu\n",
+                std::printf("joined player=%llu token=%llu position=%d,%d,%d tick=%llu\n",
                     static_cast<unsigned long long>(client.View().playerId), static_cast<unsigned long long>(savedToken),
-                    client.View().player_position.x, client.View().player_position.z,
+                    client.View().player_position.x, client.View().player_position.z, client.View().player_position.y,
                     static_cast<unsigned long long>(client.View().tick));
             }
             if (accepted && sent == resolved && sent < commands.size()) {
@@ -183,9 +187,9 @@ int RunLan(Server& server, const ContentCatalog& content, const LanOptions& opti
     if (accepted && client.HasView()) {
         const auto& view = client.View();
         std::fputs(ItemDetails(view, content).c_str(), stdout);
-        std::printf("final player=%llu token=%llu position=%d,%d tick=%llu resolved=%zu/%zu\n",
+        std::printf("final player=%llu token=%llu position=%d,%d,%d tick=%llu resolved=%zu/%zu\n",
             static_cast<unsigned long long>(view.playerId), static_cast<unsigned long long>(savedToken),
-            view.player_position.x, view.player_position.z, static_cast<unsigned long long>(view.tick), resolved, commands.size());
+            view.player_position.x, view.player_position.z, view.player_position.y, static_cast<unsigned long long>(view.tick), resolved, commands.size());
     }
     if (!options.join.empty()) { client.Disconnect(); }
     if (options.host) {
@@ -200,8 +204,8 @@ int RunLan(Server& server, const ContentCatalog& content, const LanOptions& opti
         }
         const auto view = server.View();
         std::fputs(ItemDetails(view, content).c_str(), stdout);
-        std::printf("final player=%llu position=%d,%d tick=%llu resolved=%zu/%zu\n",
-            static_cast<unsigned long long>(view.playerId), view.player_position.x, view.player_position.z,
+        std::printf("final player=%llu position=%d,%d,%d tick=%llu resolved=%zu/%zu\n",
+            static_cast<unsigned long long>(view.playerId), view.player_position.x, view.player_position.z, view.player_position.y,
             static_cast<unsigned long long>(view.tick), resolved, commands.size());
     }
     host.Close();

@@ -77,13 +77,14 @@ TEST_CASE("Item commands preserve explicit capability, target and secondary IDs"
     for (const auto action : {"start", "stop", "install", "remove", "arm", "disarm", "unknown_local_action"}) {
         use.itemAction = action;
         use.otherItem = use.itemAction == "install" ? 99 : 0;
-        use.dx = use.itemAction == "arm" ? -1 : 0;
+        use.dy = use.itemAction == "arm" ? -1 : 0;
         wire::Writer writer; REQUIRE(writer.CommandValue(use));
         wire::Reader reader{{writer.bytes.data(), writer.bytes.size()}};
         Command result;
         REQUIRE(reader.CommandValue(result)); REQUIRE(reader.Done());
         CHECK(result.kind == use.kind); CHECK(result.item == 42); CHECK(result.capability == use.capability);
         CHECK(result.itemAction == action); CHECK(result.otherItem == use.otherItem); CHECK(result.dx == use.dx);
+        CHECK(result.dy == use.dy);
         for (std::size_t size = 0; size < writer.bytes.size(); ++size) {
             wire::Reader truncated{{writer.bytes.data(), size}};
             CHECK_FALSE(truncated.CommandValue(result));
@@ -98,7 +99,7 @@ TEST_CASE("Item commands preserve explicit capability, target and secondary IDs"
         Command result; REQUIRE(reader.CommandValue(result)); CHECK(reader.Done());
         CHECK(result.item == 42); CHECK(result.otherItem == destination);
     }
-    use.itemAction = "install"; use.dx = 0; use.otherItem = 0;
+    use.itemAction = "install"; use.dx = 0; use.dy = 0; use.otherItem = 0;
     CHECK(ValidCommandShape(use)); // Declared argument validation belongs to ItemSystem.
     use.itemAction = "arm"; use.dx = 1; use.dz = 1;
     CHECK_FALSE(ValidCommandShape(use));
@@ -110,7 +111,7 @@ TEST_CASE("Item commands preserve explicit capability, target and secondary IDs"
     wire::Writer malformed; CHECK_FALSE(malformed.CommandValue(use));
     malformed.U8(static_cast<std::uint8_t>(use.kind)); malformed.I32(0); malformed.I32(1);
     malformed.U64(42); malformed.U32(use.waitCost); malformed.U16(17);
-    REQUIRE(malformed.Text("arm", maxItemActionName)); malformed.U64(0);
+    REQUIRE(malformed.Text("arm", maxItemActionName)); malformed.U64(0); malformed.I32(0);
     wire::Reader reader{{malformed.bytes.data(), malformed.bytes.size()}};
     Command result; CHECK_FALSE(reader.CommandValue(result));
 }
@@ -128,6 +129,7 @@ TEST_CASE("Local action IDs are bounded independently of behavior declarations",
     SECTION("invalid ID") { command.itemAction = "not an id"; }
     SECTION("self target") { command.otherItem = command.item; }
     SECTION("mixed arguments") { command.otherItem = 99; command.dx = 1; }
+    SECTION("mixed vertical arguments") { command.otherItem = 99; command.dy = -1; }
     wire::Writer invalid; CHECK_FALSE(invalid.CommandValue(command));
 }
 
@@ -276,9 +278,9 @@ TEST_CASE("Item decoder rejects malformed bounded fields before catalog lookup",
     // Walk the encoded fields to locate variable-length metadata boundaries.
     wire::Reader cursor{{writer.bytes.data(), writer.bytes.size()}};
     std::int32_t coordinate; std::uint8_t byte; std::uint16_t shortValue; std::uint32_t number; std::uint64_t wide;
-    REQUIRE(cursor.I32(coordinate)); REQUIRE(cursor.I32(coordinate));
+    REQUIRE(cursor.I32(coordinate)); REQUIRE(cursor.I32(coordinate)); REQUIRE(cursor.I32(coordinate));
     REQUIRE(cursor.U8(byte)); REQUIRE(cursor.U8(byte));
-    REQUIRE(cursor.I32(coordinate)); REQUIRE(cursor.I32(coordinate));
+    REQUIRE(cursor.I32(coordinate)); REQUIRE(cursor.I32(coordinate)); REQUIRE(cursor.I32(coordinate));
     for (int i = 0; i < 6; ++i) REQUIRE(cursor.U64(wide));
     REQUIRE(cursor.U32(number)); REQUIRE(cursor.U32(number));
     for (int i = 0; i < 3; ++i) REQUIRE(cursor.U8(byte));

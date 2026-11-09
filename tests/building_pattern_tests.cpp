@@ -90,6 +90,23 @@ TEST_CASE("Building patterns own resolved row-major tiles and use typed lookup",
     CHECK(Take(LoadContent({})).BuildingPatternCount() == 0);
 }
 
+TEST_CASE("Building pattern palettes resolve air and stairs without changing their planar shape", "[content][building_pattern][vertical]") {
+    const String vertical = R"({type:'terrain',id:'air',name:'Air',movement:{passable:true},
+        blocks_sight:false,open_space:true,looks_like:'floor'},
+        {type:'terrain',id:'stairs',name:'Stairs',movement:{passable:true},
+        blocks_sight:false,stairs:true,looks_like:'floor'},)";
+    const auto catalog = Take(Load(View(vertical + Pattern("landing",
+        "rows:['s.',' a'],palette:{'s':'stairs','.':'floor',' ':'air','a':'air'},entrance:{x:0,z:0}"))));
+    const auto& pattern = catalog.GetBuildingPattern(catalog.FindBuildingPattern("landing"));
+    CHECK(pattern.width == 2);
+    CHECK(pattern.height == 2);
+    REQUIRE(pattern.tiles.size() == 4);
+    CHECK(catalog.GetTerrain(pattern.tiles[0]).stairs);
+    CHECK_FALSE(catalog.GetTerrain(pattern.tiles[1]).openSpace);
+    CHECK(catalog.GetTerrain(pattern.tiles[2]).openSpace);
+    CHECK(catalog.GetTerrain(pattern.tiles[3]).openSpace);
+}
+
 TEST_CASE("Building pattern references resolve forward across sources with independent sorted IDs", "[content][building_pattern]") {
     const String first = Document(View(Pattern("z_house") + ',' + Pattern("a_house")));
     const String second = Document(terrains);

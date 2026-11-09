@@ -5,7 +5,7 @@
 namespace cataclysmx {
 
 inline constexpr int region_size = 256;
-inline constexpr std::uint32_t world_generation_version = 2;
+inline constexpr std::uint32_t world_generation_version = 3;
 
 struct RegionCoord {
     int x = 0;
@@ -90,27 +90,36 @@ struct RegionPlan {
 
 // Invalid public coordinates abort, including INT_MIN/INT_MAX, before arithmetic.
 // Tiles: [-1,000,000,1,000,000]; regions: [-3907,3906]; chunks:
-// [-62500,62500], on each axis. RegionOf uses mathematical floor division.
+// [-62500,62500], on horizontal axes; tile/chunk Y: [world_min_y,world_max_y].
+// RegionOf uses mathematical floor division and ignores Y.
 // Plans must be unmodified outputs of GenerateRegionPlan, and materialization
 // must use the same immutable catalog and seed. No World or shared RNG is used.
 RegionCoord RegionOf(TileCoord position);
 // Recoverable application/content boundary; diagnostic strings are optional.
-// floor/wall are required; floor and any grass/road/rubble must be passable.
+// Validates a 3D World catalog: floor/wall/air are required. Air must be
+// openSpace; floor and any grass/road/rubble must be passable floor support.
+// Stairs are optional; if present the 'stairs' role must have stairs=true.
 ContentResult<void> ValidateWorldgenContent(const ContentCatalog& content,
                                           Diagnostics* diagnostics = nullptr);
+// Environment and regional geometry are horizontal: Y is explicitly ignored.
 EnvironmentSample SampleEnvironment(std::uint64_t seed, TileCoord position);
 RegionPlan GenerateRegionPlan(const ContentCatalog& content, std::uint64_t seed,
                               RegionCoord region);
 // Row-major z*16+x. Invalid slots of partial edge chunks are undamaged wall.
+// Surface-only calls permit legacy catalogs without air. Upper-layer generation
+// requires the 'air' openSpace role; missing/invalid roles are invariant failures.
+// Y<0 is solid wall; Y>0 is air, except Y=1 has floor roofs covering each
+// building's rectangular plan footprint (including abandoned buildings).
 // Required floor/wall terrain absence is an invariant failure. Optional grass,
 // tree, road, rubble fall back to floor, wall, floor, floor respectively.
-// The inclusive legacy demo square [-32,32] x [-32,32] is always floor;
+// At Y=0 the inclusive legacy demo square [-32,32] x [-32,32] is always floor;
 // IsRoad masks it too. No towns or buildings intersect that square.
 eastl::array<Tile, chunk_size * chunk_size> GenerateChunk(
     const ContentCatalog& content, std::uint64_t seed, const RegionPlan& plan,
     ChunkCoord chunk);
 
-// Queries require valid world positions; return false/null outside plan bounds.
+// Queries are horizontal footprint queries, ignoring Y. Require valid world
+// positions; return false/null outside plan bounds.
 // Borrowed records remain valid only while the owning plan is unchanged/alive.
 bool Contains(TileRect bounds, TileCoord position);
 bool IsRoad(const RegionPlan& plan, TileCoord position);
