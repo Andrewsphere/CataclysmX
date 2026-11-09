@@ -114,6 +114,7 @@ std::uint64_t ContentFingerprint(const ContentCatalog& content) {
         HashNumber(hash, t.appearance.background.green); HashNumber(hash, t.appearance.background.blue);
         HashNumber(hash, t.passable); HashNumber(hash, t.blocksSight);
         HashNumber(hash, t.openSpace); HashNumber(hash, t.stairs);
+        HashNumber(hash, t.light.intensity); HashNumber(hash, t.light.range);
         HashNumber(hash, t.opensTo.value); HashNumber(hash, t.closesTo.value);
     }
     HashNumber(hash, content.BuildingPatternCount());
@@ -253,8 +254,8 @@ public:
             return;
         }
         if (!initial && !force && clock_ - guest.lastSnapshotAt < 50000) return;
+        if (!initial && !force && guest.outstandingRevision == server_.GetRevision()) return;
         const auto view = server_.ViewForPlayer(guest.player);
-        if (!initial && !force && guest.outstandingRevision == view.revision) return;
         auto w = Message(wire::Type::Snapshot);
         w.U64(guest.nonce);
         if (!w.View(view)) {
@@ -393,7 +394,7 @@ std::uint16_t LanHost::GetDiscoveryPort() const {
     return enet_socket_get_address(impl_->discovery_, &address) == 0 ? address.port : 0;
 }
 std::uint64_t LanHost::QueueLocal(Command command) {
-    auto view = impl_->server_.ViewForPlayer(impl_->server_.GetHostPlayerId());
+    const auto view = impl_->server_.GetInputContext(impl_->server_.GetHostPlayerId());
     if (impl_->localSequence_ < view.lastInputSequence) impl_->localSequence_ = view.lastInputSequence;
     if (impl_->localSequence_ == UINT64_MAX || impl_->localInputs_.size() >= 128) return 0;
     const auto sequence = ++impl_->localSequence_;
@@ -484,7 +485,7 @@ HostUpdate LanHost::Pump(std::uint64_t elapsed) {
     for (const auto& receipt : result.commandResults) {
         for (auto& guest : impl_->guests_) if (guest.active && guest.player == receipt.player) {
             auto w = Message(wire::Type::Receipt);
-            const auto state = impl_->server_.ViewForPlayer(guest.player);
+            const auto state = impl_->server_.GetInputContext(guest.player);
             w.U64(guest.nonce);
             if (!w.Result(receipt)) { impl_->Fail(guest, NetworkError::Protocol); continue; }
             w.U64(state.opportunity); w.U64(state.revision);
@@ -500,9 +501,8 @@ HostUpdate LanHost::Pump(std::uint64_t elapsed) {
 class LanClient::Impl {
 public:
     Impl(NetworkRuntime&, const ContentCatalog& content)
-        : fingerprint_(ContentFingerprint(content)), terrainCount_(content.TerrainCount()), content_(content) {}
+        : fingerprint_(ContentFingerprint(content)), content_(content) {}
     std::uint64_t fingerprint_;
-    std::size_t terrainCount_ = 0;
     const ContentCatalog& content_;
     ENetHost* host_ = nullptr;
     ENetPeer* peer_ = nullptr;
@@ -589,10 +589,8 @@ void LanClient::Pump(std::uint64_t elapsed) {
                 std::uint64_t nonce = 0;
                 WorldView view;
                 bool valid = r.U64(nonce) && nonce == impl_->nonce_ && r.View(view) &&
-                    r.Done() && view.playerId == impl_->player_ && wire::ValidItemDefinitions(view, impl_->content_);
-                if (valid) for (const auto& cell : view.cells)
-                    if (cell.visible && (cell.tile.terrain.value == 0 ||
-                        cell.tile.terrain.value > impl_->terrainCount_)) valid = false;
+                    r.Done() && view.playerId == impl_->player_ && wire::ValidItemDefinitions(view, impl_->content_) &&
+                    wire::ValidTerrainDefinitions(view, impl_->content_);
                 if (!valid) {
                     impl_->ProtocolFailure();
                 } else {

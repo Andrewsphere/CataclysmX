@@ -270,7 +270,12 @@ TEST_CASE("Settings booleans toggle numeric drafts replace text and cross-field 
     Event(f.menu, ftxui::Event::Return); Key(f.menu, '1'); Event(f.menu, ftxui::Event::Escape);
     CHECK(f.store.Effective().viewRadius == 0);
     NextCategory(f.menu); // World.
-    Event(f.menu, ftxui::Event::ArrowDown); Number(f.menu, "3");
+    // Use a small explicit resident bubble so active radius 3 is invalid.
+    Event(f.menu, ftxui::Event::ArrowDown); Event(f.menu, ftxui::Event::ArrowDown);
+    Number(f.menu, "2"); Key(f.menu, 'a');
+    CHECK(f.store.Effective().residentRadius == 2);
+    Event(f.menu, ftxui::Event::ArrowUp);
+    Number(f.menu, "3");
     CHECK(DrawSettings(f.menu).find("Invalid value") == std::string::npos);
     Key(f.menu, 'a');
     CHECK(f.store.Effective().activeRadius == 1);

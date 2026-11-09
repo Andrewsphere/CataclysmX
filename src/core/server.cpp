@@ -3,6 +3,8 @@
 #include "core/server.h"
 
 #include "core/simulation.h"
+#include "core/perception.h"
+#include "core/lighting.h"
 #include "worldgen/worldgen.h"
 
 #include <EASTL/algorithm.h>
@@ -38,15 +40,6 @@ bool Cardinal(int dx, int dz, int dy) {
 ChunkCoord BubbleCenter(TileCoord position) {
     const ChunkCoord chunk = ChunkOf(position);
     return {chunk.x, chunk.z, 0};
-}
-
-bool OpenVerticalFace(const World& world, TileCoord first, TileCoord second) {
-    const Tile* a = world.GetTile(first);
-    const Tile* b = world.GetTile(second);
-    if (!a || !b) { return false; }
-    const auto& upper = world.GetContent().GetTerrain((first.y > second.y ? a : b)->terrain);
-    const auto& lower = world.GetContent().GetTerrain((first.y > second.y ? b : a)->terrain);
-    return upper.openSpace || (upper.stairs && lower.stairs);
 }
 
 bool BubbleFits(TileCoord position, int radius) {
@@ -126,61 +119,6 @@ Outcome MovementFailure(WorldError error) {
     case WorldError::invalid_position:
     case WorldError::chunk_unavailable: return Outcome::unavailable;
     default: std::abort();
-    }
-}
-
-bool LineVisible(const World& world, TileCoord origin, TileCoord target) {
-    // Center-to-center rational voxel DDA. Crossing times are odd/(2*delta);
-    // compare by integer cross products, never floating point. At a tie every
-    // touched voxel and every vertical edge of that supercover must be open.
-    // A blocking target itself is visible, but its bottom face is checked first.
-    const int delta[] = {std::abs(target.x - origin.x), std::abs(target.z - origin.z),
-        std::abs(target.y - origin.y)};
-    const int step[] = {target.x > origin.x ? 1 : -1, target.z > origin.z ? 1 : -1,
-        target.y > origin.y ? 1 : -1};
-    int numerator[] = {1, 1, 1};
-    TileCoord cursor = origin;
-    for (;;) {
-        const Tile* tile = world.GetTile(cursor);
-        if (!tile) { return false; }
-        if (cursor == target) { return true; }
-        if (cursor != origin && world.GetContent().GetTerrain(tile->terrain).blocksSight) {
-            return false;
-        }
-        int axis = -1;
-        for (int i = 0; i < 3; ++i) {
-            if (delta[i] != 0 && (axis < 0
-                || numerator[i] * delta[axis] < numerator[axis] * delta[i])) { axis = i; }
-        }
-        Require(axis >= 0);
-        unsigned int mask = 0;
-        for (int i = 0; i < 3; ++i) {
-            if (delta[i] != 0 && numerator[i] * delta[axis] == numerator[axis] * delta[i]) {
-                mask |= 1U << i;
-            }
-        }
-        for (unsigned int subset = 1; subset <= 7; ++subset) {
-            if ((subset & mask) != subset) { continue; }
-            const TileCoord touched{cursor.x + ((subset & 1) ? step[0] : 0),
-                cursor.z + ((subset & 2) ? step[1] : 0),
-                cursor.y + ((subset & 4) ? step[2] : 0)};
-            const Tile* touchedTile = world.GetTile(touched);
-            if (!touchedTile) { return false; }
-            if ((mask & 4) != 0) {
-                TileCoord other = touched;
-                other.y += (subset & 4) ? -step[2] : step[2];
-                if (!OpenVerticalFace(world, touched, other)) { return false; }
-            }
-            if (touched != target && world.GetContent().GetTerrain(touchedTile->terrain).blocksSight) {
-                return false;
-            }
-        }
-        // Include the vertical face at the unshifted horizontal corner too.
-        if ((mask & 4) && !OpenVerticalFace(world, cursor,
-            {cursor.x, cursor.z, cursor.y + step[2]})) { return false; }
-        if (mask & 1) { cursor.x += step[0]; numerator[0] += 2; }
-        if (mask & 2) { cursor.z += step[1]; numerator[1] += 2; }
-        if (mask & 4) { cursor.y += step[2]; numerator[2] += 2; }
     }
 }
 
@@ -320,7 +258,15 @@ Server::Server(const ContentCatalog& content, std::uint32_t seed) : world_(conte
         Require(world_.SetTile({-4, 1, 0}, {air, 0}).has_value());
         Require(world_.SetTile({-4, 1, 1}, {air, 0}).has_value());
         Take(world_.CreateItem(content.FindItem("rock"), ItemLocation::Ground({-4, 1, -1})));
+        const auto lamp = Take(world_.CreateObject({-5, 0, -1}, true));
+        Require(world_.SetObjectAppearance(lamp, ObjectKind::Lamp).has_value());
+        Require(world_.SetObjectLight(lamp, {240, 4}).has_value());
+        const auto chair = Take(world_.CreateObject({-5, 1, -1}));
+        Require(world_.SetObjectAppearance(chair, ObjectKind::Chair, ObjectFacing::East).has_value());
+        const auto table = Take(world_.CreateObject({-3, 2, -1}));
+        Require(world_.SetObjectAppearance(table, ObjectKind::Table).has_value());
     }
+    world_.UpdatePlayerObservations();
     SynchronizePacing();
 }
 
@@ -524,6 +470,9 @@ CommandResult Server::Execute(ActorHandle handle, PlayerSlot& slot, Command comm
     }
     const Tick cost = ActionTicks(baseCost, world_.GetActor(handle)->speed);
     Require(world_.ScheduleActorAction(handle, baseCost).has_value());
+    // Observe the completed action for every participant, even between two
+    // commands at the same tick. Snapshot/viewport cadence never grants memory.
+    world_.UpdatePlayerObservations();
     CommandResult result{outcome, true, tick_};
     result.cost = cost;
     return result;
@@ -557,7 +506,14 @@ ActorHandle Server::PlayerActor(const PlayerSlot& slot) const {
 }
 
 PersistentId Server::GetHostPlayerId() const { return world_.GetActor(player_)->id; }
-std::uint64_t Server::GetRevision() const { return revision_; }
+std::uint64_t Server::GetRevision() const { return revision_ + world_.GetRevision(); }
+PlayerInputContext Server::GetInputContext(PersistentId id) const {
+    const auto* slot = FindPlayer(id);
+    return slot ? PlayerInputContext{slot->opportunity, slot->lastSequence, GetRevision()}
+        : PlayerInputContext{};
+}
+ViewStats Server::GetViewStats() const { return viewStats_; }
+void Server::ResetViewStats() const { viewStats_ = {}; }
 
 Vector<PlayerStatus> Server::GetPlayers() const {
     Vector<PlayerStatus> result;
@@ -743,6 +699,7 @@ SessionResult<void> Server::ActivatePlayer(PersistentId id) {
         Require(world_.ReleaseRequest(temporary).has_value());
         Require(world_.ReconcileChunks().has_value());
     }
+    world_.UpdatePlayerObservations();
     ++revision_;
     SynchronizePacing();
     return {};
@@ -769,6 +726,7 @@ SessionResult<void> Server::DisconnectPlayer(PersistentId id) {
     slot->activeRequest = {};
     slot->residentRequest = {};
     Require(world_.ReconcileChunks().has_value());
+    world_.UpdatePlayerObservations();
     ++revision_;
     SynchronizePacing();
     return {};
@@ -906,8 +864,9 @@ WorldView Server::View(int radius) const {
 }
 
 WorldView Server::ViewForPlayer(PersistentId id, int radius) const {
-    // Public presentation input is clamped to [0, 12]. The square, row-major
-    // snapshot has spherical 3D sight range; out-of-range candidates stay empty.
+    ++viewStats_.requests;
+    // Radius is a viewport extent, independent of the fixed gameplay sight range.
+    // Queries use current perception and existing memories without learning.
     radius = eastl::clamp(radius, 0, 12);
     const PlayerSlot* slot = FindPlayer(id);
     if (!slot) { return {}; }
@@ -915,6 +874,11 @@ WorldView Server::ViewForPlayer(PersistentId id, int radius) const {
     const Actor* actor = world_.GetActor(player);
     if (!actor) { return {}; }
     Require(actor != nullptr);
+    const auto revision = GetRevision();
+    if (slot->cachedView.revision == revision && slot->cachedView.width == radius * 2 + 1) {
+        return slot->cachedView;
+    }
+    ++viewStats_.constructions;
     WorldView result;
     result.player_position = actor->position;
     result.origin = {actor->position.x - radius, actor->position.z - radius, actor->position.y};
@@ -926,54 +890,93 @@ WorldView Server::ViewForPlayer(PersistentId id, int radius) const {
     result.pacing = pacer_.GetSettings();
     result.commandQueued = slot->pending.has_value();
     result.playerId = id;
-    result.revision = revision_;
+    result.revision = revision;
     result.opportunity = slot->opportunity;
     result.lastInputSequence = slot->lastSequence;
     result.players = GetPlayers();
-    result.cells.resize(static_cast<std::size_t>(result.width * result.height));
-    for (int z = 0; z < result.height; ++z) {
-        for (int x = 0; x < result.width; ++x) {
-            TileCoord position{result.origin.x + x, result.origin.z + z, result.origin.y};
-            const int dx = x - radius;
-            const int dz = z - radius;
-            if (dx * dx + dz * dz > radius * radius) {
-                continue;
-            }
-            ViewCell& cell = result.cells[static_cast<std::size_t>(z * result.width + x)];
-            bool overlayFound = false;
-            for (unsigned int depth = 0; position.y >= world_min_y; ++depth, --position.y) {
-                if (dx * dx + dz * dz + static_cast<int>(depth * depth) > radius * radius) { break; }
-                const Tile* tile = world_.GetTile(position);
-                // Projection follows only the air column, but each candidate
-                // must have its own straight LOS from the player (no bent ray).
-                if (!tile) { break; }
-                const bool visible = LineVisible(world_, actor->position, position);
-                if (visible) {
-                    cell.visible = true;
-                    cell.tile = *tile;
-                    cell.terrainDepth = depth;
-                    if (!overlayFound) {
-                        if (const Actor* occupant = world_.GetActor(world_.ActorAt(position))) {
-                            cell.actor = occupant->id;
-                            cell.player = occupant->player;
+    const bool observing = slot->state == PlayerConnectionState::Active
+        && !actor->parked && world_.IsActive(actor->position);
+    if (observing) { result.playerLight = ClassifyLight(world_.GetLightLevel(actor->position)); }
+    const bool reuseMap = slot->cachedMapRevision == world_.GetMapRevision()
+        && slot->cachedView.origin == result.origin && slot->cachedView.width == result.width
+        && slot->cachedObserving == observing;
+    if (reuseMap) {
+        result.cells = slot->cachedView.cells;
+    } else {
+        ++viewStats_.mapConstructions;
+        result.cells.resize(static_cast<std::size_t>(result.width * result.height));
+        for (int z = 0; z < result.height; ++z) {
+            for (int x = 0; x < result.width; ++x) {
+                TileCoord position{result.origin.x + x, result.origin.z + z, result.origin.y};
+                ViewCell& cell = result.cells[static_cast<std::size_t>(z * result.width + x)];
+                bool liveColumnOpen = observing;
+                bool knownColumnOpen = true;
+                for (unsigned int depth = 0; position.y >= world_min_y; ++depth, --position.y) {
+                    // Live projection can see a lit lower tile through unlit air.
+                    // Its geometry never controls the independent remembered path.
+                    const Tile* current = liveColumnOpen ? world_.GetTile(position) : nullptr;
+                    const bool visible = current && world_.CanPlayerSee(player, position);
+                    if (visible) {
+                        cell.terrainVisibility = Visibility::Visible;
+                        cell.tile = *current;
+                        cell.terrainDepth = depth;
+                        cell.terrainLight = ClassifyLight(TerrainLightLevel(world_, actor->position, position));
+                        const auto spaceLight = ClassifyLight(world_.GetLightLevel(position));
+                        const auto vision = world_.GetVisionProfile();
+                        const int overlayRange = VisionRange(vision, spaceLight, world_.GetLightLevel(actor->position));
+                        const int dx = position.x - actor->position.x;
+                        const int dz = position.z - actor->position.z;
+                        const int dy = position.y - actor->position.y;
+                        if (cell.overlayVisibility != Visibility::Visible
+                            && dx*dx + dz*dz + dy*dy <= overlayRange*overlayRange) {
+                            const Actor* occupant = world_.GetActor(world_.ActorAt(position));
+                            const auto items = static_cast<unsigned int>(world_.ItemsAt(position).size());
+                            const InteractiveObject* object = world_.GetObject(world_.ObjectAt(position));
+                            if (occupant || items != 0 || object) {
+                                // Memories are a fallback, never an occluder for an
+                                // actually visible lower overlay. Nearest live wins.
+                                cell.actor = occupant ? occupant->id : 0;
+                                cell.player = occupant && occupant->player;
+                                cell.ground_items = items;
+                                cell.object = object ? object->id : 0;
+                                cell.objectAppearance = object ? DescribeObject(*object) : ObjectAppearance{};
+                                cell.overlayDepth = depth;
+                                cell.overlayVisibility = Visibility::Visible;
+                                cell.overlayLight = spaceLight;
+                            }
                         }
-                        cell.ground_items = static_cast<unsigned int>(world_.ItemsAt(position).size());
-                        if (const InteractiveObject* object = world_.GetObject(world_.ObjectAt(position))) {
-                            cell.object = object->id;
-                            cell.object_enabled = object->enabled;
+                        knownColumnOpen = world_.GetContent().GetTerrain(current->terrain).openSpace;
+                    } else if (knownColumnOpen) {
+                        const auto remembered = world_.GetRememberedTile(id, position);
+                        if (remembered.terrain.value == 0) {
+                            knownColumnOpen = false;
+                        } else {
+                            cell.terrainVisibility = Visibility::Remembered;
+                            cell.tile = {remembered.terrain, 0};
+                            cell.terrainDepth = depth;
+                            cell.terrainLight = LightBand::Dark;
+                            if (cell.overlayVisibility == Visibility::Unknown && remembered.object.kind != ObjectKind::None) {
+                                cell.objectAppearance = remembered.object;
+                                cell.overlayDepth = depth;
+                                cell.overlayVisibility = Visibility::Remembered;
+                                cell.overlayLight = LightBand::Dark;
+                            }
+                            knownColumnOpen = world_.GetContent().GetTerrain(remembered.terrain).openSpace;
                         }
-                        overlayFound = cell.actor != 0 || cell.ground_items != 0 || cell.object != 0;
-                        if (overlayFound) { cell.overlayDepth = depth; }
                     }
+                    liveColumnOpen = current && world_.GetContent().GetTerrain(current->terrain).openSpace;
+                    if (!liveColumnOpen && !knownColumnOpen) { break; }
                 }
-                if (!world_.GetContent().GetTerrain(tile->terrain).openSpace) { break; }
             }
         }
     }
     result.inventory = DescribeItems(world_, player, actor->inventory);
-    result.groundItems = DescribeItems(world_, player, world_.ItemsAt(actor->position));
+    if (observing) { result.groundItems = DescribeItems(world_, player, world_.ItemsAt(actor->position)); }
     result.carriedMassGrams = world_.GetCarriedMass(player);
     result.carryCapacityGrams = actor->carryCapacityGrams;
+    slot->cachedMapRevision = world_.GetMapRevision();
+    slot->cachedObserving = observing;
+    slot->cachedView = result;
     return result;
 }
 

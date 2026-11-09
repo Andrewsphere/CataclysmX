@@ -33,5 +33,5 @@ cmake --preset "$preset"
 cmake --build --preset "$preset"
 cmake -E copy_if_different "out/build/$preset/compile_commands.json" compile_commands.json
 if [[ "$skipTests" == false ]]; then
-    ctest --preset "$preset"
+    bash "$root/scripts/test.sh" "$preset"
 fi

@@ -84,7 +84,7 @@ TEST_CASE("Server creates the deterministic demo and advances only successful co
     CHECK(world.GetActor(server.GetPlayer())->position == TileCoord{0, 0});
     CHECK(world.GetActor(server.GetPlayer())->player);
     CHECK(server.GetTick() == 0);
-    CHECK(world.LoadedChunks().size() == 25 * world_layer_count);
+    CHECK(world.LoadedChunks().size() == 121 * world_layer_count);
     CHECK(world.IsActive({-16, -16}));
     CHECK_FALSE(world.IsActive({-32, -32}));
     const auto backpack = world.ItemsAt({0, 0});
@@ -218,7 +218,7 @@ TEST_CASE("Pickup and drop use direct ownership and persistent IDs while preserv
     CHECK(world.CheckInvariants());
 }
 
-TEST_CASE("Views are isolated value snapshots with bounded circular LOS and empty hidden cells", "[server][view]") {
+TEST_CASE("Views isolate live values from last observations and preserve memory beyond residency", "[server][view]") {
     Server server(TestContent());
     World& world = server.GetWorld();
     REQUIRE(world.SetTile({1, 0}, {TestTerrain("wall"), 23}));
@@ -243,23 +243,31 @@ TEST_CASE("Views are isolated value snapshots with bounded circular LOS and empt
     CHECK(old.cells.size() == 81);
     CHECK(cell_at(old, {0, 0}).player);
     CHECK(cell_at(old, {0, 0}).actor == world.GetActor(server.GetPlayer())->id);
-    CHECK(cell_at(old, {1, 0}).visible);
+    CHECK(cell_at(old, {1, 0}).terrainVisibility == Visibility::Visible);
     CHECK(cell_at(old, {1, 0}).tile == Tile{TestTerrain("wall"), 23});
-    CHECK(cell_at(old, {2, 0}) == ViewCell{});
-    CHECK(cell_at(old, {0, 1}).visible);
+    CHECK(cell_at(old, {2, 0}).terrainVisibility == Visibility::Remembered);
+    CHECK(cell_at(old, {2, 0}).tile == Tile{TestTerrain("floor"), 0});
+    CHECK(cell_at(old, {2, 0}).actor == 0);
+    CHECK(cell_at(old, {2, 0}).ground_items == 0);
+    CHECK(cell_at(old, {2, 0}).object == 0);
+    CHECK_FALSE(cell_at(old, {2, 0}).objectAppearance.active);
+    CHECK(cell_at(old, {0, 1}).terrainVisibility == Visibility::Visible);
     CHECK(cell_at(old, {0, 1}).tile.terrain == TestTerrain("closed_door"));
-    CHECK(cell_at(old, {0, 2}) == ViewCell{});
-    CHECK(cell_at(old, {-4, -4}) == ViewCell{});
+    CHECK(cell_at(old, {0, 2}).terrainVisibility == Visibility::Remembered);
+    CHECK(cell_at(old, {0, 2}).tile == Tile{TestTerrain("floor"), 0});
+    // Viewport radius four crops the fixed radius-twelve gameplay sight sphere.
+    CHECK(cell_at(old, {-4, -4}).terrainVisibility == Visibility::Visible);
 
     REQUIRE(world.SetTile({1, 0}, {TestTerrain("open_door"), 12}));
     const WorldView revealed = server.View(4);
-    CHECK(cell_at(revealed, {2, 0}).visible);
+    CHECK(cell_at(revealed, {2, 0}).terrainVisibility == Visibility::Visible);
     CHECK(cell_at(revealed, {2, 0}).actor == world.GetActor(hidden_actor)->id);
     CHECK(cell_at(revealed, {2, 0}).ground_items == 1);
     CHECK(cell_at(revealed, {2, 0}).object == world.GetObject(object)->id);
-    CHECK(cell_at(revealed, {2, 0}).object_enabled);
+    CHECK(cell_at(revealed, {2, 0}).objectAppearance.active);
     CHECK(cell_at(revealed, {2, 0}).tile == Tile{TestTerrain("floor"), 71});
-    CHECK(cell_at(old, {2, 0}) == ViewCell{});
+    CHECK(cell_at(old, {2, 0}).terrainVisibility == Visibility::Remembered);
+    CHECK(cell_at(old, {2, 0}).tile == Tile{TestTerrain("floor"), 0});
     CHECK(cell_at(old, {1, 0}).tile == Tile{TestTerrain("wall"), 23});
 
     expect(server, {CommandKind::pick_up}, Outcome::picked_up, true);
@@ -275,8 +283,8 @@ TEST_CASE("Views are isolated value snapshots with bounded circular LOS and empt
 
     REQUIRE(server.SetBubbleRadii(0, 0));
     const WorldView unavailable = server.View(4);
-    CHECK(cell_at(unavailable, {-1, 0}) == ViewCell{});
-    CHECK(cell_at(unavailable, {0, -1}) == ViewCell{});
+    CHECK(cell_at(unavailable, {-1, 0}).terrainVisibility == Visibility::Remembered);
+    CHECK(cell_at(unavailable, {0, -1}).terrainVisibility == Visibility::Remembered);
     CHECK(world.GetChunk({-1, 0}) == nullptr);
     CHECK(world.CheckInvariants());
 }
@@ -643,7 +651,7 @@ TEST_CASE("Downward projection uses straight spherical LOS and isolates lower it
     const auto id = world.GetItem(rock)->id;
     const auto old = server.View(4);
     const auto& below = cell_at(old, {2, 0});
-    CHECK(below.visible);
+    CHECK(below.terrainVisibility == Visibility::Visible);
     CHECK(below.tile == Tile{TestTerrain("floor"), 41});
     CHECK(below.terrainDepth == 1);
     CHECK(below.overlayDepth == 1);
@@ -652,7 +660,7 @@ TEST_CASE("Downward projection uses straight spherical LOS and isolates lower it
     expect(server, {CommandKind::pick_up, 0, 0, id}, Outcome::nothing_here, false);
     CHECK_FALSE(world.CanAccessItem(server.GetPlayer(), rock));
     CHECK(server.View().groundItems[0].id != id);
-    CHECK(cell_at(server.View(2), {2, 0}).terrainDepth == 0); // sqrt(5) exceeds radius 2.
+    CHECK(cell_at(server.View(2), {2, 0}).terrainDepth == 1); // Viewport does not shorten sight.
     REQUIRE(world.SetTile({1, 0, 0}, {TestTerrain("floor"), 0}));
     const auto closed = server.View(4);
     CHECK(cell_at(closed, {2, 0}).tile.terrain == TestTerrain("air"));
@@ -660,7 +668,8 @@ TEST_CASE("Downward projection uses straight spherical LOS and isolates lower it
     CHECK(cell_at(closed, {2, 0}).terrainDepth == 0);
     CHECK(cell_at(old, {2, 0}).terrainDepth == 1); // Value snapshot remains isolated.
     REQUIRE(world.SetTile({1, 0, 0}, {TestTerrain("wall"), 0}));
-    CHECK(cell_at(server.View(4), {2, 0}) == ViewCell{});
+    CHECK(cell_at(server.View(4), {2, 0}).terrainVisibility == Visibility::Remembered);
+    CHECK(cell_at(server.View(4), {2, 0}).tile.terrain == TestTerrain("floor"));
     CHECK(world.CheckInvariants());
 }
 
@@ -696,7 +705,7 @@ TEST_CASE("Voxel corner ties conservatively block walls and closed floor edges",
     REQUIRE(world.SetTile({1, 1}, {TestTerrain("floor"), 0}));
     REQUIRE(world.SetTile({0, 1}, {TestTerrain("floor"), 0}));
     REQUIRE(world.SetTile({1, 0}, {TestTerrain("wall"), 0}));
-    CHECK(cell_at(server.View(4), {1, 1}) == ViewCell{});
+    CHECK(cell_at(server.View(4), {1, 1}).terrainVisibility == Visibility::Remembered);
     REQUIRE(world.SetTile({1, 0, -1}, {TestTerrain("floor"), 11}));
     REQUIRE(world.SetTile({1, 0}, {TestTerrain("air"), 0}));
     // The exact diagonal to (1,0,-1) touches the origin's closed bottom edge.

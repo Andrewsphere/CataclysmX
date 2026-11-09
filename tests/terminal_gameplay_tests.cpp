@@ -91,6 +91,37 @@ struct Fixture {
     }
 };
 
+TEST_CASE("Terminal timer coalesces outstanding wakeups and rearms on consumption", "[terminal][gameplay][input]") {
+    TerminalTimerWakeup wakeup;
+    CHECK(wakeup.TryPost());
+    for (int i = 0; i < 100; ++i) { CHECK_FALSE(wakeup.TryPost()); }
+    wakeup.Consumed();
+    CHECK(wakeup.TryPost());
+    CHECK_FALSE(wakeup.TryPost());
+    wakeup.Consumed();
+    CHECK(wakeup.TryPost());
+}
+
+TEST_CASE("Gameplay localizes player light in wide and compact status", "[terminal][gameplay][perception]") {
+    Fixture f;
+    const LanguageCatalog labels{{"game.ui.light", "Illumination:", {}},
+        {"game.light.dark", "Night", {}}, {"game.light.dim", "Faint", {}},
+        {"game.light.ordinary", "Normal", {}}, {"game.light.bright", "Radiant", {}}};
+    auto english = LoadLanguageCatalog(JoinConfigurationPath(CATACLYSMX_LOC_DIRECTORY, "en.json5").c_str());
+    REQUIRE(english);
+    REQUIRE(f.localization.SetCatalogs(*english, labels));
+    for (const int width : {80, 120}) {
+        for (const auto band : {LightBand::Dark, LightBand::Dim, LightBand::Ordinary, LightBand::Bright}) {
+            f.view.playerLight = band;
+            const auto screen = f.Draw(width, 40);
+            CHECK(Find(screen, "Illumination:"));
+            const char* expected = band == LightBand::Dark ? "Night" : band == LightBand::Dim ? "Faint"
+                : band == LightBand::Ordinary ? "Normal" : "Radiant";
+            CHECK(Find(screen, expected));
+        }
+    }
+}
+
 TEST_CASE("Gameplay layout keeps map status and message visible without inventory players or footer", "[terminal][gameplay][layout]") {
     Fixture f;
     f.Items(1);
@@ -135,6 +166,37 @@ TEST_CASE("Gameplay map crops around player preserves glyph colors and handles r
             CHECK(Find(screen, "Map cropped").has_value() == (radius >= 8 && height == 24));
         }
     }
+}
+
+TEST_CASE("Gameplay reuses prepared map across status redraws and refreshes changed cells", "[terminal][gameplay][render]") {
+    Fixture f;
+    auto first = f.Draw(120, 40);
+    REQUIRE(Find(first, "@"));
+    REQUIRE(f.ui.MapPreparations() == 1);
+    f.view.tick += 1; f.view.remainingTicks = 4; f.presentation.message = "Updated status";
+    auto status = f.Draw(80, 24);
+    CHECK(Find(status, "Updated status"));
+    CHECK(Find(status, "@"));
+    CHECK(f.ui.MapPreparations() == 1);
+    // The crop anchor is recomputed independently of the cached terrain tree.
+    f.view.player_position.x += 1;
+    f.Draw(120, 24);
+    CHECK(f.ui.MapPreparations() == 1);
+    auto& cell = f.view.cells[static_cast<std::size_t>((f.view.height / 2) * f.view.width + f.view.width / 2)];
+    cell.player = false; cell.actor = 7; cell.overlayVisibility = Visibility::Visible;
+    auto changed = f.Draw(120, 40);
+    CHECK(Find(changed, "z"));
+    CHECK(f.ui.MapPreparations() == 2);
+    cell.overlayLight = LightBand::Dim;
+    auto relit = f.Draw(120, 40);
+    GameplayUi fresh;
+    auto reference = ftxui::Screen::Create(ftxui::Dimension::Fixed(120), ftxui::Dimension::Fixed(40));
+    ftxui::Render(reference, fresh.Render(f.view, TestContent(), f.localization, f.keys, f.presentation));
+    CHECK(relit.ToString() == reference.ToString());
+    CHECK(f.ui.MapPreparations() == 3);
+    f.view = f.server.View(0);
+    f.Draw(120, 40);
+    CHECK(f.ui.MapPreparations() == 4);
 }
 
 TEST_CASE("Status groups readiness location and pacing with aligned values and complete large numbers", "[terminal][gameplay][layout]") {

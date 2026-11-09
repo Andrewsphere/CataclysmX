@@ -1,18 +1,23 @@
 # Save format
 
-CataclysmX saves are SQLite database files. The strict v6 format is governed by
-one authoritative `metadata.format_version = 6` for both SQL and JSON. The
+CataclysmX saves are SQLite database files. The strict v7 format is governed by
+one authoritative `metadata.format_version = 7` for both SQL and JSON. The
 `metadata` columns are `singleton INTEGER PRIMARY KEY CHECK(singleton=1)`,
 `format_version INTEGER NOT NULL`, and `game_version TEXT NOT NULL`; its single
-row is `(1, 6, "0.1.0")`. The other tables are
+row is `(1, 7, "0.1.0")`. The other tables are
 `world_state(singleton INTEGER PRIMARY KEY CHECK(singleton=1), payload TEXT NOT
 NULL)` and `chunks(x INTEGER NOT NULL, z INTEGER NOT NULL, y INTEGER NOT NULL,
-payload TEXT NOT NULL, PRIMARY KEY(x,z,y))`. Extra application tables/schema objects are rejected.
+payload TEXT NOT NULL, PRIMARY KEY(x,z,y))`, and
+`player_memories(player_id TEXT NOT NULL, x INTEGER NOT NULL, z INTEGER NOT NULL,
+y INTEGER NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(player_id,x,z,y))`.
+Extra application tables/schema objects are rejected.
 
 ## JSON payloads
 
 The single `world_state.payload` object has exactly `seed`,
-`generation_version`, `next_id`, and `session`. The session object has exactly
+`generation_version`, `next_id`, `sky_light`, and `session`. `sky_light` is a
+required integer in 0–255: the fixed environment illumination (new-world default
+192), independent of wall-clock time. The session object has exactly
 `tick`, `rng_state`, `player`, `position` (`x`, `z`, `y`), `active_radius`,
 `resident_radius`, `autosave_interval`, `pacing`, and `players`. `players` is an
 array of at most 32 exact objects `{ "actor": decimal-string,
@@ -48,10 +53,20 @@ The root object has exactly `tiles`, `actors`, `objects`, and `ground_items`:
 - `actors`: `{ "id": decimal-string, "position": {"x": int, "z": int, "y": int},
   "player": boolean, "parked": boolean, "turns": decimal-string, "inventory": [...],
   "speed": positive-uint32, "remaining_ticks": decimal-string,
-  "carry_capacity_g": decimal-string }`. Carry capacity preserves the full uint64 range.
+  "carry_capacity_g": decimal-string, "light": {"intensity": integer, "range": integer} }`.
+  Carry capacity preserves the full uint64 range.
 - `objects`: `{ "id": decimal-string, "position": {"x": int, "z": int, "y": int},
   "enabled": boolean, "updates": decimal-string, "contents": [...],
-  "update_interval": positive-uint32, "remaining_ticks": decimal-string }`.
+  "update_interval": positive-uint32, "remaining_ticks": decimal-string,
+  "kind": integer, "facing": integer, "broken": boolean,
+  "light": {"intensity": integer, "range": integer} }`.
+  Semantic kinds are Generic=1, Chair=2, Table=3, Lamp=4; None=0 is invalid for
+  a stored object. Facing is North=0, East=1, South=2, West=3. These closed semantic
+  enum values are part of v7, not content ordinals or renderer sprite indices.
+  Source intensity is 0–255, source range is 0–12, and intensity is zero if and
+  only if range is zero. `enabled` controls object emission; disabled or broken
+  objects still retain validated source parameters. Light objects have exactly
+  `intensity` and `range`; actor and object sources follow the same validation.
 - `ground_items` and nested `inventory`/`contents` arrays use exact item objects
   with `id` (decimal string), `type` (stable content item ID), `state` (structured
   capability object), `installation` (stable **parent** behavior capability name,
@@ -86,7 +101,7 @@ tree directly. The controller target is a world position and includes its Y
 coordinate in the v6 state representation. `ValidateItemSnapshot` is the shared item-state and ownership-tree
 validator for both archive paths, dispatching behavior-owned local and relational
 validation. Installation names resolve against the parent definition and its
-`AcceptsInstallation` policy. Metadata is version 6. Energy and charger state
+`AcceptsInstallation` policy. Metadata is version 7. Energy and charger state
 remain version 1; door state version 2 adds required signed Y. These schemas use
 unsigned JSON numbers and signed `$i64` target
 coordinates. No capacity clamping or implicit state migration is introduced.
@@ -103,12 +118,12 @@ ownership, chunks and session player identity/position are validated. Generic
 `generation_version` accepts 1 and 2 (legacy) and 3 (current); other values fail with
 `SaveError::UnsupportedVersion`. New worlds use generation version 3. Versions 1
 and 2 retain their prior surface generation; nonsurface slices use the layered
-terrain rules. The SQL/JSON save schema is version 6: save formats v1 through v5
+terrain rules. The SQL/JSON save schema is version 7: save formats v1 through v6
 and all other schema versions are rejected, with no migrations or backup
 files. In particular, v2 command-count ticks are not silently reinterpreted as
 simulation ticks. Content's own format version is independent of both versions.
-This is an explicit schema break for three-dimensional chunk keys, positions,
-and item targets. Individual state migrations are a separate,
+Version 7 explicitly adds illumination sources, object semantic identity,
+fixed skylight and independent per-player observations. Individual state migrations are a separate,
 explicit capability-version policy; no generic auto-clamp or fallback applies.
 
 `session.tick` counts global simulation ticks (100 per standard turn), while
@@ -126,6 +141,51 @@ reactivation, even when session time has advanced elsewhere. Persisting the
 relative values keeps that rule identical across RAM archives and disk reloads.
 
 ## Checkpoints and API
+
+### Per-player memory encoding
+
+Each `player_memories` row stores a complete single-layer 16×16 observation chunk.
+The player key is a canonical unsigned uint64 decimal **TEXT** value, preserving
+IDs above SQLite's signed integer range. Zero, leading zeros, signs, whitespace,
+overflow and embedded NULs are invalid. Chunk bounds match live chunk bounds,
+including Y in `[-10,10]`. Memory chunks need not have any corresponding live
+`chunks` row and survive unloading and eviction independently.
+
+The exact payload is `{ "palette": [null, "floor", ...], "runs": [[index,count], ...],
+"objects": [{"tile": integer, "kind": integer, "facing": integer,
+"active": boolean, "broken": boolean}, ...] }`.
+
+- Palette slot zero is always `null`, meaning unknown terrain. Other entries are
+  unique stable terrain strings resolved against the supplied catalog. There are
+  at most 257 entries, including unknown. Missing content fails with the stable
+  name and `player_memories[player][x,z,y]` diagnostic context.
+- Each run is exactly two integers: a valid palette index and a positive count.
+  Runs cover exactly 256 row-major tiles without overflow. At most 256 runs are
+  allowed. The writer emits maximal runs and first-use palette order; the reader
+  accepts equivalent split runs and unused palette entries. Every allocated memory
+  chunk must contain at least one observed terrain tile; all-unknown chunks are invalid.
+- Objects are sparse, strictly increasing by tile index (0–255), with no
+  duplicate tile, unknown enum value, None kind, or object on unknown terrain.
+  Appearance stores only kind/facing/active/broken, with no entity ID, behavior,
+  inventory, source parameters or ownership link to a live object.
+- Memory owners must resolve to player-marked actors anywhere in the durable
+  world, including parked actors and unloaded chunks. An empty server roster in
+  a generic World save does not invalidate a legitimate memory owner.
+
+`SaveSnapshot::memories` is decoded into owned `PlayerMemory` values, numerically
+ordered by persistent player ID (not SQL text-key order). Input owners must be
+strictly increasing; each owner's chunks must be strictly lexicographic `(x,z,y)`.
+Duplicate owners/chunks/objects and unordered chunks/objects are errors. A player
+with no allocated observation chunks needs no rows and is omitted on reload;
+its owner is nevertheless validated when supplied to a checkpoint.
+
+`SaveDatabase::WriteSnapshot` rewrites all memory rows in V1, inside the same
+transaction as changed live chunks and world/session state. This costs O(total
+remembered terrain and objects) encoding/writes per checkpoint, including stale
+observations. Saving serializes the supplied observation values without refreshing
+them from live tiles or objects. Open and commit validate every memory row and
+durable owner. Memory validation, SQL failures and commit failures roll back the
+entire checkpoint, including prior chunk writes and memory-row deletion.
 
 `World::Save` writes changed full chunk snapshots and session state in one
 transaction. `World::CreateSave` exclusively creates a new path and attaches it

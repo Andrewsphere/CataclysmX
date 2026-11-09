@@ -49,7 +49,7 @@ Definitions is an array (possibly empty). Each definition requires `type` and
 | `blocks_sight` | Boolean |
 
 Optional fields are `appearance`, `looks_like`, `opens_to`, `closes_to`,
-`open_space`, and `stairs`. The latter two are booleans defaulting to false.
+`open_space`, `stairs`, and `light`. `open_space` and `stairs` are booleans defaulting to false.
 `open_space: true` requires passable terrain that does not block sight and is
 not stairs. `stairs: true` requires passable terrain that does not block sight
 and is not open space. Open space has no floor support and transmits downward;
@@ -66,7 +66,7 @@ gameplay meaning is defined. No ID prefixes are reserved or required.
 `appearance` accepts only `symbol`, `foreground`, and `background`. `looks_like`
 names another terrain by stable string ID and inherits **only unspecified
 appearance fields**. Explicit fields override inherited fields individually.
-Name, passability, sight blocking, and transition references are never inherited;
+Name, passability, sight blocking, light, and transition references are never inherited;
 required gameplay fields must always be present locally.
 
 All sources are collected before resolving references, so forward and cross-file
@@ -85,6 +85,18 @@ DEL, and C1 controls (U+0000–001F and U+007F–009F). Invalid UTF-8, surrogate
 and multiple scalars are rejected. Space, combining scalars, and wide scalars
 are accepted: terminal display width and fallback belong to the frontend, not
 the simulation/content schema.
+
+### Terrain light
+
+An optional `light` object defines gameplay emission, for example
+`light: {intensity: 255, range: 2}`. It requires exactly both `intensity`
+and `range`: integers from 0 to 255 and 0 to 12 respectively. Both must be
+zero (disabled) or both positive. Omission also disables emission. Booleans,
+fractions, negative values, out-of-range values, unknown keys, and duplicate
+keys are errors. Intensity and range are independent, allowing both a bright,
+short-range light and a dim, wide-range light. `looks_like` never inherits light;
+each terrain specifies its own emission. Emission is gameplay content rather
+than an appearance or renderer setting.
 
 ### Colors
 

@@ -43,22 +43,13 @@ void Flexible(ftxui::Requirement& requirement) {
 // consistent with the actual terminal; no physical screen query is needed.
 class MapViewport final : public ftxui::Node {
 public:
-    MapViewport(const WorldView& view, const ContentCatalog& content, const String& cropped)
+    MapViewport(const WorldView& view, ftxui::Element terrain, const String& cropped)
         : Node(ftxui::Elements{}), width_(view.width), height_(view.height),
           playerX_(static_cast<int>(std::clamp<std::int64_t>(
               static_cast<std::int64_t>(view.player_position.x) - view.origin.x, 0, std::max(0, view.width - 1)))),
           playerY_(static_cast<int>(std::clamp<std::int64_t>(
               static_cast<std::int64_t>(view.player_position.z) - view.origin.z, 0, std::max(0, view.height - 1)))) {
-        ftxui::Elements rows;
-        for (int y = 0; y < height_; ++y) {
-            ftxui::Elements cells;
-            for (int x = 0; x < width_; ++x) {
-                cells.push_back(RenderTerrainCell(CellAppearance(
-                    view.cells[static_cast<std::size_t>(y * width_ + x)], content)));
-            }
-            rows.push_back(ftxui::hbox(std::move(cells)));
-        }
-        children_ = {ftxui::vbox(std::move(rows)), Text(cropped)};
+        children_ = {std::move(terrain), Text(cropped)};
     }
     void ComputeRequirement() override { Node::ComputeRequirement(); Flexible(requirement_); }
     void SetBox(ftxui::Box box) override {
@@ -313,10 +304,19 @@ ftxui::Element GameplayUi::Render(const WorldView& view, const ContentCatalog& c
     String position = localization.Format("game.ui.coordinates", {
         {"x", NumberText(view.player_position.x)}, {"z", NumberText(view.player_position.z)}});
     position += ", y="; position += NumberText(view.player_position.y);
+    const char* lightKey = "game.light.dark";
+    switch (view.playerLight) {
+    case LightBand::Dark: break;
+    case LightBand::Dim: lightKey = "game.light.dim"; break;
+    case LightBand::Ordinary: lightKey = "game.light.ordinary"; break;
+    case LightBand::Bright: lightKey = "game.light.bright"; break;
+    }
+    const auto light = t(lightKey);
     ftxui::Elements status{stateField,
         StatusField(t("game.ui.cooldown"), localization.Format("game.ui.ticks", {{"ticks", UnsignedText(view.remainingTicks)}})),
         StatusField(t("game.ui.speed"), UnsignedText(view.speed)), ftxui::separatorLight(),
         Text(t("game.ui.location")) | ftxui::bold, Paragraph(position),
+        StatusField(t("game.ui.light"), light),
         StatusField(t("game.ui.tick"), UnsignedText(view.tick)), ftxui::separatorLight(),
         Text(t("game.ui.pacing")) | ftxui::bold,
         StatusField(t("game.ui.tick_rate"), localization.Format("game.ui.per_second", {{"rate", UnsignedText(view.pacing.ticksPerSecond)}})),
@@ -334,8 +334,24 @@ ftxui::Element GameplayUi::Render(const WorldView& view, const ContentCatalog& c
         compact += pending; compact += " | ";
     }
     compact += compactPacing;
+    compact += " | "; compact += t("game.ui.light"); compact += ' '; compact += light;
+    if (!presentation.lan && (!mapElements_ || mapContent_ != &content || mapWidth_ != view.width
+        || mapHeight_ != view.height || mapCells_ != view.cells)) {
+        ftxui::Elements rows;
+        for (int y = 0; y < view.height; ++y) {
+            ftxui::Elements cells;
+            for (int x = 0; x < view.width; ++x) {
+                cells.push_back(RenderTerrainCell(CellAppearance(
+                    view.cells[static_cast<std::size_t>(y * view.width + x)], content)));
+            }
+            rows.push_back(ftxui::hbox(std::move(cells)));
+        }
+        mapElements_ = ftxui::vbox(std::move(rows));
+        mapCells_ = view.cells; mapWidth_ = view.width; mapHeight_ = view.height;
+        mapContent_ = &content; ++mapPreparations_;
+    }
     auto world = presentation.lan ? presentation.lan
-        : std::make_shared<MapViewport>(view, content, t("game.ui.cropped"));
+        : std::make_shared<MapViewport>(view, mapElements_, t("game.ui.cropped"));
     auto body = std::make_shared<GameplayBody>(Panel(t(presentation.lan ? "game.ui.lan" : "game.ui.world"), world),
         Panel(t("game.ui.status"), ftxui::vbox(std::move(status))), Padded(ftxui::paragraph(Frontend(compact))));
     auto background = ftxui::vbox({Padded(ftxui::hbox({Text(t("game.title")) | ftxui::bold,

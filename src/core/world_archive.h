@@ -15,6 +15,7 @@ struct SavedActor {
     Tick remainingTicks = 0;
     bool parked = false;
     std::uint64_t carryCapacityGrams = 100000;
+    LightEmission light{};
 };
 
 struct SavedObject {
@@ -24,6 +25,10 @@ struct SavedObject {
     std::uint64_t updates;
     std::uint32_t updateInterval = 100;
     Tick remainingTicks = 100;
+    ObjectKind kind = ObjectKind::Generic;
+    ObjectFacing facing = ObjectFacing::North;
+    bool broken = false;
+    LightEmission light{};
 };
 
 struct SavedItem {
@@ -49,6 +54,8 @@ struct SaveSnapshot {
     std::uint32_t generationVersion = 3;
     PersistentId nextId = 1;
     SessionState session;
+    std::uint8_t skyLight = defaultSkyLight;
+    Vector<PlayerMemory> memories;
 };
 
 }

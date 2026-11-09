@@ -2,6 +2,7 @@
 
 #include "core/containers.h"
 #include "core/diagnostics.h"
+#include "core/light_types.h"
 #include "content/item_definition.h"
 #include "content/content_result.h"
 
@@ -43,6 +44,7 @@ struct TerrainDefinition {
     TerrainId closesTo{};
     bool openSpace = false; // No floor support; transmits downward. All other terrain supports a floor.
     bool stairs = false; // Matched stairs at adjacent Y connect travel and vertical sight.
+    LightEmission light{};
 };
 
 struct BuildingPatternId {

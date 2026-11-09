@@ -62,7 +62,7 @@ TEST_CASE("Network wire rejects truncated values, invalid enums and oversized sn
     wire::Reader badSpeed{{bad.data(), bad.size()}};
     CHECK_FALSE(badSpeed.View(result));
     bad = snapshot.bytes;
-    bad[bad.size() - 19] = 255; // player connection state
+    bad[bad.size() - 20] = 255; // final player connection state, before flags/u64s and appended player light
     wire::Reader badState{{bad.data(), bad.size()}};
     CHECK_FALSE(badState.View(result));
     wire::Writer commandBytes;
@@ -104,8 +104,8 @@ bool Poll(LanHost& host, LanClient& a, LanClient& b, Predicate predicate) {
     return false;
 }
 
-TEST_CASE("Protocol six preserves signed six-axis commands and authoritative shapes", "[network][codec][3d]") {
-    CHECK(wire::protocol == 0x43584e06);
+TEST_CASE("Protocol seven preserves signed six-axis commands and authoritative shapes", "[network][codec][3d]") {
+    CHECK(wire::protocol == 0x43584e07);
     for (const auto kind : {CommandKind::move, CommandKind::interact}) {
         for (const TileCoord direction : {TileCoord{1, 0, 0}, {-1, 0, 0}, {0, 1, 0},
             {0, -1, 0}, {0, 0, 1}, {0, 0, -1}, {0, 0, 0}, {1, 0, 1}, {0, 1, -1}, {0, 0, INT_MIN}}) {
@@ -129,6 +129,9 @@ TEST_CASE("Protocol six preserves signed six-axis commands and authoritative sha
 TEST_CASE("Actual elevated server projections roundtrip independent terrain and overlay depths", "[network][codec][3d]") {
     Server server(TestContent());
     auto& world = server.GetWorld();
+    // This test isolates projection/codec geometry, including sealed underground
+    // layers where sky cannot supply illumination.
+    REQUIRE(world.SetActorLight(server.GetPlayer(), {192, 12}));
     for (int y : {-1, 2}) {
         CAPTURE(y);
         REQUIRE(world.SetTile({0, 0, y}, {TestTerrain("floor"), 0}));
@@ -149,10 +152,10 @@ TEST_CASE("Actual elevated server projections roundtrip independent terrain and 
         const auto item = world.CreateItem(TestItem("rock"), ItemLocation::Ground({0, 3, y - 1})); REQUIRE(item);
         const auto view = server.View(4);
         const auto& actorCell = view.cells[4 * view.width + 6];
-        REQUIRE(actorCell.visible); CHECK(actorCell.terrainDepth == 1); CHECK(actorCell.overlayDepth == 0);
+        REQUIRE(actorCell.terrainVisibility == Visibility::Visible); CHECK(actorCell.terrainDepth == 1); CHECK(actorCell.overlayDepth == 0);
         CHECK(actorCell.actor == world.GetActor(*foreground)->id);
         const auto& itemCell = view.cells[7 * view.width + 4];
-        REQUIRE(itemCell.visible); CHECK(itemCell.terrainDepth == 1); CHECK(itemCell.overlayDepth == 1);
+        REQUIRE(itemCell.terrainVisibility == Visibility::Visible); CHECK(itemCell.terrainDepth == 1); CHECK(itemCell.overlayDepth == 1);
         CHECK(itemCell.ground_items != 0);
         wire::Writer writer; REQUIRE(writer.View(view));
         wire::Reader reader{{writer.bytes.data(), writer.bytes.size()}};
@@ -167,7 +170,7 @@ WorldView SingleCellView(int y = 0) {
     WorldView view;
     view.width = 1; view.height = 1; view.playerId = 1;
     view.origin.y = y; view.player_position.y = y;
-    ViewCell cell; cell.visible = true; cell.tile.terrain = TestTerrain("floor");
+    ViewCell cell; cell.terrainVisibility = Visibility::Visible; cell.tile.terrain = TestTerrain("floor");
     view.cells.push_back(cell);
     return view;
 }
@@ -176,9 +179,9 @@ TEST_CASE("Snapshot codecs reject invalid elevation, source depths and visible b
     const auto baseline = SingleCellView();
     auto invalid = baseline;
     wire::Writer writer; REQUIRE(writer.View(baseline));
-    // Protocol-six view header: origin XYZ, dimensions, player XYZ, timing/status, cell count.
+    // Protocol-seven header is unchanged; each cell is now a fixed 36-byte record.
     constexpr std::size_t originY = 8, playerY = 22, firstCell = 87;
-    constexpr std::size_t terrainDepth = firstCell + 28, overlayDepth = firstCell + 29;
+    constexpr std::size_t terrainDepth = firstCell + 31, overlayDepth = firstCell + 32;
     std::size_t offset = 0;
     wire::Writer replacement;
     SECTION("origin mismatch") { invalid.origin.y = 1; offset = originY; replacement.I32(1); }
@@ -198,7 +201,9 @@ TEST_CASE("Snapshot codecs reject invalid elevation, source depths and visible b
     SECTION("terrain below bottom") { invalid.cells[0].terrainDepth = 11; offset = terrainDepth; replacement.U8(11); }
     SECTION("overlay below bottom") {
         invalid.cells[0].actor = 7; invalid.cells[0].overlayDepth = 11;
+        invalid.cells[0].overlayVisibility = Visibility::Visible;
         writer.bytes[firstCell + 13] = 7; // actor low byte
+        writer.bytes[firstCell + 33] = 2;
         offset = overlayDepth; replacement.U8(11);
     }
     SECTION("terrain beyond byte contract") { invalid.cells[0].terrainDepth = 21; offset = terrainDepth; replacement.U8(21); }
@@ -206,9 +211,9 @@ TEST_CASE("Snapshot codecs reject invalid elevation, source depths and visible b
     SECTION("unsigned depth cannot wrap on encode") { invalid.cells[0].terrainDepth = 256; offset = terrainDepth; replacement.U8(255); }
     SECTION("depth without overlay") { invalid.cells[0].overlayDepth = 1; offset = overlayDepth; replacement.U8(1); }
     SECTION("zero terrain") { invalid.cells[0].tile.terrain = {}; offset = firstCell + 1; replacement.U32(0); }
-    SECTION("invalid visibility") { invalid.cells[0].visible = false; offset = firstCell; replacement.U8(2); }
+    SECTION("invalid visibility") { invalid.cells[0].terrainVisibility = static_cast<Visibility>(3); offset = firstCell; replacement.U8(3); }
     SECTION("player without actor") { invalid.cells[0].player = true; offset = firstCell + 14; replacement.U8(1); }
-    SECTION("enabled without object") { invalid.cells[0].object_enabled = true; offset = firstCell + 27; replacement.U8(1); }
+    SECTION("active without object") { invalid.cells[0].objectAppearance.active = true; offset = firstCell + 29; replacement.U8(1); }
     wire::Writer rejected; CHECK_FALSE(rejected.View(invalid));
     REQUIRE_FALSE(replacement.bytes.empty());
     for (std::size_t i = 0; i < replacement.bytes.size(); ++i) writer.bytes[offset + i] = replacement.bytes[i];
@@ -216,13 +221,101 @@ TEST_CASE("Snapshot codecs reject invalid elevation, source depths and visible b
     WorldView decoded; CHECK_FALSE(reader.View(decoded));
 }
 
+TEST_CASE("Protocol seven roundtrips independent memory and live contributions", "[network][codec][perception]") {
+    auto view = SingleCellView(2);
+    auto& cell = view.cells[0];
+    cell.terrainDepth = 3;
+    cell.overlayDepth = 1;
+    cell.objectAppearance = {ObjectKind::Chair, ObjectFacing::West, false, true};
+    cell.overlayVisibility = Visibility::Remembered;
+    cell.terrainLight = LightBand::Bright;
+    view.playerLight = LightBand::Dim;
+    SECTION("live terrain remembered furniture") {}
+    SECTION("remembered terrain live actor and furniture") {
+        cell.terrainVisibility = Visibility::Remembered; cell.terrainLight = LightBand::Dark;
+        cell.overlayVisibility = Visibility::Visible; cell.overlayLight = LightBand::Ordinary;
+        cell.actor = 42; cell.ground_items = 2; cell.object = 99;
+    }
+    SECTION("unknown terrain remembered furniture") {
+        cell.terrainVisibility = Visibility::Unknown; cell.tile = {}; cell.terrainDepth = 0;
+        cell.terrainLight = LightBand::Dark;
+    }
+    SECTION("remembered terrain live items") {
+        cell.terrainVisibility = Visibility::Remembered; cell.terrainLight = LightBand::Dark;
+        cell.overlayVisibility = Visibility::Visible; cell.overlayLight = LightBand::Dark;
+        cell.objectAppearance = {}; cell.ground_items = 1;
+    }
+    wire::Writer writer; REQUIRE(writer.View(view));
+    wire::Reader reader{{writer.bytes.data(), writer.bytes.size()}};
+    WorldView decoded; REQUIRE(reader.View(decoded)); CHECK(reader.Done());
+    CHECK(decoded.cells == view.cells); CHECK(decoded.playerLight == LightBand::Dim);
+}
+
+TEST_CASE("Protocol seven rejects hidden information and malformed perception states", "[network][codec][perception]") {
+    auto view = SingleCellView();
+    auto& cell = view.cells[0];
+    cell.terrainVisibility = Visibility::Remembered;
+    cell.overlayVisibility = Visibility::Remembered;
+    cell.objectAppearance = {ObjectKind::Lamp, ObjectFacing::East, true, false};
+    wire::Writer writer; REQUIRE(writer.View(view));
+    std::size_t field = 0; std::uint8_t value = 0;
+    // Cell offsets are explicit protocol-seven fields, not native structure offsets.
+    SECTION("terrain visibility") { cell.terrainVisibility = static_cast<Visibility>(3); field = 0; value = 3; }
+    SECTION("overlay visibility") { cell.overlayVisibility = static_cast<Visibility>(3); field = 33; value = 3; }
+    SECTION("terrain band") { cell.terrainLight = static_cast<LightBand>(4); field = 34; value = 4; }
+    SECTION("overlay band") { cell.overlayLight = static_cast<LightBand>(4); field = 35; value = 4; }
+    SECTION("current light on memory terrain") { cell.terrainLight = LightBand::Dim; field = 34; value = 1; }
+    SECTION("current light on memory object") { cell.overlayLight = LightBand::Bright; field = 35; value = 3; }
+    SECTION("memory damage") { cell.tile.damage = 1; field = 5; value = 1; }
+    SECTION("memory actor") { cell.actor = 1; field = 13; value = 1; }
+    SECTION("memory items") { cell.ground_items = 1; field = 18; value = 1; }
+    SECTION("memory object handle") { cell.object = 1; field = 26; value = 1; }
+    SECTION("empty remembered object") { cell.objectAppearance.kind = ObjectKind::None; field = 27; value = 0; }
+    SECTION("object kind") { cell.objectAppearance.kind = static_cast<ObjectKind>(5); field = 27; value = 5; }
+    SECTION("object facing") { cell.objectAppearance.facing = static_cast<ObjectFacing>(4); field = 28; value = 4; }
+    SECTION("active boolean") { field = 29; value = 2; }
+    SECTION("broken boolean") { field = 30; value = 2; }
+    SECTION("terrain depth") { cell.terrainDepth = 21; field = 31; value = 21; }
+    SECTION("overlay depth") { cell.overlayDepth = 21; field = 32; value = 21; }
+    SECTION("live descriptor without handle") { cell.overlayVisibility = Visibility::Visible; field = 33; value = 2; }
+    if (field != 29 && field != 30) {
+        wire::Writer invalid; CHECK_FALSE(invalid.View(view));
+    }
+    writer.bytes[87 + field] = value;
+    wire::Reader reader{{writer.bytes.data(), writer.bytes.size()}};
+    WorldView decoded; CHECK_FALSE(reader.View(decoded));
+}
+
+TEST_CASE("Protocol seven validates the appended player light band", "[network][codec][perception]") {
+    auto view = SingleCellView();
+    wire::Writer writer; REQUIRE(writer.View(view));
+    writer.bytes.back() = 4;
+    wire::Reader reader{{writer.bytes.data(), writer.bytes.size()}};
+    WorldView decoded; CHECK_FALSE(reader.View(decoded));
+    view.playerLight = static_cast<LightBand>(4);
+    wire::Writer invalid; CHECK_FALSE(invalid.View(view));
+}
+
+TEST_CASE("Receiving catalog validation rejects unknown terrain including memory", "[network][codec][perception]") {
+    for (const auto visibility : {Visibility::Visible, Visibility::Remembered}) {
+        auto view = SingleCellView(); view.cells[0].terrainVisibility = visibility;
+        CHECK(wire::ValidTerrainDefinitions(view, TestContent()));
+        view.cells[0].tile.terrain = {UINT32_MAX};
+        wire::Writer writer; REQUIRE(writer.View(view)); // Definition-independent structural codec.
+        wire::Reader reader{{writer.bytes.data(), writer.bytes.size()}};
+        WorldView decoded; REQUIRE(reader.View(decoded));
+        CHECK_FALSE(wire::ValidTerrainDefinitions(decoded, TestContent()));
+    }
+}
+
 TEST_CASE("Hidden cells are default and projection origins may extend past horizontal boundaries", "[network][codec][3d]") {
     auto view = SingleCellView(world_max_y);
     view.cells[0].terrainDepth = 20; view.cells[0].overlayDepth = 20; view.cells[0].actor = 9;
+    view.cells[0].overlayVisibility = Visibility::Visible;
     wire::Writer deepest; REQUIRE(deepest.View(view));
     wire::Reader deepestReader{{deepest.bytes.data(), deepest.bytes.size()}};
     WorldView decoded; REQUIRE(deepestReader.View(decoded)); CHECK(decoded.cells == view.cells);
-    auto leaked = deepest.bytes; leaked[87] = 0; // Hidden cells have no payload on the wire.
+    auto leaked = deepest.bytes; leaked[87] = 0; // Unknown terrain must have a default payload.
     wire::Reader leakedReader{{leaked.data(), leaked.size()}};
     CHECK_FALSE((leakedReader.View(decoded) && leakedReader.Done()));
     view = SingleCellView(world_min_y);
@@ -248,8 +341,10 @@ TEST_CASE("Hidden cells are default and projection origins may extend past horiz
     // Move a valid center-cell payload to the adjacent, out-of-world column on the wire.
     view.cells[4] = view.cells[5]; view.cells[5] = {};
     wire::Writer centered; REQUIRE(centered.View(view));
-    centered.bytes.insert(centered.bytes.begin() + 87 + 4, 0);
-    centered.bytes.erase(centered.bytes.begin() + 87 + 4 + 1 + 30);
+    for (std::size_t i = 0; i < 36; ++i) {
+        centered.bytes[87 + 5 * 36 + i] = centered.bytes[87 + 4 * 36 + i];
+        centered.bytes[87 + 4 * 36 + i] = 0;
+    }
     wire::Reader malformed{{centered.bytes.data(), centered.bytes.size()}};
     CHECK_FALSE((malformed.View(decoded) && malformed.Done()));
     view = SingleCellView(); view.cells[0] = {};
@@ -263,7 +358,7 @@ TEST_CASE("Hidden cells are default and projection origins may extend past horiz
     SECTION("hidden player") { view.cells[0].player = true; }
     SECTION("hidden items") { view.cells[0].ground_items = 1; }
     SECTION("hidden object") { view.cells[0].object = 1; }
-    SECTION("hidden enabled") { view.cells[0].object_enabled = true; }
+    SECTION("hidden active") { view.cells[0].objectAppearance.active = true; }
     SECTION("hidden terrain depth") { view.cells[0].terrainDepth = 1; }
     SECTION("hidden overlay depth") { view.cells[0].overlayDepth = 1; }
     wire::Writer invalid; CHECK_FALSE(invalid.View(view));
@@ -283,9 +378,12 @@ TEST_CASE("Terrain fingerprint includes floor support and stair connectivity", "
     const auto air = fingerprint("open_space:true,stairs:false");
     const auto stairs = fingerprint("open_space:false,stairs:true");
     CHECK(floor != air); CHECK(floor != stairs); CHECK(air != stairs);
+    CHECK(floor != fingerprint("open_space:false,stairs:false,light:{intensity:120,range:4}"));
+    CHECK(fingerprint("light:{intensity:120,range:4}") != fingerprint("light:{intensity:121,range:4}"));
+    CHECK(fingerprint("light:{intensity:120,range:4}") != fingerprint("light:{intensity:120,range:5}"));
 }
 
-TEST_CASE("Loopback rejects protocol-five hello before admission", "[network][loopback][3d]") {
+TEST_CASE("Loopback rejects protocol-six hello before admission", "[network][loopback][perception]") {
     auto runtime = NetworkRuntime::Create(); REQUIRE(runtime);
     Server server(TestContent()); LanHost host(**runtime, server, TestContent()); REQUIRE(host.Open({0, 0, "Protocol"}));
     ENetHost* client = enet_host_create(nullptr, 1, 2, 0, 0); REQUIRE(client);
@@ -298,7 +396,7 @@ TEST_CASE("Loopback rejects protocol-five hello before admission", "[network][lo
         ENetEvent event{};
         while (enet_host_service(client, &event, 0) > 0) {
             if (event.type == ENET_EVENT_TYPE_CONNECT) {
-                wire::Writer hello; hello.U32(0x43584e05); hello.U8(static_cast<std::uint8_t>(wire::Type::Hello));
+                wire::Writer hello; hello.U32(0x43584e06); hello.U8(static_cast<std::uint8_t>(wire::Type::Hello));
                 hello.U64(ContentFingerprint(TestContent())); REQUIRE(hello.Text("Old guest", 32)); hello.U64(0);
                 auto* packet = enet_packet_create(hello.bytes.data(), hello.bytes.size(), ENET_PACKET_FLAG_RELIABLE);
                 REQUIRE(packet); REQUIRE(enet_peer_send(event.peer, 0, packet) == 0); enet_host_flush(client);
@@ -395,6 +493,59 @@ TEST_CASE("Real loopback joins two guests and preserves identity across reconnec
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     CHECK(b.GetState() == ConnectionState::Disconnected);
+}
+
+TEST_CASE("Reconnected guest input waits for the idle host's full grace", "[network][loopback][receipt]") {
+    auto runtime = NetworkRuntime::Create(); REQUIRE(runtime);
+    Server server(TestContent());
+    LanHost host(**runtime, server, TestContent());
+    REQUIRE(host.Open({0, 0, "Reconnect grace"}));
+    LanClient guest(**runtime, TestContent()), idle(**runtime, TestContent());
+    REQUIRE(guest.Connect({"127.0.0.1", host.GetPort(), "Alice", 0}));
+    REQUIRE(Poll(host, guest, idle, [&] { return guest.GetState() == ConnectionState::Active; }));
+    const auto player = guest.View().playerId;
+    const auto token = guest.GetReconnectToken();
+    guest.Disconnect();
+    REQUIRE(Poll(host, guest, idle, [&] {
+        for (const auto& p : server.GetPlayers())
+            if (p.id == player) return p.state == PlayerConnectionState::Parked;
+        return false;
+    }));
+    REQUIRE(guest.Connect({"127.0.0.1", host.GetPort(), "Alice", token}));
+    REQUIRE(Poll(host, guest, idle, [&] { return guest.GetState() == ConnectionState::Active; }));
+    REQUIRE(guest.View().playerId == player);
+    // Idle time during admission does not spend the host's input grace.
+    const auto hostActor = server.GetWorld().FindActor(server.GetHostPlayerId());
+    REQUIRE(server.View().players[0].graceMicroseconds == 1000000);
+    const auto sequence = guest.Submit({CommandKind::wait}); REQUIRE(sequence);
+    bool queued = false;
+    bool resolved = false;
+    const auto receive = [&] {
+        for (const auto& receipt : guest.TakeResults()) {
+            CHECK(receipt.sequence == *sequence);
+            if (receipt.result.outcome == Outcome::queued) queued = true;
+            else { CHECK(receipt.result.outcome == Outcome::waited); resolved = true; }
+        }
+    };
+    for (int i = 0; i < 200 && !queued; ++i) {
+        guest.Pump(0); host.Pump(0); guest.Pump(0); receive();
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    REQUIRE(queued); REQUIRE_FALSE(resolved);
+    host.Pump(999999);
+    REQUIRE(server.GetWorld().GetActor(hostActor)->remainingTicks == 0);
+    for (const auto& p : server.GetPlayers())
+        if (p.id == server.GetHostPlayerId()) REQUIRE(p.graceMicroseconds == 1);
+    const auto update = host.Pump(1);
+    REQUIRE(update.commandResults.size() == 1);
+    CHECK(update.commandResults[0].player == player);
+    CHECK(update.commandResults[0].sequence == *sequence);
+    CHECK(update.commandResults[0].result.outcome == Outcome::waited);
+    for (int i = 0; i < 200 && !resolved; ++i) {
+        guest.Pump(0); host.Pump(0); guest.Pump(0); receive();
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    CHECK(resolved);
 }
 
 TEST_CASE("Directed UDP discovery finds a compatible loopback host and expires", "[network][discovery]") {

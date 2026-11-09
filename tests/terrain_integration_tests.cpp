@@ -35,7 +35,7 @@ ContentCatalog CustomContent() {
 
 bool Visible(const WorldView& view, TileCoord position) {
     return view.cells[static_cast<std::size_t>((position.z - view.origin.z) * view.width
-        + position.x - view.origin.x)].visible;
+        + position.x - view.origin.x)].terrainVisibility == Visibility::Visible;
 }
 
 TEST_CASE("Catalog properties independently drive movement and visibility", "[content][server]") {

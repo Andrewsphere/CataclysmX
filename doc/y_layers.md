@@ -76,11 +76,15 @@ roofs at `y=1` over building footprints. The central legacy surface demo area is
 still preserved. New demo stairs around `x=-3` connect a basement, surface, and
 raised platform; nearby open air forms a pit.
 
-Save schema version 6 stores Y in tile/entity/session coordinates and explicitly
-rejects save versions 1–5; migrations are not implemented. The LAN protocol is
-version 6 (`0x43584e06`), incompatible with earlier versions. It carries Y in
-coordinates, vertical command `dy`, and view depth metadata. Content format
-version remains 1: the terrain flags are optional additions to that schema.
+Y-layer support was originally introduced in save/protocol version 6. The current
+save schema is version 7 and stores Y, lighting sources, skylight, semantic object
+appearance, and per-player observations; versions 1–6 are rejected and migrations
+are not implemented. The current LAN protocol is version 7 (`0x43584e07`),
+incompatible with earlier versions. It carries Y, vertical command `dy`, view depth,
+independent terrain/overlay visibility, and light bands. Content format version
+remains 1. See [lighting, perception, and player memory](perception.md),
+[save format](save_format.md), and [LAN networking](networking.md) for current
+contracts.
 
 Door-controller state version 2 stores signed `{x,z,y}` targets and rejects the
 old two-dimensional version 1. Vertical targeting also checks the connecting

@@ -16,33 +16,71 @@ void append_number(String& text, T value) {
     text.append(buffer, static_cast<String::size_type>(result.ptr - buffer));
 }
 
-RgbColor DepthTint(RgbColor color, unsigned int depth, bool background) {
+RgbColor DepthTint(RgbColor color, unsigned int depth, bool background, bool memory = false) {
     const unsigned int percent = depth == 0 ? 0 : std::min(70U, 15U + std::min(depth, 20U) * 10U);
-    const unsigned int strength = background ? percent / 2 : percent;
+    const unsigned int strength = (background ? percent / 2 : percent) / (memory ? 4 : 1);
     const auto blend = [strength](unsigned int value, unsigned int target) {
         return static_cast<unsigned char>((value * (100U - strength) + target * strength) / 100U);
     };
     return {blend(color.red, 48), blend(color.green, 96), blend(color.blue, 192)};
 }
 
+RgbColor PerceptionColor(RgbColor color, Visibility visibility, LightBand light, unsigned depth, bool background) {
+    const bool memory = visibility == Visibility::Remembered;
+    if (memory) {
+        const unsigned value = (unsigned(color.red) * 30 + unsigned(color.green) * 59 + unsigned(color.blue) * 11) / 100;
+        color = {static_cast<unsigned char>(40 + value * 55 / 100),
+            static_cast<unsigned char>(30 + value * 43 / 100), static_cast<unsigned char>(20 + value * 28 / 100)};
+    } else {
+        const auto channel = [light, background](unsigned value) {
+            switch (light) {
+            case LightBand::Dark: return background ? value / 4 : 24 + value / 4;
+            case LightBand::Dim: return value * 55 / 100;
+            case LightBand::Ordinary: return value;
+            case LightBand::Bright: return value + (255 - value) / 3;
+            }
+            return value;
+        };
+        color = {static_cast<unsigned char>(channel(color.red)), static_cast<unsigned char>(channel(color.green)),
+            static_cast<unsigned char>(channel(color.blue))};
+    }
+    return DepthTint(color, depth, background, memory);
+}
+
 }
 
 TerminalAppearance CellAppearance(const ViewCell& cell, const ContentCatalog& content) {
-    if (!cell.visible) { return {" ", {}, {}}; }
-    TerminalAppearance appearance = content.GetTerrain(cell.tile.terrain).appearance;
-    if (cell.actor != 0) {
+    TerminalAppearance appearance{" ", {}, {}};
+    if (cell.terrainVisibility != Visibility::Unknown) {
+        appearance = content.GetTerrain(cell.tile.terrain).appearance;
+        appearance.background = PerceptionColor(appearance.background, cell.terrainVisibility,
+            cell.terrainLight, cell.terrainDepth, true);
+    }
+    const bool live = cell.overlayVisibility == Visibility::Visible;
+    const bool overlay = (live && (cell.actor || cell.ground_items)) ||
+        (cell.overlayVisibility != Visibility::Unknown && cell.objectAppearance.kind != ObjectKind::None);
+    if (live && cell.actor != 0) {
         appearance.symbol = cell.player ? "@" : "z";
         appearance.foreground = cell.player ? RgbColor{255, 255, 255} : RgbColor{0, 255, 0};
-    } else if (cell.ground_items != 0) {
+    } else if (live && cell.ground_items != 0) {
         appearance.symbol = "!";
         appearance.foreground = {255, 255, 0};
-    } else if (cell.object != 0) {
-        appearance.symbol = cell.object_enabled ? "*" : "&";
-        appearance.foreground = cell.object_enabled ? RgbColor{0, 255, 255} : RgbColor{0, 128, 128};
+    } else if (overlay) {
+        switch (cell.objectAppearance.kind) {
+        case ObjectKind::Chair: appearance.symbol = "h"; break;
+        case ObjectKind::Table: appearance.symbol = "T"; break;
+        case ObjectKind::Lamp: appearance.symbol = cell.objectAppearance.active ? "*" : "i"; break;
+        case ObjectKind::Generic: appearance.symbol = cell.objectAppearance.active ? "*" : "&"; break;
+        case ObjectKind::None: break;
+        }
+        appearance.foreground = cell.objectAppearance.broken ? RgbColor{160, 96, 64}
+            : cell.objectAppearance.active ? RgbColor{0, 255, 255} : RgbColor{0, 128, 128};
     }
-    const bool overlay = cell.actor != 0 || cell.ground_items != 0 || cell.object != 0;
-    appearance.foreground = DepthTint(appearance.foreground, overlay ? cell.overlayDepth : cell.terrainDepth, false);
-    appearance.background = DepthTint(appearance.background, cell.terrainDepth, true);
+    if (overlay || cell.terrainVisibility != Visibility::Unknown) {
+        appearance.foreground = PerceptionColor(appearance.foreground,
+            overlay ? cell.overlayVisibility : cell.terrainVisibility,
+            overlay ? cell.overlayLight : cell.terrainLight, overlay ? cell.overlayDepth : cell.terrainDepth, false);
+    }
     return appearance;
 }
 

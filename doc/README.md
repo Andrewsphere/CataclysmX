@@ -11,7 +11,18 @@
 - [World API](world_api.md): identity, ownership, coordinates, chunk demand and
   in-memory archives. Start here for scenario setup and administrative tools.
 - [Y layers](y_layers.md): bounded elevation, whole-height chunk columns, stairs,
-  gravity, 3D sight, and layered generation/persistence contracts.
+  gravity, 3D sight, and layered generation/persistence contracts (introduced
+  historically with six layers; now 21 bounded Y values).
+- [Lighting, perception, and player memory](perception.md): resident light,
+  visibility channels, observation timing, and owned exploration memory.
+- [Bulk perception](bulk_perception.md): exact 3D visibility, World revisions,
+  cache invalidation, and work counters.
+- [Surface lighting](surface_lighting.md): observer-facing illumination and
+  incremental light-field updates.
+- [Sight defaults](sight_defaults.md): sight, residency, viewport, and save behavior.
+- [Terminal performance](terminal_performance.md): map DOM reuse and timer wakeups.
+- [Perception benchmark matrix](perception_benchmarks.md): scenarios and measurement
+  method, integrated Debug/Release results, and measured remaining limits.
 - [Items API](items_api.md): physical properties, volume-limited containment,
   installed batteries, explicit use actions, charging and timed door controllers.
 - [Adding item behaviors](item_behaviors.md): virtual interfaces, explicit factories,
@@ -28,10 +39,11 @@
   crossings, parcels/buildings, terrain materialization and debug inspection.
 - [Diagnostics](diagnostics.md): structured error causes and contextual frames.
 - [Terrain rendering](terrain_rendering.md): UTF-8 symbols, colors, and frontend behavior.
-- [Save format](save_format.md): SQLite v6, snapshots, validation and checkpoints.
+- [Save format](save_format.md): SQLite v7, snapshots, player memory, validation and checkpoints.
 - [LAN networking](networking.md): ENet hosting, joining, authoritative messages and discovery.
 - [LAN client profile](lan_profile.md): endpoint identities, typed errors and durability.
 - [Project README](../README.md): build instructions and dependencies.
+- [Running tests](testing.md): compact CTest runner and result-log behavior.
 
 The public interfaces are [`world.h`](../src/core/world.h),
 [`server.h`](../src/core/server.h) and

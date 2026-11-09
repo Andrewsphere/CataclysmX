@@ -224,6 +224,7 @@ int main(int argc, char** argv) {
         if (accepted) { interacting = false; }
         return accepted;
     };
+    TerminalTimerWakeup timerWakeup;
     auto component = ftxui::Renderer([&] {
         if (settingsOpen) { return settingsMenu->Render(); }
         if (debugOpen) { return debugMenu->Render(); }
@@ -256,6 +257,7 @@ int main(int argc, char** argv) {
         return gameplayUi.Render(CurrentView(), *content, localization, settings.Keys(), presentation);
     });
     component = ftxui::CatchEvent(component, [&](ftxui::Event event) {
+        if (event == ftxui::Event::Custom) { timerWakeup.Consumed(); }
         const auto now = std::chrono::steady_clock::now();
         keyboard.Query();
         const eastl::string_view raw(event.input().data(), event.input().size());
@@ -498,10 +500,10 @@ int main(int argc, char** argv) {
         SubmitCommand(command);
         return true;
     });
-    std::jthread timer([&screen](std::stop_token stop) {
+    std::jthread timer([&screen, &timerWakeup](std::stop_token stop) {
         while (!stop.stop_requested()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(20));
-            if (!stop.stop_requested()) { screen.PostEvent(ftxui::Event::Custom); }
+            if (!stop.stop_requested() && timerWakeup.TryPost()) { screen.PostEvent(ftxui::Event::Custom); }
         }
     });
     screen.Loop(component);

@@ -45,14 +45,21 @@ SimulationResult AdvanceUntilInput(World& world, Tick& tick,
     for (;;) {
         // Completed timed effects precede the input barrier. Their next delay
         // is committed immediately, so resuming this same tick cannot repeat it.
+        bool effectsCompleted = false;
         for (ObjectHandle handle : world.ActiveObjects()) {
             const InteractiveObject* object = world.GetObject(handle);
             if (object && object->enabled && object->remainingTicks == 0) {
                 Require(world.RecordObjectUpdate(handle).has_value());
+                effectsCompleted = true;
             }
         }
 
+        const auto dueItemEvent = world.NextItemEventIn();
+        effectsCompleted |= dueItemEvent && *dueItemEvent == 0;
         world.ProcessItemEvents();
+        // Due effects at the same tick form one observation boundary. This is
+        // inside the loop so a long wait cannot skip intermediate observations.
+        if (effectsCompleted) { world.UpdatePlayerObservations(); }
 
         SimulationResult result;
         const Vector<ActorHandle> actors = world.ActiveActors();
@@ -71,6 +78,7 @@ SimulationResult AdvanceUntilInput(World& world, Tick& tick,
             const Actor* actor = world.GetActor(handle);
             if (actor && !actor->player && actor->remainingTicks == 0) {
                 ActNpc(world, handle, rngState);
+                world.UpdatePlayerObservations();
             }
         }
 
@@ -112,6 +120,7 @@ void Advance(World& world, ActorHandle player, std::uint32_t& rng_state) {
     const Actor* controlled = world.GetActor(player);
     Require(controlled && controlled->player && world.IsActive(controlled->position));
     Require(world.ScheduleActorAction(player).has_value());
+    world.UpdatePlayerObservations();
     Tick tick = 0;
     const SimulationResult result = cataclysmx::AdvanceUntilInput(world, tick, rng_state,
         std::numeric_limits<Tick>::max());

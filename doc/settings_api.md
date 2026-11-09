@@ -60,7 +60,7 @@ inheritance explicit without a property registry, reflection, or variant map.
 | `view_radius` | 8 | 0–12 |
 | `autosave_interval` | 1000 | Simulation turns (100 ticks each); 0 disables |
 | `active_radius` | 1 | 0–8, no larger than resident radius |
-| `resident_radius` | 2 | 0–8 |
+| `resident_radius` | 5 | 0–8 |
 | `seed` | 42 | Creation default; never changes an existing world |
 | `ticks_per_second` | 100 | 1–1,000,000 |
 | `rate_limited` | false | Existing tick pacing behavior |
@@ -71,7 +71,11 @@ uses the server's fallible bubble update before applying pacing/autosave.
 It sends no command or elapsed time and never changes the world seed. Apply
 failure preserves previous server preferences. On load, the terminal restores
 SQLite state and applies current resolved preferences before accepting input.
-The next checkpoint records those active runtime values.
+The next checkpoint records those active runtime values. `Server::LoadSave` itself
+preserves saved radii, including smaller ones; terminal application of effective
+settings can replace them with inherited defaults or explicit overrides. Explicit
+small bubbles remain supported and clip sight at residency boundaries. Default
+sight is 64, independently of the bounded viewport. See [sight defaults](sight_defaults.md).
 
 Configuration is re-resolved on startup, world changes, and explicit reload or
 Apply; files are not watched. Headless runs retain their previous behavior

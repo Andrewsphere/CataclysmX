@@ -18,7 +18,7 @@ struct Settings {
     int viewRadius = 8;
     std::uint64_t autosaveInterval = 1000;
     int activeRadius = 1;
-    int residentRadius = 2;
+    int residentRadius = 5;
     std::uint32_t seed = 42;
     PacingSettings pacing{};
     bool operator==(const Settings&) const = default;

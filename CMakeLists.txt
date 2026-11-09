@@ -70,6 +70,8 @@ add_library(cataclysmx_engine STATIC
     src/items/charger_behavior.cpp src/items/door_controller_behavior.cpp
     src/core/diagnostics.cpp src/core/diagnostics.h
     src/core/integration.cpp src/core/world.cpp src/core/simulation.cpp src/core/server.cpp
+    src/core/light_types.h src/core/perception_types.h
+    src/core/lighting.cpp src/core/lighting.h src/core/perception.cpp src/core/perception.h
     src/core/pacing.cpp src/core/pacing.h src/core/timing.h
     src/core/save_database.cpp src/core/save_database.h src/core/save_result.h src/core/world_archive.h
     src/worldgen/worldgen.cpp src/worldgen/worldgen.h
@@ -124,6 +126,13 @@ if(CATACLYSMX_BUILD_TERMINAL)
     target_compile_definitions(cataclysmx_game PRIVATE CATACLYSMX_LOC_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/data/loc")
     target_link_libraries(cataclysmx_game PRIVATE cataclysmx_client cataclysmx_network cataclysmx_terminal ftxui::component Threads::Threads)
     cataclysmx_no_exceptions(cataclysmx_game)
+    # Explicit opt-in build target; uses the production engine and terminal paths.
+    add_executable(cataclysmx_perception_benchmark EXCLUDE_FROM_ALL tools/perception_benchmark.cpp)
+    target_compile_definitions(cataclysmx_perception_benchmark PRIVATE
+        CATACLYSMX_TERRAIN_FILE="${CMAKE_CURRENT_SOURCE_DIR}/data/terrain.json5"
+        CATACLYSMX_LOC_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/data/loc")
+    target_link_libraries(cataclysmx_perception_benchmark PRIVATE cataclysmx_terminal)
+    cataclysmx_no_exceptions(cataclysmx_perception_benchmark)
 endif()
 
 if(CATACLYSMX_BUILD_TESTS)
@@ -140,6 +149,9 @@ if(CATACLYSMX_BUILD_TESTS)
         tests/item_save_tests.cpp tests/item_network_tests.cpp tests/item_server_tests.cpp
         tests/item_behavior_tests.cpp
         tests/settings_tests.cpp tests/localization_tests.cpp)
+    target_sources(cataclysmx_tests PRIVATE tests/lighting_tests.cpp tests/memory_tests.cpp
+        tests/lighting_content_tests.cpp tests/perception_save_tests.cpp
+        tests/perception_server_tests.cpp tests/bulk_perception_tests.cpp)
     target_compile_definitions(cataclysmx_tests PRIVATE CATACLYSMX_TERRAIN_FILE="${CMAKE_CURRENT_SOURCE_DIR}/data/terrain.json5")
     target_compile_definitions(cataclysmx_tests PRIVATE CATACLYSMX_LOC_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/data/loc")
     target_link_libraries(cataclysmx_tests PRIVATE cataclysmx_client cataclysmx_network Catch2::Catch2WithMain unofficial::sqlite3::sqlite3 Threads::Threads)

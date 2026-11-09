@@ -63,6 +63,16 @@ struct PlayerInput {
     std::uint64_t opportunity = 0;
     Command command;
 };
+struct PlayerInputContext {
+    std::uint64_t opportunity = 0;
+    std::uint64_t lastInputSequence = 0;
+    std::uint64_t revision = 0;
+};
+struct ViewStats {
+    std::uint64_t requests = 0;
+    std::uint64_t constructions = 0;
+    std::uint64_t mapConstructions = 0;
+};
 struct PlayerCommandResult {
     PersistentId player = 0;
     std::uint64_t sequence = 0;
@@ -90,15 +100,18 @@ struct SessionUpdate {
 };
 
 struct ViewCell {
-    bool visible = false;
+    Visibility terrainVisibility = Visibility::Unknown;
     Tile tile{};
     PersistentId actor = 0;
     bool player = false;
     unsigned int ground_items = 0;
     PersistentId object = 0;
-    bool object_enabled = false;
+    ObjectAppearance objectAppearance;
     unsigned int terrainDepth = 0; // Layers below the view origin, in [0, 20].
-    unsigned int overlayDepth = 0; // Nearest visible actor/items/object layer, independently tinted.
+    unsigned int overlayDepth = 0; // Nearest live overlay, otherwise nearest memory; independently tinted.
+    Visibility overlayVisibility = Visibility::Unknown;
+    LightBand terrainLight = LightBand::Dark; // Unknown/remembered contributions carry no current light.
+    LightBand overlayLight = LightBand::Dark;
     bool operator==(const ViewCell&) const = default;
 };
 struct InventoryEntry {
@@ -122,7 +135,7 @@ struct WorldView {
     int height = 0; // Display rows along world Z, not world elevation.
     TileCoord player_position{};
     std::uint64_t tick = 0;
-    Vector<ViewCell> cells; // Row major. Hidden cells contain no world information.
+    Vector<ViewCell> cells; // Row major. Unknown channels are empty; memories contain only old observations.
     Vector<InventoryEntry> inventory;
     // Both lists include nested contents in persistent-ID order; parent links
     // describe trees. Ground items are limited to the player's current tile.
@@ -138,6 +151,7 @@ struct WorldView {
     std::uint64_t opportunity = 1;
     std::uint64_t lastInputSequence = 0;
     Vector<PlayerStatus> players;
+    LightBand playerLight = LightBand::Dark;
 };
 
 // Authoritative deterministic endpoint. No transport or clock access.
@@ -159,7 +173,10 @@ public:
     PersistentId GetHostPlayerId() const;
     Vector<PlayerStatus> GetPlayers() const;
     WorldView ViewForPlayer(PersistentId player, int radius = 8) const;
+    PlayerInputContext GetInputContext(PersistentId player) const;
     std::uint64_t GetRevision() const;
+    ViewStats GetViewStats() const;
+    void ResetViewStats() const;
     WorldResult<void> SetBubbleRadii(int active_radius, int resident_radius,
         Diagnostics* diagnostics = nullptr);
     SaveResult<void> CreateSave(const char* path, Diagnostics* diagnostics = nullptr);
@@ -183,7 +200,7 @@ private:
     LoadRequest active_request_{};
     LoadRequest resident_request_{};
     int active_radius_ = 1;
-    int resident_radius_ = 2;
+    int resident_radius_ = 5;
     std::uint64_t tick_ = 0;
     std::uint32_t rng_state_ = 0;
     ChunkCoord bubbleCenter_{};
@@ -202,10 +219,14 @@ private:
         eastl::optional<PlayerInput> pending;
         std::uint64_t opportunity = 1;
         std::uint64_t lastSequence = 0;
+        mutable WorldView cachedView;
+        mutable std::uint64_t cachedMapRevision = 0;
+        mutable bool cachedObserving = false;
     };
     Vector<PlayerSlot> players_;
     std::uint64_t revision_ = 1;
     std::uint64_t legacySequence_ = 0;
+    mutable ViewStats viewStats_;
 
     CommandResult Execute(ActorHandle handle, PlayerSlot& slot, Command command);
     PlayerSlot* FindPlayer(PersistentId id);

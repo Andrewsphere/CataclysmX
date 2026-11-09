@@ -1,0 +1,103 @@
+# Core lighting, perception, and player memory
+
+`LineVisible` is illumination-independent, integer center-to-center supercover
+voxel traversal. Opaque targets are visible; opaque intermediate and corner-touch
+tiles block. Vertical crossings require upper open space or matching stairs.
+Missing tiles block. Queries never request residency.
+
+`CanSeeTile` uses the **target's** light band and spherical three-dimensional
+distance. Default vision is range 64, dim range 6, dark range 1. An observer at
+light 240 or above has dim/dark range capped at 3; ordinarily lit targets remain
+unaffected. `ValidVisionProfile` requires ordered nonnegative ranges bounded by
+64, glare range no larger than dim range, and a bright-band glare threshold.
+Passing an invalid profile is an invariant violation.
+
+## Derived lighting
+
+`World::GetLightLevel` lazily refreshes one shared resident-world field. Geometry,
+emission, source movement/parking, sky changes, and residency changes invalidate
+it. Time counters, views, and observations do not invalidate it. Content is
+immutable for the lifetime of a World.
+
+Terrain light, enabled object light, and nonparked actor light contribute from all
+resident chunks, including inactive chunks. Sources use spherical radius and
+LOS; intensity at integer ceil-distance `d` is `intensity * (range+1-d) /
+(range+1)`. Integer division truncates. Contributions max-combine, never sum.
+Intensity and range are independent; valid emissions are either both zero or
+have nonzero intensity and range 1–12.
+
+Sky (default 192) enters at `world_max_y`, travels straight down through open
+vertical faces, and stops at opaque geometry. A closed floor face blocks sky
+even when its terrain is horizontally transparent. There is no ambient basement
+light. Illuminated opaque faces cannot seed or transmit indirect light.
+
+Indirect light uses exactly two open six-neighbor graph steps: direct /4 at the
+first step, direct /8 at the second. First-step values are stored separately;
+second-step values never read final light. This bounds spill at Dim (63), avoids
+query-order dependence, and prevents repeated-query creep. Lighting retains sky
+and per-source patches; changed sources recombine affected chunks, while optical
+or residency changes rebuild full shadow footprints. See [surface lighting](surface_lighting.md)
+for invalidation and the observer-facing opaque-face rule. Terrain perception uses
+that face illumination; actor exposure uses transported space light. Opaque faces
+receive light without relaying it.
+
+World and light-field lookups also keep a last-chunk index hint, checking both
+its bounds and coordinate before reuse. Hints never retain chunk pointers across
+structural changes. Clean light queries read the derived field directly rather
+than looking up the same resident chunk in World first.
+
+Default active-radius 1 / resident-radius 5 bubbles provide sight 64 plus a
+14-tile source-and-spill margin. Explicit smaller bubbles deliberately clip light
+and sight at residency boundaries. See [sight defaults](sight_defaults.md).
+
+## Owned observations
+
+Call `World::UpdatePlayerObservations` explicitly after an action/event boundary.
+It visits resident active nonparked players in persistent-ID order and observes
+perceivable tiles within the configured 3D sight sphere, clipped to residency and
+independently of viewport. Bulk visibility shares exact 3D occlusion work with
+projections while retaining `LineVisible` as a point-query oracle; see
+[bulk perception](bulk_perception.md) for cache lifetimes and invalidation.
+Neither perception queries nor arbitrary low-level edits perform observations.
+The server invokes it on construction and player activation, after each successful
+player action, after each same-tick batch of due effects in `AdvanceUntilInput`,
+and after each NPC action. Effects due at one tick are observed together after
+the batch, before the input barrier. Failed player commands do not themselves
+teach. Views compute current visibility from current world state but never refresh
+owned memory; saves likewise serialize memory as-is. Offline and Joining actors
+do not see live map changes. Administrative edit batches must explicitly call
+`UpdatePlayerObservations()` if intended to teach resident active players.
+
+World owns sparse memories sorted by persistent player ID, with chunks sorted
+`(x,z,y)`. Each allocated chunk has 256 terrain IDs (zero means unknown) and
+sparse objects sorted by tile index. Object snapshots contain only kind, facing,
+active, and broken flags. No actors, items, live handles, or behavior state are
+remembered. Observing an empty location removes stale furniture. Parking,
+inactivity, and unload preserve memory without learning; player destruction
+removes it. Save snapshots include memories and skylight; chunk archives include
+actor/object emission and semantic object appearance. Derived light is not saved.
+Memory checkpoints rewrite all memory rows; incremental checkpoint updates are not
+implemented.
+
+## Historical performance check
+
+Before the integrated radius-64 work, an isolated MSVC harness measured the then-default
+25-column / 21-layer resident bubble (resident radius 2, sight range 12)
+with one active player. Lighting builds, cached observation updates, and cached
+queries were timed separately. Three runs on the development machine gave these
+median milliseconds (profiling executables and builds lived outside the project):
+
+| Operation | Debug before | Debug optimized | Release optimized |
+| --- | ---: | ---: | ---: |
+| First lighting build, sky only | 457.4 | 11.3 | 2.06 |
+| Rebuild with one range-12 source | 490.4 | 30.9 | 4.17 |
+| Repeated observation, cached lighting | 31.7 | 19.2 | 2.06 |
+| 100,000 cached light queries | 26.5 | 5.14 | 1.31 |
+| Server construction | 499.0 | 37.4 | 5.44 |
+| Two servers, six commands, snapshot-cadence replay | 4030.8 | 883.4 | 107.0 |
+
+The replay includes construction, views at radii 0/12/3, actions, and per-command
+memory comparisons. Full resident-light checksums matched before/after and across
+debug/release. These are local diagnostic measurements, not timing assertions in
+tests and do not describe the current implementation. For the integrated benchmark
+method and results, see the [benchmark matrix](perception_benchmarks.md).

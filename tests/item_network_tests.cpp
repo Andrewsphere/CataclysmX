@@ -284,7 +284,9 @@ TEST_CASE("Item decoder rejects malformed bounded fields before catalog lookup",
     for (int i = 0; i < 6; ++i) REQUIRE(cursor.U64(wide));
     REQUIRE(cursor.U32(number)); REQUIRE(cursor.U32(number));
     for (int i = 0; i < 3; ++i) REQUIRE(cursor.U8(byte));
-    REQUIRE(cursor.U16(shortValue)); REQUIRE(cursor.U8(byte)); // single hidden cell
+    REQUIRE(cursor.U16(shortValue));
+    // Protocol seven uses a fixed 36-byte cell, including default unknown channels.
+    for (int i = 0; i < 36; ++i) REQUIRE(cursor.U8(byte));
     const auto countOffset = cursor.offset;
     REQUIRE(cursor.U16(shortValue));
     REQUIRE(cursor.U64(wide)); REQUIRE(cursor.U32(number)); REQUIRE(cursor.U32(number));

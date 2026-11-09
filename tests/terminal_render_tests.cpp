@@ -1,4 +1,6 @@
 #include "terminal/render.h"
+#include "client/text.h"
+#include "content_fixture.h"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -6,6 +8,24 @@
 #include <ftxui/screen/screen.hpp>
 
 namespace {
+
+TEST_CASE("Terminal preserves independently styled memory background and live overlay", "[terminal][render][perception]") {
+    using namespace cataclysmx;
+    ViewCell cell; cell.terrainVisibility = Visibility::Remembered;
+    cell.tile.terrain = TestTerrain("floor"); cell.terrainDepth = 2;
+    cell.overlayVisibility = Visibility::Visible; cell.overlayLight = LightBand::Dim;
+    cell.actor = 7; cell.overlayDepth = 0;
+    const auto appearance = CellAppearance(cell, TestContent());
+    CHECK(appearance.symbol == "z");
+    CHECK(appearance.foreground == RgbColor{0, 140, 0});
+    auto screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(1), ftxui::Dimension::Fixed(1));
+    ftxui::Render(screen, RenderTerrainCell(appearance));
+    const auto& pixel = screen.PixelAt(0, 0);
+    CHECK(pixel.character == "z");
+    CHECK(pixel.foreground_color == ftxui::Color::RGB(0, 140, 0));
+    CHECK(pixel.background_color == ftxui::Color::RGB(appearance.background.red,
+        appearance.background.green, appearance.background.blue));
+}
 
 TEST_CASE("Terminal terrain cells preserve colors and one-column alignment", "[terminal][render]") {
     struct GlyphCase {

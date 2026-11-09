@@ -102,6 +102,35 @@ contain additional players; these become known when their chunks are loaded.
 This small ID-sorted index is kept separately because a connection's cached
 position can become stale after administrative movement of a parked actor.
 
+## Lighting and player observations
+
+`World::GetLightLevel` and `World::GetLightBand` expose the shared derived resident
+light field; `LightBand` classifies levels as Dark, Dim, Ordinary, or Bright. Edits
+that affect sources, geometry, sky, or residency invalidate the field; its next
+query refreshes it. Sky and source contributions can be reused across source-only
+changes. See [surface lighting](surface_lighting.md) for incident faces and
+incremental recombination, [perception](perception.md) for source rules, and
+[the view contract](server_api.md#views-and-line-of-sight).
+
+`CanPlayerSee` provides residency-clipped authoritative terrain visibility without
+loading or learning. `SetVisionProfile` validates session-local sight policy;
+default maximum range is 64. `GetRevision` tracks presentation-relevant changes,
+while `GetMapRevision` separately tracks map-relevant changes. These are conservative
+equality tokens, allowing status changes to reuse map work. `GetPerceptionStats`
+and `ResetPerceptionStats` expose diagnostic counters without flushing caches.
+See [bulk perception](bulk_perception.md) for the API, exact 3D algorithm, and
+invalidation rules.
+
+`GetPlayerMemories()` returns owned sparse `PlayerMemory` values. Call
+`UpdatePlayerObservations()` explicitly at observation boundaries: construction
+and player activation establish initial observation; successful player actions,
+same-tick completed effects, and each NPC action refresh it. Queries and arbitrary
+edits do not teach. Administrative edit batches must call it themselves when
+intended to teach resident active players. Offline and Joining players do not
+observe live map changes. Saves serialize stored observations without refreshing
+them. Memory records terrain and limited object appearance, not machine state;
+current views can be fresh without updating memory.
+
 ## Chunk demand: request, reconcile, release
 
 `RequestChunks` acquires demand; `UpdateRequest` replaces that request's region

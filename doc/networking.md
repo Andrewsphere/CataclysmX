@@ -66,14 +66,14 @@ assigning an actor. Joining has a five-second
 explicit-elapsed timeout. The server does not use wall time or RNG for gameplay;
 network-only tokens and discovery identifiers use OS entropy.
 
-## World and item protocol (version 6, `0x43584e06`)
+## World and item protocol (version 7, `0x43584e07`)
 
-Version 6 is wire-incompatible with earlier versions. Coordinates encode signed
+Version 7 is wire-incompatible with earlier versions. Coordinates encode signed
 32-bit X/Z/Y. Commands append signed `dy` after their item arguments; movement,
-interaction and directional item use accept six axial directions. Visible snapshot
-cells append terrain and overlay depth as bytes, bounded to `0..20` and to the
+interaction and directional item use accept six axial directions. Snapshot
+cells carry terrain and overlay depth as bytes, bounded to `0..20` and to the
 distance from the player layer to the bottom of the world. View origin Y must equal
-player Y; hidden cells are entirely default. Inputs include a definition-local
+player Y; unknown channels are entirely default. Inputs include a definition-local
 `ItemCapabilityId` (u16), local action ID (bounded string), and secondary persistent
 item ID (u64) after the existing command fields. Action IDs and reason codes use
 `[a-z][a-z0-9_]*`, with at most 64 bytes. All strings have a u8 byte-length prefix.
@@ -98,6 +98,45 @@ UTF-8 text and spaces are preserved; C0 bytes and DEL are rejected, as for other
 wire strings. `Writer::CommandValue` and `Writer::Result` return `bool`; callers
 must check encoding failures before sending. Invalid receipt encoding reports
 `Protocol`, and invalid client commands report `InvalidCommand`.
+
+### Lighting and memory cell record
+
+The view header remains 87 bytes through its u16 cell count. Each row-major cell
+is a fixed 36-byte record. Fixed fields make independent channels explicit and
+allow default-payload validation without conditional interpretation:
+
+| Offset | Field | Encoding |
+| --- | --- | --- |
+| 0 | terrain visibility | u8: Unknown=0, Remembered=1, Visible=2 |
+| 1, 5 | terrain ID, damage | u32, u8 |
+| 6, 14 | actor ID, player | u64, boolean u8 |
+| 15, 19 | ground item count, object ID | u32, u64 |
+| 27 | object kind | u8: None=0, Generic=1, Chair=2, Table=3, Lamp=4 |
+| 28, 29, 30 | facing, active, broken | u8 North=0/East=1/South=2/West=3; two boolean u8s |
+| 31, 32 | terrain depth, overlay depth | two u8s |
+| 33 | overlay visibility | same visibility enum |
+| 34, 35 | terrain light, overlay light | u8: Dark=0, Dim=1, Ordinary=2, Bright=3 |
+
+`playerLight` is appended after the player-status list as the same light-band u8.
+Object kinds are fixed protocol constants, independent of content ordering.
+None descriptors must have North facing and false state flags. A live object ID
+requires a nonempty descriptor and vice versa. Remembered objects require a
+descriptor but object ID zero; actors, player flags and items are forbidden in
+remembered overlays. An absent overlay has no payload, light or depth. Remembered
+terrain has damage zero, and both remembered channels carry Dark as an unavailable
+light sentinel. Unknown channels require every associated field to be default.
+Non-Unknown channels must refer to in-world columns even when the projection bounds
+extend beyond the world. Terrain IDs are checked against the admitted catalog at
+the client boundary for both Visible and Remembered terrain, before publication.
+All enum values, state booleans and depth bounds are checked on decode; the encoder
+also rejects noncanonical states. A 25×25 map consumes 22,500 bytes before header,
+items and player statuses; the existing packet limit still applies.
+`wire::ValidTerrainDefinitions(view, content)` performs the catalog-dependent
+terrain check after structural decoding, alongside `ValidItemDefinitions`.
+
+The content fingerprint includes terrain light intensity and range, in addition
+to appearance, movement, support and stair connectivity, so differing emitters
+cannot join the same session.
 
 Every snapshot replaces **both** `inventory` and `groundItems`. Inventory contains
 all carried descendants; ground contains all item trees on the player's current

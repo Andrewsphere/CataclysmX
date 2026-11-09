@@ -24,7 +24,7 @@ inventory and cooldown, but neither occupy tiles nor receive timer updates.
 
 `Submit(id, PlayerInput{sequence, opportunity, command})` admits a structurally
 valid latest intent without executing it. The per-player `opportunity` is an opaque
-action-slot token; submit the current value from `ViewForPlayer` and advance the
+action-slot token; submit the current value from `GetInputContext` or `ViewForPlayer` and advance the
 sequence for each accepted replacement. Invalid shape leaves the slot intact;
 reused sequences return `duplicate_input`, and an old opportunity returns
 `stale_input`. Input arriving after its grace expires is also stale, even if
@@ -44,14 +44,22 @@ buffered result. `GetPlayers()` returns roster status and grace; `ViewForPlayer`
 provides personal LOS/inventory, roster, revision, opportunity and last accepted
 sequence. `View()` delegates to the host. The revision increases on admissions,
 connection and world/pacing changes even if the simulation tick does not advance.
-Network token generation and elapsed wall time live outside this deterministic API.
+`GetInputContext(id)` returns `opportunity`, `lastInputSequence`, and `revision`
+without constructing a view; an unknown player returns a zero-initialized context.
+`GetRevision()` incorporates World revisions as well as server changes, so direct
+administrative World mutations invalidate snapshots. Compare revisions for equality,
+not as mutation counts. Network token generation and elapsed wall time live outside
+this deterministic API.
 
 `Server(content, seed)` defaults to seed `42`, starts at tick `0`, and builds a small demo:
 player at `{0, 0}`, a backpack containing a bandage there, a rock at `{1, 0}`,
 an initially disabled object at `{2, 0}`, a closed door at `{3, 0}`, a wall at
 `{3, 1}`, and an NPC at `{5, 5}`. When `air` and `stairs` roles exist, the demo
 also builds a basement/surface/raised-platform stairwell near `x=-3` and a pit
-with a ground item below. World terrain generation itself creates no actors.
+with a ground item below. The basement demo includes an enabled lamp (intensity
+240, range 4) at `{-5, 0, -1}`, a chair at `{-5, 1, -1}`, and a table at
+`{-3, 2, -1}`; the lamp toggles through ordinary adjacent `interact`. World
+terrain generation itself creates no actors.
 The immutable catalog must outlive the server. At the application boundary, call
 `ValidateServerContent(content, diagnostics)` before construction: the demo
 requires `floor`, `wall`, and `closed_door`, and its floor must be passable.
@@ -204,11 +212,12 @@ multi-player activity/deadline rules, rounding, and transient-state details.
 ## Player bubble and administrative loading
 
 Each connected player has a bubble centered on their **chunk**. Defaults are active radius
-`1` (a `3 × 3` square) and resident radius `2` (`5 × 5`), with active chunks
+`1` (a `3 × 3` square) and resident radius `5` (`11 × 11`), with active chunks
 included in the resident total. `SetBubbleRadii(active, resident)` requires
 `0 <= active <= resident <= 8` and the full resident region to fit world limits.
 Invalid settings return `invalid_region` without changing the bubble; valid
-settings reconcile immediately without consuming a tick.
+settings reconcile immediately without consuming a tick. Explicit smaller bubbles
+remain valid and clip perception to resident tiles; see [sight defaults](sight_defaults.md).
 
 ```cpp
 cataclysmx::WorldResult<void> shrink_bubble(cataclysmx::Server& server) {
@@ -251,9 +260,19 @@ sight. Closed floor bottoms block sight; open-space columns and matched stairs
 provide the documented vertical openings. Each projected terrain candidate has
 an independent straight LOS check. `terrainDepth` and `overlayDepth` independently
 describe the projected terrain and nearest visible overlay layers. Unavailable
-tiles stop sight without loading. Hidden cells are default/empty and convey no
-world information: always check `visible` before drawing terrain. There is no
-remembered exploration map in the snapshot.
+tiles stop sight without loading. Terrain and overlay report independent
+`Visibility::Unknown`, `Remembered`, or `Visible` states and independent
+`LightBand` values. Current visible cells use live state; remembered cells use
+owned per-player observations, including limited object appearance but no machine
+state. View queries can be fresh without updating memory. Viewport radius is
+independent of gameplay sight: default vision range is 64 in a full 3D sphere,
+regardless of displayed square radius. Always check each channel's visibility
+before drawing its payload.
+Sight does not expand the bounded 25 × 25 viewport or the LAN protocol's 32 KiB
+packet limit; the protocol remains version 7.
+The nearest remembered furniture is used only when no live overlay is visible.
+Live projection can see a lit lower floor through unknown dark air; remembered
+projection follows its own known geometry, unaffected by hidden world edits.
 
 Visible cells contain terrain, actor/object persistent IDs and flags, and a
 ground-item count. Inventory entries describe all carried descendants in persistent-ID
@@ -270,6 +289,14 @@ ticks. Clients render metadata and leave behavior validation authoritative.
 `groundItems` describes complete
 ground-rooted trees on the player's own tile only. Player carried mass and mass
 capacity are included; other players' possessions remain private.
+
+Per-player full snapshots are cached by revision and viewport size. Map cells have
+an independent cache keyed by World map revision, origin, size, and observing state,
+so status-only changes can rebuild a snapshot without reconstructing its map.
+`GetViewStats()` returns `requests`, `constructions`, and `mapConstructions`;
+`ResetViewStats()` resets these counters without flushing caches. These narrow
+queries let input handling and diagnostics avoid unnecessary projection work. See
+[bulk perception](bulk_perception.md) and [terminal performance](terminal_performance.md).
 
 ## Explicit simulation and brief decisions
 
@@ -379,6 +406,9 @@ mutate the world. Its data API is frontend-independent; the menu factory is
 FTXUI-specific and confined to the terminal target (see
 [world-generation debug inspection](worldgen_api.md)).
 
+For filtered CTest runs and compact output/result-log locations, see
+[running tests](testing.md).
+
 `cataclysmx_headless --probe` retains the earlier checksum-probe invocation;
 the default invocation is the game demo. Build/run setup belongs in the
 [project README](../README.md).
@@ -395,6 +425,8 @@ player. Administrative load-request handles are runtime-only; the host bubble is
 recreated on load, while guests return parked until activated again. Checkpoints
 read guest positions from live or archived world state, including administrative
 relocations of a parked character; a parked host is an invalid session.
+`Server::LoadSave` restores saved bubble radii; the terminal subsequently applies
+effective settings, including inherited defaults or explicit overrides, before input.
 
 Loading stages all roster guest regions together with the host bubble and
 reconciles once, retaining that demand until every roster actor has been checked
@@ -406,11 +438,15 @@ can legitimately drop the active host, so authoritative roster positions and the
 host bubble center are refreshed from the settled world before returning. No
 simulation time elapses during restoration.
 
-Save format **version 6** persists Y coordinates as well as the player roster and reconnect tokens, actor speed, carrying mass limit and remaining cooldown, object
-interval and remaining timer, simulation tick/RNG, and session pacing settings.
+Save format **version 7** persists Y coordinates, lighting/appearance, player
+observations, player roster and reconnect tokens, actor speed, carrying mass limit
+and remaining cooldown, object interval and remaining timer, simulation tick/RNG,
+and session pacing settings.
 A checkpoint can therefore resume mid-action or partway through an object
 interval. Item definition/capability names, installations, charge fractions and
-remaining door delays are persisted as well. Versions 1–5 are rejected explicitly.
+remaining door delays are persisted as well. Versions 1–6 are rejected explicitly;
+migrations are not implemented. Memory checkpointing rewrites all memory rows and
+scales with total remembered terrain and objects. Saving never refreshes observations.
 Pending input intents, tick credit, fractional credit, readiness snapshots, and partially
 spent input deadlines are transient: load resets them and gives ready players
 fresh grace. Frontends reset their elapsed-time baseline; offline time is never

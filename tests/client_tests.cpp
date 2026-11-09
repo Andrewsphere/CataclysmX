@@ -33,7 +33,7 @@ ContentCatalog AppearanceContent() {
 TEST_CASE("Client resolves terrain colors and inherited appearances from its catalog", "[client]") {
     const auto content = AppearanceContent();
     ViewCell cell;
-    cell.visible = true;
+    cell.terrainVisibility = Visibility::Visible; cell.terrainLight = LightBand::Ordinary;
     cell.tile.terrain = content.FindTerrain("child");
     const auto appearance = CellAppearance(cell, content);
     CHECK(appearance.symbol == "\xc3\xa9");
@@ -53,7 +53,7 @@ TEST_CASE("Client text preserves complete Unicode scalars and textual status", "
     view.player_position = {-4, 7, -2};
     for (const char* id : {"base", "wide", "combining", "supplementary"}) {
         ViewCell cell;
-        cell.visible = true;
+        cell.terrainVisibility = Visibility::Visible; cell.terrainLight = LightBand::Ordinary;
         cell.tile.terrain = content.FindTerrain(id);
         view.cells.push_back(cell);
     }
@@ -66,15 +66,17 @@ TEST_CASE("Client text preserves complete Unicode scalars and textual status", "
 TEST_CASE("Client overlay precedence preserves the terrain background", "[client]") {
     const auto content = AppearanceContent();
     ViewCell cell;
-    cell.visible = true;
+    cell.terrainVisibility = Visibility::Visible; cell.terrainLight = LightBand::Ordinary;
+    cell.overlayVisibility = Visibility::Visible; cell.overlayLight = LightBand::Ordinary;
     cell.tile.terrain = content.FindTerrain("base");
     const auto background = content.GetTerrain(cell.tile.terrain).appearance.background;
     cell.object = 3;
+    cell.objectAppearance.kind = ObjectKind::Generic;
     auto appearance = CellAppearance(cell, content);
     CHECK(appearance.symbol == "&");
     CHECK(appearance.foreground == RgbColor{0, 128, 128});
     CHECK(appearance.background == background);
-    cell.object_enabled = true;
+    cell.objectAppearance.active = true;
     appearance = CellAppearance(cell, content);
     CHECK(appearance.symbol == "*");
     CHECK(appearance.foreground == RgbColor{0, 255, 255});
@@ -104,7 +106,7 @@ TEST_CASE("Client hidden cells reveal neither terrain nor overlays", "[client]")
     cell.player = true;
     cell.ground_items = 2;
     cell.object = 7;
-    cell.object_enabled = true;
+    cell.objectAppearance = {ObjectKind::Generic, ObjectFacing::North, true, false};
     const TerminalAppearance hidden{" ", {}, {}};
     CHECK(CellAppearance(cell, content) == hidden);
     // Hidden cells must not even resolve a terrain ID, which may be absent.
@@ -120,13 +122,14 @@ TEST_CASE("Client hidden cells reveal neither terrain nor overlays", "[client]")
 TEST_CASE("Depth tint distinguishes terrain background and overlay depth", "[client]") {
     const auto content = AppearanceContent();
     ViewCell cell;
-    cell.visible = true;
+    cell.terrainVisibility = Visibility::Visible; cell.terrainLight = LightBand::Ordinary;
     cell.tile.terrain = content.FindTerrain("base");
     cell.terrainDepth = 1;
     auto terrain = CellAppearance(cell, content);
     CHECK(terrain.foreground == RgbColor{25, 63, 112});
     CHECK(terrain.background == RgbColor{111, 147, 188});
     cell.actor = 1;
+    cell.overlayVisibility = Visibility::Visible; cell.overlayLight = LightBand::Ordinary;
     cell.overlayDepth = 0;
     auto overlay = CellAppearance(cell, content);
     CHECK(overlay.foreground == RgbColor{0, 255, 0});
@@ -148,6 +151,58 @@ TEST_CASE("Item command parser accepts vertical direction symbols", "[client]") 
     CHECK(command.dz == 0);
     REQUIRE(ParseItemCommand("use 1 2 activate up", command));
     CHECK(command.dy == 1);
+}
+
+TEST_CASE("Memory furniture renders without handles and channels style independently", "[client][perception]") {
+    const auto content = AppearanceContent();
+    ViewCell cell;
+    cell.terrainVisibility = Visibility::Visible; cell.terrainLight = LightBand::Ordinary;
+    cell.tile.terrain = content.FindTerrain("base"); cell.terrainDepth = 2;
+    const auto terrain = CellAppearance(cell, content);
+    cell.overlayVisibility = Visibility::Remembered;
+    cell.objectAppearance.kind = ObjectKind::Chair;
+    cell.overlayDepth = 1;
+    const auto memory = CellAppearance(cell, content);
+    CHECK(memory.symbol == "h"); CHECK(cell.object == 0);
+    CHECK(memory.background == terrain.background);
+    cell.actor = 99; cell.ground_items = 5; cell.player = true;
+    CHECK(CellAppearance(cell, content) == memory); // Never display actors/items from memory.
+    cell.overlayLight = LightBand::Bright;
+    CHECK(CellAppearance(cell, content) == memory); // Current light cannot recolor memory.
+    cell.actor = 0; cell.ground_items = 0; cell.player = false;
+    cell.terrainVisibility = Visibility::Remembered;
+    cell.overlayVisibility = Visibility::Visible; cell.overlayLight = LightBand::Ordinary;
+    const auto mixed = CellAppearance(cell, content);
+    CHECK(mixed.foreground != memory.foreground);
+    CHECK(mixed.background != memory.background);
+    cell.terrainLight = LightBand::Bright;
+    CHECK(CellAppearance(cell, content) == mixed);
+    cell.objectAppearance.kind = ObjectKind::Table; CHECK(CellAppearance(cell, content).symbol == "T");
+    cell.objectAppearance.kind = ObjectKind::Lamp; CHECK(CellAppearance(cell, content).symbol == "i");
+    cell.objectAppearance.active = true; CHECK(CellAppearance(cell, content).symbol == "*");
+    cell.objectAppearance.kind = ObjectKind::Generic; cell.objectAppearance.active = false;
+    CHECK(CellAppearance(cell, content).symbol == "&");
+}
+
+TEST_CASE("Live light bands preserve ordinary colors and keep dark near vision readable", "[client][perception]") {
+    const auto content = AppearanceContent();
+    ViewCell cell; cell.terrainVisibility = Visibility::Visible; cell.tile.terrain = content.FindTerrain("base");
+    cell.terrainLight = LightBand::Ordinary;
+    const auto ordinary = CellAppearance(cell, content);
+    CHECK(ordinary == content.GetTerrain(cell.tile.terrain).appearance);
+    cell.terrainLight = LightBand::Bright; const auto bright = CellAppearance(cell, content);
+    cell.terrainLight = LightBand::Dim; const auto dim = CellAppearance(cell, content);
+    cell.terrainLight = LightBand::Dark; const auto dark = CellAppearance(cell, content);
+    CHECK(bright.foreground.red > ordinary.foreground.red);
+    CHECK(bright.background.blue > ordinary.background.blue);
+    CHECK(dim.foreground.blue < ordinary.foreground.blue);
+    CHECK(dark.foreground.red >= 24);
+    CHECK(dark.foreground != dark.background);
+    cell.terrainVisibility = Visibility::Remembered; cell.terrainDepth = 0;
+    const auto memory = CellAppearance(cell, content);
+    cell.terrainDepth = 1; const auto below = CellAppearance(cell, content);
+    // Foreground depth-one blend is 25% / 4 = 6%, after sepia conversion.
+    CHECK(below.foreground.blue == (unsigned(memory.foreground.blue) * 94 + 192 * 6) / 100);
 }
 
 }

@@ -7,6 +7,7 @@
 #include "core/world_types.h"
 #include "core/item_state.h"
 #include "core/world_result.h"
+#include "core/perception_types.h"
 
 #include <EASTL/array.h>
 #include <EASTL/expected.h>
@@ -32,7 +33,7 @@ struct SessionState {
     PersistentId player = 0;
     TileCoord playerPosition{};
     int activeRadius = 1;
-    int residentRadius = 2;
+    int residentRadius = 5;
     std::uint64_t autosaveInterval = 0;
     PacingSettings pacing{};
     Vector<SavedPlayer> players;
@@ -74,6 +75,7 @@ struct Actor {
     Tick remainingTicks = 0;
     bool parked = false;
     std::uint64_t carryCapacityGrams = 100000;
+    LightEmission light{};
 };
 struct Item {
     Item();
@@ -99,7 +101,12 @@ struct InteractiveObject {
     Vector<ItemHandle> contents;
     std::uint32_t updateInterval = 100;
     Tick remainingTicks = 100;
+    ObjectKind kind = ObjectKind::Generic;
+    ObjectFacing facing = ObjectFacing::North;
+    bool broken = false;
+    LightEmission light{}; // Emits only while enabled.
 };
+ObjectAppearance DescribeObject(const InteractiveObject& object);
 struct Chunk {
     ChunkCoord position{};
     bool active = false;
@@ -146,6 +153,16 @@ public:
     const ContentCatalog& GetContent() const;
     std::uint32_t GetSeed() const;
     std::uint32_t GetGenerationVersion() const;
+    // Conservative presentation tokens, owned by mutations (including admin edits).
+    std::uint64_t GetRevision() const;
+    std::uint64_t GetMapRevision() const;
+    // Session-local policy; validation failure leaves the previous profile intact.
+    WorldResult<void> SetVisionProfile(VisionProfile vision);
+    VisionProfile GetVisionProfile() const;
+    // Authoritative terrain perception; cache refreshes never teach memory.
+    bool CanPlayerSee(ActorHandle observer, TileCoord target) const;
+    PerceptionStats GetPerceptionStats() const;
+    void ResetPerceptionStats() const;
 
     const Chunk* GetChunk(ChunkCoord position) const;
     const Tile* GetTile(TileCoord position) const;
@@ -200,6 +217,20 @@ public:
     // Object destruction drops its contents on the ground.
     WorldResult<void> DestroyObject(ObjectHandle object);
     WorldResult<void> SetObjectEnabled(ObjectHandle object, bool enabled);
+    WorldResult<void> SetObjectAppearance(ObjectHandle object, ObjectKind kind,
+        ObjectFacing facing = ObjectFacing::North, bool broken = false);
+    WorldResult<void> SetObjectLight(ObjectHandle object, LightEmission light);
+    WorldResult<void> SetActorLight(ActorHandle actor, LightEmission light);
+    void SetSkyLight(std::uint8_t level);
+    std::uint8_t GetSkyLight() const;
+    // Derived caches may refresh; these queries never change player memories.
+    std::uint8_t GetLightLevel(TileCoord position) const;
+    // Direct incident endpoint light; faces +X,-X,+Z,-Z,+Y,-Y (0..5).
+    std::uint8_t GetIncidentLightLevel(TileCoord position, int face) const;
+    RememberedTile GetRememberedTile(PersistentId player, TileCoord position) const;
+    const Vector<PlayerMemory>& GetPlayerMemories() const;
+    // Explicit post-action/event boundary. Parked/inactive players do not learn.
+    void UpdatePlayerObservations();
     WorldResult<void> SetObjectUpdateInterval(ObjectHandle object, std::uint32_t interval);
     WorldResult<void> SetActorSpeed(ActorHandle actor, std::uint32_t speed);
     WorldResult<void> ScheduleActorAction(ActorHandle actor, std::uint32_t baseCost = 100);
@@ -215,6 +246,8 @@ public:
     bool CheckInvariants() const;
 
 private:
+    friend bool LineVisible(const World&, TileCoord, TileCoord);
+    void RecordPointLos(bool voxel) const;
     friend class ItemSystem;
     friend class ItemReadContext;
     friend class ItemMutationContext;

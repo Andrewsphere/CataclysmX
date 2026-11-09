@@ -202,6 +202,36 @@ bool Position(yyjson_val* value, TileCoord& position) {
         && ValidPosition(position);
 }
 
+bool Byte(yyjson_val* value, std::uint8_t& result) {
+    int number = 0;
+    if (!Integer(value, number) || number < 0 || number > 255) { return false; }
+    result = static_cast<std::uint8_t>(number);
+    return true;
+}
+
+bool Light(yyjson_val* value, LightEmission& light) {
+    return Fields(value, {"intensity", "range"})
+        && Byte(Get(value, "intensity"), light.intensity)
+        && Byte(Get(value, "range"), light.range) && ValidLightEmission(light);
+}
+
+void EncodeLight(JsonWriter& writer, yyjson_mut_val* value, LightEmission light) {
+    auto* emission = writer.Object();
+    writer.Integer(emission, "intensity", light.intensity);
+    writer.Integer(emission, "range", light.range);
+    writer.Add(value, "light", emission);
+}
+
+bool Appearance(yyjson_val* value, ObjectAppearance& appearance) {
+    int kind = 0;
+    int facing = 0;
+    if (!Integer(Get(value, "kind"), kind) || kind < 1 || kind > 4
+        || !Integer(Get(value, "facing"), facing) || facing < 0 || facing > 3) { return false; }
+    appearance.kind = static_cast<ObjectKind>(kind);
+    appearance.facing = static_cast<ObjectFacing>(facing);
+    return true;
+}
+
 // Positive JSON integers are unsigned. Signed integers use a tagged decimal
 // string, preserving even signed zero and INT64_MAX without a floating cast.
 yyjson_mut_val* EncodeValue(JsonWriter& writer, const DataObject& value, bool escape = true) {
@@ -358,6 +388,166 @@ bool Unique(Vector<PersistentId>& ids) {
     return eastl::adjacent_find(ids.begin(), ids.end()) == ids.end();
 }
 
+bool ChunkLess(ChunkCoord a, ChunkCoord b) {
+    if (a.x != b.x) { return a.x < b.x; }
+    if (a.z != b.z) { return a.z < b.z; }
+    return a.y < b.y;
+}
+
+void MemoryContext(Diagnostics* diagnostics, PersistentId player, ChunkCoord position) {
+    if (!diagnostics) { return; }
+    DiagnosticFrame frame;
+    frame.message = "Validating player memory";
+    DiagnosticLocation location;
+    char path[160];
+    std::snprintf(path, sizeof(path), "player_memories[%llu][%d,%d,%d]",
+        static_cast<unsigned long long>(player), position.x, position.z, position.y);
+    location.path = path;
+    frame.location = eastl::move(location);
+    diagnostics->Add(eastl::move(frame));
+}
+
+bool ValidMemories(const ContentCatalog& content, const SaveSnapshot& snapshot, Diagnostics* diagnostics) {
+    Vector<PersistentId> players;
+    for (const auto& memory : snapshot.memories) {
+        if (memory.player == 0 || memory.player >= snapshot.nextId
+            || (!players.empty() && players.back() >= memory.player)) { return false; }
+        players.push_back(memory.player);
+        for (std::size_t i = 0; i < memory.chunks.size(); ++i) {
+            const auto& chunk = memory.chunks[i];
+            if (!ValidChunk(chunk.position)
+                || (i != 0 && !ChunkLess(memory.chunks[i - 1].position, chunk.position))) { return false; }
+            bool observed = false;
+            for (std::size_t tile = 0; tile < chunk.terrain.size(); ++tile) {
+                const auto terrain = chunk.terrain[tile];
+                observed |= terrain != TerrainId{};
+                const TileCoord position{chunk.position.x * chunk_size + static_cast<int>(tile % chunk_size),
+                    chunk.position.z * chunk_size + static_cast<int>(tile / chunk_size), chunk.position.y};
+                if (terrain != TerrainId{} && (!content.TryGetTerrain(terrain) || !ValidPosition(position))) {
+                    MemoryContext(diagnostics, memory.player, chunk.position);
+                    return false;
+                }
+            }
+            if (!observed) {
+                MemoryContext(diagnostics, memory.player, chunk.position);
+                return false;
+            }
+            for (std::size_t j = 0; j < chunk.objects.size(); ++j) {
+                const auto& object = chunk.objects[j];
+                if (chunk.terrain[object.tileIndex] == TerrainId{}
+                    || object.appearance.kind == ObjectKind::None || !ValidObjectAppearance(object.appearance)
+                    || (j != 0 && chunk.objects[j - 1].tileIndex >= object.tileIndex)) { return false; }
+            }
+        }
+    }
+    return Unique(players);
+}
+
+String EncodeMemory(const ContentCatalog& content, const MemoryChunk& chunk) {
+    JsonWriter writer;
+    auto* root = writer.Object();
+    auto* palette = writer.Array();
+    Vector<TerrainId> terrains{TerrainId{}};
+    writer.Append(palette, yyjson_mut_null(writer.doc));
+    for (auto terrain : chunk.terrain) {
+        if (eastl::find(terrains.begin(), terrains.end(), terrain) == terrains.end()) {
+            terrains.push_back(terrain);
+            writer.Append(palette, yyjson_mut_strcpy(writer.doc, content.GetTerrain(terrain).id.c_str()));
+        }
+    }
+    writer.Add(root, "palette", palette);
+    auto* runs = writer.Array();
+    for (std::size_t start = 0; start < chunk.terrain.size();) {
+        std::size_t end = start + 1;
+        while (end < chunk.terrain.size() && chunk.terrain[end] == chunk.terrain[start]) { ++end; }
+        auto* run = writer.Array();
+        const auto index = eastl::find(terrains.begin(), terrains.end(), chunk.terrain[start]) - terrains.begin();
+        writer.Append(run, yyjson_mut_uint(writer.doc, static_cast<std::uint64_t>(index)));
+        writer.Append(run, yyjson_mut_uint(writer.doc, end - start));
+        writer.Append(runs, run);
+        start = end;
+    }
+    writer.Add(root, "runs", runs);
+    auto* objects = writer.Array();
+    for (const auto& object : chunk.objects) {
+        auto* value = writer.Object();
+        writer.Integer(value, "tile", object.tileIndex);
+        writer.Integer(value, "kind", static_cast<int>(object.appearance.kind));
+        writer.Integer(value, "facing", static_cast<int>(object.appearance.facing));
+        writer.Boolean(value, "active", object.appearance.active);
+        writer.Boolean(value, "broken", object.appearance.broken);
+        writer.Append(objects, value);
+    }
+    writer.Add(root, "objects", objects);
+    return writer.Finish(root);
+}
+
+SaveResult<MemoryChunk> DecodeMemory(const ContentCatalog& content, const char* text,
+    std::size_t length, ChunkCoord position, Diagnostics* diagnostics) {
+    Document document;
+    if (!document.Parse(text, length)) { return Failure(SaveError::InvalidData, "Invalid memory JSON", diagnostics); }
+    auto* root = yyjson_doc_get_root(document.value);
+    auto* palette = Get(root, "palette");
+    auto* runs = Get(root, "runs");
+    auto* objects = Get(root, "objects");
+    if (!Fields(root, {"palette", "runs", "objects"}) || !yyjson_is_arr(palette)
+        || yyjson_arr_size(palette) < 1 || yyjson_arr_size(palette) > 257
+        || !yyjson_is_null(yyjson_arr_get(palette, 0))
+        || !yyjson_is_arr(runs) || yyjson_arr_size(runs) > 256
+        || !yyjson_is_arr(objects) || yyjson_arr_size(objects) > 256) {
+        return Failure(SaveError::InvalidData, "Invalid memory palette, runs or objects", diagnostics);
+    }
+    Vector<TerrainId> terrains{TerrainId{}};
+    for (std::size_t i = 1; i < yyjson_arr_size(palette); ++i) {
+        auto* entry = yyjson_arr_get(palette, i);
+        if (!yyjson_is_str(entry)) { return Failure(SaveError::InvalidData, "Invalid memory terrain", diagnostics); }
+        const eastl::string_view id(yyjson_get_str(entry), yyjson_get_len(entry));
+        const auto terrain = content.FindTerrain(id);
+        if (terrain == TerrainId{}) {
+            if (diagnostics) {
+                String message = "Unknown remembered terrain: ";
+                message.append(id.data(), id.size());
+                diagnostics->Add(message.c_str());
+            }
+            return eastl::unexpected(SaveError::InvalidData);
+        }
+        if (eastl::find(terrains.begin(), terrains.end(), terrain) != terrains.end()) {
+            return Failure(SaveError::InvalidData, "Duplicate memory palette terrain", diagnostics);
+        }
+        terrains.push_back(terrain);
+    }
+    MemoryChunk chunk;
+    chunk.position = position;
+    std::size_t offset = 0;
+    yyjson_arr_iter iterator = yyjson_arr_iter_with(runs);
+    while (auto* run = yyjson_arr_iter_next(&iterator)) {
+        int index = 0;
+        int count = 0;
+        if (!yyjson_is_arr(run) || yyjson_arr_size(run) != 2
+            || !Integer(yyjson_arr_get(run, 0), index) || index < 0
+            || static_cast<std::size_t>(index) >= terrains.size()
+            || !Integer(yyjson_arr_get(run, 1), count) || count <= 0
+            || static_cast<std::size_t>(count) > chunk.terrain.size() - offset) {
+            return Failure(SaveError::InvalidData, "Invalid memory run", diagnostics);
+        }
+        for (int i = 0; i < count; ++i) { chunk.terrain[offset++] = terrains[index]; }
+    }
+    if (offset != chunk.terrain.size()) { return Failure(SaveError::InvalidData, "Incomplete memory coverage", diagnostics); }
+    iterator = yyjson_arr_iter_with(objects);
+    while (auto* value = yyjson_arr_iter_next(&iterator)) {
+        RememberedObject object;
+        if (!Fields(value, {"tile", "kind", "facing", "active", "broken"})
+            || !Byte(Get(value, "tile"), object.tileIndex) || !Appearance(value, object.appearance)
+            || !yyjson_is_bool(Get(value, "active")) || !yyjson_is_bool(Get(value, "broken"))) {
+            return Failure(SaveError::InvalidData, "Invalid remembered object", diagnostics);
+        }
+        object.appearance.active = yyjson_get_bool(Get(value, "active"));
+        object.appearance.broken = yyjson_get_bool(Get(value, "broken"));
+        chunk.objects.push_back(object);
+    }
+    return chunk;
+}
+
 void ItemDiagnostic(Diagnostics* diagnostics, PersistentId id, const char* field, const char* message,
     eastl::string_view detail = {}) {
     if (!diagnostics) { return; }
@@ -399,7 +589,7 @@ bool ValidateChunk(const ContentCatalog& content, const ChunkArchive& chunk,
     };
     for (std::size_t i = 0; i < chunk.actors.size(); ++i) {
         const auto& actor = chunk.actors[i];
-        if (actor.speed == 0 || (actor.parked && !actor.player)
+        if (!ValidLightEmission(actor.light) || actor.speed == 0 || (actor.parked && !actor.player)
             || !addId(actor.id) || !ValidPosition(actor.position)
             || ChunkOf(actor.position) != chunk.position) { return false; }
         for (std::size_t j = 0; j < i; ++j) {
@@ -409,7 +599,9 @@ bool ValidateChunk(const ContentCatalog& content, const ChunkArchive& chunk,
     }
     for (std::size_t i = 0; i < chunk.objects.size(); ++i) {
         const auto& object = chunk.objects[i];
-        if (object.updateInterval == 0 || object.remainingTicks > object.updateInterval
+        if (!ValidLightEmission(object.light) || object.kind == ObjectKind::None
+            || !ValidObjectAppearance({object.kind, object.facing, object.enabled, object.broken})
+            || object.updateInterval == 0 || object.remainingTicks > object.updateInterval
             || !addId(object.id) || !ValidPosition(object.position)
             || ChunkOf(object.position) != chunk.position) { return false; }
         for (std::size_t j = 0; j < i; ++j) {
@@ -430,6 +622,7 @@ String EncodeSnapshot(const SaveSnapshot& snapshot) {
     writer.Integer(root, "seed", snapshot.seed);
     writer.Integer(root, "generation_version", snapshot.generationVersion);
     writer.Counter(root, "next_id", snapshot.nextId);
+    writer.Integer(root, "sky_light", snapshot.skyLight);
     auto* session = writer.Object();
     writer.Counter(session, "tick", snapshot.session.tick);
     writer.Integer(session, "rng_state", snapshot.session.rngState);
@@ -464,7 +657,8 @@ SaveResult<SaveSnapshot> DecodeSnapshot(const char* text, std::size_t length, Di
         return Failure(SaveError::InvalidData, "Invalid world_state JSON", diagnostics);
     }
     auto* root = yyjson_doc_get_root(document.value);
-    if (!Fields(root, {"seed", "generation_version", "next_id", "session"})
+    if (!Fields(root, {"seed", "generation_version", "next_id", "sky_light", "session"})
+        || !Byte(Get(root, "sky_light"), snapshot.skyLight)
         || !Unsigned32(Get(root, "seed"), snapshot.seed)
         || !Unsigned32(Get(root, "generation_version"), snapshot.generationVersion)
         || !Counter(Get(root, "next_id"), snapshot.nextId)) {
@@ -541,6 +735,7 @@ String EncodeChunk(const ContentCatalog& content, const ChunkArchive& chunk) {
         writer.Integer(value, "speed", actor.speed);
         writer.Counter(value, "remaining_ticks", actor.remainingTicks);
         writer.Counter(value, "carry_capacity_g", actor.carryCapacityGrams);
+        EncodeLight(writer, value, actor.light);
         auto* inventory = writer.Array();
         inventories.push_back(inventory);
         writer.Add(value, "inventory", inventory);
@@ -554,6 +749,10 @@ String EncodeChunk(const ContentCatalog& content, const ChunkArchive& chunk) {
         writer.Counter(value, "id", object.id);
         writer.Position(value, object.position);
         writer.Boolean(value, "enabled", object.enabled);
+        writer.Integer(value, "kind", static_cast<int>(object.kind));
+        writer.Integer(value, "facing", static_cast<int>(object.facing));
+        writer.Boolean(value, "broken", object.broken);
+        EncodeLight(writer, value, object.light);
         writer.Counter(value, "updates", object.updates);
         writer.Integer(value, "update_interval", object.updateInterval);
         writer.Counter(value, "remaining_ticks", object.remainingTicks);
@@ -718,7 +917,8 @@ SaveResult<ChunkArchive> DecodeChunk(const ContentCatalog& content, const char* 
     yyjson_arr_iter actorIterator = yyjson_arr_iter_with(actors);
     while (auto* value = yyjson_arr_iter_next(&actorIterator)) {
         SavedActor actor{};
-        if (!Fields(value, {"id", "position", "player", "parked", "turns", "inventory", "speed", "remaining_ticks", "carry_capacity_g"})
+        if (!Fields(value, {"id", "position", "player", "parked", "turns", "inventory", "speed", "remaining_ticks", "carry_capacity_g", "light"})
+            || !Light(Get(value, "light"), actor.light)
             || !Counter(Get(value, "carry_capacity_g"), actor.carryCapacityGrams)
             || !Unsigned32(Get(value, "speed"), actor.speed)
             || !Counter(Get(value, "remaining_ticks"), actor.remainingTicks)
@@ -736,7 +936,10 @@ SaveResult<ChunkArchive> DecodeChunk(const ContentCatalog& content, const char* 
     yyjson_arr_iter objectIterator = yyjson_arr_iter_with(objects);
     while (auto* value = yyjson_arr_iter_next(&objectIterator)) {
         SavedObject object{};
-        if (!Fields(value, {"id", "position", "enabled", "updates", "contents", "update_interval", "remaining_ticks"})
+        ObjectAppearance appearance;
+        if (!Fields(value, {"id", "position", "enabled", "updates", "contents", "update_interval", "remaining_ticks", "kind", "facing", "broken", "light"})
+            || !Appearance(value, appearance) || !Light(Get(value, "light"), object.light)
+            || !yyjson_is_bool(Get(value, "broken"))
             || !Unsigned32(Get(value, "update_interval"), object.updateInterval)
             || !Counter(Get(value, "remaining_ticks"), object.remainingTicks)
             || !Counter(Get(value, "id"), object.id) || !Position(Get(value, "position"), object.position)
@@ -744,6 +947,9 @@ SaveResult<ChunkArchive> DecodeChunk(const ContentCatalog& content, const char* 
             return Failure(SaveError::InvalidData, "Invalid object", diagnostics);
         }
         object.enabled = yyjson_get_bool(Get(value, "enabled"));
+        object.kind = appearance.kind;
+        object.facing = appearance.facing;
+        object.broken = yyjson_get_bool(Get(value, "broken"));
         chunk.objects.push_back(object);
         auto decoded = DecodeItems(content, Get(value, "contents"), LocationKind::object, object.id, 1, chunk, diagnostics);
         if (!decoded) { return eastl::unexpected(decoded.error()); }
@@ -944,10 +1150,14 @@ SaveResult<void> CheckSchema(sqlite3* db, Diagnostics* diagnostics) {
         {"x", "z", "y", "payload"}, {"INTEGER", "INTEGER", "INTEGER", "TEXT"},
         {1, 1, 1, 1}, {1, 2, 3, 0}, diagnostics);
     if (!result) { return result; }
+    result = CheckTable(db, "PRAGMA table_info(player_memories)",
+        {"player_id", "x", "z", "y", "payload"}, {"TEXT", "INTEGER", "INTEGER", "INTEGER", "TEXT"},
+        {1, 1, 1, 1, 1}, {1, 2, 3, 4, 0}, diagnostics);
+    if (!result) { return result; }
     Statement tables;
     code = tables.Prepare(db,
         "SELECT count(*) FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' AND "
-        "(type != 'table' OR name NOT IN ('metadata','world_state','chunks'))");
+        "(type != 'table' OR name NOT IN ('metadata','world_state','chunks','player_memories'))");
     if (code != SQLITE_OK) { return Failure(SqlError(code), sqlite3_errmsg(db), diagnostics); }
     code = sqlite3_step(tables.value);
     if (code != SQLITE_ROW) { return Failure(SqlError(code), sqlite3_errmsg(db), diagnostics); }
@@ -957,7 +1167,56 @@ SaveResult<void> CheckSchema(sqlite3* db, Diagnostics* diagnostics) {
     return {};
 }
 
-SaveResult<SaveSnapshot> ReadSnapshot(sqlite3* db, Diagnostics* diagnostics) {
+SaveResult<void> ReadMemories(const ContentCatalog& content, sqlite3* db,
+    SaveSnapshot& snapshot, Diagnostics* diagnostics) {
+    Statement statement;
+    int code = statement.Prepare(db, "SELECT player_id,x,z,y,payload FROM player_memories ORDER BY player_id,x,z,y");
+    if (code != SQLITE_OK) { return Failure(SqlError(code), sqlite3_errmsg(db), diagnostics); }
+    while ((code = sqlite3_step(statement.value)) == SQLITE_ROW) {
+        const char* text = nullptr;
+        std::size_t length = 0;
+        PersistentId player = 0;
+        if (!TextColumn(statement.value, 0, text, length)) {
+            return Failure(SaveError::InvalidData, "Memory player ID must be canonical text", diagnostics);
+        }
+        const auto converted = std::from_chars(text, text + length, player);
+        if (length == 0 || (length > 1 && text[0] == '0') || text[0] < '0' || text[0] > '9'
+            || converted.ec != std::errc{} || converted.ptr != text + length
+            || player == 0 || player >= snapshot.nextId) {
+            return Failure(SaveError::InvalidData, "Invalid memory player ID", diagnostics);
+        }
+        ChunkCoord position{};
+        int* coordinates[] = {&position.x, &position.z, &position.y};
+        for (int i = 0; i < 3; ++i) {
+            const auto number = sqlite3_column_int64(statement.value, i + 1);
+            if (sqlite3_column_type(statement.value, i + 1) != SQLITE_INTEGER || number < INT_MIN || number > INT_MAX) {
+                return Failure(SaveError::InvalidData, "Invalid memory chunk coordinate", diagnostics);
+            }
+            *coordinates[i] = static_cast<int>(number);
+        }
+        if (!ValidChunk(position) || !TextColumn(statement.value, 4, text, length)) {
+            return Failure(SaveError::InvalidData, "Invalid memory row", diagnostics);
+        }
+        auto chunk = DecodeMemory(content, text, length, position, diagnostics);
+        if (!chunk) {
+            MemoryContext(diagnostics, player, position);
+            return eastl::unexpected(chunk.error());
+        }
+        if (snapshot.memories.empty() || snapshot.memories.back().player != player) {
+            snapshot.memories.push_back(PlayerMemory{player, {}});
+        }
+        snapshot.memories.back().chunks.push_back(eastl::move(*chunk));
+    }
+    if (code != SQLITE_DONE) { return Failure(SqlError(code), sqlite3_errmsg(db), diagnostics); }
+    eastl::sort(snapshot.memories.begin(), snapshot.memories.end(),
+        [](const PlayerMemory& a, const PlayerMemory& b) { return a.player < b.player; });
+    if (!ValidMemories(content, snapshot, diagnostics)) {
+        return Failure(SaveError::InvalidData, "Invalid memory ordering, duplicate entries or unseen objects", diagnostics);
+    }
+    return {};
+}
+
+SaveResult<SaveSnapshot> ReadSnapshot(const ContentCatalog& content, sqlite3* db, Diagnostics* diagnostics) {
     Statement statement;
     int code = statement.Prepare(db, "SELECT singleton,payload FROM world_state");
     if (code != SQLITE_OK) { return Failure(SqlError(code), sqlite3_errmsg(db), diagnostics); }
@@ -980,6 +1239,8 @@ SaveResult<SaveSnapshot> ReadSnapshot(sqlite3* db, Diagnostics* diagnostics) {
         return Failure(code == SQLITE_ROW ? SaveError::InvalidData : SqlError(code),
             "world_state must contain one singleton", diagnostics);
     }
+    auto memories = ReadMemories(content, db, *snapshot, diagnostics);
+    if (!memories) { return eastl::unexpected(memories.error()); }
     return snapshot;
 }
 
@@ -991,6 +1252,7 @@ SaveResult<void> ValidateDatabase(const ContentCatalog& content, sqlite3* db,
     Vector<PersistentId> ids;
     bool playerFound = snapshot.session.player == 0;
     Vector<PersistentId> rosterFound;
+    Vector<PersistentId> memoryOwners;
     const bool authoritative = snapshot.session.player != 0 || !snapshot.session.players.empty();
     bool havePrevious = false;
     ChunkCoord previous{};
@@ -1026,6 +1288,7 @@ SaveResult<void> ValidateDatabase(const ContentCatalog& content, sqlite3* db,
         }
         for (const auto& actor : chunk->actors) {
             ids.push_back(actor.id);
+            if (actor.player) { memoryOwners.push_back(actor.id); }
             if (actor.id == snapshot.session.player && actor.player
                 && !actor.parked && actor.position == snapshot.session.playerPosition) {
                 playerFound = true;
@@ -1050,6 +1313,11 @@ SaveResult<void> ValidateDatabase(const ContentCatalog& content, sqlite3* db,
     if (!Unique(ids) || !playerFound || rosterFound.size() != snapshot.session.players.size()
         || !Unique(rosterFound)) {
         return Failure(SaveError::InvalidData, "Duplicate persistent ID or missing session player", diagnostics);
+    }
+    for (const auto& memory : snapshot.memories) {
+        if (eastl::find(memoryOwners.begin(), memoryOwners.end(), memory.player) == memoryOwners.end()) {
+            return Failure(SaveError::InvalidData, "Memory owner is not a durable player actor", diagnostics);
+        }
     }
     return {};
 }
@@ -1081,8 +1349,10 @@ public:
     CreatedFile createdFile;
     Connection connection;
     bool transaction = false;
+    Vector<PersistentId> emptyMemoryOwners;
 
     void Rollback() {
+        emptyMemoryOwners.clear();
         if (transaction) {
             const int code = sqlite3_exec(connection.value, "ROLLBACK", nullptr, nullptr, nullptr);
             if ((code & 255) == SQLITE_NOMEM || code == SQLITE_IOERR_NOMEM) { std::abort(); }
@@ -1118,9 +1388,10 @@ SaveResult<void> SaveDatabase::Create(const char* path, Diagnostics* diagnostics
         "BEGIN IMMEDIATE;"
         "CREATE TABLE metadata(singleton INTEGER PRIMARY KEY CHECK(singleton=1),"
         "format_version INTEGER NOT NULL,game_version TEXT NOT NULL);"
-        "INSERT INTO metadata VALUES(1,6,'0.1.0');"
+        "INSERT INTO metadata VALUES(1,7,'0.1.0');"
         "CREATE TABLE world_state(singleton INTEGER PRIMARY KEY CHECK(singleton=1),payload TEXT NOT NULL);"
         "CREATE TABLE chunks(x INTEGER NOT NULL,z INTEGER NOT NULL,y INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(x,z,y));"
+        "CREATE TABLE player_memories(player_id TEXT NOT NULL,x INTEGER NOT NULL,z INTEGER NOT NULL,y INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(player_id,x,z,y));"
         "COMMIT;", diagnostics);
     if (!created) {
         (void)Execute(candidate->connection.value, "ROLLBACK", nullptr);
@@ -1150,7 +1421,7 @@ SaveResult<SaveSnapshot> SaveDatabase::Open(const char* path, Diagnostics* diagn
         if (diagnostics) { diagnostics->Add("Opening save: validating schema"); }
         return eastl::unexpected(schema.error());
     }
-    auto snapshot = ReadSnapshot(candidate->connection.value, diagnostics);
+    auto snapshot = ReadSnapshot(content_, candidate->connection.value, diagnostics);
     if (!snapshot) {
         if (diagnostics) { diagnostics->Add("Opening save: reading world state"); }
         return snapshot;
@@ -1246,7 +1517,7 @@ SaveResult<void> SaveDatabase::WriteSnapshot(const SaveSnapshot& snapshot, Diagn
     if (!impl_) { return Failure(SaveError::NotOpen, "Database is not open", diagnostics); }
     if (!impl_->transaction) { return Failure(SaveError::InvalidState, "No active transaction", diagnostics); }
     const bool supported = snapshot.generationVersion >= 1 && snapshot.generationVersion <= 3;
-    if (!supported || !ValidSnapshot(snapshot)) {
+    if (!supported || !ValidSnapshot(snapshot) || !ValidMemories(content_, snapshot, diagnostics)) {
         impl_->Rollback();
         return Failure(!supported ? SaveError::UnsupportedVersion : SaveError::InvalidData,
             "Invalid snapshot or unsupported generation version", diagnostics);
@@ -1260,17 +1531,45 @@ SaveResult<void> SaveDatabase::WriteSnapshot(const SaveSnapshot& snapshot, Diagn
     if (code != SQLITE_OK) { return impl_->WriteFailure(code, diagnostics); }
     code = sqlite3_step(statement.value);
     if (code != SQLITE_DONE) { return impl_->WriteFailure(code, diagnostics); }
+    auto cleared = Execute(db, "DELETE FROM player_memories", diagnostics);
+    if (!cleared) { impl_->Rollback(); return cleared; }
+    Statement memoryStatement;
+    code = memoryStatement.Prepare(db, "INSERT INTO player_memories(player_id,x,z,y,payload) VALUES(?1,?2,?3,?4,?5)");
+    if (code != SQLITE_OK) { return impl_->WriteFailure(code, diagnostics); }
+    for (const auto& memory : snapshot.memories) {
+        char player[32];
+        const auto converted = std::to_chars(player, player + sizeof(player), memory.player);
+        for (const auto& chunk : memory.chunks) {
+            const String memoryPayload = EncodeMemory(content_, chunk);
+            code = sqlite3_reset(memoryStatement.value);
+            if (code == SQLITE_OK) { code = sqlite3_bind_text(memoryStatement.value, 1, player, static_cast<int>(converted.ptr - player), SQLITE_TRANSIENT); }
+            if (code == SQLITE_OK) { code = sqlite3_bind_int(memoryStatement.value, 2, chunk.position.x); }
+            if (code == SQLITE_OK) { code = sqlite3_bind_int(memoryStatement.value, 3, chunk.position.z); }
+            if (code == SQLITE_OK) { code = sqlite3_bind_int(memoryStatement.value, 4, chunk.position.y); }
+            if (code == SQLITE_OK) { code = BindText(memoryStatement.value, 5, memoryPayload); }
+            if (code != SQLITE_OK) { return impl_->WriteFailure(code, diagnostics); }
+            code = sqlite3_step(memoryStatement.value);
+            if (code != SQLITE_DONE) { return impl_->WriteFailure(code, diagnostics); }
+        }
+    }
+    impl_->emptyMemoryOwners.clear();
+    for (const auto& memory : snapshot.memories) {
+        if (memory.chunks.empty()) { impl_->emptyMemoryOwners.push_back(memory.player); }
+    }
     return {};
 }
 
 SaveResult<void> SaveDatabase::Commit(Diagnostics* diagnostics) {
     if (!impl_) { return Failure(SaveError::NotOpen, "Database is not open", diagnostics); }
     if (!impl_->transaction) { return Failure(SaveError::InvalidState, "No active transaction", diagnostics); }
-    auto snapshot = ReadSnapshot(impl_->connection.value, diagnostics);
+    auto snapshot = ReadSnapshot(content_, impl_->connection.value, diagnostics);
     if (!snapshot) {
         impl_->Rollback();
         if (diagnostics) { diagnostics->Add("Committing save: reading world state"); }
         return eastl::unexpected(snapshot.error());
+    }
+    for (PersistentId player : impl_->emptyMemoryOwners) {
+        snapshot->memories.push_back(PlayerMemory{player, {}});
     }
     auto valid = ValidateDatabase(content_, impl_->connection.value, *snapshot, diagnostics);
     if (!valid) {
@@ -1285,6 +1584,7 @@ SaveResult<void> SaveDatabase::Commit(Diagnostics* diagnostics) {
         return result;
     }
     impl_->transaction = false;
+    impl_->emptyMemoryOwners.clear();
     impl_->createdFile.Keep();
     return {};
 }

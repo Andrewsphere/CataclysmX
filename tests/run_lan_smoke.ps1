@@ -109,9 +109,13 @@ try {
         -not (Test-Path -LiteralPath $bobProfile -PathType Leaf)) { throw 'Host save or guest profile missing' }
     Write-Host 'LAN discovery, concurrent guests, waits and checkpoint passed.'
 
-    $host2 = Start-SmokeProcess 'restarted host' @('--host', '--port', "$port", '--discovery-port', "$discoveryPort", '--load', $save, '--name', 'Host', '--run-for', '3000') $true
+    $host2 = Start-SmokeProcess 'restarted host' @('--host', '--port', "$port", '--discovery-port', "$discoveryPort", '--load', $save, '--name', 'Host', '--run-for', '5000') $true
     Wait-HostReady $host2 $port $discoveryPort
-    $resume = Start-SmokeProcess 'resumed Alice' @('--join', '127.0.0.1', '--port', "$port", '--name', 'Alice', '--profile', $aliceProfile, '--run-for', '1500', '--command', 'wait')
+    # Reconnect still needs snapshot/activation before submitting. Only then does
+    # the idle host's full one-second missing-input grace begin. At sight 64 the
+    # activation alone can exceed 500 ms in Debug, so use the same guest/host
+    # budgets as the initial round rather than assuming reconnect skips a barrier.
+    $resume = Start-SmokeProcess 'resumed Alice' @('--join', '127.0.0.1', '--port', "$port", '--name', 'Alice', '--profile', $aliceProfile, '--run-for', '2500', '--command', 'wait')
     $resumedResult = Get-GuestResult (Wait-SmokeProcess $resume) 'resumed Alice'
     if ($resumedResult.Id -ne $aliceResult.Id -or $resumedResult.Token -ne $aliceResult.Token -or
         $resumedResult.Position -ne $aliceResult.Position) { throw 'Alice did not resume her saved identity and position' }

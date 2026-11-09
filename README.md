@@ -60,7 +60,9 @@ Press **F11** in-game for the world-generation debug menu; arrows/hjkl move its
 cursor, **HJKL** jump by region, **1–5/Tab/Shift+Tab** change layers, **+/-** zoom,
 **Home/c** recenter, **PageUp/PageDown** browse details, and **F11/Escape/q** close.
 The demo has a backpack containing a bandage, a toggleable machine, a door, a
-wandering NPC, and a multi-level stairwell/pit west of the start. `<` descends
+wandering NPC, and a multi-level stairwell/pit west of the start. The basement
+contains a bright enabled lamp, chair, and table; interact with the lamp to toggle
+it. `<` descends
 and `>` ascends matching stairs; walking into open air falls immediately.
 Simulation time uses 100 ticks per in-world second; default
 actions cost 100 ticks. Successful actions spend their action cost; rejected
@@ -91,10 +93,13 @@ objects are destroyed; value snapshots restore their persistent IDs with fresh
 runtime handles. SQLite checkpoints persist full chunk snapshots and session
 state; unloaded archives remain in RAM until saved successfully. Actors outside
 active columns freeze; active actors above or below the player continue running.
-See [save format and behavior](doc/save_format.md).
+See [save format and behavior](doc/save_format.md), and [lighting, perception,
+and player memory](doc/perception.md) for sight, light, and per-player observations.
 
 See [`doc/`](doc/README.md) for the world/server API, [Y-layer rules](doc/y_layers.md),
-and headless command grammar.
+and headless command grammar. Current save and network formats are version 7;
+older saves are rejected without migration. [Running tests](doc/testing.md)
+documents the compact CTest runner.
 The dependency probes remain available separately below.
 Headless scripts can set `rate <ticks-per-second>`, `limit <on|off>`,
 `idle-pause <on|off>`, and supply deterministic elapsed time with

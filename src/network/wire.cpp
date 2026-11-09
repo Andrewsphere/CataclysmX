@@ -5,6 +5,10 @@
 
 namespace cataclysmx::network::wire {
 namespace {
+// Semantic object kinds are fixed protocol constants, never content indices.
+static_assert(static_cast<unsigned>(ObjectKind::None) == 0 && static_cast<unsigned>(ObjectKind::Generic) == 1 &&
+    static_cast<unsigned>(ObjectKind::Chair) == 2 && static_cast<unsigned>(ObjectKind::Table) == 3 &&
+    static_cast<unsigned>(ObjectKind::Lamp) == 4);
 bool ValidViewBounds(const WorldView& view) {
     return view.width >= 1 && view.width <= 25 && view.height == view.width && (view.width & 1) != 0 &&
         ValidPosition(view.player_position) && view.origin.y == view.player_position.y &&
@@ -12,13 +16,26 @@ bool ValidViewBounds(const WorldView& view) {
         static_cast<std::int64_t>(view.origin.z) + view.height / 2 == view.player_position.z;
 }
 bool ValidCell(const ViewCell& cell, const WorldView& view, std::size_t index) {
-    if (!cell.visible) return cell == ViewCell{};
+    if (cell.terrainVisibility > Visibility::Visible || cell.overlayVisibility > Visibility::Visible ||
+        cell.terrainLight > LightBand::Bright || cell.overlayLight > LightBand::Bright ||
+        !ValidObjectAppearance(cell.objectAppearance)) return false;
+    const bool terrain = cell.terrainVisibility != Visibility::Unknown;
+    const bool overlay = cell.overlayVisibility != Visibility::Unknown;
+    const bool object = cell.objectAppearance.kind != ObjectKind::None;
+    if (!terrain && (cell.tile != Tile{} || cell.terrainDepth || cell.terrainLight != LightBand::Dark)) return false;
+    if (cell.terrainVisibility == Visibility::Remembered &&
+        (cell.tile.damage || cell.terrainLight != LightBand::Dark)) return false;
+    if (!overlay && (cell.actor || cell.player || cell.ground_items || cell.object ||
+        cell.objectAppearance != ObjectAppearance{} || cell.overlayDepth || cell.overlayLight != LightBand::Dark)) return false;
+    if (overlay && !(cell.actor || cell.ground_items || object)) return false;
+    if (cell.overlayVisibility == Visibility::Remembered &&
+        (cell.actor || cell.player || cell.ground_items || cell.object || !object || cell.overlayLight != LightBand::Dark)) return false;
+    if (cell.overlayVisibility == Visibility::Visible && ((cell.object != 0) != object)) return false;
+    if (!terrain && !overlay) return true;
     const auto maxDepth = static_cast<unsigned>(view.player_position.y - world_min_y);
-    const bool overlay = cell.actor != 0 || cell.ground_items != 0 || cell.object != 0;
-    return cell.tile.terrain.value != 0 && cell.terrainDepth < world_layer_count &&
+    return (!terrain || cell.tile.terrain.value != 0) && cell.terrainDepth < world_layer_count &&
         cell.overlayDepth < world_layer_count && cell.terrainDepth <= maxDepth && cell.overlayDepth <= maxDepth &&
         (overlay || cell.overlayDepth == 0) && (!cell.player || cell.actor != 0) &&
-        (!cell.object_enabled || cell.object != 0) &&
         ValidPosition({view.origin.x + static_cast<int>(index % view.width),
             view.origin.z + static_cast<int>(index / view.width), view.origin.y});
 }
@@ -164,6 +181,13 @@ bool ReadEntries(Reader& reader, Vector<InventoryEntry>& entries) {
 }
 }
 
+bool ValidTerrainDefinitions(const WorldView& view, const ContentCatalog& content) {
+    for (const auto& cell : view.cells) {
+        if (cell.terrainVisibility != Visibility::Unknown && !content.TryGetTerrain(cell.tile.terrain)) return false;
+    }
+    return true;
+}
+
 bool ValidItemDefinitions(const WorldView& view, const ContentCatalog& content) {
     if (!ValidLists(view)) return false;
     for (const auto* entries : {&view.inventory, &view.groundItems}) {
@@ -258,7 +282,8 @@ bool Writer::View(const WorldView& v) {
     if (!ValidViewBounds(v) ||
         v.cells.size() != static_cast<std::size_t>(v.width * v.height) ||
         !ValidLists(v) || v.players.size() > 32 ||
-        v.playerId == 0 || v.opportunity == 0 || v.speed == 0 || v.pacing.ticksPerSecond == 0) return false;
+        v.playerId == 0 || v.opportunity == 0 || v.speed == 0 || v.pacing.ticksPerSecond == 0 ||
+        v.playerLight > LightBand::Bright) return false;
     for (std::size_t i = 0; i < v.cells.size(); ++i)
         if (!ValidCell(v.cells[i], v, i)) return false;
     I32(v.origin.x); I32(v.origin.z); I32(v.origin.y);
@@ -270,12 +295,15 @@ bool Writer::View(const WorldView& v) {
     U8(v.pacing.pauseWhenIdle ? 1 : 0); U8(v.commandQueued ? 1 : 0);
     U16(static_cast<std::uint16_t>(v.cells.size()));
     for (const ViewCell& c : v.cells) {
-        U8(c.visible ? 1 : 0);
-        if (c.visible) {
-            U32(c.tile.terrain.value); U8(c.tile.damage); U64(c.actor); U8(c.player ? 1 : 0);
-            U32(c.ground_items); U64(c.object); U8(c.object_enabled ? 1 : 0);
-            U8(static_cast<std::uint8_t>(c.terrainDepth)); U8(static_cast<std::uint8_t>(c.overlayDepth));
-        }
+        U8(static_cast<std::uint8_t>(c.terrainVisibility));
+        U32(c.tile.terrain.value); U8(c.tile.damage); U64(c.actor); U8(c.player ? 1 : 0);
+        U32(c.ground_items); U64(c.object);
+        U8(static_cast<std::uint8_t>(c.objectAppearance.kind));
+        U8(static_cast<std::uint8_t>(c.objectAppearance.facing));
+        U8(c.objectAppearance.active ? 1 : 0); U8(c.objectAppearance.broken ? 1 : 0);
+        U8(static_cast<std::uint8_t>(c.terrainDepth)); U8(static_cast<std::uint8_t>(c.overlayDepth));
+        U8(static_cast<std::uint8_t>(c.overlayVisibility));
+        U8(static_cast<std::uint8_t>(c.terrainLight)); U8(static_cast<std::uint8_t>(c.overlayLight));
     }
     if (!WriteEntries(*this, v.inventory) || !WriteEntries(*this, v.groundItems)) return false;
     U64(v.carriedMassGrams); U64(v.carryCapacityGrams);
@@ -285,6 +313,7 @@ bool Writer::View(const WorldView& v) {
         U8(static_cast<std::uint8_t>(p.state)); U8(p.ready ? 1 : 0);
         U8(p.commandQueued ? 1 : 0); U64(p.opportunity); U64(p.graceMicroseconds);
     }
+    U8(static_cast<std::uint8_t>(v.playerLight));
     return bytes.size() <= maxPacket;
 }
 bool Reader::U8(std::uint8_t& v) { if (offset >= bytes.size()) return false; v = bytes[offset++]; return true; }
@@ -345,17 +374,21 @@ bool Reader::View(WorldView& v) {
     v.commandQueued = queued;
     v.cells.clear();
     for (unsigned i = 0; i < count; ++i) {
-        ViewCell c; std::uint8_t visible;
-        if (!U8(visible) || visible > 1) return false;
-        c.visible = visible;
-        if (c.visible) {
-            std::uint8_t player, enabled, terrainDepth, overlayDepth;
-            if (!U32(c.tile.terrain.value) || !U8(c.tile.damage) || !U64(c.actor) ||
-                !U8(player) || player > 1 || !U32(c.ground_items) || !U64(c.object) ||
-                !U8(enabled) || enabled > 1 || !U8(terrainDepth) || !U8(overlayDepth)) return false;
-            c.player = player; c.object_enabled = enabled;
-            c.terrainDepth = terrainDepth; c.overlayDepth = overlayDepth;
-        }
+        ViewCell c;
+        std::uint8_t terrainVisibility, overlayVisibility, terrainLight, overlayLight, kind, facing, active, broken;
+        if (!U8(terrainVisibility)) return false;
+        c.terrainVisibility = static_cast<Visibility>(terrainVisibility);
+        std::uint8_t player, terrainDepth, overlayDepth;
+        if (!U32(c.tile.terrain.value) || !U8(c.tile.damage) || !U64(c.actor) ||
+            !U8(player) || player > 1 || !U32(c.ground_items) || !U64(c.object) ||
+            !U8(kind) || !U8(facing) || !U8(active) || active > 1 || !U8(broken) || broken > 1 ||
+            !U8(terrainDepth) || !U8(overlayDepth) || !U8(overlayVisibility) ||
+            !U8(terrainLight) || !U8(overlayLight)) return false;
+        c.player = player;
+        c.objectAppearance = {static_cast<ObjectKind>(kind), static_cast<ObjectFacing>(facing), active != 0, broken != 0};
+        c.terrainDepth = terrainDepth; c.overlayDepth = overlayDepth;
+        c.overlayVisibility = static_cast<Visibility>(overlayVisibility);
+        c.terrainLight = static_cast<LightBand>(terrainLight); c.overlayLight = static_cast<LightBand>(overlayLight);
         if (!ValidCell(c, v, i)) return false;
         v.cells.push_back(c);
     }
@@ -374,6 +407,9 @@ bool Reader::View(WorldView& v) {
         lastPlayer = p.id;
         v.players.push_back(eastl::move(p));
     }
+    std::uint8_t playerLight;
+    if (!U8(playerLight) || playerLight > static_cast<std::uint8_t>(LightBand::Bright)) return false;
+    v.playerLight = static_cast<LightBand>(playerLight);
     return true;
 }
 

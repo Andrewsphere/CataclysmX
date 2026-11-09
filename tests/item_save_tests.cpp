@@ -114,7 +114,7 @@ void Mutate(const char* path, const char* before, const char* after) {
     WritePayload(path, text);
 }
 
-TEST_CASE("Explicit V6 item payload loads without rewriting its state", "[save][item-save]") {
+TEST_CASE("Explicit V7 item payload loads without rewriting its state", "[save][item-save]") {
     const auto original = Catalog();
     const auto expanded = Catalog(true);
     ItemSaveFile file;
@@ -127,7 +127,7 @@ TEST_CASE("Explicit V6 item payload loads without rewriting its state", "[save][
         if (i) { payload += ','; }
         payload += R"({"terrain":"floor","damage":0})";
     }
-    payload += R"(],"actors":[{"id":"1","position":{"x":0,"z":0,"y":0},"player":true,"parked":false,"turns":"0","speed":100,"remaining_ticks":"0","carry_capacity_g":"18446744073709551615","inventory":[{"id":"2","type":"bag","state":{},"installation":"","contents":[]}]}],"objects":[],"ground_items":[{"id":"3","type":"device","state":{"charger":{"version":1,"enabled":true,"remainder":87},"power":{"version":1,"energy":800},"timer":{"version":2,"armed":true,"remaining_ticks":123,"target":{"x":{"$i64":"1"},"z":{"$i64":"0"},"y":{"$i64":"0"}}}},"installation":"","contents":[{"id":"4","type":"battery","state":{"cell":{"version":1,"energy":17}},"installation":"charger","contents":[]}],"position":{"x":0,"z":0,"y":0}}]})";
+    payload += R"(],"actors":[{"id":"1","position":{"x":0,"z":0,"y":0},"player":true,"parked":false,"turns":"0","speed":100,"remaining_ticks":"0","carry_capacity_g":"18446744073709551615","light":{"intensity":0,"range":0},"inventory":[{"id":"2","type":"bag","state":{},"installation":"","contents":[]}]}],"objects":[],"ground_items":[{"id":"3","type":"device","state":{"charger":{"version":1,"enabled":true,"remainder":87},"power":{"version":1,"energy":800},"timer":{"version":2,"armed":true,"remaining_ticks":123,"target":{"x":{"$i64":"1"},"z":{"$i64":"0"},"y":{"$i64":"0"}}}},"installation":"","contents":[{"id":"4","type":"battery","state":{"cell":{"version":1,"energy":17}},"installation":"charger","contents":[]}],"position":{"x":0,"z":0,"y":0}}]})";
     WritePayload(file.path.c_str(), payload);
     SaveDatabase database(expanded);
     auto opened = database.Open(file.path.c_str()); REQUIRE(opened);

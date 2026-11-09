@@ -151,7 +151,7 @@ TEST_CASE("Save terrain names survive catalog renumbering and missing content fa
     }
     {
         RawDatabase raw(file.path.c_str());
-        CHECK(raw.Text("SELECT format_version FROM metadata") == "6");
+        CHECK(raw.Text("SELECT format_version FROM metadata") == "7");
         const auto payload = raw.Text("SELECT payload FROM chunks");
         CHECK(payload.find("\"terrain\":\"moss\"") != std::string::npos);
         CHECK(payload.find("\"terrain\":\"floor\"") != std::string::npos);
@@ -500,7 +500,8 @@ TEST_CASE("Save database rejects unknown versions and incomplete or extended sch
     Populate(file.path.c_str());
     {
         RawDatabase raw(file.path.c_str());
-        SECTION("future version") { raw.Exec("UPDATE metadata SET format_version=7"); }
+        SECTION("future version") { raw.Exec("UPDATE metadata SET format_version=8"); }
+        SECTION("previous v6 format") { raw.Exec("UPDATE metadata SET format_version=6"); }
         SECTION("previous v5 format") { raw.Exec("UPDATE metadata SET format_version=5"); }
         SECTION("previous v4 format") { raw.Exec("UPDATE metadata SET format_version=4"); }
         SECTION("previous v3 format") { raw.Exec("UPDATE metadata SET format_version=3"); }
@@ -518,12 +519,14 @@ TEST_CASE("Save database rejects damaged metadata and schemas", "[save][database
         RawDatabase raw(file.path.c_str());
         SECTION("missing metadata") { raw.Exec("DELETE FROM metadata"); }
         SECTION("extra columns") { raw.Exec("ALTER TABLE chunks ADD COLUMN future TEXT"); }
-        SECTION("v5 chunks schema with v6 metadata") {
+        SECTION("v5 chunks schema with v7 metadata") {
             raw.Exec("ALTER TABLE chunks RENAME TO old_chunks;"
                 "CREATE TABLE chunks(x INTEGER NOT NULL,z INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(x,z));"
                 "INSERT INTO chunks SELECT x,z,payload FROM old_chunks; DROP TABLE old_chunks;");
         }
         SECTION("missing world_state") { raw.Exec("DELETE FROM world_state"); }
+        SECTION("missing player memories table") { raw.Exec("DROP TABLE player_memories"); }
+        SECTION("extended player memories table") { raw.Exec("ALTER TABLE player_memories ADD COLUMN future TEXT"); }
         SECTION("unknown tables") { raw.Exec("CREATE TABLE future(value TEXT)"); }
         SECTION("malformed chunk") { raw.Exec("UPDATE chunks SET payload='{}'"); }
     }
@@ -564,6 +567,16 @@ TEST_CASE("Save database strictly validates nested JSON and coordinates", "[save
         SECTION("negative actor speed") { Replace(payload, "\"speed\":173", "\"speed\":-1"); }
         SECTION("overflow actor speed") { Replace(payload, "\"speed\":173", "\"speed\":4294967296"); }
         SECTION("missing actor speed") { Replace(payload, "\"speed\":173,", ""); }
+        SECTION("actor light missing") { Replace(payload, "\"light\":{\"intensity\":0,\"range\":0},", ""); }
+        SECTION("actor light intensity overflow") { Replace(payload, "\"intensity\":0", "\"intensity\":256"); }
+        SECTION("actor light range overflow") { Replace(payload, "\"range\":0", "\"range\":13"); }
+        SECTION("actor light unpaired zero") { Replace(payload, "\"intensity\":0", "\"intensity\":1"); }
+        SECTION("actor light duplicate field") { Replace(payload, "\"range\":0", "\"range\":0,\"range\":0"); }
+        SECTION("actor light unknown field") { Replace(payload, "\"range\":0", "\"range\":0,\"extra\":0"); }
+        SECTION("object None kind") { Replace(payload, "\"kind\":1", "\"kind\":0"); }
+        SECTION("object unknown kind") { Replace(payload, "\"kind\":1", "\"kind\":5"); }
+        SECTION("object invalid facing") { Replace(payload, "\"facing\":0", "\"facing\":4"); }
+        SECTION("object broken not boolean") { Replace(payload, "\"broken\":false", "\"broken\":0"); }
         SECTION("numeric actor carry capacity") { Replace(payload, "\"carry_capacity_g\":\"100000\"", "\"carry_capacity_g\":100000"); }
         SECTION("missing parked flag") { Replace(payload, "\"parked\":false,", ""); }
         SECTION("numeric parked flag") { Replace(payload, "\"parked\":false", "\"parked\":0"); }
@@ -605,7 +618,11 @@ TEST_CASE("Save database validates session, counters and generator version", "[s
             expected = SaveError::UnsupportedVersion;
         }
         SECTION("numeric counter") { Replace(payload, "\"tick\":\"18446744073709551615\"", "\"tick\":1"); }
-        SECTION("invalid radius") { Replace(payload, "\"resident_radius\":2", "\"resident_radius\":9"); }
+        SECTION("missing sky light") { Replace(payload, "\"sky_light\":192,", ""); }
+        SECTION("sky light overflow") { Replace(payload, "\"sky_light\":192", "\"sky_light\":256"); }
+        SECTION("negative sky light") { Replace(payload, "\"sky_light\":192", "\"sky_light\":-1"); }
+        SECTION("duplicate sky light") { Replace(payload, "\"sky_light\":192", "\"sky_light\":192,\"sky_light\":192"); }
+        SECTION("invalid radius") { Replace(payload, "\"resident_radius\":5", "\"resident_radius\":9"); }
         SECTION("invalid next ID") { Replace(payload, "\"next_id\":\"8\"", "\"next_id\":\"7\""); }
         SECTION("player is an object") { Replace(payload, "\"player\":\"1\"", "\"player\":\"2\""); }
         SECTION("player position mismatch") { Replace(payload, "\"x\":0", "\"x\":1"); }

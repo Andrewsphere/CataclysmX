@@ -6,8 +6,18 @@
 #include <ftxui/dom/elements.hpp>
 
 #include <functional>
+#include <atomic>
 
 namespace cataclysmx {
+
+// At most one timer wakeup is outstanding; input events are never coalesced.
+class TerminalTimerWakeup {
+public:
+    bool TryPost() { return !pending_.exchange(true); }
+    void Consumed() { pending_.store(false); }
+private:
+    std::atomic<bool> pending_ = false;
+};
 
 struct GameplayPresentation {
     String session;
@@ -29,6 +39,8 @@ public:
     bool PausesLocal(eastl::optional<InputAction> action) const;
     ftxui::Element Render(const WorldView& view, const ContentCatalog& content,
         const Localization& localization, const Keymap& keys, const GameplayPresentation& presentation);
+    // Number of map element trees prepared by this UI, for reuse diagnostics.
+    std::uint64_t MapPreparations() const { return mapPreparations_; }
     // Consumes every event while open. Submit returns true only when accepted;
     // failures keep Inventory open. The application owns routing and timing.
     // Quick actions open UI-owned windows directly; other choices close the
@@ -38,6 +50,12 @@ public:
         const std::function<void(InputAction)>& activate = {}, const ContentCatalog* content = nullptr);
 
 private:
+    Vector<ViewCell> mapCells_;
+    const ContentCatalog* mapContent_ = nullptr;
+    int mapWidth_ = 0;
+    int mapHeight_ = 0;
+    ftxui::Element mapElements_;
+    std::uint64_t mapPreparations_ = 0;
     enum class Modal { None, Inventory, Players, Controls, QuickActions };
     enum class ItemStage { Browse, Actions, Item, Container, Direction };
     ItemStage itemStage_ = ItemStage::Browse;

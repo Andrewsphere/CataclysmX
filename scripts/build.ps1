@@ -37,8 +37,8 @@ try {
     cmake -E copy_if_different "out/build/$Preset/compile_commands.json" compile_commands.json
     if ($LASTEXITCODE -ne 0) { throw 'Compilation database copy failed' }
     if (-not $SkipTests) {
-        ctest --preset $Preset
-        if ($LASTEXITCODE -ne 0) { throw 'Tests failed' }
+        & "$PSScriptRoot/test.ps1" -Preset $Preset
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     }
 } finally {
     Pop-Location

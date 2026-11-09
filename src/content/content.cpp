@@ -127,6 +127,9 @@ bool ReadBool(yyjson_val* value, bool& output, const Context& context) {
     return true;
 }
 
+bool ReadBoundedInteger(yyjson_val* value, std::uint32_t minimum, std::uint32_t maximum,
+                        std::uint32_t& output, const Context& context);
+
 bool ValidSymbol(eastl::string_view text) {
     if (text.empty()) { return false; }
     const auto first = static_cast<unsigned char>(text[0]);
@@ -211,7 +214,7 @@ bool MissingReference(const PendingTerrain& terrain, eastl::string_view field,
 bool ParseTerrain(yyjson_val* object, PendingTerrain& terrain) {
     const auto& context = terrain.context;
     if (!CheckObject(object, {"type", "id", "name", "movement", "blocks_sight", "appearance",
-                               "looks_like", "opens_to", "closes_to", "open_space", "stairs"}, context)) { return false; }
+                               "looks_like", "opens_to", "closes_to", "open_space", "stairs", "light"}, context)) { return false; }
     if (!ReadId(yyjson_obj_get(object, "id"), terrain.definition.id, context.Child("id"))
         || !ReadString(yyjson_obj_get(object, "name"), terrain.definition.name, context.Child("name"))) {
         return false;
@@ -227,6 +230,20 @@ bool ParseTerrain(yyjson_val* object, PendingTerrain& terrain) {
     }
     if (auto* stairs = yyjson_obj_get(object, "stairs")) {
         if (!ReadBool(stairs, terrain.definition.stairs, context.Child("stairs"))) { return false; }
+    }
+    if (auto* light = yyjson_obj_get(object, "light")) {
+        const auto lightContext = context.Child("light");
+        std::uint32_t intensity = 0, range = 0;
+        if (!CheckObject(light, {"intensity", "range"}, lightContext)
+            || !ReadBoundedInteger(yyjson_obj_get(light, "intensity"), 0,
+                                   std::numeric_limits<std::uint8_t>::max(), intensity, lightContext.Child("intensity"))
+            || !ReadBoundedInteger(yyjson_obj_get(light, "range"), 0, maxLightRange, range,
+                                   lightContext.Child("range"))) { return false; }
+        const LightEmission emission{static_cast<std::uint8_t>(intensity), static_cast<std::uint8_t>(range)};
+        if (!ValidLightEmission(emission)) {
+            return lightContext.Fail("intensity and range must both be zero or both be positive");
+        }
+        terrain.definition.light = emission;
     }
     if (terrain.definition.openSpace && (!terrain.definition.passable
         || terrain.definition.blocksSight || terrain.definition.stairs)) {
