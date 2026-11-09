@@ -1,0 +1,18 @@
+# Charger and battery remain on the ground while a controller is deployed.
+move s
+use 7 1 install 8
+use 7 1 start
+wait 17
+items
+pickup 9
+move n
+move e
+move e
+drop 9
+use 9 1 arm e
+wait 300
+items
+# The timed controller has opened the door by now.
+move e
+inspect
+quit

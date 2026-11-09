@@ -89,11 +89,11 @@ TEST_CASE("Server creates the deterministic demo and advances only successful co
     CHECK_FALSE(world.IsActive({-32, -32}));
     const auto backpack = world.ItemsAt({0, 0});
     REQUIRE(backpack.size() == 1);
-    CHECK(world.GetItem(backpack[0])->kind == ItemKind::backpack);
+    CHECK(world.GetItem(backpack[0])->type == TestItem("backpack"));
     REQUIRE(world.GetItem(backpack[0])->contents.size() == 1);
-    CHECK(world.GetItem(world.GetItem(backpack[0])->contents[0])->kind == ItemKind::bandage);
+    CHECK(world.GetItem(world.GetItem(backpack[0])->contents[0])->type == TestItem("bandage"));
     REQUIRE(world.ItemsAt({1, 0}).size() == 1);
-    CHECK(world.GetItem(world.ItemsAt({1, 0})[0])->kind == ItemKind::rock);
+    CHECK(world.GetItem(world.ItemsAt({1, 0})[0])->type == TestItem("rock"));
     const ObjectHandle object = world.ObjectAt({2, 0});
     REQUIRE(world.GetObject(object) != nullptr);
     CHECK_FALSE(world.GetObject(object)->enabled);
@@ -177,7 +177,7 @@ TEST_CASE("Pickup and drop use direct ownership and persistent IDs while preserv
     const PersistentId bandage_id = world.GetItem(bandage)->id;
     const ItemHandle rock = world.ItemsAt({1, 0})[0];
     const PersistentId rock_id = world.GetItem(rock)->id;
-    const ItemHandle loose = take(world.CreateItem(ItemKind::rock, ItemLocation::Ground({0, 0})));
+    const ItemHandle loose = take(world.CreateItem(TestItem("rock"), ItemLocation::Ground({0, 0})));
     const PersistentId loose_id = world.GetItem(loose)->id;
     // Collection order differs from persistent-ID order.
     REQUIRE(world.TransferItem(bag, ItemLocation::Ground({0, 1})));
@@ -193,9 +193,19 @@ TEST_CASE("Pickup and drop use direct ownership and persistent IDs while preserv
     REQUIRE(world.TransferItem(bag, ItemLocation::Ground({0, 0})));
     REQUIRE(world.TransferItem(bag, ItemLocation::Carried(server.GetPlayer())));
     const WorldView inventory = server.View();
-    REQUIRE(inventory.inventory.size() == 2);
-    CHECK(inventory.inventory[0] == InventoryEntry{bag_id, ItemKind::backpack, 1});
-    CHECK(inventory.inventory[1] == InventoryEntry{loose_id, ItemKind::rock, 0});
+    REQUIRE(inventory.inventory.size() == 3);
+    CHECK(inventory.inventory[0].id == bag_id);
+    CHECK(inventory.inventory[0].type == TestItem("backpack"));
+    CHECK(inventory.inventory[0].contained_items == 1);
+    CHECK(inventory.inventory[0].parent == 0);
+    CHECK(inventory.inventory[1].id == bandage_id);
+    CHECK(inventory.inventory[1].type == TestItem("bandage"));
+    CHECK(inventory.inventory[1].contained_items == 0);
+    CHECK(inventory.inventory[1].parent == bag_id);
+    CHECK(inventory.inventory[2].id == loose_id);
+    CHECK(inventory.inventory[2].type == TestItem("rock"));
+    CHECK(inventory.inventory[2].contained_items == 0);
+    CHECK(inventory.inventory[2].parent == 0);
     expect(server, {CommandKind::drop}, Outcome::dropped, true);
     CHECK(world.GetItem(bag)->location == ItemLocation::Ground({0, 0}));
     CHECK(world.GetItem(bandage)->id == bandage_id);
@@ -214,7 +224,7 @@ TEST_CASE("Views are isolated value snapshots with bounded circular LOS and empt
     REQUIRE(world.SetTile({1, 0}, {TestTerrain("wall"), 23}));
     REQUIRE(world.SetTile({2, 0}, {TestTerrain("floor"), 71}));
     const auto hidden_actor = take(world.CreateActor({2, 0}));
-    take(world.CreateItem(ItemKind::rock, ItemLocation::Ground({2, 0})));
+    take(world.CreateItem(TestItem("rock"), ItemLocation::Ground({2, 0})));
     const auto object = world.ObjectAt({2, 0});
     REQUIRE(world.SetObjectEnabled(object, true));
     REQUIRE(world.SetTile({0, 1}, {TestTerrain("closed_door"), 8}));
@@ -254,9 +264,9 @@ TEST_CASE("Views are isolated value snapshots with bounded circular LOS and empt
 
     expect(server, {CommandKind::pick_up}, Outcome::picked_up, true);
     const WorldView carrying = server.View(0);
-    REQUIRE(carrying.inventory.size() == 1);
+    REQUIRE(carrying.inventory.size() == 2);
     expect(server, {CommandKind::drop}, Outcome::dropped, true);
-    CHECK(carrying.inventory.size() == 1);
+    CHECK(carrying.inventory.size() == 2);
     CHECK(carrying.tick + 100 == server.GetTick());
     CHECK(old.inventory.empty());
     CHECK(server.View(INT_MIN).width == 1);

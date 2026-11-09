@@ -1,4 +1,5 @@
 #include "content/content.h"
+#include "items/item_registry.h"
 
 #include <EASTL/optional.h>
 #include <EASTL/sort.h>
@@ -294,6 +295,260 @@ bool ReadBoundedInteger(yyjson_val* value, std::uint32_t minimum, std::uint32_t 
     return true;
 }
 
+struct PendingItem {
+    ItemDefinition definition;
+    std::size_t inputOrder = 0;
+    Context context;
+};
+
+void AddItemContext(const Context& context, eastl::string_view id) {
+    if (!context.diagnostics) { return; }
+    String message = "while loading item '";
+    if (!id.empty()) { message.append(id.data(), id.size()); }
+    message += '\'';
+    context.Fail(View(message));
+}
+
+bool ReadItemInteger(yyjson_val* object, const char* field, std::uint32_t minimum,
+                     std::uint32_t& output, const Context& context) {
+    return ReadBoundedInteger(yyjson_obj_get(object, field), minimum,
+                              std::numeric_limits<std::uint32_t>::max(), output, context.Child(field));
+}
+
+struct PendingCapability {
+    ItemCapabilityDefinition definition;
+    Context context;
+};
+
+// Content uses ordinary JSON integer semantics, never the archive's tagged codec.
+bool ReadContentData(yyjson_val* value, DataObject& output, const Context& context, unsigned depth = 0) {
+    if (depth > 64) { return context.Fail("content value exceeds maximum depth"); }
+    if (yyjson_is_bool(value)) { output = DataObject::Boolean(yyjson_get_bool(value)); return true; }
+    if (yyjson_is_uint(value)) { output = DataObject::Unsigned(yyjson_get_uint(value)); return true; }
+    if (yyjson_is_sint(value)) { output = DataObject::Signed(yyjson_get_sint(value)); return true; }
+    if (yyjson_is_str(value)) {
+        const auto text = JsonString(value);
+        if (std::memchr(text.data(), 0, text.size())) { return context.Fail("embedded NUL is not allowed"); }
+        output = DataObject::Text(text);
+        return true;
+    }
+    if (yyjson_is_arr(value)) {
+        output = DataObject::List();
+        std::size_t index, count;
+        yyjson_val* child;
+        yyjson_arr_foreach(value, index, count, child) {
+            DataObject data;
+            if (!ReadContentData(child, data, ArrayElement(context, index), depth + 1)) { return false; }
+            output.Append(eastl::move(data));
+        }
+        return true;
+    }
+    if (yyjson_is_obj(value)) {
+        output = DataObject{};
+        std::size_t index, count;
+        yyjson_val* key;
+        yyjson_val* child;
+        yyjson_obj_foreach(value, index, count, key, child) {
+            const auto name = JsonString(key);
+            const auto childContext = context.Child(name);
+            if (std::memchr(name.data(), 0, name.size())) { return childContext.Fail("embedded NUL is not allowed"); }
+            if (output.Find(name)) { return childContext.Fail("duplicate field"); }
+            DataObject data;
+            if (!ReadContentData(child, data, childContext, depth + 1)) { return false; }
+            output.Set(name, eastl::move(data));
+        }
+        return true;
+    }
+    return context.Fail("expected a boolean, integer, string, list, or object");
+}
+
+bool CheckDataFields(const DataObject& object, std::initializer_list<eastl::string_view> allowed,
+                     const Context& context) {
+    for (std::size_t i = 0; i < object.Size(); ++i) {
+        const auto name = View(object.Name(i));
+        bool known = false;
+        for (auto field : allowed) { if (name == field) { known = true; break; } }
+        if (!known) { return context.Child(name).Fail("unknown field"); }
+    }
+    return true;
+}
+
+bool ReadDataInteger(const DataObject& object, eastl::string_view field, std::uint32_t minimum,
+                     std::uint32_t maximum, std::uint32_t& output, const Context& context) {
+    const auto value = object.GetUnsigned(field);
+    if (!value || *value < minimum || *value > maximum) {
+        return context.Child(field).Fail("expected an integer in the allowed range");
+    }
+    output = static_cast<std::uint32_t>(*value);
+    return true;
+}
+
+DataObject CanonicalContentData(const DataObject& input) {
+    if (input.Type() == DataType::List) {
+        DataObject output = DataObject::List();
+        for (std::size_t i = 0; i < input.Size(); ++i) { output.Append(CanonicalContentData(input.At(i))); }
+        return output;
+    }
+    if (input.Type() != DataType::Object) { return input; }
+    Vector<std::size_t> fields;
+    fields.reserve(input.Size());
+    for (std::size_t i = 0; i < input.Size(); ++i) { fields.push_back(i); }
+    eastl::sort(fields.begin(), fields.end(), [&input](std::size_t left, std::size_t right) {
+        return input.Name(left) < input.Name(right);
+    });
+    DataObject output;
+    for (auto field : fields) { output.Set(View(input.Name(field)), CanonicalContentData(input.At(field))); }
+    return output;
+}
+
+// Factories have no JSON/source dependency. Supply the caller's source location
+// to their inner-first diagnostic frames at this boundary.
+void AppendBehaviorDiagnostics(const Diagnostics& details, const Context& context) {
+    if (!context.diagnostics) { return; }
+    for (const auto& detail : details.Frames()) {
+        DiagnosticFrame frame = detail;
+        if (!frame.location) {
+            frame.location = DiagnosticLocation{String(context.file.data(), context.file.size()), context.path, {}, {}};
+        } else {
+            if (frame.location->file.empty()) { frame.location->file.assign(context.file.data(), context.file.size()); }
+            String path = context.path;
+            if (!frame.location->path.empty()) {
+                if (!path.empty() && frame.location->path[0] != '[') { path += '.'; }
+                path += frame.location->path;
+            }
+            frame.location->path = eastl::move(path);
+        }
+        context.diagnostics->Add(eastl::move(frame));
+    }
+}
+
+bool ParseSharedCapability(PendingCapability& pending, ItemDefinition& item, ItemCapabilityId self) {
+    auto& capability = pending.definition;
+    const auto& input = capability.config;
+    const auto& context = pending.context;
+    constexpr auto maximum = std::numeric_limits<std::uint32_t>::max();
+    DataObject config;
+    config.SetString("id", View(capability.id));
+    config.SetString("type", View(capability.type));
+    if (capability.type == "container") {
+        ContainerDefinition data;
+        if (!CheckDataFields(input, {"id", "type", "capacity_volume_ml"}, context)
+            || !ReadDataInteger(input, "capacity_volume_ml", 1, maximum, data.capacityVolumeMl, context)) { return false; }
+        if (item.container) { return context.Fail("at most one container is allowed"); }
+        item.container = ItemContainerDefinition{self, data};
+        config.SetUnsigned("capacity_volume_ml", data.capacityVolumeMl);
+    } else {
+        EnergyStoreDefinition data;
+        if (!CheckDataFields(input, {"id", "type", "capacity_energy", "initial_energy", "rechargeable", "battery_class"}, context)
+            || !ReadDataInteger(input, "capacity_energy", 1, maximum, data.capacityEnergy, context)) { return false; }
+        const auto rechargeable = input.GetBoolean("rechargeable");
+        if (!rechargeable) { return context.Child("rechargeable").Fail("expected a boolean"); }
+        data.rechargeable = *rechargeable;
+        data.initialEnergy = data.capacityEnergy;
+        if (input.Find("initial_energy")
+            && !ReadDataInteger(input, "initial_energy", 0, data.capacityEnergy, data.initialEnergy, context)) { return false; }
+        if (input.Find("battery_class")) {
+            const auto batteryClass = input.GetString("battery_class");
+            if (!batteryClass || !ValidId(*batteryClass)) {
+                return context.Child("battery_class").Fail("expected an id matching [a-z][a-z0-9_]*");
+            }
+            data.batteryClass.assign(batteryClass->data(), batteryClass->size());
+        }
+        config.SetUnsigned("capacity_energy", data.capacityEnergy);
+        config.SetUnsigned("initial_energy", data.initialEnergy);
+        config.SetBoolean("rechargeable", data.rechargeable);
+        config.SetString("battery_class", View(data.batteryClass));
+        item.energyStores.push_back({self, eastl::move(data)});
+    }
+    capability.config = CanonicalContentData(config);
+    return true;
+}
+
+bool ParseItem(yyjson_val* object, PendingItem& item, const ItemBehaviorRegistry& registry) {
+    const auto& context = item.context;
+    auto& definition = item.definition;
+    if (!CheckObject(object, {"type", "id", "name", "mass_g", "volume_ml", "capabilities"}, context)
+        || !ReadId(yyjson_obj_get(object, "id"), definition.id, context.Child("id"))
+        || !ReadString(yyjson_obj_get(object, "name"), definition.name, context.Child("name"))
+        || !ReadItemInteger(object, "mass_g", 0, definition.massGrams, context)
+        || !ReadItemInteger(object, "volume_ml", 1, definition.volumeMl, context)) { return false; }
+    auto* capabilities = yyjson_obj_get(object, "capabilities");
+    if (!capabilities) { return true; }
+    const auto capabilitiesContext = context.Child("capabilities");
+    if (!yyjson_is_arr(capabilities) || yyjson_arr_size(capabilities) > maxItemCapabilities) {
+        return capabilitiesContext.Fail("expected an array of at most 16 capabilities");
+    }
+    Vector<PendingCapability> pending;
+    std::size_t index, count;
+    yyjson_val* value;
+    yyjson_arr_foreach(capabilities, index, count, value) {
+        PendingCapability capability;
+        capability.context = ArrayElement(capabilitiesContext, index);
+        if (!yyjson_is_obj(value)) { return capability.context.Fail("expected a capability object"); }
+        if (!ReadId(yyjson_obj_get(value, "id"), capability.definition.id, capability.context.Child("id"))
+            || !ReadId(yyjson_obj_get(value, "type"), capability.definition.type, capability.context.Child("type"))
+            || !ReadContentData(value, capability.definition.config, capability.context)) { return false; }
+        pending.push_back(eastl::move(capability));
+    }
+    eastl::sort(pending.begin(), pending.end(), [](const PendingCapability& left, const PendingCapability& right) {
+        return left.definition.id < right.definition.id;
+    });
+    for (std::size_t i = 0; i < pending.size(); ++i) {
+        auto& capability = pending[i];
+        if (i > 0 && pending[i - 1].definition.id == capability.definition.id) {
+            return capability.context.Child("id").Fail("duplicate capability id");
+        }
+        definition.capabilities.push_back(capability.definition);
+    }
+    for (std::size_t i = 0; i < pending.size(); ++i) {
+        auto& capability = pending[i];
+        if (capability.definition.type != "container" && capability.definition.type != "energy_store") { continue; }
+        if (!ParseSharedCapability(capability, definition, {static_cast<std::uint16_t>(i + 1)})) { return false; }
+        definition.capabilities[i].config = capability.definition.config;
+    }
+    for (const auto& store : definition.energyStores) {
+        if (!store.config.batteryClass.empty() && definition.energyStores.size() != 1) {
+            return capabilitiesContext.Fail("an installable battery requires a sole energy store");
+        }
+    }
+    std::size_t declaredActions = 0;
+    for (std::size_t i = 0; i < pending.size(); ++i) {
+        const auto& capability = pending[i];
+        if (capability.definition.type == "container" || capability.definition.type == "energy_store") { continue; }
+        const auto parser = registry.Find(View(capability.definition.type));
+        if (!parser) { return capability.context.Child("type").Fail("unsupported item capability type"); }
+        const ItemCapabilityId self{static_cast<std::uint16_t>(i + 1)};
+        Diagnostics details;
+        auto parsed = parser(capability.definition.config, definition, self, context.diagnostics ? &details : nullptr);
+        AppendBehaviorDiagnostics(details, capability.context);
+        if (!parsed) { return capability.context.Fail("could not parse item behavior"); }
+        if (!parsed->definition || parsed->config.Type() != DataType::Object) {
+            return capability.context.Fail("behavior factory returned an invalid definition");
+        }
+        const auto& schema = parsed->definition->Schema();
+        if (!ValidItemBehaviorSchema(schema)) {
+            return capability.context.Child("schema").Fail("invalid item behavior schema");
+        }
+        if (schema.actions.size() > maxItemActionsPerItem - declaredActions) {
+            return capability.context.Child("schema").Child("actions").Fail("at most 64 declared actions per item are allowed");
+        }
+        declaredActions += schema.actions.size();
+        definition.capabilities[i].config = CanonicalContentData(parsed->config);
+        definition.behaviors.push_back({self, eastl::move(parsed->definition)});
+    }
+    for (const auto& binding : definition.behaviors) {
+        const auto& behaviorContext = pending[binding.capability.value - 1].context;
+        Diagnostics details;
+        const auto result = binding.definition->ValidateComposition(definition, binding.capability,
+            context.diagnostics ? &details : nullptr);
+        AppendBehaviorDiagnostics(details, behaviorContext);
+        if (!result) {
+            return behaviorContext.Fail("invalid item behavior composition");
+        }
+    }
+    return true;
+}
+
 bool ParsePattern(yyjson_val* object, PendingPattern& pattern) {
     const auto& context = pattern.context;
     auto& definition = pattern.definition;
@@ -376,7 +631,8 @@ struct Document {
 };
 
 ContentResult<bool> ParseSource(const ContentSource& source, Vector<PendingTerrain>& pending,
-                                Vector<PendingPattern>& patterns, Diagnostics* diagnostics) {
+                                Vector<PendingPattern>& patterns, Vector<PendingItem>& items,
+                                const ItemBehaviorRegistry& registry, Diagnostics* diagnostics) {
     Context context{diagnostics, source.name, {}};
     yyjson_alc allocator{JsonMalloc, JsonRealloc, JsonFree, nullptr};
     yyjson_read_err error{};
@@ -427,7 +683,7 @@ ContentResult<bool> ParseSource(const ContentSource& source, Vector<PendingTerra
         }
         PendingTerrain terrain;
         terrain.context = definitionContext;
-        terrain.inputOrder = pending.size() + patterns.size();
+        terrain.inputOrder = pending.size() + patterns.size() + items.size();
         bool parsed = false;
         // Dispatch definition kinds at the document boundary; individual parsers own their schemas.
         if (!yyjson_is_obj(value)) {
@@ -438,6 +694,17 @@ ContentResult<bool> ParseSource(const ContentSource& source, Vector<PendingTerra
                 terrain.context.Child("type").Fail("expected a definition type string");
             } else if (JsonString(type) == "terrain") {
                 parsed = ParseTerrain(value, terrain);
+            } else if (JsonString(type) == "item") {
+                PendingItem item;
+                item.context = definitionContext;
+                item.inputOrder = terrain.inputOrder;
+                if (!ParseItem(value, item, registry)) {
+                    auto* id = yyjson_obj_get(value, "id");
+                    AddItemContext(item.context, yyjson_is_str(id) ? JsonString(id) : eastl::string_view{});
+                    return eastl::unexpected(ContentError::InvalidData);
+                }
+                items.push_back(eastl::move(item));
+                continue;
             } else if (JsonString(type) == "building_pattern") {
                 PendingPattern pattern;
                 pattern.context = definitionContext;
@@ -453,7 +720,7 @@ ContentResult<bool> ParseSource(const ContentSource& source, Vector<PendingTerra
                 String message = "unsupported definition type '";
                 const auto typeName = JsonString(type);
                 message.append(typeName.data(), typeName.size());
-                message += "' (expected terrain or building_pattern)";
+                message += "' (expected terrain, building_pattern, or item)";
                 terrain.context.Child("type").Fail(View(message));
             }
         }
@@ -587,17 +854,21 @@ struct DefinitionIdentity {
     const Context* context = nullptr;
     std::size_t inputOrder = 0;
     bool pattern = false;
+    bool item = false;
 };
 
 bool CheckDefinitionIds(const Vector<PendingTerrain>& terrains, const Vector<PendingPattern>& patterns,
-                        Diagnostics* diagnostics) {
+                         const Vector<PendingItem>& items, Diagnostics* diagnostics) {
     Vector<DefinitionIdentity> identities;
-    identities.reserve(terrains.size() + patterns.size());
+    identities.reserve(terrains.size() + patterns.size() + items.size());
     for (const auto& terrain : terrains) {
         identities.push_back({View(terrain.definition.id), &terrain.context, terrain.inputOrder, false});
     }
     for (const auto& pattern : patterns) {
         identities.push_back({View(pattern.definition.id), &pattern.context, pattern.inputOrder, true});
+    }
+    for (const auto& item : items) {
+        identities.push_back({View(item.definition.id), &item.context, item.inputOrder, false, true});
     }
     eastl::sort(identities.begin(), identities.end(), [](const DefinitionIdentity& left, const DefinitionIdentity& right) {
         if (left.id == right.id) { return left.inputOrder < right.inputOrder; }
@@ -608,12 +879,14 @@ bool CheckDefinitionIds(const Vector<PendingTerrain>& terrains, const Vector<Pen
         const auto& previous = identities[i - 1];
         if (previous.id != current.id) { continue; }
         if (diagnostics) {
-            String message = current.pattern ? "duplicate building pattern definition '" : "duplicate terrain definition '";
+            String message = current.item ? "duplicate item definition '" :
+                (current.pattern ? "duplicate building pattern definition '" : "duplicate terrain definition '");
             message.append(current.id.data(), current.id.size());
             message += '\'';
             current.context->Child("id").Fail(View(message));
             previous.context->Child("id").Fail("previous definition is here");
-            if (current.pattern) { AddPatternContext(*current.context, current.id); }
+            if (current.item) { AddItemContext(*current.context, current.id); }
+            else if (current.pattern) { AddPatternContext(*current.context, current.id); }
             else { AddTerrainContext(*current.context, current.id); }
             Context{diagnostics, {}, {}}.Fail("could not load content catalog");
         }
@@ -688,18 +961,51 @@ const BuildingPattern& ContentCatalog::GetBuildingPattern(BuildingPatternId id) 
 
 std::size_t ContentCatalog::BuildingPatternCount() const { return patterns_.size(); }
 
+ItemTypeId ContentCatalog::FindItem(eastl::string_view id) const {
+    std::size_t begin = 0, end = items_.size();
+    while (begin < end) {
+        const std::size_t middle = begin + (end - begin) / 2;
+        if (View(items_[middle].id) < id) { begin = middle + 1; }
+        else { end = middle; }
+    }
+    if (begin == items_.size() || View(items_[begin].id) != id) { return {}; }
+    return {static_cast<std::uint32_t>(begin + 1)};
+}
+
+const ItemDefinition* ContentCatalog::TryGetItem(ItemTypeId id) const {
+    if (id.value == 0 || id.value > items_.size()) { return nullptr; }
+    return &items_[id.value - 1];
+}
+
+const ItemDefinition& ContentCatalog::GetItem(ItemTypeId id) const {
+    const auto* definition = TryGetItem(id);
+    if (!definition) { std::abort(); }
+    return *definition;
+}
+
+std::size_t ContentCatalog::ItemCount() const { return items_.size(); }
+
 ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sources, Diagnostics* diagnostics) {
+    ItemBehaviorRegistry registry;
+    RegisterBuiltinItemBehaviors(registry);
+    return LoadContent(sources, registry, diagnostics);
+}
+
+ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sources,
+    const ItemBehaviorRegistry& registry, Diagnostics* diagnostics) {
     Vector<PendingTerrain> pending;
     Vector<PendingPattern> patterns;
+    Vector<PendingItem> items;
     for (const auto& source : sources) {
-        auto result = ParseSource(source, pending, patterns, diagnostics);
+        auto result = ParseSource(source, pending, patterns, items, registry, diagnostics);
         if (!result) {
             Context{diagnostics, source.name, {}}.Fail("could not load content source");
             return eastl::unexpected(result.error());
         }
     }
     if (pending.size() > std::numeric_limits<std::uint32_t>::max()
-        || patterns.size() > std::numeric_limits<std::uint32_t>::max()) {
+        || patterns.size() > std::numeric_limits<std::uint32_t>::max()
+        || items.size() > std::numeric_limits<std::uint32_t>::max()) {
         Context{diagnostics, {}, {}}.Fail("too many content definitions");
         Context{diagnostics, {}, {}}.Fail("could not load content catalog");
         return eastl::unexpected(ContentError::InvalidData);
@@ -709,12 +1015,17 @@ ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sourc
         if (left.definition.id == right.definition.id) { return left.inputOrder < right.inputOrder; }
         return left.definition.id < right.definition.id;
     });
-    if (!CheckDefinitionIds(pending, patterns, diagnostics)) { return eastl::unexpected(ContentError::InvalidData); }
+    if (!CheckDefinitionIds(pending, patterns, items, diagnostics)) { return eastl::unexpected(ContentError::InvalidData); }
     if (!Resolve(pending)) {
         Context{diagnostics, {}, {}}.Fail("could not load content catalog");
         return eastl::unexpected(ContentError::InvalidData);
     }
     ContentCatalog catalog;
+    eastl::sort(items.begin(), items.end(), [](const PendingItem& left, const PendingItem& right) {
+        return left.definition.id < right.definition.id;
+    });
+    catalog.items_.reserve(items.size());
+    for (auto& item : items) { catalog.items_.push_back(eastl::move(item.definition)); }
     catalog.definitions_.reserve(pending.size());
     for (auto& terrain : pending) { catalog.definitions_.push_back(eastl::move(terrain.definition)); }
     eastl::sort(patterns.begin(), patterns.end(), [](const PendingPattern& left, const PendingPattern& right) {
@@ -734,6 +1045,13 @@ ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sourc
 
 ContentResult<ContentCatalog> LoadContentFiles(eastl::span<const eastl::string_view> paths,
                                              Diagnostics* diagnostics) {
+    ItemBehaviorRegistry registry;
+    RegisterBuiltinItemBehaviors(registry);
+    return LoadContentFiles(paths, registry, diagnostics);
+}
+
+ContentResult<ContentCatalog> LoadContentFiles(eastl::span<const eastl::string_view> paths,
+    const ItemBehaviorRegistry& registry, Diagnostics* diagnostics) {
     Vector<String> texts;
     texts.reserve(paths.size());
     for (auto path : paths) {
@@ -772,12 +1090,19 @@ ContentResult<ContentCatalog> LoadContentFiles(eastl::span<const eastl::string_v
     Vector<ContentSource> sources;
     sources.reserve(paths.size());
     for (std::size_t i = 0; i < paths.size(); ++i) { sources.push_back({paths[i], View(texts[i])}); }
-    return LoadContent({sources.data(), sources.size()}, diagnostics);
+    return LoadContent({sources.data(), sources.size()}, registry, diagnostics);
 }
 
 ContentResult<ContentCatalog> LoadContentFile(const char* path, Diagnostics* diagnostics) {
+    ItemBehaviorRegistry registry;
+    RegisterBuiltinItemBehaviors(registry);
+    return LoadContentFile(path, registry, diagnostics);
+}
+
+ContentResult<ContentCatalog> LoadContentFile(const char* path,
+    const ItemBehaviorRegistry& registry, Diagnostics* diagnostics) {
     const eastl::string_view view = path ? eastl::string_view(path) : eastl::string_view{};
-    return LoadContentFiles({&view, 1}, diagnostics);
+    return LoadContentFiles({&view, 1}, registry, diagnostics);
 }
 
 }

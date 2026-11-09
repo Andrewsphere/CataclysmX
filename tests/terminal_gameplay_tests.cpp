@@ -16,8 +16,8 @@ namespace {
 using namespace cataclysmx;
 
 struct Position { int x; int y; };
-eastl::optional<Position> Find(const ftxui::Screen& screen, const std::string& text) {
-    for (int y = 0; y < screen.dimy(); ++y) {
+eastl::optional<Position> Find(const ftxui::Screen& screen, const std::string& text, int top = 0) {
+    for (int y = top; y < screen.dimy(); ++y) {
         for (int x = 0; x < screen.dimx(); ++x) {
             std::string candidate;
             for (int end = x; end < screen.dimx() && candidate.size() < text.size(); ++end) {
@@ -64,6 +64,7 @@ struct Fixture {
         REQUIRE(localization.Load(CATACLYSMX_LOC_DIRECTORY, "en"));
         presentation.session = "Local";
         presentation.message = "Latest outcome.";
+        Items(0);
     }
     ftxui::Screen Draw(int width = 80, int height = 24) {
         auto screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(width), ftxui::Dimension::Fixed(height));
@@ -77,7 +78,16 @@ struct Fixture {
     }
     void Items(int count) {
         view.inventory.clear();
-        for (int i = 1; i <= count; ++i) { view.inventory.push_back({static_cast<PersistentId>(i), ItemKind::rock, 0}); }
+        // Synthetic inventories replace the entire accessible-item snapshot,
+        // including demo ground descendants, so IDs and empty states are real.
+        view.groundItems.clear(); view.carriedMassGrams = 0;
+        const auto type = TestItem("rock");
+        const auto& definition = TestContent().GetItem(type);
+        for (int i = 1; i <= count; ++i) {
+            InventoryEntry item; item.id = static_cast<PersistentId>(i); item.type = type;
+            item.massGrams = definition.massGrams; item.volumeMl = definition.volumeMl;
+            view.inventory.push_back(item); view.carriedMassGrams += item.massGrams;
+        }
     }
 };
 
@@ -197,7 +207,7 @@ TEST_CASE("Quick actions wrap navigate preserve selection on resize and activate
         INFO(Plain(screen));
         const auto row = Find(screen, "> debug"); REQUIRE(row);
         CHECK(screen.PixelAt(row->x, row->y).inverted);
-        CHECK(Find(screen, "13 / 13"));
+        CHECK(Find(screen, "14 / 14"));
         CHECK(Find(screen, "Escape"));
     }
     f.Event(ftxui::Event::Character("g"));
@@ -224,7 +234,8 @@ TEST_CASE("Quick actions use rebound menu controls and dispatch a gameplay comma
     REQUIRE(ValidateKeymap(f.keys));
     CHECK(GameplayWelcome(f.localization, f.keys).find("A: Quick actions") != String::npos);
     REQUIRE(f.ui.Open(InputAction::QuickActions)); f.Draw();
-    for (int i = 0; i < 3; ++i) { f.Event(ftxui::Event::Character("x")); }
+    // Inventory, Use, Pick up, Interact, Wait.
+    for (int i = 0; i < 4; ++i) { f.Event(ftxui::Event::Character("x")); }
     CHECK(Find(f.Draw(), "> wait"));
     f.Event(ftxui::Event::Return); // Physical Enter is not the rebound Menu accept.
     CHECK(f.ui.IsOpen()); CHECK(f.activations == 0);
@@ -261,8 +272,12 @@ TEST_CASE("Gameplay modals fit terminal margins and preserve inventory selection
         const auto close = Find(screen, "Escape"); REQUIRE(close);
         CHECK(close->y == height - 4);
         CHECK(screen.PixelAt(close->x, close->y).bold);
-        const auto drop = Find(screen, "Enter"); REQUIRE(drop);
+        // Find the effective binding in the fixed footer, not the explanatory
+        // sentence above the list, which also mentions Enter.
+        const auto drop = Find(screen, "Enter", close->y - 1); REQUIRE(drop);
+        CHECK(drop->y == close->y - 1);
         CHECK(screen.PixelAt(drop->x, drop->y).bold);
+        CHECK(Find(screen, "drop  |  u use item  |  a manage", close->y - 1));
         CHECK_FALSE(screen.PixelAt(close->x, close->y).inverted);
     }
     f.Event(ftxui::Event::Return);
@@ -281,15 +296,20 @@ TEST_CASE("Inventory rejects stale selections and failed submissions without dro
     f.Event(ftxui::Event::Return);
     CHECK(f.submissions == 0);
     CHECK(f.ui.IsOpen());
-    CHECK(Find(f.Draw(), "That item is no longer carried."));
+    CHECK(Find(f.Draw(), "That item is no longer accessible."));
+    // Neither rendering nor a second activation may substitute ID 30 for 20.
+    f.Event(ftxui::Event::Return);
+    CHECK(f.submissions == 0);
+    f.Event(ftxui::Event::ArrowDown); f.Draw(); // Explicitly select ID 10.
+    f.Event(ftxui::Event::ArrowDown); f.Draw(); // Explicitly select ID 30.
     f.accept = false;
     f.Event(ftxui::Event::Return);
     CHECK(f.submissions == 1);
     CHECK(f.submitted.item == 30);
     CHECK(f.ui.IsOpen());
-    CHECK(Find(f.Draw(), "Drop could not be submitted."));
+    CHECK(Find(f.Draw(), "The command was refused."));
     // A new lower-ID item does not move the selection to a different identity.
-    f.view.inventory.insert(f.view.inventory.begin(), {1, ItemKind::backpack, 1});
+    f.view.inventory.insert(f.view.inventory.begin(), {1, TestItem("backpack"), 1});
     f.Draw(); f.accept = true; f.Event(ftxui::Event::Return);
     CHECK(f.submitted.item == 30);
     CHECK_FALSE(f.ui.IsOpen());
@@ -447,19 +467,26 @@ TEST_CASE("Inventory modal submits selected host and guest drops over real loopb
     REQUIRE(poll([&] { return guest.GetState() == ConnectionState::Active && guest.HasView(); }));
     const auto guestActor = f.server.GetWorld().FindActor(guest.View().playerId);
     auto& world = f.server.GetWorld();
-    const auto hostItem = world.CreateItem(ItemKind::rock, ItemLocation::Carried(f.server.GetPlayer())); REQUIRE(hostItem);
-    const auto guestItem = world.CreateItem(ItemKind::backpack, ItemLocation::Carried(guestActor)); REQUIRE(guestItem);
+    const auto hostItem = world.CreateItem(TestItem("rock"), ItemLocation::Carried(f.server.GetPlayer())); REQUIRE(hostItem);
+    const auto guestItem = world.CreateItem(TestItem("backpack"), ItemLocation::Carried(guestActor)); REQUIRE(guestItem);
+    const auto guestContents = world.CreateItem(TestItem("bandage"), ItemLocation::Inside(*guestItem)); REQUIRE(guestContents);
     const auto hostId = world.GetItem(*hostItem)->id;
     const auto guestId = world.GetItem(*guestItem)->id;
     // Publish the administrative fixture changes through a normal round.
     REQUIRE(host.QueueLocal({CommandKind::wait}) != 0); REQUIRE(guest.Submit({CommandKind::wait}));
-    REQUIRE(poll([&] { return guest.View().inventory.size() == 1; }));
+    REQUIRE(poll([&] { return guest.View().inventory.size() == 2; }));
+    REQUIRE(guest.View().inventory[0].id == guestId);
+    CHECK(guest.View().inventory[1].parent == guestId);
     f.view = f.server.View(); f.ui.Open(InputAction::Inventory); f.Draw();
+    CHECK(Find(f.Draw(), "> " + std::to_string(hostId) + ":rock"));
     REQUIRE(f.ui.HandleEvent(ftxui::Event::Return, f.view, f.localization, f.keys, [&](Command command) {
         CHECK(command.item == hostId); return host.QueueLocal(command) != 0;
     }));
     CHECK_FALSE(f.ui.IsOpen());
     f.view = guest.View(); f.ui.Open(InputAction::Inventory); f.Draw();
+    CHECK(Find(f.Draw(), "> " + std::to_string(guestId) + ":backpack"));
+    CHECK(Find(f.Draw(), "1 inside"));
+    CHECK(Find(f.Draw(), "[in #" + std::to_string(guestId)));
     REQUIRE(f.ui.HandleEvent(ftxui::Event::Return, f.view, f.localization, f.keys, [&](Command command) {
         CHECK(command.item == guestId); return guest.Submit(command).has_value();
     }));
@@ -467,6 +494,7 @@ TEST_CASE("Inventory modal submits selected host and guest drops over real loopb
     REQUIRE(poll([&] { return f.server.View().inventory.empty() && guest.View().inventory.empty(); }));
     CHECK(world.GetItem(*hostItem)->location.kind == ItemLocation::Ground({0, 0}).kind);
     CHECK(world.GetItem(*guestItem)->location == ItemLocation::Ground(guest.View().player_position));
+    CHECK(world.GetItem(*guestContents)->location == ItemLocation::Inside(*guestItem));
     host.Close();
 }
 

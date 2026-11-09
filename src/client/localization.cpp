@@ -157,14 +157,41 @@ String Localization::OutcomeText(Outcome outcome) const {
     case Outcome::unavailable: return Text("outcome.unavailable");
     case Outcome::not_ready: return Text("outcome.not_ready");
     case Outcome::queued: return Text("outcome.queued");
+    case Outcome::stale_input: return Text("outcome.stale_input", OutcomeMessage(outcome));
+    case Outcome::duplicate_input: return Text("outcome.duplicate_input", OutcomeMessage(outcome));
+    case Outcome::used_item: return Text("outcome.used_item", OutcomeMessage(outcome));
+    case Outcome::stored_item: return Text("outcome.stored_item", OutcomeMessage(outcome));
+    case Outcome::item_use_failed: return Text("outcome.item_use_failed", OutcomeMessage(outcome));
+    case Outcome::capacity_exceeded: return Text("outcome.capacity_exceeded", OutcomeMessage(outcome));
+    case Outcome::invalid_container: return Text("outcome.invalid_container", OutcomeMessage(outcome));
     }
     std::abort();
 }
-String Localization::ItemName(ItemKind kind) const {
-    switch (kind) {
-    case ItemKind::rock: return Text("item.rock.name");
-    case ItemKind::backpack: return Text("item.backpack.name");
-    case ItemKind::bandage: return Text("item.bandage.name");
+String Localization::ResultText(const CommandResult& result) const {
+    return result.outcome == Outcome::item_use_failed ? ItemRefusal(result.itemOutcome, result.itemReason) : OutcomeText(result.outcome);
+}
+String Localization::ItemName(const ItemDefinition& definition) const {
+    String key = "item."; key += definition.id;
+    return Text(View(key), View(definition.name));
+}
+String Localization::ItemName(const ContentCatalog& content, ItemTypeId type) const {
+    return ItemName(content.GetItem(type));
+}
+String Localization::RenderItemText(const ItemText& text) const {
+    if (!text.key.empty() && Find(View(text.key))) { return Text(View(text.key)); }
+    return text.fallback;
+}
+String Localization::ItemActionText(const ItemActionInfo& action) const {
+    return RenderItemText(action.label);
+}
+String Localization::ItemRefusal(ItemUseOutcome outcome, const ItemUseReason& reason) const {
+    String message = RenderItemText(reason.message);
+    if (!message.empty()) { return message; }
+    switch (outcome) {
+    case ItemUseOutcome::Succeeded: return Text("item.use.succeeded", ItemUseMessage(outcome));
+    case ItemUseOutcome::InvalidAction: return Text("item.use.invalid_action", ItemUseMessage(outcome));
+    case ItemUseOutcome::Inaccessible: return Text("item.use.inaccessible", ItemUseMessage(outcome));
+    case ItemUseOutcome::Refused: return Text("item.use.refused", ItemUseMessage(outcome));
     }
     std::abort();
 }

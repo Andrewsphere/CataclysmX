@@ -4,6 +4,8 @@
 #include "core/world.h"
 #include "core/slot_map.h"
 #include "core/save_database.h"
+#include "items/item_system.h"
+#include "items/item_snapshot.h"
 #include "worldgen/worldgen.h"
 
 #include <EASTL/algorithm.h>
@@ -81,6 +83,11 @@ struct Request {
 
 using Archive = ChunkArchive;
 
+std::uint64_t CheckedAdd(std::uint64_t left, std::uint64_t right) {
+    Require(right <= eastl::numeric_limits<std::uint64_t>::max() - left);
+    return left + right;
+}
+
 SaveResult<void> SaveFailure(SaveError error, const char* message, Diagnostics* diagnostics) {
     if (diagnostics) {
         diagnostics->Add(message);
@@ -127,8 +134,9 @@ bool ValidateArchive(const ContentCatalog& content, const Archive& saved,
     }
     for (std::size_t index = 0; index < saved.items.size(); ++index) {
         const SavedItem& item = saved.items[index];
-        if (!addId(item.id) || (item.kind != ItemKind::rock && item.kind != ItemKind::backpack
-                && item.kind != ItemKind::bandage)) {
+        const ItemDefinition* definition = content.TryGetItem(item.type);
+        if (!addId(item.id) || !definition
+            || (item.location != LocationKind::item && item.installation.value)) {
             return false;
         }
         switch (item.location) {
@@ -153,7 +161,7 @@ bool ValidateArchive(const ContentCatalog& content, const Archive& saved,
         case LocationKind::item:
             if (eastl::none_of(saved.items.begin(), saved.items.begin() + index,
                     [&item](const SavedItem& owner) {
-                        return owner.id == item.owner && owner.kind == ItemKind::backpack;
+                         return owner.id == item.owner;
                     })) {
                 return false;
             }
@@ -161,7 +169,7 @@ bool ValidateArchive(const ContentCatalog& content, const Archive& saved,
         default: return false;
         }
     }
-    return true;
+    return ValidateItemSnapshot(content, saved).has_value();
 }
 
 bool UniqueIds(Vector<PersistentId>& ids) {
@@ -200,15 +208,6 @@ bool Passable(const ContentCatalog& content, TerrainId terrain) {
     return content.GetTerrain(terrain).passable;
 }
 
-const char* item_name(ItemKind kind) {
-    switch (kind) {
-    case ItemKind::rock: return "rock";
-    case ItemKind::backpack: return "backpack";
-    case ItemKind::bandage: return "bandage";
-    }
-    std::abort();
-}
-
 ItemLocation ItemLocation::Ground(TileCoord position) {
     ItemLocation result;
     result.position = position;
@@ -222,10 +221,11 @@ ItemLocation ItemLocation::Carried(ActorHandle actor) {
     return result;
 }
 
-ItemLocation ItemLocation::Inside(ItemHandle item) {
+ItemLocation ItemLocation::Inside(ItemHandle item, ItemCapabilityId installation) {
     ItemLocation result;
     result.kind = LocationKind::item;
     result.item = item;
+    result.installation = installation;
     return result;
 }
 
@@ -254,11 +254,12 @@ public:
     Vector<Archive> archives; // Only currently unloaded chunks.
     Vector<ChunkCoord> dirtyChunks; // Sorted, includes pending unloaded archives.
     Vector<PlayerLocation> playerPositions; // Sorted by ID; survives unload and archive eviction.
+    ItemSystem itemSystem;
     eastl::unique_ptr<SaveDatabase> database;
 
-    explicit Impl(const ContentCatalog& catalog, std::uint32_t value)
+    explicit Impl(World& world, const ContentCatalog& catalog, std::uint32_t value)
         : content(catalog), floor(catalog.FindTerrain("floor")),
-          wall(catalog.FindTerrain("wall")), seed(value) {
+          wall(catalog.FindTerrain("wall")), seed(value), itemSystem(world) {
         Require(floor.value != 0 && wall.value != 0);
     }
 
@@ -311,6 +312,119 @@ public:
         }
     }
 
+    ItemLocation Root(ItemLocation location) const {
+        for (std::size_t depth = 0; location.kind == LocationKind::item; ++depth) {
+            Require(depth < 64);
+            const Item* parent = Live(items, location.item);
+            Require(parent != nullptr);
+            location = parent->location;
+        }
+        return location;
+    }
+
+    bool Eligible(ItemHandle handle) const {
+        const Item* item = Live(items, handle);
+        if (!item) { return false; }
+        const ItemLocation root = Root(item->location);
+        const Chunk* chunk = GetChunk(RootChunk(root));
+        return chunk && chunk->active
+            && (root.kind != LocationKind::actor || !Live(actors, root.actor)->parked);
+    }
+
+    void Unregister(ItemHandle handle) {
+        itemSystem.Detach(handle);
+    }
+
+    std::uint64_t Mass(ItemHandle handle) const {
+        const Item* item = Live(items, handle);
+        Require(item != nullptr);
+        std::uint64_t result = content.GetItem(item->type).massGrams;
+        for (ItemHandle child : item->contents) { result = CheckedAdd(result, Mass(child)); }
+        return result;
+    }
+
+    std::uint64_t CarriedMass(ActorHandle handle) const {
+        const Actor* actor = Live(actors, handle);
+        Require(actor != nullptr);
+        std::uint64_t result = 0;
+        for (ItemHandle item : actor->inventory) { result = CheckedAdd(result, Mass(item)); }
+        return result;
+    }
+
+    std::uint64_t Volume(ItemHandle handle, ItemHandle excluded = {}) const {
+        const Item* item = Live(items, handle);
+        Require(item != nullptr);
+        std::uint64_t result = 0;
+        for (ItemHandle child : item->contents) {
+            const Item* value = Live(items, child);
+            Require(value != nullptr);
+            if (child != excluded && !value->location.installation.value) {
+                result = CheckedAdd(result, content.GetItem(value->type).volumeMl);
+            }
+        }
+        return result;
+    }
+
+    std::size_t Height(ItemHandle handle) const {
+        const Item* item = Live(items, handle);
+        Require(item != nullptr);
+        std::size_t height = 1;
+        for (ItemHandle child : item->contents) { height = eastl::max(height, 1 + Height(child)); }
+        return height;
+    }
+
+    ItemHandle Installed(ItemHandle handle, ItemCapabilityId mount, ItemHandle excluded = {}) const {
+        for (ItemHandle child : Live(items, handle)->contents) {
+            if (child != excluded && Live(items, child)->location.installation == mount) { return child; }
+        }
+        return {};
+    }
+
+    WorldResult<void> Fits(ItemTypeId type, ItemLocation location, ItemHandle moving = {}) const {
+        const auto& definition = content.GetItem(type);
+        std::size_t depth = 0;
+        for (ItemLocation cursor = location; cursor.kind == LocationKind::item;
+            cursor = Live(items, cursor.item)->location) { ++depth; }
+        if (depth + (moving.value ? Height(moving) : 1) > 64) {
+            return eastl::unexpected(WorldError::capacity_exceeded);
+        }
+        if (location.kind == LocationKind::item) {
+            const Item* parent = Live(items, location.item);
+            const auto& parentDefinition = content.GetItem(parent->type);
+            if (location.installation.value) {
+                const auto* behavior = ItemBehaviorConfig(parentDefinition, location.installation);
+                if (!behavior || !behavior->AcceptsInstallation(definition)) {
+                    return eastl::unexpected(WorldError::incompatible_item);
+                }
+                if (Installed(location.item, location.installation, moving).value) {
+                    return eastl::unexpected(WorldError::occupied);
+                }
+            } else {
+                const auto* container = ItemContainer(parentDefinition);
+                if (!container) { return eastl::unexpected(WorldError::not_container); }
+                const auto used = Volume(location.item, moving);
+                if (used > container->capacityVolumeMl
+                    || definition.volumeMl > container->capacityVolumeMl - used) {
+                    return eastl::unexpected(WorldError::capacity_exceeded);
+                }
+            }
+        }
+        const auto root = Root(location);
+        if (root.kind == LocationKind::actor) {
+            if (moving.value) {
+                const auto oldRoot = Root(Live(items, moving)->location);
+                if (oldRoot.kind == LocationKind::actor && oldRoot.actor == root.actor) { return {}; }
+            }
+            const auto used = CarriedMass(root.actor);
+            const auto capacity = Live(actors, root.actor)->carryCapacityGrams;
+            const auto mass = moving.value ? Mass(moving) : definition.massGrams;
+            if (used > capacity || mass > capacity - used) {
+                return eastl::unexpected(WorldError::capacity_exceeded);
+            }
+        }
+        return {};
+    }
+
     Chunk* GetChunk(ChunkCoord position) {
         const auto found = eastl::lower_bound(chunks.begin(), chunks.end(), position,
             [](const Chunk& value, ChunkCoord key) { return ChunkLess(value.position, key); });
@@ -361,6 +475,9 @@ public:
     }
 
     WorldResult<ItemLocation> Destination(ItemLocation location, ItemHandle moving = {}) const {
+        if (location.kind != LocationKind::item && location.installation.value) {
+            return eastl::unexpected(WorldError::invalid_request);
+        }
         switch (location.kind) {
         case LocationKind::ground:
             if (auto result = Available(location.position); !result) {
@@ -382,7 +499,7 @@ public:
             if (!parent) {
                 return eastl::unexpected(WorldError::invalid_handle);
             }
-            if (parent->kind != ItemKind::backpack) {
+            if (!location.installation.value && !ItemContainer(content.GetItem(parent->type))) {
                 return eastl::unexpected(WorldError::not_container);
             }
             ItemHandle cursor = location.item;
@@ -398,7 +515,7 @@ public:
                 }
                 cursor = ancestor->location.item;
             }
-            return ItemLocation::Inside(location.item);
+            return ItemLocation::Inside(location.item, location.installation);
         }
         }
         return eastl::unexpected(WorldError::invalid_handle);
@@ -466,7 +583,7 @@ public:
             const Actor* actor = Live(actors, handle);
             Require(actor != nullptr);
             saved.actors.push_back({actor->id, actor->position, actor->player, actor->turns,
-                actor->speed, actor->remainingTicks, actor->parked});
+                actor->speed, actor->remainingTicks, actor->parked, actor->carryCapacityGrams});
             for (ItemHandle item : actor->inventory) {
                 pending.push_back(item);
             }
@@ -491,8 +608,8 @@ public:
             case LocationKind::item: owner = Live(items, item->location.item)->id; break;
             case LocationKind::object: owner = Live(objects, item->location.object)->id; break;
             }
-            saved.items.push_back({item->id, item->kind, item->location.kind,
-                item->location.position, owner});
+            saved.items.push_back({item->id, item->type, item->location.kind,
+                item->location.position, owner, item->location.installation, itemSystem.Capture(pending[index])});
             for (ItemHandle child : item->contents) {
                 pending.push_back(child);
             }
@@ -509,6 +626,7 @@ public:
         // First capture all values; then retire every runtime key. Do not reset
         // the central slot maps, even when the last chunk is unloaded.
         for (ItemHandle handle : pending) {
+            Unregister(handle);
             items.erase(dod::slot_map64<Item>::key{handle.value});
         }
         for (ActorHandle handle : value.actors) {
@@ -525,7 +643,7 @@ public:
         value.tiles = saved.tiles;
         for (const SavedActor& actor : saved.actors) {
             const auto key = actors.emplace(Actor{actor.id, actor.position, actor.player, actor.turns,
-                {}, actor.speed, actor.remainingTicks, actor.parked});
+                {}, actor.speed, actor.remainingTicks, actor.parked, actor.carryCapacityGrams});
             value.actors.push_back({key.raw});
             if (actor.player) { TrackPlayer(actor.id, actor.position); }
         }
@@ -541,13 +659,16 @@ public:
             switch (item.location) {
             case LocationKind::ground: location = ItemLocation::Ground(item.position); break;
             case LocationKind::actor: location = ItemLocation::Carried(FindActor(item.owner)); break;
-            case LocationKind::item: location = ItemLocation::Inside(FindItem(item.owner)); break;
+            case LocationKind::item: location = ItemLocation::Inside(FindItem(item.owner), item.installation); break;
             case LocationKind::object: location = ItemLocation::Stored(FindObject(item.owner)); break;
             }
             Require(Destination(location).has_value());
-            const auto key = items.emplace(Item{item.id, item.kind, location, {}});
+            Item restored(item.id, item.type, location);
+            Require(itemSystem.Initialize(restored, &item.state).has_value());
+            const auto key = items.emplace(eastl::move(restored));
             Collection(location).push_back({key.raw});
         }
+        for (const SavedItem& item : saved.items) { itemSystem.Attach(FindItem(item.id)); }
     }
 
     SaveResult<void> ValidateSession(const SessionState& session, SaveDatabase* source,
@@ -679,7 +800,7 @@ public:
 };
 
 World::World(const ContentCatalog& content, std::uint32_t seed)
-    : impl_(eastl::make_unique<Impl>(content, seed)) {}
+    : impl_(eastl::make_unique<Impl>(*this, content, seed)) {}
 World::~World() = default;
 
 WorldResult<LoadRequest> World::RequestChunks(ChunkRegion region, LoadMode mode) {
@@ -865,7 +986,7 @@ SaveResult<SessionState> World::LoadSave(const char* path, Diagnostics* diagnost
         return eastl::unexpected(error);
     }
     // Validate on temporary state; even seed/ID installation waits for success.
-    Impl candidate(impl_->content, snapshot->seed);
+    Impl candidate(*this, impl_->content, snapshot->seed);
     candidate.next_id = snapshot->nextId;
     if (auto result = candidate.ValidateSession(snapshot->session, database.get(), diagnostics); !result) {
         return eastl::unexpected(result.error());
@@ -1075,16 +1196,22 @@ WorldResult<void> World::DestroyActor(ActorHandle handle) {
     return {};
 }
 
-WorldResult<ItemHandle> World::CreateItem(ItemKind kind, ItemLocation location) {
+WorldResult<ItemHandle> World::CreateItem(ItemTypeId type, ItemLocation location) {
+    const ItemDefinition* definition = impl_->content.TryGetItem(type);
+    if (!definition) { return eastl::unexpected(WorldError::invalid_request); }
     const auto destination = impl_->Destination(location);
     if (!destination) {
         return eastl::unexpected(destination.error());
     }
-    Require(kind == ItemKind::rock || kind == ItemKind::backpack || kind == ItemKind::bandage);
-    const auto key = impl_->items.emplace(Item{impl_->IssueId(), kind, *destination, {}});
+    if (auto fits = impl_->Fits(type, *destination); !fits) { return eastl::unexpected(fits.error()); }
+    Item created(impl_->IssueId(), type, *destination);
+    Require(impl_->itemSystem.Initialize(created, nullptr).has_value());
+    const auto key = impl_->items.emplace(eastl::move(created));
     const ItemHandle handle{key.raw};
     impl_->Collection(*destination).push_back(handle);
+    impl_->itemSystem.Attach(handle);
     impl_->MarkDirty(impl_->RootChunk(*destination));
+    if (destination->kind == LocationKind::item) { impl_->itemSystem.Notify({ItemChangeKind::ContentsChanged, destination->item, destination->installation}); }
     return handle;
 }
 
@@ -1100,11 +1227,22 @@ WorldResult<void> World::TransferItem(ItemHandle handle, ItemLocation location) 
     if (value->location == *destination) {
         return {};
     }
+    if (auto fits = impl_->Fits(value->type, *destination, handle); !fits) { return fits; }
     impl_->MarkDirty(impl_->RootChunk(value->location));
     impl_->MarkDirty(impl_->RootChunk(*destination));
+    const ItemLocation old = value->location;
+    Vector<ItemHandle> moved{handle};
+    for (std::size_t i = 0; i < moved.size(); ++i) {
+        for (ItemHandle child : GetItem(moved[i])->contents) { moved.push_back(child); }
+    }
     EraseOne(impl_->Collection(value->location), handle);
     impl_->Collection(*destination).push_back(handle);
     value->location = *destination;
+    impl_->itemSystem.BeginCallback();
+    for (ItemHandle current : moved) { impl_->itemSystem.Notify({ItemChangeKind::Moved, current, {}}); }
+    if (old.kind == LocationKind::item) { impl_->itemSystem.Notify({ItemChangeKind::ContentsChanged, old.item, old.installation}); }
+    if (destination->kind == LocationKind::item) { impl_->itemSystem.Notify({ItemChangeKind::ContentsChanged, destination->item, destination->installation}); }
+    impl_->itemSystem.EndCallback();
     return {};
 }
 
@@ -1114,6 +1252,7 @@ WorldResult<void> World::DestroyItem(ItemHandle handle) {
         return eastl::unexpected(WorldError::invalid_handle);
     }
     impl_->MarkDirty(impl_->RootChunk(value->location));
+    const ItemLocation old = value->location;
     EraseOne(impl_->Collection(value->location), handle);
     Vector<ItemHandle> pending{handle};
     for (std::size_t index = 0; index < pending.size(); ++index) {
@@ -1125,10 +1264,89 @@ WorldResult<void> World::DestroyItem(ItemHandle handle) {
         Require(pending.size() <= impl_->items.size());
     }
     for (ItemHandle current : pending) {
+        impl_->Unregister(current);
         impl_->items.erase(dod::slot_map64<Item>::key{current.value});
     }
+    if (old.kind == LocationKind::item) { impl_->itemSystem.Notify({ItemChangeKind::ContentsChanged, old.item, old.installation}); }
     return {};
 }
+
+WorldResult<void> World::SetActorCarryCapacity(ActorHandle handle, std::uint64_t grams) {
+    Actor* actor = Live(impl_->actors, handle);
+    if (!actor) { return eastl::unexpected(WorldError::invalid_handle); }
+    if (impl_->CarriedMass(handle) > grams) { return eastl::unexpected(WorldError::capacity_exceeded); }
+    actor->carryCapacityGrams = grams;
+    impl_->MarkDirty(ChunkOf(actor->position));
+    return {};
+}
+
+std::uint64_t World::GetItemMass(ItemHandle handle) const {
+    return GetItem(handle) ? impl_->Mass(handle) : 0;
+}
+
+std::uint64_t World::GetCarriedMass(ActorHandle handle) const {
+    return GetActor(handle) ? impl_->CarriedMass(handle) : 0;
+}
+
+std::uint64_t World::GetContainerUsedVolume(ItemHandle handle) const {
+    return GetItem(handle) ? impl_->Volume(handle) : 0;
+}
+
+bool World::CanAccessItem(ActorHandle actorHandle, ItemHandle itemHandle) const {
+    const Actor* actor = GetActor(actorHandle);
+    const Item* item = GetItem(itemHandle);
+    if (!actor || actor->parked || !IsActive(actor->position) || !item) { return false; }
+    const ItemLocation root = impl_->Root(item->location);
+    return (root.kind == LocationKind::actor && root.actor == actorHandle)
+        || (root.kind == LocationKind::ground && root.position == actor->position);
+}
+
+Vector<ItemActionInfo> World::QueryItemActions(ActorHandle actor, ItemHandle handle) const {
+    return impl_->itemSystem.QueryActions(actor, handle);
+}
+
+ItemUseResult World::UseItem(ActorHandle actor, ItemHandle handle, const ItemUseRequest& request) {
+    return impl_->itemSystem.Use(actor, handle, request);
+}
+
+WorldResult<void> World::SetItemEnergy(ItemHandle handle, ItemCapabilityId capability, std::uint32_t energy) {
+    return impl_->itemSystem.SetEnergy({handle, capability}, energy);
+}
+
+eastl::optional<Tick> World::NextItemEventIn() const {
+    return impl_->itemSystem.NextEventIn();
+}
+
+void World::ProcessItemEvents() {
+    impl_->itemSystem.ProcessEvents();
+}
+
+std::size_t World::ActiveItemCount() const { return impl_->itemSystem.ScheduledItemCount(); }
+
+Item::Item() = default;
+Item::Item(PersistentId identity, ItemTypeId itemType, ItemLocation itemLocation)
+    : id(identity), type(itemType), location(itemLocation) {}
+Item::~Item() = default;
+Item::Item(Item&&) noexcept = default;
+Item& Item::operator=(Item&&) noexcept = default;
+Item* World::MutableItem(ItemHandle item) { return Live(impl_->items, item); }
+void World::MarkItemDirty(ItemHandle handle) {
+    if (const auto* item = GetItem(handle)) { impl_->MarkDirty(impl_->RootChunk(item->location)); }
+}
+bool World::ItemEligible(ItemHandle item) const { return impl_->Eligible(item); }
+WorldResult<void> World::CheckItemTransfer(ItemHandle handle, ItemLocation location) const {
+    const auto* item = GetItem(handle);
+    if (!item) { return eastl::unexpected(WorldError::invalid_handle); }
+    const auto destination = impl_->Destination(location, handle);
+    if (!destination) { return eastl::unexpected(destination.error()); }
+    if (item->location == *destination) { return {}; }
+    return impl_->Fits(item->type, *destination, handle);
+}
+DataObject World::CaptureItemState(ItemHandle item) const { return impl_->itemSystem.Capture(item); }
+eastl::optional<ItemEnergyView> World::GetItemEnergy(ItemHandle item, ItemCapabilityId capability) const {
+    return impl_->itemSystem.Energy(item, capability);
+}
+ItemPresentation World::DescribeItem(ActorHandle actor, ItemHandle item) const { return impl_->itemSystem.Describe(actor, item); }
 
 WorldResult<ObjectHandle> World::CreateObject(TileCoord position, bool enabled) {
     if (auto result = impl_->Available(position); !result) {
@@ -1207,6 +1425,7 @@ WorldResult<void> World::SetObjectUpdateInterval(ObjectHandle handle, std::uint3
 
 void World::ElapseTicks(Tick elapsed) {
     if (elapsed == 0) { return; }
+    impl_->itemSystem.Elapse(elapsed);
     for (const Chunk& chunk : impl_->chunks) {
         if (!chunk.active) { continue; }
         bool modified = false;
@@ -1377,12 +1596,14 @@ bool World::CheckInvariants() const {
     for (const auto& entry : state.items.items()) {
         const Item& value = entry.second.get();
         const ItemHandle handle{entry.first.raw};
-        if (!add_id(value.id) || (value.kind != ItemKind::backpack && !value.contents.empty())) {
+        const auto* definition = state.content.TryGetItem(value.type);
+        if (!add_id(value.id) || !definition) {
             return false;
         }
         for (ItemHandle child : value.contents) {
             const Item* item = this->GetItem(child);
-            if (!item || item->location != ItemLocation::Inside(handle)) {
+            if (!item || item->location.kind != LocationKind::item || item->location.item != handle
+                || !state.Fits(item->type, item->location, child)) {
                 return false;
             }
             owned_items.push_back(child);
@@ -1391,11 +1612,11 @@ bool World::CheckInvariants() const {
         const Item* cursor = &value;
         std::size_t depth = 0;
         while (cursor->location.kind == LocationKind::item) {
-            if (++depth > state.items.size()) {
+            if (++depth >= 64) {
                 return false;
             }
             cursor = GetItem(cursor->location.item);
-            if (!cursor || cursor->kind != ItemKind::backpack) {
+            if (!cursor) {
                 return false;
             }
         }
@@ -1473,7 +1694,7 @@ bool World::CheckInvariants() const {
                 // guarantees every archived tree terminates at a spatial root.
                 if (eastl::none_of(saved.items.begin(), saved.items.begin() + index,
                         [&value](const SavedItem& owner) {
-                            return owner.id == value.owner && owner.kind == ItemKind::backpack;
+                            return owner.id == value.owner;
                         })) {
                     return false;
                 }
@@ -1487,6 +1708,15 @@ bool World::CheckInvariants() const {
             return false;
         }
     }
+    for (const Chunk& chunk : state.chunks) {
+        Vector<PersistentId> checkedIds;
+        if (!ValidateArchive(state.content, state.Capture(chunk), state.next_id, checkedIds)) { return false; }
+    }
+    for (const Archive& archive : state.archives) {
+        Vector<PersistentId> checkedIds;
+        if (!ValidateArchive(state.content, archive, state.next_id, checkedIds)) { return false; }
+    }
+    if (!state.itemSystem.CheckInvariants()) { return false; }
     eastl::sort(ids.begin(), ids.end());
     return eastl::adjacent_find(ids.begin(), ids.end()) == ids.end();
 }

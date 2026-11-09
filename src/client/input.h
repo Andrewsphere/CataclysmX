@@ -16,14 +16,14 @@ struct KeyChord {
     bool operator==(const KeyChord&) const = default;
 };
 
-enum class InputContext { Gameplay, Interaction, Menu, Debug };
+enum class InputContext { Gameplay, Interaction, Menu, Debug, Items };
 enum class InputAction {
     West, East, North, South, Wait, PickUp, Drop, Interact, Save, Quit,
     Settings, Debug, RateDown, RateUp, ToggleRate, ToggleIdle, Cancel,
     Accept, Next, Previous, JumpWest, JumpEast, JumpNorth, JumpSouth,
     Recenter, Layer1, Layer2, Layer3, Layer4, Layer5, ZoomIn, ZoomOut,
     DetailsUp, DetailsDown, Apply, SaveSettings, Reload, Inspect, AddBinding, Unbind, Reset,
-    Inventory, Players, Help, QuickActions
+    Inventory, Players, Help, QuickActions, Use
 };
 struct InputBinding {
     InputContext context = InputContext::Gameplay;

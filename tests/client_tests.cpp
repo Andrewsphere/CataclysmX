@@ -22,7 +22,8 @@ ContentCatalog AppearanceContent() {
         {type:'terrain',id:'combining',name:'Combining',movement:{passable:true},blocks_sight:false,
          looks_like:'base',appearance:{symbol:'\u0301'}},
         {type:'terrain',id:'supplementary',name:'Supplementary',movement:{passable:true},blocks_sight:false,
-         looks_like:'base',appearance:{symbol:'😀'}}
+         looks_like:'base',appearance:{symbol:'😀'}},
+        {type:'item',id:'rock',name:'rock',mass_g:500,volume_ml:250}
     ]})"};
     auto result = LoadContent({&source, 1});
     REQUIRE(result.has_value());
@@ -58,7 +59,7 @@ TEST_CASE("Client text preserves complete Unicode scalars and textual status", "
     }
     CHECK(render_text(view, content) ==
         "tick=23 position=-4,7\n\xc3\xa9\xe7\x95\x8c\xcc\x81\xf0\x9f\x98\x80\nInventory: empty\n");
-    view.inventory.push_back({17, ItemKind::rock, 2});
+    view.inventory.push_back({17, content.FindItem("rock"), 2});
     CHECK(render_text(view, content).find("Inventory: 17:rock(2 inside)\n") != String::npos);
 }
 

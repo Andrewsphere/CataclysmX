@@ -14,6 +14,7 @@ struct SavedActor {
     std::uint32_t speed = 100;
     Tick remainingTicks = 0;
     bool parked = false;
+    std::uint64_t carryCapacityGrams = 100000;
 };
 
 struct SavedObject {
@@ -27,10 +28,12 @@ struct SavedObject {
 
 struct SavedItem {
     PersistentId id;
-    ItemKind kind;
+    ItemTypeId type;
     LocationKind location;
     TileCoord position;
     PersistentId owner;
+    ItemCapabilityId installation{};
+    DataObject state;
 };
 
 struct ChunkArchive {

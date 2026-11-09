@@ -136,20 +136,29 @@ cataclysmx::WorldResult<void> load_origin(cataclysmx::World& world) {
 
 Every item has exactly one location: ground, an actor's direct inventory,
 another item's contents, or an object's contents. Use `ItemLocation::Ground`,
-`Carried`, `Inside` and `Stored` to construct destinations. Only backpacks are
-item containers. Nested backpacks are supported; self-containment and ancestor
-cycles return `containment_cycle`, and non-container parents return
-`not_container`.
+`Carried`, `Inside` and `Stored` to construct destinations. Items use catalog-local
+`ItemTypeId` values in `Item::type`; `CreateItem(type, location)` initializes shared
+resources and independent virtual behaviors through their immutable definitions.
+Runtime behavior ownership is private. `CaptureItemState`, `GetItemEnergy` and
+`DescribeItem` provide value inspection. Ordinary item storage requires a container
+capability. `Inside(parent, installation)` with a nonzero capability ID instead
+selects that behavior's installation mount; compatibility is defined by its
+`AcceptsInstallation` hook. Nested trees are limited to 64 items along
+any root-to-leaf path. Self-containment and ancestor cycles return
+`containment_cycle`; non-container ordinary parents return `not_container`.
 
 `TransferItem` validates before changing ownership and spatial indexes. Moving
 a container carries its descendants without changing their direct parent.
-This is an administrative operation: it does not enforce reach, capacity, or
-turn cost. All ownership changes go through `World`, never borrowed collections.
+It enforces storage volume, mount compatibility/occupancy, depth and the
+destination root actor's carry mass before committing. Same-location transfers
+are no-ops; same-root transfers do not count moving mass twice. This is an
+administrative operation and does not enforce reach or spend simulation time.
+All ownership changes go through `World`, never borrowed collections.
 
 ```cpp
 cataclysmx::WorldResult<void> give_rock(
     cataclysmx::World& world, cataclysmx::ActorHandle actor) {
-    auto rock = world.CreateItem(cataclysmx::ItemKind::rock,
+    auto rock = world.CreateItem(world.GetContent().FindItem("rock"),
                                  cataclysmx::ItemLocation::Carried(actor));
     if (!rock) {
         return eastl::unexpected(rock.error());
@@ -162,6 +171,19 @@ Destroying an actor drops its direct possessions at its last position; destroyin
 an object drops its contents there. Nested item trees remain intact. Destroying
 an item instead destroys its entire descendant tree. Reusing retired handles
 returns `invalid_handle` from mutations and `nullptr` from entity lookups.
+
+`Actor::carryCapacityGrams` defaults to 100000. `SetActorCarryCapacity(handle,
+grams)` rejects a limit below current carried mass. `GetItemMass` includes every
+descendant, including installed batteries; `GetCarriedMass` sums full inventory
+trees. `GetContainerUsedVolume` sums only immediate ordinary children's fixed
+external volume, excluding installed batteries. These read-only uint64 queries
+return zero for invalid handles and fail fast on arithmetic overflow. There is
+no container-specific mass limit. Capacity failures return `capacity_exceeded`,
+incompatible installations return `incompatible_item`, and an occupied
+mount returns `occupied`. World delegates item action dispatch and time processing
+to `ItemSystem`; individual behavior implementations apply effects through checked
+mutation contexts. See [items API](items_api.md) for actions and activities, and
+[adding item behaviors](item_behaviors.md) for the extension contracts.
 
 ## Relative timing
 
@@ -214,6 +236,11 @@ The server separately constructs the demo scene.
 Unloading captures tiles (including damage), entity values/counters and complete
 item ownership trees as values linked by persistent IDs, then retires runtime
 handles. Reload restores those values and collection order with fresh handles.
+Archives include actor carry limits, item types, installation IDs and all
+capability state. Runtime owner handles and the sparse activity registry are
+rebuilt on materialization; no runtime handles are persisted. Archive validation
+checks definitions, capability state, mounts, volume, depth, root mass and
+deployed timer targets before creating live keys.
 Resident-only and archived entities do not advance or catch up on reactivation.
 Archives exist only for currently unloaded chunks in this `World`, and disappear
 with it. See the [save format](save_format.md) for disk checkpointing and archive

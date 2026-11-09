@@ -15,9 +15,9 @@ constexpr eastl::string_view actionNames[] = {
     "accept", "next", "previous", "jump_west", "jump_east", "jump_north", "jump_south",
     "recenter", "layer_1", "layer_2", "layer_3", "layer_4", "layer_5", "zoom_in", "zoom_out",
     "details_up", "details_down", "apply", "save_settings", "reload", "inspect", "add_binding", "unbind", "reset",
-    "inventory", "players", "help", "quick_actions"
+    "inventory", "players", "help", "quick_actions", "use"
 };
-constexpr eastl::string_view contextNames[] = {"gameplay", "interaction", "menu", "debug"};
+constexpr eastl::string_view contextNames[] = {"gameplay", "interaction", "menu", "debug", "items"};
 constexpr eastl::string_view namedKeys[] = {
     "Left", "Right", "Up", "Down", "Escape", "Enter", "Tab", "Backspace", "Delete",
     "Insert", "Home", "End", "PageUp", "PageDown", "BackTab", "F1", "F2", "F3", "F4", "F5", "F6",
@@ -116,6 +116,7 @@ Keymap DefaultKeymap() {
     add(game, InputAction::ToggleRate, {"r"}); add(game, InputAction::ToggleIdle, {"p"});
     for (auto context : {InputContext::Gameplay, InputContext::Interaction}) {
         add(context, InputAction::Inventory, {"i"});
+        add(context, InputAction::Use, {"u"});
         add(context, InputAction::Players, {"P"});
         add(context, InputAction::Help, {"F1"});
         add(context, InputAction::QuickActions, {"a"});
@@ -132,6 +133,8 @@ Keymap DefaultKeymap() {
     add(InputContext::Menu, InputAction::Inspect, {"i"});
     add(InputContext::Menu, InputAction::AddBinding, {"+"});
     add(InputContext::Menu, InputAction::Unbind, {"u"});
+    add(InputContext::Items, InputAction::Use, {"u"});
+    add(InputContext::Items, InputAction::Apply, {"a"});
     add(InputContext::Menu, InputAction::Reset, {"Backspace"});
     const auto debug = InputContext::Debug;
     add(debug, InputAction::Debug, {"F11", "q"});

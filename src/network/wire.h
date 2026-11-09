@@ -6,8 +6,12 @@
 
 namespace cataclysmx::network::wire {
 
-inline constexpr std::uint32_t protocol = 0x43584e03;
+inline constexpr std::uint32_t protocol = 0x43584e05;
 inline constexpr std::size_t maxPacket = 32768;
+inline constexpr std::size_t maxItemEntries = 2048;
+inline constexpr std::size_t maxItemActions = maxItemActionsPerItem;
+// Validate definition-dependent metadata after structural decoding, before publication.
+bool ValidItemDefinitions(const WorldView& view, const ContentCatalog& content);
 enum class Type : std::uint8_t {
     Hello = 1, Accepted, Ready, Snapshot, Input, Receipt, Rejection,
     Closing, Query, Advertisement, SnapshotAck
@@ -22,8 +26,8 @@ struct Writer {
     void I32(std::int32_t v);
     bool Text(eastl::string_view v, std::size_t limit);
     bool View(const WorldView& v);
-    void CommandValue(const Command& v);
-    void Result(const PlayerCommandResult& v);
+    bool CommandValue(const Command& v);
+    bool Result(const PlayerCommandResult& v);
 };
 struct Reader {
     eastl::span<const std::uint8_t> bytes;

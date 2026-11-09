@@ -239,7 +239,7 @@ TEST_CASE("Content rejects unknown and duplicate schema keys at every object lev
 TEST_CASE("Content validates required values and format versions", "[content]") {
     for (const char* definition : {
         "{id:'a',name:'A',movement:{passable:true},blocks_sight:false}",
-        "{type:'item',id:'a',name:'A',movement:{passable:true},blocks_sight:false}",
+        "{type:'unknown_type',id:'a',name:'A',movement:{passable:true},blocks_sight:false}",
         "{type:'terrain',id:'a',movement:{passable:true},blocks_sight:false}",
         "{type:'terrain',id:'a',name:'',movement:{passable:true},blocks_sight:false}",
         "{type:'terrain',id:'a',name:'A\\u0000B',movement:{passable:true},blocks_sight:false}",
@@ -349,12 +349,12 @@ TEST_CASE("Content diagnostics retain structured paths and syntax locations", "[
 
 TEST_CASE("Content dispatch reports unsupported types at the type field", "[content]") {
     Diagnostics diagnostics;
-    const String text = Document("{type:'item',id:'rock'}");
+    const String text = Document("{type:'unknown_type',id:'rock'}");
     const auto result = Load(View(text), &diagnostics);
     REQUIRE_FALSE(result.has_value());
     CHECK(result.error() == ContentError::InvalidData);
     REQUIRE(diagnostics.Frames().size() == 3);
-    CHECK(diagnostics.Frames()[0].message == "unsupported definition type 'item' (expected terrain or building_pattern)");
+    CHECK(diagnostics.Frames()[0].message == "unsupported definition type 'unknown_type' (expected terrain, building_pattern, or item)");
     REQUIRE(diagnostics.Frames()[0].location.has_value());
     CHECK(diagnostics.Frames()[0].location->path == "definitions[0].type");
     CHECK(diagnostics.Frames()[1].message == "while loading content definition");

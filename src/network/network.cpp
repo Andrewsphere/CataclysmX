@@ -1,9 +1,11 @@
 #include "network/network.h"
 #include "network/wire.h"
+#include "items/item_behavior.h"
 
 #include <enet/enet.h>
 
 #include <EASTL/utility.h>
+#include <EASTL/sort.h>
 
 #include <cstdlib>
 #include <random>
@@ -12,19 +14,6 @@ namespace cataclysmx::network {
 namespace {
 std::uint64_t SaturatingAdd(std::uint64_t a, std::uint64_t b) {
     return b > UINT64_MAX - a ? UINT64_MAX : a + b;
-}
-
-bool ValidCommand(Command command) {
-    switch (command.kind) {
-    case CommandKind::wait: return command.waitCost != 0;
-    case CommandKind::move:
-    case CommandKind::interact:
-        return (command.dx == 0 && (command.dz == -1 || command.dz == 1)) ||
-            (command.dz == 0 && (command.dx == -1 || command.dx == 1));
-    case CommandKind::pick_up:
-    case CommandKind::drop: return true;
-    }
-    return false;
 }
 
 std::uint64_t RandomToken() {
@@ -42,6 +31,31 @@ void HashNumber(std::uint64_t& hash, std::uint64_t v) {
 }
 void HashString(std::uint64_t& hash, const String& s) {
     HashNumber(hash, s.size()); for (char c : s) HashByte(hash, static_cast<std::uint8_t>(c));
+}
+void HashText(std::uint64_t& hash, const ItemText& text) {
+    HashString(hash, text.key); HashString(hash, text.fallback);
+}
+void HashData(std::uint64_t& hash, const DataObject& data) {
+    // Tags distinguish values such as signed 1, unsigned 1, and true.
+    HashNumber(hash, static_cast<std::uint64_t>(data.Type()));
+    switch (data.Type()) {
+    case DataType::Boolean: HashNumber(hash, data.BooleanValue()); break;
+    case DataType::Signed: HashNumber(hash, static_cast<std::uint64_t>(data.SignedValue())); break;
+    case DataType::Unsigned: HashNumber(hash, data.UnsignedValue()); break;
+    case DataType::String: HashString(hash, data.StringValue()); break;
+    case DataType::List:
+        HashNumber(hash, data.Size());
+        for (std::size_t i = 0; i < data.Size(); ++i) HashData(hash, data.At(i));
+        break;
+    case DataType::Object: {
+        Vector<std::size_t> order;
+        for (std::size_t i = 0; i < data.Size(); ++i) order.push_back(i);
+        eastl::sort(order.begin(), order.end(), [&data](std::size_t a, std::size_t b) { return data.Name(a) < data.Name(b); });
+        HashNumber(hash, order.size());
+        for (const auto i : order) { HashString(hash, data.Name(i)); HashData(hash, data.At(i)); }
+        break;
+    }
+    }
 }
 
 bool Send(ENetPeer* peer, enet_uint8 channel, const wire::Writer& message) {
@@ -107,6 +121,29 @@ std::uint64_t ContentFingerprint(const ContentCatalog& content) {
         HashString(hash, p.id); HashNumber(hash, p.width); HashNumber(hash, p.height);
         HashNumber(hash, p.entrance.x); HashNumber(hash, p.entrance.z); HashNumber(hash, p.weight);
         HashNumber(hash, p.tiles.size()); for (TerrainId t : p.tiles) HashNumber(hash, t.value);
+    }
+    HashNumber(hash, content.ItemCount());
+    for (std::size_t i = 0; i < content.ItemCount(); ++i) {
+        const auto& item = content.GetItem({static_cast<std::uint32_t>(i + 1)});
+        HashString(hash, item.id); HashString(hash, item.name);
+        HashNumber(hash, item.massGrams); HashNumber(hash, item.volumeMl);
+        HashNumber(hash, item.capabilities.size());
+        for (std::size_t c = 0; c < item.capabilities.size(); ++c) {
+            const auto& capability = item.capabilities[c];
+            HashString(hash, capability.id); HashString(hash, capability.type); HashData(hash, capability.config);
+            const auto* behavior = ItemBehaviorConfig(item, {static_cast<std::uint16_t>(c + 1)});
+            HashNumber(hash, behavior != nullptr);
+            if (!behavior) continue;
+            const auto& schema = behavior->Schema();
+            HashNumber(hash, schema.actions.size());
+            for (const auto& action : schema.actions) {
+                HashString(hash, action.id); HashNumber(hash, static_cast<std::uint64_t>(action.argument));
+                HashNumber(hash, static_cast<std::uint64_t>(action.category)); HashNumber(hash, action.baseCost);
+                HashText(hash, action.label);
+            }
+            HashNumber(hash, schema.hasActivity); HashNumber(hash, schema.countdown);
+            HashNumber(hash, schema.maximumDelay); HashNumber(hash, schema.implementationVersion);
+        }
     }
     return hash;
 }
@@ -447,7 +484,9 @@ HostUpdate LanHost::Pump(std::uint64_t elapsed) {
         for (auto& guest : impl_->guests_) if (guest.active && guest.player == receipt.player) {
             auto w = Message(wire::Type::Receipt);
             const auto state = impl_->server_.ViewForPlayer(guest.player);
-            w.U64(guest.nonce); w.Result(receipt); w.U64(state.opportunity); w.U64(state.revision);
+            w.U64(guest.nonce);
+            if (!w.Result(receipt)) { impl_->Fail(guest, NetworkError::Protocol); continue; }
+            w.U64(state.opportunity); w.U64(state.revision);
             if (!Send(guest.peer, 0, w)) impl_->Fail(guest, NetworkError::SocketFailure);
         }
     }
@@ -460,9 +499,10 @@ HostUpdate LanHost::Pump(std::uint64_t elapsed) {
 class LanClient::Impl {
 public:
     Impl(NetworkRuntime&, const ContentCatalog& content)
-        : fingerprint_(ContentFingerprint(content)), terrainCount_(content.TerrainCount()) {}
+        : fingerprint_(ContentFingerprint(content)), terrainCount_(content.TerrainCount()), content_(content) {}
     std::uint64_t fingerprint_;
     std::size_t terrainCount_ = 0;
+    const ContentCatalog& content_;
     ENetHost* host_ = nullptr;
     ENetPeer* peer_ = nullptr;
     ConnectionSettings settings_;
@@ -548,7 +588,7 @@ void LanClient::Pump(std::uint64_t elapsed) {
                 std::uint64_t nonce = 0;
                 WorldView view;
                 bool valid = r.U64(nonce) && nonce == impl_->nonce_ && r.View(view) &&
-                    r.Done() && view.playerId == impl_->player_;
+                    r.Done() && view.playerId == impl_->player_ && wire::ValidItemDefinitions(view, impl_->content_);
                 if (valid) for (const auto& cell : view.cells)
                     if (cell.visible && (cell.tile.terrain.value == 0 ||
                         cell.tile.terrain.value > impl_->terrainCount_)) valid = false;
@@ -634,12 +674,13 @@ void LanClient::Pump(std::uint64_t elapsed) {
 NetworkResult<std::uint64_t> LanClient::Submit(Command command) {
     if (impl_->state_ != ConnectionState::Active || !impl_->hasView_)
         return eastl::unexpected(NetworkError::Disconnected);
-    if (!ValidCommand(command)) return eastl::unexpected(NetworkError::InvalidCommand);
+    if (!ValidCommandShape(command)) return eastl::unexpected(NetworkError::InvalidCommand);
     if (impl_->sequence_ == UINT64_MAX) return eastl::unexpected(NetworkError::Protocol);
     if (impl_->pendingSends_.size() >= 64) return eastl::unexpected(NetworkError::SlowPeer);
     auto w = Message(wire::Type::Input);
     const std::uint64_t sequence = impl_->sequence_ + 1;
-    w.U64(impl_->nonce_); w.U64(sequence); w.U64(impl_->submitOpportunity_); w.CommandValue(command);
+    w.U64(impl_->nonce_); w.U64(sequence); w.U64(impl_->submitOpportunity_);
+    if (!w.CommandValue(command)) return eastl::unexpected(NetworkError::InvalidCommand);
     if (!Send(impl_->peer_, 0, w)) return eastl::unexpected(NetworkError::SocketFailure);
     impl_->sequence_ = sequence;
     impl_->pendingSends_.push_back(sequence);

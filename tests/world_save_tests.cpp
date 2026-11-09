@@ -80,8 +80,8 @@ TEST_CASE("Parked guest roster and inventory survive checkpoint and unload", "[w
     const auto request = Load(world);
     const auto host = Take(world.CreateActor({0, 0}, true));
     const auto guest = Take(world.CreateActor({1, 0}, true));
-    const auto bag = Take(world.CreateItem(ItemKind::backpack, ItemLocation::Carried(guest)));
-    const auto bandage = Take(world.CreateItem(ItemKind::bandage, ItemLocation::Inside(bag)));
+    const auto bag = Take(world.CreateItem(TestItem("backpack"), ItemLocation::Carried(guest)));
+    const auto bandage = Take(world.CreateItem(TestItem("bandage"), ItemLocation::Inside(bag)));
     const PersistentId guestId = world.GetActor(guest)->id;
     const PersistentId itemId = world.GetItem(bandage)->id;
     SessionState session;
@@ -115,7 +115,7 @@ TEST_CASE("Parked guest roster and inventory survive checkpoint and unload", "[w
     CHECK(restored.GetActor(parked)->parked);
     CHECK(restored.GetActor(parked)->position == TileCoord{2, 0});
     CHECK(restored.GetActor(parked)->remainingTicks == 100);
-    CHECK(restored.GetItem(restored.FindItem(itemId))->kind == ItemKind::bandage);
+    CHECK(restored.GetItem(restored.FindItem(itemId))->type == TestItem("bandage"));
     CHECK(restored.ActorAt({1, 0}).value != parked.value);
     CHECK(restored.CheckInvariants());
     auto invalid = session;
@@ -171,15 +171,15 @@ TEST_CASE("World save round trips every tile and nested inventory values", "[wor
         }
         const auto actor = Take(world.CreateActor({0, 0}, true));
         const auto object = Take(world.CreateObject({2, 2}, true));
-        const auto bag = Take(world.CreateItem(ItemKind::backpack, ItemLocation::Carried(actor)));
-        const auto nested = Take(world.CreateItem(ItemKind::backpack, ItemLocation::Inside(bag)));
-        const auto child = Take(world.CreateItem(ItemKind::rock, ItemLocation::Inside(nested)));
-        const auto sibling = Take(world.CreateItem(ItemKind::bandage, ItemLocation::Inside(bag)));
-        const auto carried = Take(world.CreateItem(ItemKind::rock, ItemLocation::Carried(actor)));
-        const auto stored = Take(world.CreateItem(ItemKind::backpack, ItemLocation::Stored(object)));
-        const auto storedChild = Take(world.CreateItem(ItemKind::bandage, ItemLocation::Inside(stored)));
-        const auto ground = Take(world.CreateItem(ItemKind::backpack, ItemLocation::Ground({3, 3})));
-        const auto groundChild = Take(world.CreateItem(ItemKind::rock, ItemLocation::Inside(ground)));
+        const auto bag = Take(world.CreateItem(TestItem("backpack"), ItemLocation::Carried(actor)));
+        const auto nested = Take(world.CreateItem(TestItem("backpack"), ItemLocation::Inside(bag)));
+        const auto child = Take(world.CreateItem(TestItem("rock"), ItemLocation::Inside(nested)));
+        const auto sibling = Take(world.CreateItem(TestItem("bandage"), ItemLocation::Inside(bag)));
+        const auto carried = Take(world.CreateItem(TestItem("rock"), ItemLocation::Carried(actor)));
+        const auto stored = Take(world.CreateItem(TestItem("backpack"), ItemLocation::Stored(object)));
+        const auto storedChild = Take(world.CreateItem(TestItem("bandage"), ItemLocation::Inside(stored)));
+        const auto ground = Take(world.CreateItem(TestItem("backpack"), ItemLocation::Ground({3, 3})));
+        const auto groundChild = Take(world.CreateItem(TestItem("rock"), ItemLocation::Inside(ground)));
         REQUIRE(world.TransferItem(nested, ItemLocation::Ground({1, 1})));
         REQUIRE(world.TransferItem(nested, ItemLocation::Inside(bag)));
         for (ItemHandle handle : Vector<ItemHandle>{bag, nested, child, sibling, carried,
@@ -233,8 +233,8 @@ TEST_CASE("World save round trips every tile and nested inventory values", "[wor
     CHECK(restored.GetItem(items[1])->location == ItemLocation::Inside(items[0]));
     CHECK(restored.GetItem(items[1])->contents == Vector<ItemHandle>{items[2]});
     CHECK(restored.GetItem(items[2])->location == ItemLocation::Inside(items[1]));
-    CHECK(restored.GetItem(items[2])->kind == ItemKind::rock);
-    CHECK(restored.GetItem(items[3])->kind == ItemKind::bandage);
+    CHECK(restored.GetItem(items[2])->type == TestItem("rock"));
+    CHECK(restored.GetItem(items[3])->type == TestItem("bandage"));
     CHECK(restored.GetObject(object)->contents == Vector<ItemHandle>{items[5]});
     CHECK(restored.GetItem(items[5])->contents == Vector<ItemHandle>{items[6]});
     CHECK(restored.GetItem(items[5])->location == ItemLocation::Stored(object));
@@ -243,7 +243,7 @@ TEST_CASE("World save round trips every tile and nested inventory values", "[wor
     CHECK(restored.GetItem(items[7])->contents == Vector<ItemHandle>{items[8]});
     CHECK(restored.GetItem(items[8])->location == ItemLocation::Inside(items[7]));
     CHECK(restored.CheckInvariants());
-    const auto next = Take(restored.CreateItem(ItemKind::rock, ItemLocation::Ground({0, 0})));
+    const auto next = Take(restored.CreateItem(TestItem("rock"), ItemLocation::Ground({0, 0})));
     CHECK(restored.GetItem(next)->id > itemIds.back());
 
     // Missing rows generate from the installed seed, rather than the constructor seed.
@@ -331,8 +331,8 @@ TEST_CASE("World retains unloaded archives until checkpoint then reloads from di
     World world(TestContent());
     const auto request = Load(world);
     const auto actor = Take(world.CreateActor({1, 1}, true));
-    const auto bag = Take(world.CreateItem(ItemKind::backpack, ItemLocation::Carried(actor)));
-    const auto child = Take(world.CreateItem(ItemKind::rock, ItemLocation::Inside(bag)));
+    const auto bag = Take(world.CreateItem(TestItem("backpack"), ItemLocation::Carried(actor)));
+    const auto child = Take(world.CreateItem(TestItem("rock"), ItemLocation::Inside(bag)));
     const auto actorId = world.GetActor(actor)->id;
     const auto childId = world.GetItem(child)->id;
     SessionState session;
@@ -470,9 +470,9 @@ TEST_CASE("World checkpoints both sides of cross chunk moves and ownership chang
         Load(world, {1, 0});
         const auto actor = Take(world.CreateActor({15, 1}));
         const auto object = Take(world.CreateObject({1, 2}));
-        const auto bag = Take(world.CreateItem(ItemKind::backpack, ItemLocation::Stored(object)));
-        const auto nested = Take(world.CreateItem(ItemKind::backpack, ItemLocation::Inside(bag)));
-        const auto child = Take(world.CreateItem(ItemKind::bandage, ItemLocation::Inside(nested)));
+        const auto bag = Take(world.CreateItem(TestItem("backpack"), ItemLocation::Stored(object)));
+        const auto nested = Take(world.CreateItem(TestItem("backpack"), ItemLocation::Inside(bag)));
+        const auto child = Take(world.CreateItem(TestItem("bandage"), ItemLocation::Inside(nested)));
         actorId = world.GetActor(actor)->id;
         objectId = world.GetObject(object)->id;
         bagId = world.GetItem(bag)->id;
@@ -562,7 +562,7 @@ TEST_CASE("Dirty live chunks persist edits and deletion after a clean checkpoint
         Load(world, {1, 0});
         const auto actor = Take(world.CreateActor({1, 1}));
         const auto object = Take(world.CreateObject({17, 1}));
-        const auto item = Take(world.CreateItem(ItemKind::rock, ItemLocation::Ground({17, 2})));
+        const auto item = Take(world.CreateItem(TestItem("rock"), ItemLocation::Ground({17, 2})));
         actorId = world.GetActor(actor)->id;
         objectId = world.GetObject(object)->id;
         itemId = world.GetItem(item)->id;
@@ -700,7 +700,7 @@ TEST_CASE("World saves preserve unsigned persistent IDs up to exhaustion", "[wor
         Take(world.LoadSave(files.database.c_str()));
         Load(world);
         REQUIRE(world.GetActor(world.FindActor(maximum - 2)));
-        const auto item = Take(world.CreateItem(ItemKind::rock, ItemLocation::Ground({1, 0})));
+        const auto item = Take(world.CreateItem(TestItem("rock"), ItemLocation::Ground({1, 0})));
         issued = world.GetItem(item)->id;
         CHECK(issued == maximum - 1);
         REQUIRE(world.Save({}));

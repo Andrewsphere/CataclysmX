@@ -34,17 +34,6 @@ bool Cardinal(int dx, int dz) {
         || (dx == 0 && (dz == -1 || dz == 1));
 }
 
-bool ValidCommand(Command command) {
-    switch (command.kind) {
-    case CommandKind::wait: return command.waitCost != 0;
-    case CommandKind::move:
-    case CommandKind::interact: return Cardinal(command.dx, command.dz);
-    case CommandKind::pick_up:
-    case CommandKind::drop: return true;
-    default: return false;
-    }
-}
-
 bool BubbleFits(TileCoord position, int radius) {
     if (!ValidPosition(position)) {
         return false;
@@ -71,6 +60,48 @@ ItemHandle SelectItem(const World& world, const Vector<ItemHandle>& items, Persi
         }
     }
     return selected;
+}
+
+Outcome TransferFailure(WorldError error) {
+    switch (error) {
+    case WorldError::capacity_exceeded: return Outcome::capacity_exceeded;
+    case WorldError::chunk_unavailable: return Outcome::unavailable;
+    case WorldError::not_container:
+    case WorldError::incompatible_item:
+    case WorldError::containment_cycle: return Outcome::invalid_container;
+    default: return Outcome::invalid_command;
+    }
+}
+
+Vector<InventoryEntry> DescribeItems(const World& world, ActorHandle actor,
+    Vector<ItemHandle> pending) {
+    Vector<InventoryEntry> result;
+    for (std::size_t i = 0; i < pending.size(); ++i) {
+        const ItemHandle handle = pending[i];
+        const Item* item = world.GetItem(handle);
+        Require(item != nullptr);
+        const ItemDefinition& definition = world.GetContent().GetItem(item->type);
+        InventoryEntry entry{item->id, item->type, static_cast<unsigned int>(item->contents.size())};
+        if (item->location.kind == LocationKind::item) {
+            entry.parent = world.GetItem(item->location.item)->id;
+            entry.installation = item->location.installation;
+        }
+        entry.massGrams = world.GetItemMass(handle);
+        entry.volumeMl = definition.volumeMl;
+        if (const auto* container = ItemContainer(definition)) {
+            entry.capacityVolumeMl = container->capacityVolumeMl;
+            entry.usedVolumeMl = world.GetContainerUsedVolume(handle);
+        }
+        auto presentation = world.DescribeItem(actor, handle);
+        entry.energy = eastl::move(presentation.energy);
+        entry.activities = eastl::move(presentation.activities);
+        entry.actions = eastl::move(presentation.actions);
+        result.push_back(eastl::move(entry));
+        pending.insert(pending.end(), item->contents.begin(), item->contents.end());
+    }
+    eastl::sort(result.begin(), result.end(),
+        [](const InventoryEntry& a, const InventoryEntry& b) { return a.id < b.id; });
+    return result;
 }
 
 Outcome MovementFailure(WorldError error) {
@@ -117,6 +148,27 @@ bool LineVisible(const World& world, TileCoord origin, TileCoord target) {
 
 }
 
+bool ValidCommandShape(const Command& command) {
+    switch (command.kind) {
+    case CommandKind::wait: return command.waitCost != 0;
+    case CommandKind::move:
+    case CommandKind::interact: return Cardinal(command.dx, command.dz);
+    case CommandKind::pick_up:
+    case CommandKind::drop: return true;
+    case CommandKind::store_item:
+        return command.item != 0 && command.item != command.otherItem;
+    case CommandKind::use_item:
+        if (command.item == 0 || command.capability.value == 0
+            || command.capability.value > maxItemCapabilities
+            || !ValidItemActionId(command.itemAction) || command.otherItem == command.item) { return false; }
+        // Admission checks the generic argument envelope. The selected behavior's
+        // declaration is checked against current authoritative state at execution.
+        if (command.otherItem != 0) { return command.dx == 0 && command.dz == 0; }
+        return (command.dx == 0 && command.dz == 0) || Cardinal(command.dx, command.dz);
+    }
+    return false;
+}
+
 const char* OutcomeMessage(Outcome outcome) {
     switch (outcome) {
     case Outcome::waited: return "You wait.";
@@ -136,8 +188,19 @@ const char* OutcomeMessage(Outcome outcome) {
     case Outcome::queued: return "You queue your next action.";
     case Outcome::stale_input: return "Stale input.";
     case Outcome::duplicate_input: return "Duplicate input.";
+    case Outcome::used_item: return "You use the item.";
+    case Outcome::stored_item: return "You move the item.";
+    case Outcome::item_use_failed: return "The item cannot be used.";
+    case Outcome::capacity_exceeded: return "Not enough carrying or storage capacity.";
+    case Outcome::invalid_container: return "That item cannot be stored there.";
     }
     std::abort();
+}
+
+const char* CommandResultMessage(const CommandResult& result) {
+    if (result.outcome != Outcome::item_use_failed) { return OutcomeMessage(result.outcome); }
+    return result.itemReason.message.fallback.empty() ? ItemUseMessage(result.itemOutcome)
+        : result.itemReason.message.fallback.c_str();
 }
 
 ContentResult<void> ValidateServerContent(const ContentCatalog& content, Diagnostics* diagnostics) {
@@ -153,6 +216,20 @@ ContentResult<void> ValidateServerContent(const ContentCatalog& content, Diagnos
     }
     if (!content.GetTerrain(content.FindTerrain("floor")).passable) {
         if (diagnostics) { diagnostics->Add("Demo terrain 'floor' must be passable"); }
+        return eastl::unexpected(ContentError::InvalidData);
+    }
+    for (const char* id : {"rock", "backpack", "bandage"}) {
+        if (content.FindItem(id).value == 0) {
+            if (diagnostics) {
+                String message = "Missing item required by the demo: "; message += id;
+                diagnostics->Add({message.data(), message.size()});
+            }
+            return eastl::unexpected(ContentError::InvalidData);
+        }
+    }
+    const auto* backpack = ItemContainer(content.GetItem(content.FindItem("backpack")));
+    if (!backpack || backpack->capacityVolumeMl < content.GetItem(content.FindItem("bandage")).volumeMl) {
+        if (diagnostics) { diagnostics->Add("Demo backpack must hold the bandage"); }
         return eastl::unexpected(ContentError::InvalidData);
     }
     return ValidateWorldgenContent(content, diagnostics);
@@ -171,16 +248,22 @@ Server::Server(const ContentCatalog& content, std::uint32_t seed) : world_(conte
     Require(world_.SetTile({3, 1}, {content.FindTerrain("wall"), 0}).has_value());
     player_ = Take(world_.CreateActor({0, 0}, true));
     players_.push_back({world_.GetActor(player_)->id, "Host", 0, {0, 0}, PlayerConnectionState::Active});
-    const ItemHandle backpack = Take(world_.CreateItem(ItemKind::backpack, ItemLocation::Ground({0, 0})));
-    Take(world_.CreateItem(ItemKind::bandage, ItemLocation::Inside(backpack)));
-    Take(world_.CreateItem(ItemKind::rock, ItemLocation::Ground({1, 0})));
+    const ItemHandle backpack = Take(world_.CreateItem(content.FindItem("backpack"), ItemLocation::Ground({0, 0})));
+    Take(world_.CreateItem(content.FindItem("bandage"), ItemLocation::Inside(backpack)));
+    Take(world_.CreateItem(content.FindItem("rock"), ItemLocation::Ground({1, 0})));
     Take(world_.CreateObject({2, 0}, false));
     Take(world_.CreateActor({5, 5}));
+    // Optional demo equipment follows the original entities, preserving their IDs.
+    for (const char* id : {"field_charger", "rechargeable_battery", "door_controller", "utility_controller"}) {
+        if (const auto type = content.FindItem(id); type.value != 0) {
+            Take(world_.CreateItem(type, ItemLocation::Ground({0, 1})));
+        }
+    }
     SynchronizePacing();
 }
 
 CommandResult Server::Send(Command command) {
-    if (!ValidCommand(command)) { return {Outcome::invalid_command, false, tick_}; }
+    if (!ValidCommandShape(command)) { return {Outcome::invalid_command, false, tick_}; }
     const Actor* actor = world_.GetActor(player_);
     Require(actor != nullptr);
     const PlayerSlot* host = FindPlayer(GetHostPlayerId());
@@ -225,6 +308,7 @@ CommandResult Server::Execute(ActorHandle handle, PlayerSlot& slot, Command comm
     const auto failed = [this](Outcome outcome) { return CommandResult{outcome, false, tick_}; };
     if (actor->remainingTicks != 0) { return failed(Outcome::not_ready); }
     Outcome outcome = Outcome::invalid_command;
+    std::uint32_t baseCost = command.kind == CommandKind::wait ? command.waitCost : ticks_per_turn;
     switch (command.kind) {
     case CommandKind::wait:
         if (command.waitCost == 0) { return failed(Outcome::invalid_command); }
@@ -284,7 +368,9 @@ CommandResult Server::Execute(ActorHandle handle, PlayerSlot& slot, Command comm
         if (item.value == 0) {
             return failed(Outcome::nothing_here);
         }
-        Require(world_.TransferItem(item, ItemLocation::Carried(handle)).has_value());
+        if (const auto moved = world_.TransferItem(item, ItemLocation::Carried(handle)); !moved) {
+            return failed(TransferFailure(moved.error()));
+        }
         outcome = Outcome::picked_up;
         break;
     }
@@ -295,6 +381,35 @@ CommandResult Server::Execute(ActorHandle handle, PlayerSlot& slot, Command comm
         }
         Require(world_.TransferItem(item, ItemLocation::Ground(position)).has_value());
         outcome = Outcome::dropped;
+        break;
+    }
+    case CommandKind::use_item: {
+        const ItemHandle item = world_.FindItem(command.item);
+        const ItemUseResult used = world_.UseItem(handle, item,
+            {command.capability, command.itemAction, world_.FindItem(command.otherItem), command.dx, command.dz});
+        if (used.outcome != ItemUseOutcome::Succeeded) {
+            auto result = failed(Outcome::item_use_failed);
+            result.itemOutcome = used.outcome;
+            result.itemReason = used.reason;
+            return result;
+        }
+        baseCost = used.baseCost;
+        outcome = Outcome::used_item;
+        break;
+    }
+    case CommandKind::store_item: {
+        const ItemHandle item = world_.FindItem(command.item);
+        if (!world_.CanAccessItem(handle, item)) { return failed(Outcome::not_carried); }
+        ItemLocation destination = ItemLocation::Carried(handle);
+        if (command.otherItem != 0) {
+            const ItemHandle container = world_.FindItem(command.otherItem);
+            if (!world_.CanAccessItem(handle, container)) { return failed(Outcome::invalid_container); }
+            destination = ItemLocation::Inside(container);
+        }
+        if (const auto moved = world_.TransferItem(item, destination); !moved) {
+            return failed(TransferFailure(moved.error()));
+        }
+        outcome = Outcome::stored_item;
         break;
     }
     case CommandKind::interact: {
@@ -330,7 +445,6 @@ CommandResult Server::Execute(ActorHandle handle, PlayerSlot& slot, Command comm
     default:
         return failed(Outcome::invalid_command);
     }
-    const std::uint32_t baseCost = command.kind == CommandKind::wait ? command.waitCost : ticks_per_turn;
     const Tick cost = ActionTicks(baseCost, world_.GetActor(handle)->speed);
     Require(world_.ScheduleActorAction(handle, baseCost).has_value());
     CommandResult result{outcome, true, tick_};
@@ -588,7 +702,7 @@ CommandResult Server::Submit(PersistentId id, PlayerInput input) {
     if (!slot || slot->state != PlayerConnectionState::Active) {
         return {Outcome::unavailable, false, tick_};
     }
-    if (!ValidCommand(input.command)) { return {Outcome::invalid_command, false, tick_}; }
+    if (!ValidCommandShape(input.command)) { return {Outcome::invalid_command, false, tick_}; }
     if (input.opportunity != slot->opportunity) { return {Outcome::stale_input, false, tick_}; }
     if (input.sequence <= slot->lastSequence) { return {Outcome::duplicate_input, false, tick_}; }
     const ActorHandle actor = PlayerActor(*slot);
@@ -720,7 +834,8 @@ WorldView Server::ViewForPlayer(PersistentId id, int radius) const {
     radius = eastl::clamp(radius, 0, 12);
     const PlayerSlot* slot = FindPlayer(id);
     if (!slot) { return {}; }
-    const Actor* actor = world_.GetActor(PlayerActor(*slot));
+    const ActorHandle player = PlayerActor(*slot);
+    const Actor* actor = world_.GetActor(player);
     if (!actor) { return {}; }
     Require(actor != nullptr);
     WorldView result;
@@ -762,13 +877,10 @@ WorldView Server::ViewForPlayer(PersistentId id, int radius) const {
             }
         }
     }
-    for (ItemHandle handle : actor->inventory) {
-        const Item* item = world_.GetItem(handle);
-        Require(item != nullptr);
-        result.inventory.push_back({item->id, item->kind, static_cast<unsigned int>(item->contents.size())});
-    }
-    eastl::sort(result.inventory.begin(), result.inventory.end(),
-        [](const InventoryEntry& a, const InventoryEntry& b) { return a.id < b.id; });
+    result.inventory = DescribeItems(world_, player, actor->inventory);
+    result.groundItems = DescribeItems(world_, player, world_.ItemsAt(actor->position));
+    result.carriedMassGrams = world_.GetCarriedMass(player);
+    result.carryCapacityGrams = actor->carryCapacityGrams;
     return result;
 }
 

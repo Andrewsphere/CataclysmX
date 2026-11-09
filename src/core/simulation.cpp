@@ -50,6 +50,8 @@ SimulationResult AdvanceUntilInput(World& world, Tick& tick,
             }
         }
 
+        world.ProcessItemEvents();
+
         SimulationResult result;
         const Vector<ActorHandle> actors = world.ActiveActors();
         for (ActorHandle handle : actors) {
@@ -84,6 +86,11 @@ SimulationResult AdvanceUntilInput(World& world, Tick& tick,
             if (!object || !object->enabled) { continue; }
             Require(object->remainingTicks != 0);
             if (object->remainingTicks < next) { next = object->remainingTicks; }
+            hasEvents = true;
+        }
+        if (const auto itemEvent = world.NextItemEventIn()) {
+            Require(*itemEvent != 0);
+            if (*itemEvent < next) { next = *itemEvent; }
             hasEvents = true;
         }
         if (!hasEvents) { return result; }

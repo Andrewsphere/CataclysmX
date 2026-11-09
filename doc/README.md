@@ -9,17 +9,23 @@
 6
 - [World API](world_api.md): identity, ownership, coordinates, chunk demand and
   in-memory archives. Start here for scenario setup and administrative tools.
+- [Items API](items_api.md): physical properties, volume-limited containment,
+  installed batteries, explicit use actions, charging and timed door controllers.
+- [Adding item behaviors](item_behaviors.md): virtual interfaces, explicit factories,
+  shared definitions, local actions and safe callback/scheduling contracts.
+- [Structured state](data_object.md): owned typed objects and versioned capability
+  serialization behind the JSON persistence boundary.
 - [Server and simulation API](server_api.md): commands, turn advancement, views,
   player bubbles and client integration. Start here for a game client.
 - [Tick scheduling](tick_scheduling.md): simulation units, runtime pacing,
   speed-scaled input deadlines and idle policy.
-- [Content format and catalog](content_format.md): JSON5 terrain definitions, IDs,
-  building patterns, appearance inheritance, and loading APIs.
+- [Content format and catalog](content_format.md): JSON5 terrain and item definitions,
+  capabilities, IDs, building patterns, appearance inheritance, and loading APIs.
 - [World generation](worldgen_api.md): deterministic region plans, boundary
   crossings, parcels/buildings, terrain materialization and debug inspection.
 - [Diagnostics](diagnostics.md): structured error causes and contextual frames.
 - [Terrain rendering](terrain_rendering.md): UTF-8 symbols, colors, and frontend behavior.
-- [Save format](save_format.md): SQLite v4, snapshots, validation and checkpoints.
+- [Save format](save_format.md): SQLite v5, snapshots, validation and checkpoints.
 - [LAN networking](networking.md): ENet hosting, joining, authoritative messages and discovery.
 - [LAN client profile](lan_profile.md): endpoint identities, typed errors and durability.
 - [Project README](../README.md): build instructions and dependencies.

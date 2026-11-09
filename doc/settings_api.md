@@ -108,11 +108,25 @@ uses produced UTF-8 characters without shortcut normalization.
 Ctrl currently supports ASCII letters and the named keys; unsupported character
 combinations are rejected during validation.
 
-Contexts are `gameplay`, `interaction`, `menu`, and `debug`. A local entry
+Contexts are `gameplay`, `interaction`, `menu`, `debug`, and `items`. A local entry
 replaces the entire inherited list for that context/action; removing it restores
 inheritance. Conflicting chords within one context are rejected. Escape always
 cancels; `Ctrl+c` always exits. `Ctrl+C` remains a separate enhanced binding.
 Action names and defaults are explicit in `client/input.cpp`.
+
+`use` defaults to **u** in Gameplay and Interaction (open item selection), and
+in Items (use the selected inventory item). Items `apply` defaults to **a** and
+opens battery/storage management. Items bindings take precedence over Menu
+bindings while browsing inventory, preserving Menu `unbind` **u** in Settings.
+Submodal navigation, accept, direction selection and cancel use Menu bindings.
+The Settings binding editor includes the Items category.
+
+`Localization::ItemName` takes an `ItemDefinition` or a catalog/type pair. It
+looks up optional `item.<stable-id>` and falls back to the definition's name;
+it has no enum/name table. `ItemActionText` and `ItemRefusal` localize typed
+capability actions and refusals with English helper fallbacks. `ResultText`
+uses the specific item refusal in `CommandResult::itemOutcome`, otherwise the
+ordinary outcome text. Headless rendering uses content definition names.
 
 `DecodeTerminalInput` is a pure frontend adapter. Traditional terminals send
 uppercase text without reporting whether Shift or Caps Lock caused it. They also

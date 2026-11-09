@@ -66,7 +66,7 @@ constexpr FieldPresentation fields[] = {
 static_assert(std::size(fields) == static_cast<unsigned>(SettingsField::Count));
 constexpr eastl::string_view categoryNames[] = {"interface", "world", "timing", "saving"};
 constexpr InputContext bindingContexts[] = {
-    InputContext::Gameplay, InputContext::Interaction, InputContext::Menu, InputContext::Debug
+    InputContext::Gameplay, InputContext::Interaction, InputContext::Menu, InputContext::Debug, InputContext::Items
 };
 
 // Selection and both viewports belong to this exact scope/section/category.
@@ -398,7 +398,8 @@ private:
     ftxui::Element Tabs(FocusArea area, bool vertical = false) const {
         const unsigned selected = area == FocusArea::Scope ? Index()
             : area == FocusArea::Section ? sections_[Index()] : Category();
-        const unsigned count = area == FocusArea::Category ? 4 : 2;
+        const unsigned count = area == FocusArea::Category
+            ? static_cast<unsigned>(Bindings() ? std::size(bindingContexts) : std::size(categoryNames)) : 2;
         ftxui::Elements entries;
         for (unsigned i = 0; i < count; ++i) {
             String label;
@@ -539,7 +540,8 @@ private:
         else if (focus_ == FocusArea::Section) { sections_[Index()] = 1 - sections_[Index()]; }
         else if (focus_ == FocusArea::Category) {
             auto& category = categories_[Index()][sections_[Index()]];
-            category = static_cast<unsigned>((static_cast<int>(category) + delta + 4) % 4);
+            const int count = static_cast<int>(Bindings() ? std::size(bindingContexts) : std::size(categoryNames));
+            category = static_cast<unsigned>((static_cast<int>(category) + delta + count) % count);
         }
     }
     void BeginEdit(bool append) {
@@ -665,7 +667,7 @@ private:
     Keymap keyDrafts_[2];
     unsigned sections_[2] = {0, 0};
     unsigned categories_[2][2] = {};
-    PageState pages_[2][2][4];
+    PageState pages_[2][2][std::size(bindingContexts)];
     bool append_ = false;
     bool replaceOnType_ = false;
     bool sidebarVisible_ = false;

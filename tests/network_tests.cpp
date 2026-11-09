@@ -71,8 +71,13 @@ TEST_CASE("Network wire rejects truncated values, invalid enums and oversized sn
     CHECK_FALSE(badCommand.CommandValue(decodedCommand));
     wire::Writer text;
     CHECK_FALSE(text.Text("bad\nname", 32));
+    // This synthetic inventory replaces the snapshot's real item identities.
+    view.groundItems.clear();
     view.inventory.resize(129);
-    for (std::size_t i = 0; i < view.inventory.size(); ++i) view.inventory[i].id = i + 1;
+    for (std::size_t i = 0; i < view.inventory.size(); ++i) {
+        view.inventory[i].id = i + 1;
+        view.inventory[i].type = TestItem("rock");
+    }
     wire::Writer many;
     REQUIRE(many.View(view));
     wire::Reader manyReader{{many.bytes.data(), many.bytes.size()}};
@@ -114,8 +119,8 @@ TEST_CASE("Real loopback joins two guests and preserves identity across reconnec
     const auto aliceActor = server.GetWorld().FindActor(alice);
     REQUIRE(aliceActor.value != 0);
     for (int i = 0; i < 129; ++i)
-        REQUIRE(server.GetWorld().CreateItem(ItemKind::rock, ItemLocation::Carried(aliceActor)));
-    REQUIRE(server.GetWorld().CreateItem(ItemKind::rock, ItemLocation::Ground(a.View().player_position)));
+        REQUIRE(server.GetWorld().CreateItem(TestItem("rock"), ItemLocation::Carried(aliceActor)));
+    REQUIRE(server.GetWorld().CreateItem(TestItem("rock"), ItemLocation::Ground(a.View().player_position)));
     REQUIRE(a.Submit({CommandKind::pick_up}));
     REQUIRE(b.Submit({CommandKind::wait}));
     host.QueueLocal({CommandKind::wait});

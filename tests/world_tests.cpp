@@ -65,7 +65,7 @@ TEST_CASE("World coordinates use floor division and bounded positions", "[world]
     CHECK(world.SetTile({0, 0}, {}) == eastl::unexpected(WorldError::chunk_unavailable));
     CHECK(world.CreateActor({INT_MAX, 0}) == eastl::unexpected(WorldError::invalid_position));
     CHECK(world.CreateObject({0, INT_MIN}) == eastl::unexpected(WorldError::invalid_position));
-    CHECK(world.CreateItem(ItemKind::rock, ItemLocation::Ground({world_coordinate_limit + 1, 0}))
+    CHECK(world.CreateItem(TestItem("rock"), ItemLocation::Ground({world_coordinate_limit + 1, 0}))
         == eastl::unexpected(WorldError::invalid_position));
 
     load(world, {{62'500, -62'500}, 0});
@@ -244,8 +244,8 @@ TEST_CASE("Actor movement keeps handles and inventory across chunk boundaries", 
     const auto origin = load(world);
     load(world, {{1, 0}, 0}, LoadMode::resident);
     const auto actor = take(world.CreateActor({15, 1}, true));
-    const auto backpack = take(world.CreateItem(ItemKind::backpack, ItemLocation::Carried(actor)));
-    const auto rock = take(world.CreateItem(ItemKind::rock, ItemLocation::Inside(backpack)));
+    const auto backpack = take(world.CreateItem(TestItem("backpack"), ItemLocation::Carried(actor)));
+    const auto rock = take(world.CreateItem(TestItem("rock"), ItemLocation::Inside(backpack)));
     const PersistentId id = world.GetActor(actor)->id;
     REQUIRE(world.MoveActor(actor, {16, 1}));
     CHECK(world.GetActor(actor)->id == id);
@@ -281,16 +281,16 @@ TEST_CASE("Item transfers validate destinations and cycles before changing owner
     load(world, {{1, 0}, 0}, LoadMode::resident);
     const auto actor = take(world.CreateActor({1, 1}));
     const auto object = take(world.CreateObject({2, 1}));
-    const auto root = take(world.CreateItem(ItemKind::backpack, ItemLocation::Ground({0, 0})));
-    const auto nested = take(world.CreateItem(ItemKind::backpack, ItemLocation::Inside(root)));
-    const auto rock = take(world.CreateItem(ItemKind::rock, ItemLocation::Inside(nested)));
+    const auto root = take(world.CreateItem(TestItem("backpack"), ItemLocation::Ground({0, 0})));
+    const auto nested = take(world.CreateItem(TestItem("backpack"), ItemLocation::Inside(root)));
+    const auto rock = take(world.CreateItem(TestItem("rock"), ItemLocation::Inside(nested)));
     CHECK(world.TransferItem(root, ItemLocation::Inside(root))
         == eastl::unexpected(WorldError::containment_cycle));
     CHECK(world.TransferItem(root, ItemLocation::Inside(nested))
         == eastl::unexpected(WorldError::containment_cycle));
     CHECK(world.TransferItem(nested, ItemLocation::Inside(rock))
         == eastl::unexpected(WorldError::not_container));
-    CHECK(world.CreateItem(ItemKind::bandage, ItemLocation::Inside(rock))
+    CHECK(world.CreateItem(TestItem("bandage"), ItemLocation::Inside(rock))
         == eastl::unexpected(WorldError::not_container));
     CHECK(world.TransferItem(root, ItemLocation::Carried({UINT64_MAX}))
         == eastl::unexpected(WorldError::invalid_handle));
@@ -335,15 +335,15 @@ TEST_CASE("Chunk archives preserve values and nested ownership with fresh runtim
     load(world, {{2, 0}, 0}, LoadMode::resident);
     const auto actor = take(world.CreateActor({1, 1}, true));
     const auto object = take(world.CreateObject({2, 2}, true));
-    const auto bag = take(world.CreateItem(ItemKind::backpack, ItemLocation::Carried(actor)));
-    const auto nested = take(world.CreateItem(ItemKind::backpack, ItemLocation::Inside(bag)));
-    const auto rock = take(world.CreateItem(ItemKind::rock, ItemLocation::Inside(nested)));
-    const auto bandage = take(world.CreateItem(ItemKind::bandage, ItemLocation::Inside(bag)));
-    const auto carried = take(world.CreateItem(ItemKind::rock, ItemLocation::Carried(actor)));
-    const auto stored = take(world.CreateItem(ItemKind::backpack, ItemLocation::Stored(object)));
-    const auto stored_child = take(world.CreateItem(ItemKind::bandage, ItemLocation::Inside(stored)));
-    const auto ground = take(world.CreateItem(ItemKind::backpack, ItemLocation::Ground({0, 4})));
-    const auto ground_child = take(world.CreateItem(ItemKind::rock, ItemLocation::Inside(ground)));
+    const auto bag = take(world.CreateItem(TestItem("backpack"), ItemLocation::Carried(actor)));
+    const auto nested = take(world.CreateItem(TestItem("backpack"), ItemLocation::Inside(bag)));
+    const auto rock = take(world.CreateItem(TestItem("rock"), ItemLocation::Inside(nested)));
+    const auto bandage = take(world.CreateItem(TestItem("bandage"), ItemLocation::Inside(bag)));
+    const auto carried = take(world.CreateItem(TestItem("rock"), ItemLocation::Carried(actor)));
+    const auto stored = take(world.CreateItem(TestItem("backpack"), ItemLocation::Stored(object)));
+    const auto stored_child = take(world.CreateItem(TestItem("bandage"), ItemLocation::Inside(stored)));
+    const auto ground = take(world.CreateItem(TestItem("backpack"), ItemLocation::Ground({0, 4})));
+    const auto ground_child = take(world.CreateItem(TestItem("rock"), ItemLocation::Inside(ground)));
     // Reorder siblings so reload cannot accidentally rely on ID or slot order.
     REQUIRE(world.TransferItem(nested, ItemLocation::Ground({0, 0})));
     REQUIRE(world.TransferItem(nested, ItemLocation::Inside(bag)));
@@ -376,7 +376,7 @@ TEST_CASE("Chunk archives preserve values and nested ownership with fresh runtim
     CHECK(world.DestroyObject(object) == eastl::unexpected(WorldError::invalid_handle));
     CHECK(world.DestroyItem(bag) == eastl::unexpected(WorldError::invalid_handle));
     CHECK(world.CheckInvariants());
-    const auto newer = take(world.CreateItem(ItemKind::rock, ItemLocation::Ground({32, 0})));
+    const auto newer = take(world.CreateItem(TestItem("rock"), ItemLocation::Ground({32, 0})));
     CHECK(world.GetItem(newer)->id > item_ids.back());
     CHECK(world.TransferItem(newer, ItemLocation::Carried(actor))
         == eastl::unexpected(WorldError::invalid_handle));
@@ -415,9 +415,9 @@ TEST_CASE("Chunk archives preserve values and nested ownership with fresh runtim
     CHECK(world.GetItem(fresh[0])->contents == Vector<ItemHandle>{fresh[3], fresh[1]});
     CHECK(world.GetItem(fresh[1])->location == ItemLocation::Inside(fresh[0]));
     CHECK(world.GetItem(fresh[1])->contents == Vector<ItemHandle>{fresh[2]});
-    CHECK(world.GetItem(fresh[2])->kind == ItemKind::rock);
+    CHECK(world.GetItem(fresh[2])->type == TestItem("rock"));
     CHECK(world.GetItem(fresh[2])->location == ItemLocation::Inside(fresh[1]));
-    CHECK(world.GetItem(fresh[3])->kind == ItemKind::bandage);
+    CHECK(world.GetItem(fresh[3])->type == TestItem("bandage"));
     CHECK(world.GetObject(fresh_object)->contents == Vector<ItemHandle>{fresh[5]});
     CHECK(world.GetItem(fresh[5])->location == ItemLocation::Stored(fresh_object));
     CHECK(world.GetItem(fresh[5])->contents == Vector<ItemHandle>{fresh[6]});
@@ -447,12 +447,12 @@ TEST_CASE("Actor and object destruction drop trees while item destruction remove
     const auto request = load(world);
     const auto actor = take(world.CreateActor({1, 1}));
     const auto object = take(world.CreateObject({2, 2}));
-    const auto bag = take(world.CreateItem(ItemKind::backpack, ItemLocation::Carried(actor)));
-    const auto child = take(world.CreateItem(ItemKind::backpack, ItemLocation::Inside(bag)));
-    const auto grandchild = take(world.CreateItem(ItemKind::bandage, ItemLocation::Inside(child)));
-    const auto loose = take(world.CreateItem(ItemKind::rock, ItemLocation::Carried(actor)));
-    const auto stored = take(world.CreateItem(ItemKind::backpack, ItemLocation::Stored(object)));
-    const auto stored_child = take(world.CreateItem(ItemKind::rock, ItemLocation::Inside(stored)));
+    const auto bag = take(world.CreateItem(TestItem("backpack"), ItemLocation::Carried(actor)));
+    const auto child = take(world.CreateItem(TestItem("backpack"), ItemLocation::Inside(bag)));
+    const auto grandchild = take(world.CreateItem(TestItem("bandage"), ItemLocation::Inside(child)));
+    const auto loose = take(world.CreateItem(TestItem("rock"), ItemLocation::Carried(actor)));
+    const auto stored = take(world.CreateItem(TestItem("backpack"), ItemLocation::Stored(object)));
+    const auto stored_child = take(world.CreateItem(TestItem("rock"), ItemLocation::Inside(stored)));
     const auto id = world.GetItem(grandchild)->id;
     REQUIRE(world.DestroyActor(actor));
     CHECK(world.ActorAt({1, 1}) == ActorHandle{});
@@ -516,8 +516,8 @@ TEST_CASE("Full unload preserves moved item roots and never resets entity slot m
     const auto request = load(world, {{0, 0}, 1});
     const auto actor = take(world.CreateActor({1, 1}));
     const auto object = take(world.CreateObject({17, 1}));
-    const auto bag = take(world.CreateItem(ItemKind::backpack, ItemLocation::Carried(actor)));
-    const auto child = take(world.CreateItem(ItemKind::rock, ItemLocation::Inside(bag)));
+    const auto bag = take(world.CreateItem(TestItem("backpack"), ItemLocation::Carried(actor)));
+    const auto child = take(world.CreateItem(TestItem("rock"), ItemLocation::Inside(bag)));
     const auto actor_id = world.GetActor(actor)->id;
     const auto object_id = world.GetObject(object)->id;
     const auto bag_id = world.GetItem(bag)->id;
@@ -549,7 +549,7 @@ TEST_CASE("Full unload preserves moved item roots and never resets entity slot m
     CHECK(fresh_child != child);
     CHECK(world.GetItem(fresh_bag)->location == ItemLocation::Stored(fresh_object));
     CHECK(world.GetItem(fresh_child)->location == ItemLocation::Inside(fresh_bag));
-    const auto newer = take(world.CreateItem(ItemKind::bandage, ItemLocation::Ground({0, 0})));
+    const auto newer = take(world.CreateItem(TestItem("bandage"), ItemLocation::Ground({0, 0})));
     CHECK(world.GetItem(newer)->id > child_id);
     CHECK(world.CheckInvariants());
 }

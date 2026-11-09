@@ -107,6 +107,9 @@ bool Execute(eastl::unique_ptr<Server>& ownedServer, eastl::string_view line, bo
         return true;
     }
     if (name == "inspect" && count == 1) { Inspect(server); return true; }
+    if (name == "items" && count == 1) {
+        std::fputs(ItemDetails(server.View(0), server.GetWorld().GetContent()).c_str(), stdout); return true;
+    }
     if (name == "save" && (count == 1 || count == 2)) {
         Diagnostics diagnostics;
         SaveResult<void> saved;
@@ -184,7 +187,7 @@ bool Execute(eastl::unique_ptr<Server>& ownedServer, eastl::string_view line, bo
             const CommandResult& resolved = *update.commandResult;
             std::printf("resolved tick=%llu advanced=%d %s\n",
                 static_cast<unsigned long long>(resolved.tick), resolved.advanced ? 1 : 0,
-                OutcomeMessage(resolved.outcome));
+                CommandResultMessage(resolved));
         }
         if (update.storageError) {
             std::fprintf(stderr, "%s (error=%d)\n",
@@ -237,10 +240,17 @@ bool Execute(eastl::unique_ptr<Server>& ownedServer, eastl::string_view line, bo
     } else if ((name == "pickup" || name == "drop") && (count == 1 || count == 2)) {
         command.kind = name == "pickup" ? CommandKind::pick_up : CommandKind::drop;
         if (count == 2 && !Number(words[1], command.item)) { return false; }
+    } else if (name == "use" || name == "store") {
+        String text;
+        for (std::size_t i = 0; i < count; ++i) {
+            if (i != 0) { text += ' '; }
+            text.append(words[i].data(), words[i].size());
+        }
+        if (!ParseItemCommand({text.data(), text.size()}, command)) { return false; }
     } else { return false; }
     const CommandResult result = server.Send(command);
     std::printf("tick=%llu advanced=%d %s\n", static_cast<unsigned long long>(result.tick),
-        result.advanced ? 1 : 0, OutcomeMessage(result.outcome));
+        result.advanced ? 1 : 0, CommandResultMessage(result));
     if (result.storageError) {
         std::fprintf(stderr, "%s (error=%d)\n",
             result.advanced ? "Autosave failed after completed turn" : "World load failed",

@@ -16,7 +16,7 @@ namespace cataclysmx {
 namespace {
 
 constexpr InputAction quickActions[] = {
-    InputAction::Inventory, InputAction::PickUp, InputAction::Interact, InputAction::Wait,
+    InputAction::Inventory, InputAction::Use, InputAction::PickUp, InputAction::Interact, InputAction::Wait,
     InputAction::Players, InputAction::Settings, InputAction::Help, InputAction::Save,
     InputAction::ToggleIdle, InputAction::ToggleRate, InputAction::RateDown, InputAction::RateUp,
     InputAction::Debug
@@ -243,6 +243,15 @@ String PlayerText(const PlayerStatus& player, const Localization& localization) 
     return result;
 }
 
+std::size_t ItemCount(const WorldView& view) { return view.inventory.size() + view.groundItems.size(); }
+const InventoryEntry& ItemAt(const WorldView& view, std::size_t index) {
+    return index < view.inventory.size() ? view.inventory[index] : view.groundItems[index - view.inventory.size()];
+}
+const InventoryEntry* FindItem(const WorldView& view, PersistentId id) {
+    for (std::size_t i = 0; i < ItemCount(view); ++i) { if (ItemAt(view, i).id == id) { return &ItemAt(view, i); } }
+    return nullptr;
+}
+
 }
 
 String GameplayWelcome(const Localization& localization, const Keymap& keys) {
@@ -256,7 +265,9 @@ String GameplayWelcome(const Localization& localization, const Keymap& keys) {
 }
 
 bool GameplayUi::Open(InputAction action) {
+    itemStage_ = ItemStage::Browse; useSelection_ = action == InputAction::Use;
     switch (action) {
+    case InputAction::Use:
     case InputAction::Inventory: modal_ = Modal::Inventory; break;
     case InputAction::Players: modal_ = Modal::Players; break;
     case InputAction::Help: modal_ = Modal::Controls; break;
@@ -269,15 +280,24 @@ bool GameplayUi::IsOpen() const { return modal_ != Modal::None; }
 void GameplayUi::Close() { modal_ = Modal::None; feedback_.clear(); }
 bool GameplayUi::PausesLocal(eastl::optional<InputAction> action) const {
     return IsOpen() || action == InputAction::Inventory || action == InputAction::Players
-        || action == InputAction::Help || action == InputAction::QuickActions;
+        || action == InputAction::Help || action == InputAction::QuickActions || action == InputAction::Use;
 }
 void GameplayUi::ReconcileInventory(const WorldView& view) {
-    if (view.inventory.empty()) { selectedItem_ = 0; selectedIndex_ = 0; inventoryScroll_ = 0; return; }
-    for (std::size_t i = 0; i < view.inventory.size(); ++i) {
-        if (view.inventory[i].id == selectedItem_) { selectedIndex_ = i; return; }
+    if (selectionPlayer_ != view.playerId) {
+        selectionPlayer_ = view.playerId;
+        selectedItem_ = 0; selectedIndex_ = 0; inventoryScroll_ = 0;
+        sourceItem_ = 0; itemStage_ = ItemStage::Browse;
+        itemActions_.clear(); itemTargets_.clear(); feedback_.clear();
     }
-    selectedIndex_ = std::min(selectedIndex_, view.inventory.size() - 1);
-    selectedItem_ = view.inventory[selectedIndex_].id;
+    if (ItemCount(view) == 0) { selectedIndex_ = 0; inventoryScroll_ = 0; return; }
+    for (std::size_t i = 0; i < ItemCount(view); ++i) {
+        if (ItemAt(view, i).id == selectedItem_) { selectedIndex_ = i; return; }
+    }
+    // A vanished ID remains selected until explicit navigation. Rendering a new
+    // snapshot must not turn a later activation into an action on its neighbor.
+    if (selectedItem_ != 0) { return; }
+    selectedIndex_ = std::min(selectedIndex_, ItemCount(view) - 1);
+    selectedItem_ = ItemAt(view, selectedIndex_).id;
 }
 
 ftxui::Element GameplayUi::Render(const WorldView& view, const ContentCatalog& content,
@@ -333,26 +353,73 @@ ftxui::Element GameplayUi::Render(const WorldView& view, const ContentCatalog& c
     int selected = -1;
     if (modal_ == Modal::Inventory) {
         ReconcileInventory(view);
-        title = t("game.ui.inventory"); subtitle = t("game.ui.inventory_hint");
+        title = t("game.ui.inventory"); subtitle = t(useSelection_ ? "item.ui.choose_use" : "game.ui.inventory_hint");
         scroll = &inventoryScroll_; preferredWidth = 72;
         count = localization.Format("game.ui.selection_count", {
-            {"selected", UnsignedText(view.inventory.empty() ? 0 : selectedIndex_ + 1)},
-            {"total", UnsignedText(view.inventory.size())}});
-        if (view.inventory.empty()) { rows.push_back(Paragraph(t("game.ui.inventory_empty"))); }
+            {"selected", UnsignedText(ItemCount(view) == 0 ? 0 : selectedIndex_ + 1)},
+            {"total", UnsignedText(ItemCount(view))}});
+        if (ItemCount(view) == 0) { rows.push_back(Paragraph(t("game.ui.inventory_empty"))); }
         else {
             selected = static_cast<int>(selectedIndex_);
-            for (std::size_t i = 0; i < view.inventory.size(); ++i) {
-                const auto& item = view.inventory[i];
-                String label = i == selectedIndex_ ? "> " : "  ";
-                label += localization.Format("inventory.entry", {{"id", UnsignedText(item.id)}, {"name", localization.ItemName(item.kind)}});
+            for (std::size_t i = 0; i < ItemCount(view); ++i) {
+                const auto& item = ItemAt(view, i);
+                String label = item.id == selectedItem_ ? "> " : "  ";
+                label += localization.Format("inventory.entry", {{"id", UnsignedText(item.id)}, {"name", localization.ItemName(content, item.type)}});
+                label += ' '; label += t(i < view.inventory.size() ? "item.ui.carried" : "item.ui.ground");
+                if (item.parent != 0) { label += localization.Format("item.ui.parent", {{"id", UnsignedText(item.parent)}, {"cap", UnsignedText(item.installation.value)}}); }
                 if (item.contained_items != 0) {
                     label += " (";
                     label += localization.Format("inventory.inside", {{"count", UnsignedText(item.contained_items)}}, item.contained_items);
                     label += ')';
                 }
                 auto row = Text(label);
-                if (i == selectedIndex_) { row = row | ftxui::bold | ftxui::inverted; }
+                if (item.id == selectedItem_) { row = row | ftxui::bold | ftxui::inverted; }
                 rows.push_back(row);
+            }
+        }
+        const auto* detail = FindItem(view, itemStage_ == ItemStage::Browse ? selectedItem_ : sourceItem_);
+        if (detail) {
+            subtitle += ' '; subtitle += localization.Format("item.ui.measure", {{"mass", UnsignedText(detail->massGrams)},
+                {"volume", UnsignedText(detail->volumeMl)}, {"used", UnsignedText(detail->usedVolumeMl)}, {"capacity", UnsignedText(detail->capacityVolumeMl)}});
+            for (const auto& energy : detail->energy) {
+                subtitle += ' '; subtitle += localization.Format("item.ui.energy", {{"cap", UnsignedText(energy.capability.value)}, {"energy", UnsignedText(energy.energy)}, {"capacity", UnsignedText(energy.capacity)}});
+            }
+            for (const auto& activity : detail->activities) {
+                subtitle += ' '; subtitle += localization.Format("item.ui.activity", {{"cap", UnsignedText(activity.capability.value)}, {"mode", on(activity.active)}, {"ticks", UnsignedText(activity.remainingTicks)}});
+                const auto activityStatus = localization.RenderItemText(activity.status);
+                if (!activityStatus.empty()) { subtitle += ' '; subtitle += activityStatus; }
+            }
+        }
+        count += ' '; count += localization.Format("item.ui.mass", {{"mass", UnsignedText(view.carriedMassGrams)}, {"capacity", UnsignedText(view.carryCapacityGrams)}});
+        if (itemStage_ != ItemStage::Browse) {
+            rows.clear(); selected = static_cast<int>(itemChoice_); count.clear();
+            title = t(itemStage_ == ItemStage::Actions ? "item.ui.actions" : itemStage_ == ItemStage::Item ? "item.ui.target" : itemStage_ == ItemStage::Container ? "item.ui.container" : "item.ui.direction");
+            const auto addChoice = [&](std::size_t index, const String& label) {
+                auto row = Text(String(index == itemChoice_ ? "> " : "  ") + label);
+                if (index == itemChoice_) { row = row | ftxui::bold | ftxui::inverted; }
+                rows.push_back(row);
+            };
+            if (itemStage_ == ItemStage::Actions) {
+                for (std::size_t i = 0; i < itemActions_.size(); ++i) {
+                    const auto& info = itemActions_[i];
+                    String label = localization.ItemActionText(info);
+                    label += localization.Format("item.ui.cap_cost", {{"cap", UnsignedText(info.capability.value)}, {"cost", UnsignedText(info.baseCost)}});
+                    if (info.availability != ItemUseOutcome::Succeeded) { label += " — "; label += localization.ItemRefusal(info.availability, info.reason); }
+                    addChoice(i, label);
+                }
+                if (managingContents_) {
+                    addChoice(itemActions_.size(), t("item.ui.store"));
+                    addChoice(itemActions_.size() + 1, t("item.ui.extract"));
+                }
+            } else if (itemStage_ == ItemStage::Direction) { rows.push_back(Paragraph(t("item.ui.direction_hint"))); }
+            else {
+                for (std::size_t i = 0; i < itemTargets_.size(); ++i) {
+                    const auto* target = FindItem(view, itemTargets_[i]);
+                    String label = UnsignedText(itemTargets_[i]); label += ": ";
+                    label += target ? localization.ItemName(content, target->type) : t("game.ui.item_gone");
+                    addChoice(i, label);
+                }
+                if (itemTargets_.empty()) { rows.push_back(Paragraph(t("item.ui.no_targets"))); }
             }
         }
     } else if (modal_ == Modal::Players) {
@@ -391,7 +458,7 @@ ftxui::Element GameplayUi::Render(const WorldView& view, const ContentCatalog& c
         };
         group("game.ui.windows", {InputAction::QuickActions, InputAction::Inventory, InputAction::Players,
             InputAction::Settings, InputAction::Help});
-        group("game.ui.actions", {InputAction::PickUp, InputAction::Drop, InputAction::Interact, InputAction::Wait});
+        group("game.ui.actions", {InputAction::Use, InputAction::PickUp, InputAction::Drop, InputAction::Interact, InputAction::Wait});
         group("game.ui.movement", {InputAction::West, InputAction::North, InputAction::South, InputAction::East});
         group("game.ui.pacing", {InputAction::RateDown, InputAction::RateUp, InputAction::ToggleRate, InputAction::ToggleIdle});
         group("game.ui.system", {InputAction::Save, InputAction::Debug, InputAction::Quit, InputAction::Cancel});
@@ -400,6 +467,12 @@ ftxui::Element GameplayUi::Render(const WorldView& view, const ContentCatalog& c
             if (binding.context != InputContext::Interaction) { continue; }
             rows.push_back(BindingRow(ActionLabel(localization, binding.action),
                 BindingLabel(keys, localization, binding.context, binding.action)));
+        }
+        rows.push_back(Text(t("context.items")) | ftxui::bold);
+        for (const auto& binding : keys) {
+            if (binding.context == InputContext::Items) {
+                rows.push_back(BindingRow(ActionLabel(localization, binding.action), BindingLabel(keys, localization, binding.context, binding.action)));
+            }
         }
         rows.push_back(ftxui::text("")); rows.push_back(Paragraph(t("game.ui.lan_controls")));
         rows.push_back(Paragraph(t("game.ui.fixed_controls")));
@@ -416,10 +489,16 @@ ftxui::Element GameplayUi::Render(const WorldView& view, const ContentCatalog& c
     directions += '/'; directions += BindingLabel(keys, localization, InputContext::Menu, InputAction::South);
     const bool selectable = modal_ == Modal::Inventory || modal_ == Modal::QuickActions;
     ftxui::Elements hints{Hint(directions, t(selectable ? "game.ui.select" : "game.ui.scroll"))};
-    if ((modal_ == Modal::Inventory && !view.inventory.empty()) || modal_ == Modal::QuickActions) {
+    if ((modal_ == Modal::Inventory && ItemCount(view) != 0) || modal_ == Modal::QuickActions) {
         hints.push_back(ftxui::text("  |  "));
         hints.push_back(Hint(BindingLabel(keys, localization, InputContext::Menu, InputAction::Accept),
-            t(modal_ == Modal::Inventory ? "action.drop" : "game.ui.activate")));
+            t(modal_ == Modal::Inventory && itemStage_ == ItemStage::Browse && !useSelection_ ? "action.drop" : "game.ui.activate")));
+    }
+    if (modal_ == Modal::Inventory && itemStage_ == ItemStage::Browse) {
+        hints.push_back(ftxui::text("  |  "));
+        hints.push_back(Hint(BindingLabel(keys, localization, InputContext::Items, InputAction::Use), t("action.use")));
+        hints.push_back(ftxui::text("  |  "));
+        hints.push_back(Hint(BindingLabel(keys, localization, InputContext::Items, InputAction::Apply), t("item.ui.manage")));
     }
     hints.push_back(ftxui::filler());
     String cancel = "Escape";
@@ -428,18 +507,35 @@ ftxui::Element GameplayUi::Render(const WorldView& view, const ContentCatalog& c
     auto header = ftxui::hbox({Text(title) | ftxui::bold | ftxui::xflex_shrink,
         ftxui::text("  "), ftxui::filler(), Text(count) | ftxui::bold});
     ftxui::Elements window{Padded(header), Padded(Paragraph(subtitle)), ftxui::separatorLight(), Padded(contentPane) | ftxui::flex};
-    if (!feedback_.empty()) { window.push_back(Padded(Paragraph(feedback_) | ftxui::color(ftxui::Color::Red))); }
+    if (!feedback_.empty()) {
+        window.push_back(Padded(Paragraph(feedback_) | ftxui::color(ftxui::Color::Red)));
+        if (modal_ == Modal::Inventory && !presentation.message.empty()) {
+            window.push_back(Padded(Paragraph(presentation.message)));
+        }
+    }
     window.push_back(ftxui::separatorLight()); window.push_back(Padded(ftxui::hbox(std::move(hints))));
     window.push_back(Padded(Hint(cancel, t("settings.ui.close"))));
     return std::make_shared<ModalOverlay>(background, ftxui::vbox(std::move(window)) | ftxui::borderLight, preferredWidth);
 }
 
 bool GameplayUi::HandleEvent(const ftxui::Event& event, const WorldView& view, const Localization& localization,
-    const Keymap& keys, const std::function<bool(Command)>& submit, const std::function<void(InputAction)>& activate) {
+    const Keymap& keys, const std::function<bool(Command)>& submit, const std::function<void(InputAction)>& activate, const ContentCatalog*) {
     if (!IsOpen()) { return false; }
+    // A player change after the last frame invalidates the entire prompt. Do
+    // not reinterpret an activation against the new player's first item.
+    if (modal_ == Modal::Inventory && selectionPlayer_ != view.playerId) {
+        ReconcileInventory(view); Close(); return true;
+    }
     const auto chord = DecodeTerminalInput({event.input().data(), event.input().size()});
-    const auto action = chord ? ResolveAction(keys, InputContext::Menu, *chord) : eastl::optional<InputAction>{};
-    if (action == InputAction::Cancel) { Close(); return true; }
+    auto action = chord ? ResolveAction(keys, InputContext::Menu, *chord) : eastl::optional<InputAction>{};
+    if (modal_ == Modal::Inventory && itemStage_ == ItemStage::Browse && chord) {
+        if (auto itemAction = ResolveAction(keys, InputContext::Items, *chord)) { action = itemAction; }
+    }
+    if (action == InputAction::Cancel) {
+        if (modal_ == Modal::Inventory && itemStage_ != ItemStage::Browse) { itemStage_ = ItemStage::Browse; feedback_.clear(); }
+        else { Close(); }
+        return true;
+    }
     if (modal_ == Modal::QuickActions) {
         if (action == InputAction::North) {
             quickActionIndex_ = (quickActionIndex_ + std::size(quickActions) - 1) % std::size(quickActions);
@@ -454,25 +550,92 @@ bool GameplayUi::HandleEvent(const ftxui::Event& event, const WorldView& view, c
             else { feedback_ = localization.Text("game.ui.action_unavailable"); }
         }
     } else if (modal_ == Modal::Inventory) {
-        // Validate the exact selection from the last frame before reconciliation.
-        // A snapshot arriving between rendering and Enter must not drop a neighbor.
-        if (action == InputAction::Accept && selectedItem_ != 0) {
-            bool present = false;
-            for (const auto& item : view.inventory) { present |= item.id == selectedItem_; }
-            if (!present) {
-                ReconcileInventory(view); feedback_ = localization.Text("game.ui.item_gone"); return true;
+        const auto send = [&](Command command) {
+            if (!FindItem(view, command.item) || (command.otherItem != 0 && !FindItem(view, command.otherItem))) {
+                feedback_ = localization.Text("game.ui.item_gone"); return;
             }
-            const Command command{CommandKind::drop, 0, 0, selectedItem_};
+            if (command.kind == CommandKind::use_item) {
+                const auto* source = FindItem(view, command.item);
+                bool found = false;
+                for (const auto& info : source->actions) {
+                    if (info.capability == command.capability && info.action == command.itemAction) {
+                        found = true;
+                        if (info.availability != ItemUseOutcome::Succeeded) { feedback_ = localization.ItemRefusal(info.availability, info.reason); return; }
+                    }
+                }
+                if (!found) { feedback_ = localization.Text("item.ui.action_gone"); return; }
+            }
             if (submit(command)) { Close(); }
-            else { feedback_ = localization.Text("game.ui.drop_failed"); }
+            else { feedback_ = localization.Text("item.ui.submit_failed"); }
+        };
+        const auto prepare = [&](ItemActionInfo info) {
+            itemCommand_ = {}; itemCommand_.kind = CommandKind::use_item;
+            itemCommand_.item = sourceItem_; itemCommand_.capability = info.capability; itemCommand_.itemAction = info.action;
+            if (info.availability != ItemUseOutcome::Succeeded) { feedback_ = localization.ItemRefusal(info.availability, info.reason); return; }
+            if (info.argument == ItemActionArgument::Direction) { itemStage_ = ItemStage::Direction; return; }
+            if (info.argument == ItemActionArgument::None) { send(itemCommand_); return; }
+            itemStage_ = ItemStage::Item; itemChoice_ = 0; itemTargets_.clear();
+            for (std::size_t i = 0; i < ItemCount(view); ++i) {
+                const auto& target = ItemAt(view, i);
+                itemTargets_.push_back(target.id);
+            }
+        };
+        if (itemStage_ == ItemStage::Direction) {
+            Command command = itemCommand_;
+            if (action == InputAction::North) { command.dz = -1; }
+            else if (action == InputAction::South) { command.dz = 1; }
+            else if (action == InputAction::West) { command.dx = -1; }
+            else if (action == InputAction::East) { command.dx = 1; }
+            else { return true; }
+            send(command); return true;
+        }
+        if (itemStage_ != ItemStage::Browse) {
+            const auto size = itemStage_ == ItemStage::Actions ? itemActions_.size() + (managingContents_ ? 2 : 0) : itemTargets_.size();
+            if (size != 0 && (action == InputAction::North || action == InputAction::South)) {
+                itemChoice_ = action == InputAction::North ? (itemChoice_ + size - 1) % size : (itemChoice_ + 1) % size;
+                feedback_.clear();
+            } else if (action == InputAction::Accept && size != 0) {
+                if (!FindItem(view, sourceItem_)) { feedback_ = localization.Text("game.ui.item_gone"); return true; }
+                if (itemStage_ == ItemStage::Actions) {
+                    if (itemChoice_ < itemActions_.size()) { prepare(itemActions_[itemChoice_]); }
+                    else if (itemChoice_ == itemActions_.size() + 1) {
+                        Command command; command.kind = CommandKind::store_item; command.item = sourceItem_; send(command);
+                    } else {
+                        itemCommand_ = {}; itemCommand_.kind = CommandKind::store_item; itemCommand_.item = sourceItem_;
+                        itemTargets_.clear(); itemChoice_ = 0; itemStage_ = ItemStage::Container;
+                        for (std::size_t i = 0; i < ItemCount(view); ++i) {
+                            const auto& target = ItemAt(view, i);
+                            if (target.id != sourceItem_ && target.capacityVolumeMl != 0) { itemTargets_.push_back(target.id); }
+                        }
+                    }
+                } else { Command command = itemCommand_; command.otherItem = itemTargets_[itemChoice_]; send(command); }
+            }
+            return true;
+        }
+        if (action == InputAction::Accept || action == InputAction::Use || action == InputAction::Apply) {
+            if (selectedItem_ == 0) { ReconcileInventory(view); return true; }
+            const auto* source = FindItem(view, selectedItem_);
+            if (!source) { feedback_ = localization.Text("game.ui.item_gone"); return true; }
+            if (action == InputAction::Accept && !useSelection_) {
+                bool carried = false;
+                for (const auto& item : view.inventory) { carried |= item.id == selectedItem_ && item.parent == 0; }
+                if (!carried) { feedback_ = localization.Text("item.ui.drop_root"); return true; }
+                send({CommandKind::drop, 0, 0, selectedItem_}); return true;
+            }
+            sourceItem_ = source->id; itemActions_.clear(); itemChoice_ = 0; inventoryScroll_ = 0;
+            managingContents_ = action == InputAction::Apply;
+            const auto category = managingContents_ ? ItemActionCategory::ManageContents : ItemActionCategory::Operate;
+            for (const auto& info : source->actions) { if (info.category == category) { itemActions_.push_back(info); } }
+            if (action != InputAction::Apply && itemActions_.size() == 1) { prepare(itemActions_[0]); }
+            else if (action != InputAction::Apply && itemActions_.empty()) { feedback_ = localization.Text("item.ui.no_actions"); }
+            else { itemStage_ = ItemStage::Actions; }
             return true;
         }
         ReconcileInventory(view);
-        if (!view.inventory.empty() && (action == InputAction::North || action == InputAction::South)) {
+        if (ItemCount(view) != 0 && (action == InputAction::North || action == InputAction::South)) {
             selectedIndex_ = action == InputAction::North
-                ? (selectedIndex_ + view.inventory.size() - 1) % view.inventory.size()
-                : (selectedIndex_ + 1) % view.inventory.size();
-            selectedItem_ = view.inventory[selectedIndex_].id; feedback_.clear();
+                ? (selectedIndex_ + ItemCount(view) - 1) % ItemCount(view) : (selectedIndex_ + 1) % ItemCount(view);
+            selectedItem_ = ItemAt(view, selectedIndex_).id; feedback_.clear();
         }
     } else {
         int& scroll = modal_ == Modal::Players ? playersScroll_ : controlsScroll_;

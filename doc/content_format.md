@@ -2,8 +2,8 @@
 
 `content/content.h` provides an immutable, owning `ContentCatalog`. The loader
 accepts JSON5, including comments, unquoted keys, single-quoted strings, and trailing
-commas. `data/terrain.json5` bundles eight terrains and three house patterns. Content may define
-terrain and building patterns in the same catalog; terrain-only catalogs remain
+commas. `data/terrain.json5` bundles eight terrains, three house patterns, and eleven items. Content may define
+terrain, building patterns, and items in the same catalog; terrain-only catalogs remain
 valid and generate terrain/roads without buildings.
 
 ```json5
@@ -38,7 +38,7 @@ valid and generate terrain/roads without buildings.
 The root has exactly `format_version` and `definitions`, both required. Version
 must be an integer; an unsigned integer other than 1 returns `UnsupportedVersion`.
 Definitions is an array (possibly empty). Each definition requires `type` and
-`id`; types are `terrain` and `building_pattern`. Terrain definitions require:
+`id`; types are `terrain`, `building_pattern`, and `item`. Terrain definitions require:
 
 | Field | Value |
 | --- | --- |
@@ -134,7 +134,7 @@ integer `x` and `z` coordinates within the pattern, on its boundary. The
 resolved entrance terrain must be passable or open to passable terrain. Optional
 `weight` is an integer from 1 to 1,000,000 (default 1). Pattern IDs, like terrain IDs, are
 sorted independently into stable catalog-local numeric IDs; duplicate strings
-are prohibited across both types.
+are prohibited across all definition types.
 
 `FindBuildingPattern(string_view)` returns a typed `BuildingPatternId`, zero
 when absent. `TryGetBuildingPattern(id)` returns null for zero/out-of-range;
@@ -144,6 +144,126 @@ row-major resolved `Vector<TerrainId>`, `PatternPoint` entrance, and weight.
 These are authored coordinates; placement rotations belong to world generation.
 Pattern lookup borrows have the same catalog lifetime and catalog-local ID
 restrictions as terrain lookup.
+
+## Items and capabilities
+
+An `item` requires exactly `type`, stable `id`, nonempty `name`, `mass_g`, and
+`volume_ml`, with an optional `capabilities` array (zero to sixteen entries).
+Mass is an unsigned 32-bit integer including zero; external volume is a positive
+unsigned 32-bit integer. Fractions, negative values, booleans, overflow, duplicate
+keys, and unknown fields are errors. Items do not inherit terrain appearance.
+
+```json5
+{
+  type: 'item', id: 'field_charger', name: 'field charger', mass_g: 500, volume_ml: 500,
+  capabilities: [
+    {type: 'charger', id: 'charger', power_source: 'power', battery_class: 'aa', energy_per_turn: 3},
+    {type: 'energy_store', id: 'power', capacity_energy: 2000, rechargeable: false},
+  ],
+}
+```
+
+Every capability requires `type` and an item-local unique stable `id`, using
+`[a-z][a-z0-9_]*`. Each type accepts only the additional fields below:
+
+| Type | Required fields | Optional fields |
+| --- | --- | --- |
+| `container` | `capacity_volume_ml`: positive uint32 | None |
+| `energy_store` | `capacity_energy`: positive uint32; `rechargeable`: boolean | `initial_energy`: uint32 from zero to capacity, defaults to capacity; `battery_class`: stable ID |
+| `charger` | `power_source`: local capability ID; `battery_class`: stable ID; `energy_per_turn`: positive uint32 | `action_cost`: positive uint32, default 100 |
+| `door_controller` | `delay_ticks`: positive uint32 | `action_cost`: positive uint32, default 100 |
+
+There is at most one container per item. A container has no mass limit. Its
+external volume remains fixed regardless of contents; capacity measures the
+contained items' external volumes. Installed batteries are separate from container
+contents and occupy a charger's runtime battery slot.
+
+Capabilities are sorted lexically by their names before assigning one-based
+`ItemCapabilityId` values and resolving `power_source`. Forward references work;
+the source must be an `energy_store` on the same item without a `battery_class`.
+Two chargers cannot share a source, keeping their energy transfers independent
+of processing partition/order. Multiple ordinary internal energy stores are legal.
+A store with a `battery_class` identifies an installable battery: it must be the
+item's sole energy store, and that item must have no charger capabilities. This
+keeps battery targeting unambiguous and battery definitions passive. Class names
+are matching labels, not references to another catalog definition.
+
+`FindItem(string_view)`, `TryGetItem(ItemTypeId)`, `GetItem(ItemTypeId)`, and
+`ItemCount()` follow the terrain lookup conventions below. `ItemDefinition` owns
+physical values and a sorted vector of named `ItemCapabilityDefinition` metadata
+(`id`, `type`, and canonical owned `DataObject config`, including effective defaults).
+`FindItemCapability(definition, name)` returns zero when absent;
+`TryGetItemCapability(definition, id)` returns null for zero/out-of-range IDs;
+`ItemContainer(definition)` returns the sole typed container or null;
+`ItemEnergyStore(definition, capability)` returns the named typed energy resource
+or null; `ItemBehaviorConfig(definition, capability)` returns the immutable behavior
+definition or null. The optional `container` and `energyStores` vector are common
+typed resources, separate from the `behaviors` vector of capability bindings.
+Item IDs are sorted independently of terrain and pattern IDs. Persist item and
+capability names, never numeric ordinals. The bundled items include ordinary
+props, a 20,000 ml backpack, two AA batteries, a charger, a door timer, and a
+combined utility controller for multi-capability use.
+
+### Registering behaviors
+
+`items/item_registry.h` provides `ItemBehaviorRegistry`, an explicitly owned small
+vector of type-name/factory pairs. `Add(type, parser)` returns `ContentResult<void>`:
+names must match `[a-z][a-z0-9_]*`, be unique, and must not be the reserved shared
+resource names `container` or `energy_store`; null factories are invalid.
+`Find(type)` returns the factory or null. `RegisterBuiltinItemBehaviors(registry)`
+registers the built-in charger and door controller factories and requires their
+names to be unused. There are no global registries or static registration hooks.
+
+To add a behavior, implement `ItemBehaviorDefinition` and its runtime behavior,
+then register a `ParseItemBehavior` factory under a new stable type name. The
+factory receives the full capability object as an owned-value `const DataObject&`,
+the item's resolved capability identities and typed common resources, its own
+`ItemCapabilityId`, and an optional `Diagnostics*`. It validates its closed schema
+and returns `ParsedItemBehavior{definition, config}` with effective defaults in
+`config`. Resource reference checks belong in the factory; cross-behavior checks
+belong in `ValidateComposition`, called after **all** behavior bindings exist.
+The content parser needs no new type branch. Behavior factories should not depend
+on previously constructed bindings: factory order is lexical capability order.
+
+Before publishing a catalog, the loader applies the shared
+`ValidItemBehaviorSchema(const ItemBehaviorSchema&)` validator to every factory's
+definition, even when it inherits the default successful composition check.
+Implementation versions and action base costs must be positive. Action IDs match
+`[a-z][a-z0-9_]*`, have at most `maxItemActionName` (64) bytes, and must be unique
+and strictly lexically sorted within each schema. Argument/category enums must
+be in their declared ranges. A countdown requires an activity and positive
+`maximumDelay`; a non-countdown requires zero `maximumDelay`. Activities without
+countdowns are supported. Each schema and the sum of all declared actions across
+an item's behaviors are bounded by `maxItemActionsPerItem` (64), including actions
+that may be unavailable at runtime. Invalid metadata returns `InvalidData` with
+the capability's source file/path, rather than reaching runtime consumers.
+
+`ValidItemText(const ItemText&)` validates both the key and fallback independently:
+each may be empty, is at most `maxItemText` (192) bytes, and contains no C0 bytes
+(0–31) or DEL byte (127). These are byte bounds shared with wire validation;
+non-ASCII bytes are permitted. `ValidItemUseReason(ItemUseOutcome, const ItemUseReason&)`
+rejects invalid outcomes, accepts an entirely empty reason for every valid outcome,
+and permits a nonempty reason only for `Refused`, with a valid action-style code
+and valid message text. Shared validators live in `items/item_types.h/.cpp` so
+loading and wire consumers can enforce identical metadata bounds without
+depending on each other.
+
+Capability JSON values support booleans, signed negative integers, unsigned
+nonnegative integers, strings, lists, and objects, with at most 64 nested edges
+from the capability root. Null, floating-point values (including NaN/infinity),
+embedded NUL, duplicate object keys at any depth, and deeper trees are invalid.
+Objects use ordinary content JSON semantics: archive signed-value/escape tags
+are ordinary object keys, never interpreted as a persistence codec.
+Canonical metadata config object keys are sorted recursively; list order is
+preserved. Factories own their domain defaults and canonical field values.
+
+Behavior bindings use `shared_ptr<const ItemBehaviorDefinition>` so catalog
+copies can share immutable parsed definitions and action schemas without cloning
+runtime behavior. Each live item creates its own mutable behavior state. Catalogs
+retain no registry pointers; a registry and the input buffers may be destroyed as
+soon as loading returns. Definition equality compares physical values, capability
+metadata/config values, typed resources, binding identities, and behavior schemas,
+never shared-pointer identity.
 
 ## API, ownership, and errors
 
@@ -155,6 +275,13 @@ restrictions as terrain lookup.
   NUL-terminated. Empty paths and embedded NUL are I/O errors.
 - `LoadContentFile(const char*, Diagnostics* = nullptr)` is the single-path
   convenience entry point. A null path returns `Io`.
+- Each loading entry point also accepts `const ItemBehaviorRegistry&` immediately
+  before the optional diagnostics argument: `LoadContent(sources, registry, diagnostics)`,
+  `LoadContentFiles(paths, registry, diagnostics)`, and
+  `LoadContentFile(path, registry, diagnostics)`. These use exactly that registry.
+  The existing overloads construct a local registry and call
+  `RegisterBuiltinItemBehaviors`. Applications can register built-ins and their
+  own factories explicitly before loading.
 - All return `ContentResult<ContentCatalog>` (`eastl::expected`). Expected
   failures are `Io`, `InvalidData`, and `UnsupportedVersion`; allocation failure
   is fatal. Stdio files and parser documents use RAII. Read errors and close
@@ -178,7 +305,8 @@ restrictions as terrain lookup.
   adding/removing IDs can renumber them, and an in-range ID from another catalog
   cannot be detected. Persist stable string IDs, not numeric ordinals.
 - Returned pointers/references remain valid while the owning catalog lives and
-  is not moved from or replaced by assignment. Copies own independent storage.
+  is not moved from or replaced by assignment. Copies own independent metadata
+  and typed resource storage and share immutable behavior definitions.
   The catalog has no public mutators, hidden defaults, or global instance.
 
 The API exposes only typed owned values, keeping yyjson inside content loading.

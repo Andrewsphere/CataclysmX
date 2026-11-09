@@ -39,7 +39,12 @@ public:
     String Format(eastl::string_view key, std::initializer_list<TextArgument> arguments,
         std::uint64_t count = 1) const;
     String OutcomeText(Outcome outcome) const;
-    String ItemName(ItemKind kind) const;
+    String ResultText(const CommandResult& result) const;
+    String ItemName(const ItemDefinition& definition) const;
+    String ItemName(const ContentCatalog& content, ItemTypeId type) const;
+    String RenderItemText(const ItemText& text) const;
+    String ItemActionText(const ItemActionInfo& action) const;
+    String ItemRefusal(ItemUseOutcome outcome, const ItemUseReason& reason) const;
     String TerrainName(const TerrainDefinition& terrain) const;
 private:
     const LocalizedMessage* Find(eastl::string_view key) const;

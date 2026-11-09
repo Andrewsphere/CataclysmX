@@ -218,7 +218,12 @@ TEST_CASE("Settings keybinding tabs show only their context and retain selection
     CHECK(DrawSettings(f.menu).find("[Menu]") != std::string::npos);
     for (int i = 0; i < 14; ++i) { Event(f.menu, ftxui::Event::ArrowDown); }
     const auto before = DrawSettings(f.menu, 80, 24);
-    NextCategory(f.menu); NextCategory(f.menu, 3); // Debug -> Menu.
+    NextCategory(f.menu); // Debug.
+    NextCategory(f.menu); // Items: the fifth context must have its own page.
+    const auto items = DrawSettings(f.menu, 80, 24);
+    CHECK(items.find("[Item inventory]") != std::string::npos);
+    CHECK(items.find("use item") != std::string::npos);
+    NextCategory(f.menu, 3); // Items -> Gameplay -> Interaction -> Menu.
     CHECK(DrawSettings(f.menu, 80, 24) == before);
     NextSection(f.menu); NextSection(f.menu);
     CHECK(DrawSettings(f.menu, 80, 24) == before);

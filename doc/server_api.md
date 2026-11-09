@@ -53,6 +53,10 @@ an initially disabled object at `{2, 0}`, a closed door at `{3, 0}`, a wall at
 The immutable catalog must outlive the server. At the application boundary, call
 `ValidateServerContent(content, diagnostics)` before construction: the demo
 requires `floor`, `wall`, and `closed_door`, and its floor must be passable.
+It also requires the `rock`, `backpack`, and `bandage` item definitions, with
+enough backpack volume for the bandage. Bundled equipment (`field_charger`,
+`rechargeable_battery`, `door_controller`, and `utility_controller`) is placed
+at `{0, 1}` when those definitions exist, after the original six entity IDs.
 Construction treats these requirements as invariants. Terrain interactions use
 resolved `opens_to`/`closes_to` IDs, not special terrain names.
 
@@ -69,6 +73,8 @@ world's `eastl::expected` errors.
 | `pick_up` | Move a ground item on the player's tile to direct inventory |
 | `drop` | Move a directly carried item to the player's tile |
 | `interact` | Open/close an adjacent door, otherwise toggle an adjacent object |
+| `use_item` | Execute a capability's explicit action on an accessible item |
+| `store_item` | Move an accessible item into an accessible container, or extract to direct inventory |
 
 Move and interact require `(dx, dz)` equal to `(±1, 0)` or `(0, ±1)`.
 Pickup/drop use `Command::item`, a **persistent ID**, not a handle. Zero selects
@@ -76,11 +82,34 @@ the lowest-ID eligible item. Nested contents cannot be selected directly;
 moving a backpack preserves its contents. Fields irrelevant to a command are
 ignored. Closing a door occupied by an actor fails with `occupied`.
 
+Item use requires nonzero `item` and definition-local `capability` IDs, plus
+`itemAction`, a behavior-local string ID. The action schema declares `None`,
+`Item` (a nonzero persistent `otherItem` ID), or `Direction` (cardinal `dx`/`dz`).
+Frontends accept generic command shapes; the authoritative behavior schema
+determines the required argument and validates its target.
+`ValidCommandShape` shares shape validation between local and LAN admission.
+Execution rechecks live access and capabilities. `store_item` uses `item` for
+the source and `otherItem` for the container; zero extracts into the actor's
+direct inventory. Ownership cycles, volume and carry-mass checks are atomic.
+Pickup/drop retain their direct-root selection rules; storage and use can
+address accessible descendants. See [item action contracts](items_api.md).
+
+Successful use returns `used_item` and spends its configured speed-scaled cost.
+Refusals return `item_use_failed` with generic `CommandResult::itemOutcome`
+(`InvalidAction`, `Inaccessible`, or `Refused`) and `itemReason`, spending no
+time. `itemReason` contains a machine code and an `ItemText` message with a
+localization key and fallback. `CommandResultMessage` returns the reason's
+fallback when supplied, otherwise generic outcome text. Terminal localization
+resolves the key before using that fallback.
+Storage uses a normal 100-tick base action. Capacity refusals are ordinary
+`capacity_exceeded` outcomes. Action menus are read-only advisory snapshots.
+
 The simulation unit is fixed: `ticks_per_turn == 100`. Actor `speed` is a
 **duration factor**, default `100`: lower values finish faster. A successful
 action costs `ceil(baseCost * speed / 100)` ticks. Wait accepts a positive
 `uint32` base duration (for example `150` or `250`); every other command uses
-base cost `100`, ignoring `waitCost`. Zero wait cost is `invalid_command`.
+base cost `100`, except `use_item`, which uses its capability's `actionCost`;
+all non-wait commands ignore `waitCost`. Zero wait cost is `invalid_command`.
 Positive durations always round upward to at least one tick.
 
 In single-player host play, `Send` admits the input and processes due object
@@ -217,12 +246,20 @@ world information: always check `visible` before drawing terrain. There is no
 remembered exploration map in the snapshot.
 
 Visible cells contain terrain, actor/object persistent IDs and flags, and a
-ground-item count. Inventory entries describe direct possessions in persistent-ID
-order, including each item's kind and immediate contained-item count. The view
+ground-item count. Inventory entries describe all carried descendants in persistent-ID
+order, including each item's catalog type and immediate contained-item count. The view
 also includes player `remainingTicks`, `speed`, current `pacing`, and a
 `commandQueued` flag for the pending intent. It
-contains no borrowed entity pointers and does not enumerate nested inventories
-or ground-item IDs; administrative inspection can obtain those from `World`.
+contains no borrowed entity pointers. `parent` and `installation` identify nested
+ownership and fitted batteries. Entries expose mass, volume, container use,
+energy, activity status and available actions. Each `ItemActionInfo` carries its
+capability, behavior-local string `action`, typed argument, `Operate` or
+`ManageContents` category, cost, `ItemText` label, generic availability and typed
+reason. Optional `ItemBehaviorView::status` text supplements active/remaining
+ticks. Clients render metadata and leave behavior validation authoritative.
+`groundItems` describes complete
+ground-rooted trees on the player's own tile only. Player carried mass and mass
+capacity are included; other players' possessions remain private.
 
 ## Explicit simulation and brief decisions
 
@@ -242,7 +279,10 @@ uses an absolute limit at or after `tick`, returning `SimulationResult`:
 
 At each event tick, due enabled objects update first in persistent-ID order and
 immediately schedule their next interval (default `100`), independent of player
-speed. After the player barrier clears, due NPCs act in persistent-ID order,
+speed. Due item effects follow in persistent-ID/capability order, before the
+player barrier. Item deadlines participate in the nearest-event calculation;
+charging advances only sparse registered activities. After the player barrier
+clears, due NPCs act in persistent-ID order,
 commit positive-cost normal actions, and consume one explicit RNG draw each,
 even when blocked. They attempt a cardinal step into an active, passable,
 unoccupied tile. The simulator then elapses to the nearest event or the limit.
@@ -273,6 +313,9 @@ move <n|s|e|w>
 pickup [persistent-id]
 drop [persistent-id]
 interact <n|s|e|w>
+use <item-id> <capability-id> <action> [item-id|n/s/e/w]
+store <item-id> <container-id|0>
+items
 view
 inspect
 bubble <active-radius> <resident-radius>
@@ -343,10 +386,12 @@ recreated on load, while guests return parked until activated again. Checkpoints
 read guest positions from live or archived world state, including administrative
 relocations of a parked character; a parked host is an invalid session.
 
-Save format **version 4** persists the player roster and reconnect tokens, actor speed and remaining cooldown, object
+Save format **version 5** persists the player roster and reconnect tokens, actor speed, carrying mass limit and remaining cooldown, object
 interval and remaining timer, simulation tick/RNG, and session pacing settings.
 A checkpoint can therefore resume mid-action or partway through an object
-interval. Pending input intents, tick credit, fractional credit, readiness snapshots, and partially
+interval. Item definition/capability names, installations, charge fractions and
+remaining door delays are persisted as well. Versions 1–4 are rejected explicitly.
+Pending input intents, tick credit, fractional credit, readiness snapshots, and partially
 spent input deadlines are transient: load resets them and gives ready players
 fresh grace. Frontends reset their elapsed-time baseline; offline time is never
 simulated.

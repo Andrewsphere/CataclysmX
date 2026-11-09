@@ -19,7 +19,7 @@ TEST_CASE("Parked players retain inventory and timing without occupying active t
     const PersistentId id = world.GetActor(guest)->id;
     CHECK(world.FindPlayerPosition(id) == TileCoord{0, 0});
     CHECK_FALSE(world.FindPlayerPosition(0));
-    const auto item = world.CreateItem(ItemKind::rock, ItemLocation::Carried(guest));
+    const auto item = world.CreateItem(TestItem("rock"), ItemLocation::Carried(guest));
     REQUIRE(item);
     const PersistentId itemId = world.GetItem(*item)->id;
     REQUIRE(world.ScheduleActorAction(guest));

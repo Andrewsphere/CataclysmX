@@ -70,11 +70,11 @@ ChunkArchive SampleChunk(ChunkCoord position = {0, 0}) {
     chunk.tiles[255] = {TestTerrain("closed_door"), 255};
     chunk.actors.push_back({1, tile, true, UINT64_MAX, 173, UINT64_MAX});
     chunk.objects.push_back({2, tile, true, UINT64_MAX - 1, 217, 176});
-    chunk.items.push_back({3, ItemKind::backpack, LocationKind::actor, {}, 1});
-    chunk.items.push_back({4, ItemKind::backpack, LocationKind::item, {}, 3});
-    chunk.items.push_back({5, ItemKind::bandage, LocationKind::item, {}, 4});
-    chunk.items.push_back({6, ItemKind::rock, LocationKind::object, {}, 2});
-    chunk.items.push_back({7, ItemKind::rock, LocationKind::ground, tile, 0});
+    chunk.items.push_back({3, TestItem("backpack"), LocationKind::actor, {}, 1});
+    chunk.items.push_back({4, TestItem("backpack"), LocationKind::item, {}, 3});
+    chunk.items.push_back({5, TestItem("bandage"), LocationKind::item, {}, 4});
+    chunk.items.push_back({6, TestItem("rock"), LocationKind::object, {}, 2});
+    chunk.items.push_back({7, TestItem("rock"), LocationKind::ground, tile, 0});
     return chunk;
 }
 
@@ -151,7 +151,7 @@ TEST_CASE("Save terrain names survive catalog renumbering and missing content fa
     }
     {
         RawDatabase raw(file.path.c_str());
-        CHECK(raw.Text("SELECT format_version FROM metadata") == "4");
+        CHECK(raw.Text("SELECT format_version FROM metadata") == "5");
         const auto payload = raw.Text("SELECT payload FROM chunks");
         CHECK(payload.find("\"terrain\":\"moss\"") != std::string::npos);
         CHECK(payload.find("\"terrain\":\"floor\"") != std::string::npos);
@@ -261,6 +261,8 @@ TEST_CASE("Save database stores nested standard JSON and round trips full width 
         CHECK(payload.find("\"inventory\":[{\"id\":\"3\"") != std::string::npos);
         CHECK(payload.find("\"contents\":[{\"id\":\"4\"") != std::string::npos);
         CHECK(payload.find("\"ground_items\":[{\"id\":\"18446744073709551614\"") != std::string::npos);
+        CHECK(payload.find("\"carry_capacity_g\":\"100000\"") != std::string::npos);
+        CHECK(payload.find("\"type\":\"backpack\",\"state\":{},\"installation\":\"\"") != std::string::npos);
         CHECK(payload.find("\"position\":{\"x\":-16,\"z\":-16}") != std::string::npos);
         CHECK(payload.find("\"owner\"") == std::string::npos);
         raw.Exec("UPDATE metadata SET game_version='future informational label'");
@@ -282,6 +284,7 @@ TEST_CASE("Save database stores nested standard JSON and round trips full width 
     CHECK((**loaded).actors[0].turns == UINT64_MAX);
     CHECK((**loaded).actors[0].speed == 173);
     CHECK((**loaded).actors[0].remainingTicks == UINT64_MAX);
+    CHECK((**loaded).actors[0].carryCapacityGrams == 100000);
     CHECK((**loaded).objects[0].updates == UINT64_MAX - 1);
     CHECK((**loaded).objects[0].updateInterval == 217);
     CHECK((**loaded).objects[0].remainingTicks == 176);
@@ -397,7 +400,8 @@ TEST_CASE("Save database rejects unknown versions and incomplete or extended sch
     Populate(file.path.c_str());
     {
         RawDatabase raw(file.path.c_str());
-        SECTION("future version") { raw.Exec("UPDATE metadata SET format_version=5"); }
+        SECTION("future version") { raw.Exec("UPDATE metadata SET format_version=6"); }
+        SECTION("previous v4 format") { raw.Exec("UPDATE metadata SET format_version=4"); }
         SECTION("previous v3 format") { raw.Exec("UPDATE metadata SET format_version=3"); }
         SECTION("command count ticks version") { raw.Exec("UPDATE metadata SET format_version=2"); }
         SECTION("old version without migration") { raw.Exec("UPDATE metadata SET format_version=1"); }
@@ -428,15 +432,15 @@ TEST_CASE("Save database strictly validates nested JSON and coordinates", "[save
         RawDatabase raw(file.path.c_str());
         auto payload = raw.Text("SELECT payload FROM chunks");
         SECTION("duplicate root key") { payload.insert(1, "\"actors\":[],"); }
-        SECTION("duplicate nested key") { Replace(payload, "\"kind\":\"backpack\"", "\"kind\":\"backpack\",\"kind\":\"backpack\""); }
+        SECTION("duplicate nested key") { Replace(payload, "\"type\":\"backpack\"", "\"type\":\"backpack\",\"type\":\"backpack\""); }
         SECTION("JSON5 comment") { payload.insert(1, "/* comment */"); }
         SECTION("numeric ID") { Replace(payload, "\"id\":\"3\"", "\"id\":3"); }
         SECTION("overflow ID") { Replace(payload, "\"id\":\"3\"", "\"id\":\"18446744073709551616\""); }
         SECTION("noncanonical ID") { Replace(payload, "\"id\":\"3\"", "\"id\":\"03\""); }
         SECTION("zero ID") { Replace(payload, "\"id\":\"3\"", "\"id\":\"0\""); }
         SECTION("duplicate ID across entity types") { Replace(payload, "\"id\":\"3\"", "\"id\":\"2\""); }
-        SECTION("unknown item") { Replace(payload, "\"kind\":\"bandage\"", "\"kind\":\"unknown\""); }
-        SECTION("noncontainer children") { Replace(payload, "\"kind\":\"backpack\"", "\"kind\":\"rock\""); }
+        SECTION("unknown item") { Replace(payload, "\"type\":\"bandage\"", "\"type\":\"unknown\""); }
+        SECTION("noncontainer children") { Replace(payload, "\"type\":\"backpack\"", "\"type\":\"rock\""); }
         SECTION("unknown terrain") { Replace(payload, "\"terrain\":\"floor\"", "\"terrain\":\"water\""); }
         SECTION("embedded NUL terrain") { Replace(payload, "\"terrain\":\"floor\"", "\"terrain\":\"floor\\u0000wall\""); }
         SECTION("numeric terrain") { Replace(payload, "\"terrain\":\"floor\"", "\"terrain\":1"); }
@@ -448,6 +452,7 @@ TEST_CASE("Save database strictly validates nested JSON and coordinates", "[save
         SECTION("negative actor speed") { Replace(payload, "\"speed\":173", "\"speed\":-1"); }
         SECTION("overflow actor speed") { Replace(payload, "\"speed\":173", "\"speed\":4294967296"); }
         SECTION("missing actor speed") { Replace(payload, "\"speed\":173,", ""); }
+        SECTION("numeric actor carry capacity") { Replace(payload, "\"carry_capacity_g\":\"100000\"", "\"carry_capacity_g\":100000"); }
         SECTION("missing parked flag") { Replace(payload, "\"parked\":false,", ""); }
         SECTION("numeric parked flag") { Replace(payload, "\"parked\":false", "\"parked\":0"); }
         SECTION("nonplayer parked") {
@@ -544,7 +549,7 @@ TEST_CASE("Save database bounds containment depth on encode and decode", "[save]
     ChunkArchive chunk{};
     chunk.tiles.fill(Tile{TestTerrain("floor"), 0});
     for (PersistentId id = 1; id <= 64; ++id) {
-        chunk.items.push_back({id, ItemKind::backpack,
+        chunk.items.push_back({id, TestItem("backpack"),
             id == 1 ? LocationKind::ground : LocationKind::item, {}, id - 1});
     }
     SaveSnapshot snapshot;
@@ -558,13 +563,13 @@ TEST_CASE("Save database bounds containment depth on encode and decode", "[save]
     REQUIRE(*loaded);
     CHECK((**loaded).items.size() == 64);
     REQUIRE(database.Begin());
-    chunk.items.push_back({65, ItemKind::backpack, LocationKind::item, {}, 64});
+    chunk.items.push_back({65, TestItem("backpack"), LocationKind::item, {}, 64});
     CHECK(database.WriteChunk(chunk) == eastl::unexpected(SaveError::InvalidData));
     {
         RawDatabase raw(file.path.c_str());
         auto payload = raw.Text("SELECT payload FROM chunks");
-        Replace(payload, "\"id\":\"64\",\"kind\":\"backpack\",\"contents\":[]",
-            "\"id\":\"64\",\"kind\":\"backpack\",\"contents\":[{\"id\":\"65\",\"kind\":\"backpack\",\"contents\":[]}]");
+        Replace(payload, "\"id\":\"64\",\"type\":\"backpack\",\"state\":{},\"installation\":\"\",\"contents\":[]",
+            "\"id\":\"64\",\"type\":\"backpack\",\"state\":{},\"installation\":\"\",\"contents\":[{\"id\":\"65\",\"type\":\"backpack\",\"state\":{},\"installation\":\"\",\"contents\":[]}]");
         raw.SetText("UPDATE chunks SET payload=?1", payload);
     }
     CHECK(database.ReadChunk({0, 0}, 100) == eastl::unexpected(SaveError::InvalidData));
@@ -582,12 +587,12 @@ TEST_CASE("Save database validates flat archive owners before encoding", "[save]
     SECTION("owner type mismatch") { chunk.items[0].owner = 2; }
     SECTION("ground owner") { chunk.items.back().owner = 1; }
     SECTION("item order") { chunk.items[0].location = LocationKind::item; chunk.items[0].owner = 4; }
-    SECTION("noncontainer") { chunk.items[0].kind = ItemKind::rock; }
+    SECTION("noncontainer") { chunk.items[0].type = TestItem("rock"); }
     SECTION("duplicate ID") { chunk.items[0].id = 1; }
     SECTION("duplicate actor position") { chunk.actors.push_back({20, {}, false, 0}); }
     SECTION("duplicate object position") { chunk.objects.push_back({20, {}, false, 0}); }
     SECTION("ground wrong chunk") { chunk.items.back().position = {16, 0}; }
-    SECTION("unknown item kind") { chunk.items[0].kind = static_cast<ItemKind>(255); }
+    SECTION("unknown item type") { chunk.items[0].type = ItemTypeId{UINT32_MAX}; }
     SECTION("unknown location") { chunk.items[0].location = static_cast<LocationKind>(255); }
     SECTION("unknown terrain") { chunk.tiles[0].terrain = TerrainId{UINT32_MAX}; }
     SECTION("invalid zero terrain") { chunk.tiles[0] = Tile{}; }
@@ -621,8 +626,8 @@ TEST_CASE("Save database validates player rosters against every chunk", "[save][
     guest.objects.clear();
     guest.items.clear();
     guest.actors.push_back({8, {16, 0}, true, 7, 100, 42, true});
-    guest.items.push_back({9, ItemKind::backpack, LocationKind::actor, {}, 8});
-    guest.items.push_back({10, ItemKind::rock, LocationKind::item, {}, 9});
+    guest.items.push_back({9, TestItem("backpack"), LocationKind::actor, {}, 8});
+    guest.items.push_back({10, TestItem("rock"), LocationKind::item, {}, 9});
     auto snapshot = SampleSnapshot();
     snapshot.nextId = 11;
     snapshot.session.players.push_back({1, {0, 0}, "host", 0});

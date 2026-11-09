@@ -25,6 +25,13 @@ a *new character*, replacing its saved identity after admission. A host can
 open LAN mid-game; guest input and host input both flow through authoritative
 rounds. Status and messages show pending actions and server receipts. Press
 **i** for Inventory, select an item with arrows/jk, and **Enter** to drop it.
+Inventory lists carried contents and accessible ground items with parent IDs,
+mass, volume, charge and activity. **u** uses the selected item; from gameplay,
+**u** opens item selection. A single functional use executes directly or asks
+for a direction; multiple uses open a menu. Inventory **a** opens management:
+install/remove batteries, store in a selected container, or extract to direct
+inventory. Enter-to-drop applies to directly carried roots. These item keys are
+configurable; see [item flows](doc/gameplay_ui.md#item-use-and-storage).
 **P** opens Players with connection, readiness and grace status. **F1** opens
 the complete controls reference. **a** opens Quick actions: use **Up/Down** and
 **Enter** to select and activate a command or open another window.
@@ -71,8 +78,9 @@ Terrain definitions live in [`data/terrain.json5`](data/terrain.json5), with UTF
 symbols, named/RGB colors, appearance fallback, passability, sight blocking, and
 door transitions. Both clients accept `--content <path>` to load another JSON5
 document. The default path points to the bundled file in this source checkout.
-See [content format and APIs](doc/content_format.md). Save V4 stores terrain
-string IDs and rejects older save versions; migrations are not implemented yet.
+See [content format and APIs](doc/content_format.md). Save V5 stores terrain and
+item stable string IDs, nested ownership, and versioned item capability state;
+older save versions are rejected and migrations are not implemented yet.
 
 The world has 16×16 XZ chunks, typed generational handles, nested item ownership,
 resident/active load requests, and a following player reality bubble. Unloaded
@@ -86,6 +94,23 @@ The dependency probes remain available separately below.
 Headless scripts can set `rate <ticks-per-second>`, `limit <on|off>`,
 `idle-pause <on|off>`, and supply deterministic elapsed time with
 `elapse <microseconds>`; `wait [base-cost]` optionally sets a positive wait cost.
+`items` lists carried/ground persistent IDs, parent/installation links, mass,
+volume, energy, activity, and available capability/action IDs with fallback
+labels and typed refusal reasons. Item commands
+work in both `--script` and live `--command`:
+
+```text
+use <item-id> <capability-id> <action> [item-id|n/s/e/w]
+store <item-id> <container-id|0>
+```
+
+IDs are positive decimal values; capability IDs are definition-local ordinals
+shown by inspection. Actions are behavior-local string IDs (for example `start`,
+`install`, or `arm`); any syntactically valid ID is accepted by the parser, and
+the server validates its declared argument schema. Destination `0` extracts
+into direct inventory. Install and remove are capability actions. Refusals print the
+specific authoritative reason and spend no action cost. Live runs also print
+item details at completion; `items` itself is a script inspection command.
 Live headless networking is a separate bounded real-time mode, leaving `--script`
 deterministic and unchanged:
 
@@ -101,8 +126,8 @@ deterministic and unchanged:
 smoke tests), while omitting it broadcasts on the local subnet. `--port <n>`
 sets the host port or the default port for `--join address` without `:port`.
 Repeated
-`--command` accepts `wait`, `pickup`, `drop`, `move n/s/e/w`, or
-`interact n/s/e/w`. Host transport continues pumping throughout `--run-for`
+`--command` accepts `wait`, `pickup`, `drop`, `move n/s/e/w`,
+`interact n/s/e/w`, and the item commands above. Host transport continues pumping throughout `--run-for`
 without waiting on stdin. The live client prints admission, submitted sequence
 numbers and server receipts. `--profile` works here too; `--new-character`
 explicitly starts a fresh identity for `--join` and overwrites its saved token

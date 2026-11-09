@@ -20,7 +20,11 @@ ContentCatalog CustomContent() {
         {type:'terrain', id:'glass', name:'Glass', movement:{passable:false}, blocks_sight:false,
          appearance:{symbol:'#',foreground:'cyan'}},
         {type:'terrain', id:'fog', name:'Fog', movement:{passable:true}, blocks_sight:true,
-         appearance:{symbol:'%',foreground:'light_gray'}}
+         appearance:{symbol:'%',foreground:'light_gray'}},
+        {type:'item',id:'rock',name:'rock',mass_g:500,volume_ml:250},
+        {type:'item',id:'backpack',name:'backpack',mass_g:1000,volume_ml:2000,
+         capabilities:[{type:'container',id:'storage',capacity_volume_ml:20000}]},
+        {type:'item',id:'bandage',name:'bandage',mass_g:20,volume_ml:50}
     ]})"};
     auto result = LoadContent({&source, 1});
     REQUIRE(result.has_value());

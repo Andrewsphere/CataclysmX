@@ -1,4 +1,7 @@
 #include "core/save_database.h"
+#include "core/data_object.h"
+#include "items/item_behavior.h"
+#include "items/item_snapshot.h"
 #include "content/content.h"
 #include "worldgen/worldgen.h"
 
@@ -198,6 +201,91 @@ bool Position(yyjson_val* value, TileCoord& position) {
         && Integer(Get(value, "z"), position.z) && ValidPosition(position);
 }
 
+// Positive JSON integers are unsigned. Signed integers use a tagged decimal
+// string, preserving even signed zero and INT64_MAX without a floating cast.
+yyjson_mut_val* EncodeValue(JsonWriter& writer, const DataObject& value, bool escape = true) {
+    switch (value.Type()) {
+    case DataType::Boolean: return yyjson_mut_bool(writer.doc, value.BooleanValue());
+    case DataType::Unsigned: return yyjson_mut_uint(writer.doc, value.UnsignedValue());
+    case DataType::Signed: {
+        auto* result = writer.Object();
+        char buffer[32];
+        auto converted = std::to_chars(buffer, buffer + sizeof(buffer) - 1, value.SignedValue());
+        *converted.ptr = '\0';
+        writer.Text(result, "$i64", buffer);
+        return result;
+    }
+    case DataType::String: return yyjson_mut_strncpy(writer.doc, value.StringValue().data(), value.StringValue().size());
+    case DataType::List: {
+        auto* result = writer.Array();
+        for (std::size_t i = 0; i < value.Size(); ++i) { writer.Append(result, EncodeValue(writer, value.At(i))); }
+        return result;
+    }
+    case DataType::Object: {
+        if (escape && (value.Find("$i64") || value.Find("$object"))) {
+            auto* result = writer.Object();
+            writer.Add(result, "$object", EncodeValue(writer, value, false));
+            return result;
+        }
+        auto* result = writer.Object();
+        for (std::size_t i = 0; i < value.Size(); ++i) {
+            auto* key = yyjson_mut_strncpy(writer.doc, value.Name(i).data(), value.Name(i).size());
+            if (!yyjson_mut_obj_add(result, key, EncodeValue(writer, value.At(i)))) { std::abort(); }
+        }
+        return result;
+    }
+    }
+    std::abort();
+}
+
+DataResult<DataObject> DecodeValue(yyjson_val* value, unsigned depth = 0, bool escaped = false) {
+    if (depth > 64) { return eastl::unexpected(DataError::DepthLimit); }
+    if (yyjson_is_bool(value)) { return DataObject::Boolean(yyjson_get_bool(value)); }
+    if (yyjson_is_uint(value)) { return DataObject::Unsigned(yyjson_get_uint(value)); }
+    if (yyjson_is_sint(value)) { return DataObject::Signed(yyjson_get_sint(value)); }
+    if (yyjson_is_str(value)) { return DataObject::Text({yyjson_get_str(value), yyjson_get_len(value)}); }
+    if (yyjson_is_arr(value)) {
+        DataObject result = DataObject::List();
+        yyjson_arr_iter iterator = yyjson_arr_iter_with(value);
+        while (auto* child = yyjson_arr_iter_next(&iterator)) {
+            auto decoded = DecodeValue(child, depth + 1);
+            if (!decoded) { return eastl::unexpected(decoded.error()); }
+            result.Append(eastl::move(*decoded));
+        }
+        return result;
+    }
+    if (!yyjson_is_obj(value)) { return eastl::unexpected(DataError::InvalidData); }
+    if (!escaped && Fields(value, {"$i64"})) {
+        auto* number = Get(value, "$i64");
+        if (!yyjson_is_str(number)) { return eastl::unexpected(DataError::InvalidData); }
+        const char* first = yyjson_get_str(number);
+        const char* last = first + yyjson_get_len(number);
+        std::int64_t parsed = 0;
+        const auto converted = std::from_chars(first, last, parsed);
+        char canonical[32];
+        auto written = std::to_chars(canonical, canonical + sizeof(canonical), parsed);
+        if (converted.ec != std::errc{} || converted.ptr != last
+            || static_cast<std::size_t>(written.ptr - canonical) != yyjson_get_len(number)
+            || std::memcmp(canonical, first, yyjson_get_len(number)) != 0) { return eastl::unexpected(DataError::InvalidData); }
+        return DataObject::Signed(parsed);
+    }
+    if (!escaped && Fields(value, {"$object"})) {
+        auto* object = Get(value, "$object");
+        if (!yyjson_is_obj(object)) { return eastl::unexpected(DataError::InvalidData); }
+        return DecodeValue(object, depth, true);
+    }
+    DataObject result;
+    yyjson_obj_iter iterator = yyjson_obj_iter_with(value);
+    while (auto* key = yyjson_obj_iter_next(&iterator)) {
+        const eastl::string_view name(yyjson_get_str(key), yyjson_get_len(key));
+        if (result.Find(name)) { return eastl::unexpected(DataError::InvalidData); }
+        auto decoded = DecodeValue(yyjson_obj_iter_get_val(key), depth + 1);
+        if (!decoded) { return eastl::unexpected(decoded.error()); }
+        result.Set(name, eastl::move(*decoded));
+    }
+    return result;
+}
+
 bool ValidChunk(ChunkCoord position) {
     constexpr int limit = world_coordinate_limit / chunk_size;
     return position.x >= -limit && position.x <= limit
@@ -263,18 +351,23 @@ void TerrainDiagnostic(Diagnostics* diagnostics, ChunkCoord position, std::size_
     frame.location = eastl::move(location);
     diagnostics->Add(eastl::move(frame));
 }
-const char* KindName(ItemKind kind) {
-    switch (kind) {
-    case ItemKind::rock: return "rock";
-    case ItemKind::backpack: return "backpack";
-    case ItemKind::bandage: return "bandage";
-    }
-    return nullptr;
-}
-
 bool Unique(Vector<PersistentId>& ids) {
     eastl::sort(ids.begin(), ids.end());
     return eastl::adjacent_find(ids.begin(), ids.end()) == ids.end();
+}
+
+void ItemDiagnostic(Diagnostics* diagnostics, PersistentId id, const char* field, const char* message,
+    eastl::string_view detail = {}) {
+    if (!diagnostics) { return; }
+    DiagnosticFrame frame;
+    frame.message = message;
+    if (!detail.empty()) { frame.message += ": "; frame.message.append(detail.data(), detail.size()); }
+    DiagnosticLocation location;
+    char path[128];
+    std::snprintf(path, sizeof(path), "items[%llu].%s", static_cast<unsigned long long>(id), field);
+    location.path = path;
+    frame.location = eastl::move(location);
+    diagnostics->Add(eastl::move(frame));
 }
 
 bool ValidateChunk(const ContentCatalog& content, const ChunkArchive& chunk,
@@ -321,35 +414,8 @@ bool ValidateChunk(const ContentCatalog& content, const ChunkArchive& chunk,
             if (object.position == chunk.objects[j].position) { return false; }
         }
     }
-    Vector<unsigned> depths;
-    for (std::size_t i = 0; i < chunk.items.size(); ++i) {
-        const auto& item = chunk.items[i];
-        if (!addId(item.id) || !KindName(item.kind) || !ValidPosition(item.position)) { return false; }
-        unsigned depth = 1;
-        bool found = false;
-        switch (item.location) {
-        case LocationKind::ground:
-            found = item.owner == 0 && ChunkOf(item.position) == chunk.position;
-            break;
-        case LocationKind::actor:
-            for (const auto& actor : chunk.actors) { if (actor.id == item.owner) { found = true; } }
-            break;
-        case LocationKind::object:
-            for (const auto& object : chunk.objects) { if (object.id == item.owner) { found = true; } }
-            break;
-        case LocationKind::item:
-            for (std::size_t j = 0; j < i; ++j) {
-                if (chunk.items[j].id == item.owner && chunk.items[j].kind == ItemKind::backpack) {
-                    found = true;
-                    depth = depths[j] + 1;
-                    break;
-                }
-            }
-            break;
-        default: return false;
-        }
-        if (!found || depth > maxItemDepth) { return false; }
-        depths.push_back(depth);
+    for (const auto& item : chunk.items) {
+        if (!addId(item.id)) { return false; }
     }
     if (!Unique(localIds)) { return false; }
     ids.insert(ids.end(), localIds.begin(), localIds.end());
@@ -472,6 +538,7 @@ String EncodeChunk(const ContentCatalog& content, const ChunkArchive& chunk) {
         writer.Counter(value, "turns", actor.turns);
         writer.Integer(value, "speed", actor.speed);
         writer.Counter(value, "remaining_ticks", actor.remainingTicks);
+        writer.Counter(value, "carry_capacity_g", actor.carryCapacityGrams);
         auto* inventory = writer.Array();
         inventories.push_back(inventory);
         writer.Add(value, "inventory", inventory);
@@ -501,7 +568,19 @@ String EncodeChunk(const ContentCatalog& content, const ChunkArchive& chunk) {
         const auto& item = chunk.items[i];
         auto* value = writer.Object();
         writer.Counter(value, "id", item.id);
-        writer.Text(value, "kind", KindName(item.kind));
+        const auto& definition = content.GetItem(item.type);
+        writer.Text(value, "type", definition.id.c_str());
+        writer.Add(value, "state", EncodeValue(writer, item.state));
+        const char* installation = "";
+        if (item.installation.value) {
+            for (std::size_t j = 0; j < i; ++j) {
+                if (chunk.items[j].id == item.owner) {
+                    installation = TryGetItemCapability(content.GetItem(chunk.items[j].type), item.installation)->id.c_str();
+                    break;
+                }
+            }
+        }
+        writer.Text(value, "installation", installation);
         auto* children = writer.Array();
         writer.Add(value, "contents", children);
         contents.push_back(children);
@@ -532,32 +611,63 @@ String EncodeChunk(const ContentCatalog& content, const ChunkArchive& chunk) {
     return writer.Finish(root);
 }
 
-bool DecodeItems(yyjson_val* array, LocationKind location, PersistentId owner,
-    unsigned depth, ChunkArchive& chunk) {
-    if (!yyjson_is_arr(array)) { return false; }
-    if (yyjson_arr_size(array) != 0 && depth > maxItemDepth) { return false; }
+SaveResult<void> DecodeItems(const ContentCatalog& content, yyjson_val* array, LocationKind location,
+    PersistentId owner, unsigned depth, ChunkArchive& chunk, Diagnostics* diagnostics,
+    const ItemDefinition* parent = nullptr) {
+    if (!yyjson_is_arr(array) || (yyjson_arr_size(array) != 0 && depth > maxItemDepth)) {
+        return Failure(SaveError::InvalidData, "Invalid item array or excessive item depth", diagnostics);
+    }
     yyjson_arr_iter iterator = yyjson_arr_iter_with(array);
     while (auto* value = yyjson_arr_iter_next(&iterator)) {
         const bool ground = location == LocationKind::ground;
-        if (ground ? !Fields(value, {"id", "kind", "contents", "position"})
-                   : !Fields(value, {"id", "kind", "contents"})) { return false; }
+        if (ground ? !Fields(value, {"id", "type", "state", "installation", "contents", "position"})
+                   : !Fields(value, {"id", "type", "state", "installation", "contents"})) {
+            return Failure(SaveError::InvalidData, "Invalid item fields (type, state, installation and contents required)", diagnostics);
+        }
         SavedItem item{};
         item.location = location;
         item.owner = owner;
-        if (!Counter(Get(value, "id"), item.id)) { return false; }
-        auto* kind = Get(value, "kind");
-        if (yyjson_equals_str(kind, "rock")) { item.kind = ItemKind::rock; }
-        else if (yyjson_equals_str(kind, "backpack")) { item.kind = ItemKind::backpack; }
-        else if (yyjson_equals_str(kind, "bandage")) { item.kind = ItemKind::bandage; }
-        else { return false; }
-        if (ground && !Position(Get(value, "position"), item.position)) { return false; }
+        if (!Counter(Get(value, "id"), item.id)) { return Failure(SaveError::InvalidData, "Invalid item ID", diagnostics); }
+        auto* type = Get(value, "type");
+        if (yyjson_is_str(type)) {
+            item.type = content.FindItem({yyjson_get_str(type), yyjson_get_len(type)});
+        }
+        const auto* definition = content.TryGetItem(item.type);
+        if (!definition) {
+            ItemDiagnostic(diagnostics, item.id, "type", "Unknown or invalid stable item type",
+                yyjson_is_str(type) ? eastl::string_view(yyjson_get_str(type), yyjson_get_len(type)) : eastl::string_view{});
+            return eastl::unexpected(SaveError::InvalidData);
+        }
+        auto* installation = Get(value, "installation");
+        if (!yyjson_is_str(installation)) {
+            ItemDiagnostic(diagnostics, item.id, "installation", "Installation must be a stable parent capability name");
+            return eastl::unexpected(SaveError::InvalidData);
+        }
+        const eastl::string_view mount(yyjson_get_str(installation), yyjson_get_len(installation));
+        if (!mount.empty()) {
+            item.installation = parent ? FindItemCapability(*parent, mount) : ItemCapabilityId{};
+            const auto* behavior = parent ? ItemBehaviorConfig(*parent, item.installation) : nullptr;
+            if (!behavior || !behavior->AcceptsInstallation(*definition)) {
+                ItemDiagnostic(diagnostics, item.id, "installation", "Unknown or incompatible parent installation capability", mount);
+                return eastl::unexpected(SaveError::InvalidData);
+            }
+        }
+        auto tree = DecodeValue(Get(value, "state"));
+        if (!tree) {
+            ItemDiagnostic(diagnostics, item.id, "state", "Invalid state value, duplicate key or excessive depth");
+            return eastl::unexpected(SaveError::InvalidData);
+        }
+        item.state = eastl::move(*tree);
+        if (ground && !Position(Get(value, "position"), item.position)) {
+            return Failure(SaveError::InvalidData, "Invalid ground item position", diagnostics);
+        }
         auto* children = Get(value, "contents");
-        if (!yyjson_is_arr(children)
-            || (item.kind != ItemKind::backpack && yyjson_arr_size(children) != 0)) { return false; }
-        chunk.items.push_back(item);
-        if (!DecodeItems(children, LocationKind::item, item.id, depth + 1, chunk)) { return false; }
+        const auto id = item.id;
+        chunk.items.push_back(eastl::move(item));
+        auto decoded = DecodeItems(content, children, LocationKind::item, id, depth + 1, chunk, diagnostics, definition);
+        if (!decoded) { return decoded; }
     }
-    return true;
+    return {};
 }
 
 SaveResult<ChunkArchive> DecodeChunk(const ContentCatalog& content, const char* text, std::size_t length,
@@ -606,7 +716,8 @@ SaveResult<ChunkArchive> DecodeChunk(const ContentCatalog& content, const char* 
     yyjson_arr_iter actorIterator = yyjson_arr_iter_with(actors);
     while (auto* value = yyjson_arr_iter_next(&actorIterator)) {
         SavedActor actor{};
-        if (!Fields(value, {"id", "position", "player", "parked", "turns", "inventory", "speed", "remaining_ticks"})
+        if (!Fields(value, {"id", "position", "player", "parked", "turns", "inventory", "speed", "remaining_ticks", "carry_capacity_g"})
+            || !Counter(Get(value, "carry_capacity_g"), actor.carryCapacityGrams)
             || !Unsigned32(Get(value, "speed"), actor.speed)
             || !Counter(Get(value, "remaining_ticks"), actor.remainingTicks)
             || !Counter(Get(value, "id"), actor.id) || !Position(Get(value, "position"), actor.position)
@@ -617,9 +728,8 @@ SaveResult<ChunkArchive> DecodeChunk(const ContentCatalog& content, const char* 
         actor.player = yyjson_get_bool(Get(value, "player"));
         actor.parked = yyjson_get_bool(Get(value, "parked"));
         chunk.actors.push_back(actor);
-        if (!DecodeItems(Get(value, "inventory"), LocationKind::actor, actor.id, 1, chunk)) {
-            return Failure(SaveError::InvalidData, "Invalid inventory or excessive item depth", diagnostics);
-        }
+        auto decoded = DecodeItems(content, Get(value, "inventory"), LocationKind::actor, actor.id, 1, chunk, diagnostics);
+        if (!decoded) { return eastl::unexpected(decoded.error()); }
     }
     yyjson_arr_iter objectIterator = yyjson_arr_iter_with(objects);
     while (auto* value = yyjson_arr_iter_next(&objectIterator)) {
@@ -633,13 +743,18 @@ SaveResult<ChunkArchive> DecodeChunk(const ContentCatalog& content, const char* 
         }
         object.enabled = yyjson_get_bool(Get(value, "enabled"));
         chunk.objects.push_back(object);
-        if (!DecodeItems(Get(value, "contents"), LocationKind::object, object.id, 1, chunk)) {
-            return Failure(SaveError::InvalidData, "Invalid object contents or excessive item depth", diagnostics);
-        }
+        auto decoded = DecodeItems(content, Get(value, "contents"), LocationKind::object, object.id, 1, chunk, diagnostics);
+        if (!decoded) { return eastl::unexpected(decoded.error()); }
     }
     Vector<PersistentId> ids;
-    if (!DecodeItems(Get(root, "ground_items"), LocationKind::ground, 0, 1, chunk)
-        || !ValidateChunk(content, chunk, nextId, ids, diagnostics)) {
+    auto decoded = DecodeItems(content, Get(root, "ground_items"), LocationKind::ground, 0, 1, chunk, diagnostics);
+    if (!decoded) { return eastl::unexpected(decoded.error()); }
+    const auto validated = ValidateItemSnapshot(content, chunk, diagnostics);
+    if (!validated) {
+        return eastl::unexpected(validated.error() == StateError::UnsupportedVersion
+            ? SaveError::UnsupportedVersion : SaveError::InvalidData);
+    }
+    if (!ValidateChunk(content, chunk, nextId, ids, diagnostics)) {
         return Failure(SaveError::InvalidData, "Invalid chunk ownership, IDs, positions or item depth", diagnostics);
     }
     return chunk;
@@ -939,6 +1054,21 @@ int BindText(sqlite3_stmt* statement, int index, const String& text) {
 
 } // namespace
 
+String EncodeDataObject(const DataObject& value) {
+    JsonWriter writer;
+    return writer.Finish(EncodeValue(writer, value));
+}
+DataResult<DataObject> DecodeDataObject(eastl::string_view text, Diagnostics* diagnostics) {
+    Document document;
+    if (!document.Parse(text.data(), text.size())) {
+        if (diagnostics) { diagnostics->Add("Invalid structured value JSON"); }
+        return eastl::unexpected(DataError::InvalidData);
+    }
+    auto result = DecodeValue(yyjson_doc_get_root(document.value));
+    if (!result && diagnostics) { diagnostics->Add("Invalid structured value, duplicate key or excessive depth"); }
+    return result;
+}
+
 class SaveDatabase::Impl {
 public:
     // Member order closes SQLite (including its journal) before file cleanup.
@@ -982,7 +1112,7 @@ SaveResult<void> SaveDatabase::Create(const char* path, Diagnostics* diagnostics
         "BEGIN IMMEDIATE;"
         "CREATE TABLE metadata(singleton INTEGER PRIMARY KEY CHECK(singleton=1),"
         "format_version INTEGER NOT NULL,game_version TEXT NOT NULL);"
-        "INSERT INTO metadata VALUES(1,4,'0.1.0');"
+        "INSERT INTO metadata VALUES(1,5,'0.1.0');"
         "CREATE TABLE world_state(singleton INTEGER PRIMARY KEY CHECK(singleton=1),payload TEXT NOT NULL);"
         "CREATE TABLE chunks(x INTEGER NOT NULL,z INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(x,z));"
         "COMMIT;", diagnostics);
@@ -1080,9 +1210,12 @@ SaveResult<void> SaveDatabase::WriteChunk(const ChunkArchive& chunk, Diagnostics
     if (!impl_) { return Failure(SaveError::NotOpen, "Database is not open", diagnostics); }
     if (!impl_->transaction) { return Failure(SaveError::InvalidState, "No active transaction", diagnostics); }
     Vector<PersistentId> ids;
-    if (!ValidateChunk(content_, chunk, UINT64_MAX, ids, diagnostics)) {
+    const auto itemsValid = ValidateItemSnapshot(content_, chunk, diagnostics);
+    if (!itemsValid || !ValidateChunk(content_, chunk, UINT64_MAX, ids, diagnostics)) {
         impl_->Rollback();
-        auto error = Failure(SaveError::InvalidData,
+        const auto code = !itemsValid && itemsValid.error() == StateError::UnsupportedVersion
+            ? SaveError::UnsupportedVersion : SaveError::InvalidData;
+        auto error = Failure(code,
             "Invalid chunk, ownership, IDs or excessive item depth", diagnostics);
         ChunkContext(diagnostics, chunk.position, "Writing saved chunk");
         return error;

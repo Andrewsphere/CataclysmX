@@ -118,8 +118,8 @@ TEST_CASE("Server checkpoint reopens tick RNG bubble and nested inventory for de
     REQUIRE(original.Send({CommandKind::pick_up}).advanced);
     World& world = original.GetWorld();
     const auto bag = world.GetActor(original.GetPlayer())->inventory[0];
-    const auto nested = Take(world.CreateItem(ItemKind::backpack, ItemLocation::Inside(bag)));
-    const auto child = Take(world.CreateItem(ItemKind::bandage, ItemLocation::Inside(nested)));
+    const auto nested = Take(world.CreateItem(TestItem("backpack"), ItemLocation::Inside(bag)));
+    const auto child = Take(world.CreateItem(TestItem("bandage"), ItemLocation::Inside(nested)));
     const auto bagId = world.GetItem(bag)->id;
     const auto nestedId = world.GetItem(nested)->id;
     const auto childId = world.GetItem(child)->id;
@@ -346,7 +346,7 @@ TEST_CASE("Failed autosave preserves successful gameplay and retries dirty state
     CHECK(ReadSession(file).tick == 500);
     auto restored = Take(Server::LoadSave(TestContent(), file.path.c_str()));
     SameState(server, *restored);
-    CHECK(restored->View().inventory.size() == 1);
+    CHECK(restored->View().inventory.size() == 2);
     REQUIRE(server.Send({}).advanced);
     REQUIRE(server.Send({}).advanced);
     CHECK(ReadSession(file).tick == 500);
@@ -534,7 +534,7 @@ TEST_CASE("Guest checkpoint keeps parked inventory and reconnect identity", "[se
     REQUIRE(server.ActivatePlayer(joined->player));
     const ActorHandle guest = server.GetWorld().FindActor(joined->player);
     REQUIRE(server.GetWorld().GetActor(guest));
-    const ItemHandle item = Take(server.GetWorld().CreateItem(ItemKind::bandage,
+    const ItemHandle item = Take(server.GetWorld().CreateItem(TestItem("bandage"),
         ItemLocation::Ground(server.GetWorld().GetActor(guest)->position)));
     REQUIRE(server.GetWorld().TransferItem(item, ItemLocation::Carried(guest)));
     const PersistentId itemId = server.GetWorld().GetItem(item)->id;
@@ -550,7 +550,7 @@ TEST_CASE("Guest checkpoint keeps parked inventory and reconnect identity", "[se
     const WorldView view = restored->ViewForPlayer(resumed->player);
     REQUIRE(view.inventory.size() == 1);
     CHECK(view.inventory[0].id == itemId);
-    CHECK(view.inventory[0].kind == ItemKind::bandage);
+    CHECK(view.inventory[0].type == TestItem("bandage"));
     CHECK(restored->GetWorld().CheckInvariants());
 }
 

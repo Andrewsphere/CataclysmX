@@ -1,10 +1,10 @@
 # Save format
 
-CataclysmX saves are SQLite database files. The strict v4 format is governed by
-one authoritative `metadata.format_version = 4` for both SQL and JSON. The
+CataclysmX saves are SQLite database files. The strict v5 format is governed by
+one authoritative `metadata.format_version = 5` for both SQL and JSON. The
 `metadata` columns are `singleton INTEGER PRIMARY KEY CHECK(singleton=1)`,
 `format_version INTEGER NOT NULL`, and `game_version TEXT NOT NULL`; its single
-row is `(1, 4, "0.1.0")`. The other tables are
+row is `(1, 5, "0.1.0")`. The other tables are
 `world_state(singleton INTEGER PRIMARY KEY CHECK(singleton=1), payload TEXT NOT
 NULL)` and `chunks(x INTEGER NOT NULL, z INTEGER NOT NULL, payload TEXT NOT NULL,
 PRIMARY KEY(x,z))`. Extra application tables/schema objects are rejected.
@@ -46,15 +46,46 @@ The root object has exactly `tiles`, `actors`, `objects`, and `ground_items`:
   catalog; unknown strings, embedded NULs and numeric terrain values are invalid.
 - `actors`: `{ "id": decimal-string, "position": {"x": int, "z": int},
   "player": boolean, "parked": boolean, "turns": decimal-string, "inventory": [...],
-  "speed": positive-uint32, "remaining_ticks": decimal-string }`.
+  "speed": positive-uint32, "remaining_ticks": decimal-string,
+  "carry_capacity_g": decimal-string }`. Carry capacity preserves the full uint64 range.
 - `objects`: `{ "id": decimal-string, "position": {"x": int, "z": int},
   "enabled": boolean, "updates": decimal-string, "contents": [...],
   "update_interval": positive-uint32, "remaining_ticks": decimal-string }`.
-- `ground_items` and nested `inventory`/`contents` arrays use items with `id`
-  (decimal string), `kind` (`rock`, `backpack`, or `bandage`), and recursive
-  `contents`. Ground items also have `position`; contained items do not. Only
-  backpacks may contain items. Maximum nesting depth is 64 items including the
-  root.
+- `ground_items` and nested `inventory`/`contents` arrays use exact item objects
+  with `id` (decimal string), `type` (stable content item ID), `state` (structured
+  capability object), `installation` (stable **parent** behavior capability name,
+  or empty string), and recursive `contents`. Ground items also have `position`;
+  contained items do not. Runtime type/capability ordinals are never persisted.
+  Maximum nesting depth is 64 items including the root. Ordinary children require
+  a container; their direct external volumes must fit its configured capacity.
+  Installed children require a parent behavior that accepts their definition,
+  with at most one child per installation capability. Existing chargers accept one
+  rechargeable battery of the matching battery class per charger. A battery has
+  exactly one energy store and no charger capabilities. Installed children do not
+  consume ordinary container volume. Actor/object/ground roots cannot specify an
+  installation. Every descendant's mass counts against actor carrying capacity.
+
+State entries use stable capability names and their own version 1 schemas; see
+[data_object.md](data_object.md) for exact fields and integer encoding. Rock,
+bandage, and backpack have empty state objects. Missing required saved state is
+invalid, rather than initialized from defaults. Unknown item/capability names,
+duplicate fields and unsupported state versions fail with diagnostic context.
+Parents are decoded before children so installation names resolve in the parent's
+definition. Enabled chargers require an installed compatible nonfull battery and
+positive source energy. Armed door controllers must be directly on the ground,
+target a cardinal adjacent coordinate and retain a delay no greater than the
+configured delay (including zero). Disarmed controllers have zero delay/target.
+
+RAM archives store item state as a plain owned `DataObject` (defaulting to an empty
+root object). Runtime capture/restore uses common typed energy state and each
+behavior's factory/`SaveState`; the database writes and decodes the generic value
+tree directly. `ValidateItemSnapshot` is the shared item-state and ownership-tree
+validator for both archive paths, dispatching behavior-owned local and relational
+validation. Installation names resolve against the parent definition and its
+`AcceptsInstallation` policy. This is an in-memory ownership refactor only:
+metadata remains version 5, item fields and existing version 1 energy/charger/timer
+payloads are unchanged, including unsigned JSON numbers and signed `$i64` target
+coordinates. No capacity clamping or implicit state migration is introduced.
 
 Parked actors must be player-marked. They retain position, inventory and delay
 without occupying a tile. Parked actors may overlap live actors; two live
@@ -68,10 +99,13 @@ ownership, chunks and session player identity/position are validated. Generic
 `generation_version` accepts 1 (legacy) and 2 (current); other values fail with
 `SaveError::UnsupportedVersion`. New worlds use generation version 2. Version 1
 continues to generate unexplored chunks byte-for-byte as before, while version 2
-uses the region planner. The SQL/JSON save schema is version 4: save formats
-v1, v2, v3 and all other schema versions are rejected, with no migrations or backup
+uses the region planner. The SQL/JSON save schema is version 5: save formats
+v1, v2, v3, v4 and all other schema versions are rejected, with no migrations or backup
 files. In particular, v2 command-count ticks are not silently reinterpreted as
 simulation ticks. Content's own format version is independent of both versions.
+This is an explicit schema break for typed item IDs, structured state, installed
+batteries and actor mass capacity. Individual state migrations are a separate,
+explicit capability-version policy; no generic auto-clamp or fallback applies.
 
 `session.tick` counts global simulation ticks (100 per standard turn), while
 `pacing.ticks_per_second` only maps simulation ticks to real time.

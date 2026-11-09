@@ -198,6 +198,8 @@ int main(int argc, char** argv) {
             case cataclysmx::CommandKind::wait: return std::string("wait");
             case cataclysmx::CommandKind::pick_up: return std::string("pick up");
             case cataclysmx::CommandKind::drop: return std::string("drop");
+            case cataclysmx::CommandKind::use_item: return Frontend(localization.Text("action.use"));
+            case cataclysmx::CommandKind::store_item: return Frontend(localization.Text("item.ui.store"));
             }
             return std::string("action");
         }();
@@ -212,7 +214,7 @@ int main(int argc, char** argv) {
         } else {
             const auto result = server.Send(command);
             accepted = result.advanced || result.outcome == Outcome::queued;
-            message = Frontend(localization.OutcomeText(result.outcome));
+            message = Frontend(localization.ResultText(result));
             if (result.storageError) {
                 message = Frontend(localization.Text(result.advanced ? "game.autosave_failed" : "game.load_failed"))
                     + " (error=" + std::to_string(static_cast<int>(*result.storageError)) + ")";
@@ -322,7 +324,7 @@ int main(int argc, char** argv) {
             pending.clear();
         }
         for (const auto& result : guest.TakeResults()) {
-            message = "Receipt #" + std::to_string(result.sequence) + ": " + cataclysmx::OutcomeMessage(result.result.outcome);
+            message = "Receipt #" + std::to_string(result.sequence) + ": " + Frontend(localization.ResultText(result.result));
             if (result.sequence == pendingSequence && result.result.outcome != cataclysmx::Outcome::queued) { pending.clear(); }
         }
         if (guest.GetState() != cataclysmx::network::ConnectionState::Active
@@ -332,7 +334,7 @@ int main(int argc, char** argv) {
                 const auto update = host.Pump(delta);
                 for (const auto& result : update.commandResults) {
                     if (result.player == server.GetHostPlayerId()) {
-                        message = Frontend(localization.OutcomeText(result.result.outcome));
+                        message = Frontend(localization.ResultText(result.result));
                         if (result.sequence == pendingSequence && result.result.outcome != cataclysmx::Outcome::queued) { pending.clear(); }
                     }
                 }
@@ -353,7 +355,7 @@ int main(int argc, char** argv) {
         if (gameplayUi.IsOpen()) {
             eastl::optional<InputAction> activated;
             gameplayUi.HandleEvent(event, CurrentView(), localization, settings.Keys(), SubmitCommand,
-                [&](InputAction selected) { activated = selected; });
+                [&](InputAction selected) { activated = selected; }, &*content);
             lastUpdate = std::chrono::steady_clock::now();
             if (!activated) { return true; }
             // Dispatch the selected action once through the same handlers as a

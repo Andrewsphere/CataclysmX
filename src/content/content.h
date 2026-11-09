@@ -2,6 +2,8 @@
 
 #include "core/containers.h"
 #include "core/diagnostics.h"
+#include "content/item_definition.h"
+#include "content/content_result.h"
 
 #include <EASTL/expected.h>
 #include <EASTL/span.h>
@@ -61,10 +63,7 @@ struct BuildingPattern {
     std::uint32_t weight = 1;
 };
 
-enum class ContentError { Io, InvalidData, UnsupportedVersion };
-
-template<class T>
-using ContentResult = eastl::expected<T, ContentError>;
+class ItemBehaviorRegistry;
 
 struct ContentSource {
     eastl::string_view name;
@@ -81,11 +80,17 @@ public:
     const BuildingPattern* TryGetBuildingPattern(BuildingPatternId id) const;
     const BuildingPattern& GetBuildingPattern(BuildingPatternId id) const;
     std::size_t BuildingPatternCount() const;
+    ItemTypeId FindItem(eastl::string_view id) const;
+    const ItemDefinition* TryGetItem(ItemTypeId id) const;
+    const ItemDefinition& GetItem(ItemTypeId id) const;
+    std::size_t ItemCount() const;
 
 private:
     Vector<TerrainDefinition> definitions_;
     Vector<BuildingPattern> patterns_;
+    Vector<ItemDefinition> items_;
     friend ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource>, Diagnostics*);
+    friend ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource>, const ItemBehaviorRegistry&, Diagnostics*);
 };
 
 ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sources,
@@ -93,5 +98,11 @@ ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sourc
 ContentResult<ContentCatalog> LoadContentFiles(eastl::span<const eastl::string_view> paths,
                                              Diagnostics* diagnostics = nullptr);
 ContentResult<ContentCatalog> LoadContentFile(const char* path, Diagnostics* diagnostics = nullptr);
+ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sources,
+    const ItemBehaviorRegistry& registry, Diagnostics* diagnostics = nullptr);
+ContentResult<ContentCatalog> LoadContentFiles(eastl::span<const eastl::string_view> paths,
+    const ItemBehaviorRegistry& registry, Diagnostics* diagnostics = nullptr);
+ContentResult<ContentCatalog> LoadContentFile(const char* path,
+    const ItemBehaviorRegistry& registry, Diagnostics* diagnostics = nullptr);
 
 }

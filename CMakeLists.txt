@@ -58,6 +58,16 @@ endfunction()
 
 add_library(cataclysmx_engine STATIC
     src/content/content.cpp src/content/content.h
+    src/content/item_definition.cpp src/content/item_definition.h
+    src/core/data_object.cpp src/core/data_object.h src/core/item_state.cpp src/core/item_state.h
+    src/core/world_types.h
+    src/core/world_result.h src/content/content_result.h
+    src/items/item_types.h src/items/item_types.cpp
+    src/items/item_behavior.h src/items/item_behavior.cpp
+    src/items/item_registry.h src/items/item_registry.cpp
+    src/items/item_system.h src/items/item_system.cpp
+    src/items/item_snapshot.h src/items/item_snapshot.cpp
+    src/items/charger_behavior.cpp src/items/door_controller_behavior.cpp
     src/core/diagnostics.cpp src/core/diagnostics.h
     src/core/integration.cpp src/core/world.cpp src/core/simulation.cpp src/core/server.cpp
     src/core/pacing.cpp src/core/pacing.h src/core/timing.h
@@ -126,13 +136,17 @@ if(CATACLYSMX_BUILD_TESTS)
         tests/worldgen_debug_tests.cpp tests/pacing_tests.cpp tests/scheduling_tests.cpp
         tests/multiplayer_session_tests.cpp tests/player_parking_tests.cpp tests/network_tests.cpp
         tests/lan_profile_tests.cpp
+        tests/item_content_tests.cpp tests/item_state_tests.cpp tests/item_world_tests.cpp
+        tests/item_save_tests.cpp tests/item_network_tests.cpp tests/item_server_tests.cpp
+        tests/item_behavior_tests.cpp
         tests/settings_tests.cpp tests/localization_tests.cpp)
     target_compile_definitions(cataclysmx_tests PRIVATE CATACLYSMX_TERRAIN_FILE="${CMAKE_CURRENT_SOURCE_DIR}/data/terrain.json5")
     target_compile_definitions(cataclysmx_tests PRIVATE CATACLYSMX_LOC_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/data/loc")
     target_link_libraries(cataclysmx_tests PRIVATE cataclysmx_client cataclysmx_network Catch2::Catch2WithMain unofficial::sqlite3::sqlite3 Threads::Threads)
     if(CATACLYSMX_BUILD_TERMINAL)
         target_sources(cataclysmx_tests PRIVATE tests/terminal_render_tests.cpp tests/terminal_debug_menu_tests.cpp
-            tests/terminal_input_tests.cpp tests/terminal_settings_tests.cpp tests/terminal_gameplay_tests.cpp)
+            tests/terminal_input_tests.cpp tests/terminal_settings_tests.cpp tests/terminal_gameplay_tests.cpp
+            tests/item_ui_tests.cpp)
         target_link_libraries(cataclysmx_tests PRIVATE cataclysmx_terminal)
     endif()
     cataclysmx_target(cataclysmx_tests)
@@ -159,6 +173,10 @@ if(CATACLYSMX_BUILD_TESTS)
         "-DHEADLESS=$<TARGET_FILE:cataclysmx_headless>"
         "-DSCENARIO=${CMAKE_CURRENT_SOURCE_DIR}/tests/scenarios/pacing.txt"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/run_pacing_script.cmake")
+    add_test(NAME headless_items_script COMMAND ${CMAKE_COMMAND}
+        "-DHEADLESS=$<TARGET_FILE:cataclysmx_headless>"
+        "-DSCENARIO=${CMAKE_CURRENT_SOURCE_DIR}/tests/scenarios/items.txt"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/run_item_script.cmake")
     set(save_client_terminal_arg)
     if(CATACLYSMX_BUILD_TERMINAL)
         set(save_client_terminal_arg "-DTERMINAL=$<TARGET_FILE:cataclysmx_game>")

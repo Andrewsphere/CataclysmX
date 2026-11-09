@@ -7,23 +7,31 @@
 
 namespace cataclysmx {
 
-enum class CommandKind { wait, move, pick_up, drop, interact };
+enum class CommandKind { wait, move, pick_up, drop, interact, use_item, store_item };
 struct Command {
     CommandKind kind = CommandKind::wait;
     int dx = 0;
     int dz = 0;
-    // Zero picks the first ground/inventory item in persistent-ID order.
+    // Pickup/drop: zero picks the first eligible root in persistent-ID order.
+    // Item use and storage require an explicit persistent ID.
     PersistentId item = 0;
-    // Only wait uses this field. Other action costs are authoritative constants.
+    // Only wait uses this field. Item-use costs come from the content catalog.
     std::uint32_t waitCost = ticks_per_turn;
+    ItemCapabilityId capability{};
+    String itemAction; // Stable action name local to the selected behavior.
+    // Use: battery to install. Store: destination container; zero extracts to inventory.
+    PersistentId otherItem = 0;
 };
+bool ValidCommandShape(const Command& command);
 enum class Outcome {
     waited, moved, picked_up, dropped, opened, closed, toggled,
     blocked, occupied, nothing_here, invalid_command, not_carried, unavailable, not_ready, queued,
-    stale_input, duplicate_input
+    stale_input, duplicate_input, used_item, stored_item, item_use_failed,
+    capacity_exceeded, invalid_container
 };
 const char* OutcomeMessage(Outcome outcome);
 // The demo requires floor, wall, and closed_door; floor must be passable.
+// It also requires rock, backpack, and bandage; the backpack must fit the bandage.
 // Call at the application boundary before constructing a Server.
 ContentResult<void> ValidateServerContent(const ContentCatalog& content,
     Diagnostics* diagnostics = nullptr);
@@ -34,7 +42,10 @@ struct CommandResult {
     std::uint64_t tick = 0;
     eastl::optional<SaveError> storageError = {};
     Tick cost = 0;
+    ItemUseOutcome itemOutcome = ItemUseOutcome::Succeeded;
+    ItemUseReason itemReason;
 };
+const char* CommandResultMessage(const CommandResult& result);
 
 enum class PlayerConnectionState { Parked, Joining, Active };
 struct PlayerStatus {
@@ -89,8 +100,17 @@ struct ViewCell {
 };
 struct InventoryEntry {
     PersistentId id = 0;
-    ItemKind kind = ItemKind::rock;
+    ItemTypeId type{};
     unsigned int contained_items = 0;
+    PersistentId parent = 0;
+    ItemCapabilityId installation{};
+    std::uint64_t massGrams = 0; // Includes descendants.
+    std::uint32_t volumeMl = 0;
+    std::uint32_t capacityVolumeMl = 0;
+    std::uint64_t usedVolumeMl = 0;
+    Vector<ItemEnergyView> energy;
+    Vector<ItemBehaviorView> activities;
+    Vector<ItemActionInfo> actions;
     bool operator==(const InventoryEntry&) const = default;
 };
 struct WorldView {
@@ -101,6 +121,11 @@ struct WorldView {
     std::uint64_t tick = 0;
     Vector<ViewCell> cells; // Row major. Hidden cells contain no world information.
     Vector<InventoryEntry> inventory;
+    // Both lists include nested contents in persistent-ID order; parent links
+    // describe trees. Ground items are limited to the player's current tile.
+    Vector<InventoryEntry> groundItems;
+    std::uint64_t carriedMassGrams = 0;
+    std::uint64_t carryCapacityGrams = 100000;
     Tick remainingTicks = 0;
     std::uint32_t speed = 100;
     PacingSettings pacing{};

@@ -1,7 +1,45 @@
-// Terrain IDs are stable content names; numeric runtime IDs are assigned after sorting.
+// Stable content names; numeric runtime IDs are assigned after sorting each type.
 {
   format_version: 1,
   definitions: [
+    {type: 'item', id: 'rock', name: 'rock', mass_g: 500, volume_ml: 250},
+    {
+      type: 'item', id: 'backpack', name: 'backpack', mass_g: 1000, volume_ml: 2000,
+      capabilities: [{type: 'container', id: 'storage', capacity_volume_ml: 20000}],
+    },
+    {type: 'item', id: 'bandage', name: 'bandage', mass_g: 20, volume_ml: 50},
+    {type: 'item', id: 'scrap', name: 'scrap', mass_g: 100, volume_ml: 100},
+    {type: 'item', id: 'metal_pipe', name: 'metal pipe', mass_g: 1500, volume_ml: 1000},
+    {type: 'item', id: 'wood_plank', name: 'wood plank', mass_g: 2000, volume_ml: 3000},
+    {
+      type: 'item', id: 'disposable_battery', name: 'disposable battery', mass_g: 25, volume_ml: 10,
+      capabilities: [{type: 'energy_store', id: 'power', capacity_energy: 1000,
+        initial_energy: 1000, rechargeable: false, battery_class: 'aa'}],
+    },
+    {
+      type: 'item', id: 'rechargeable_battery', name: 'rechargeable battery', mass_g: 30, volume_ml: 10,
+      capabilities: [{type: 'energy_store', id: 'power', capacity_energy: 1000,
+        initial_energy: 0, rechargeable: true, battery_class: 'aa'}],
+    },
+    {
+      type: 'item', id: 'field_charger', name: 'field charger', mass_g: 500, volume_ml: 500,
+      capabilities: [
+        {type: 'energy_store', id: 'power', capacity_energy: 2000, initial_energy: 2000, rechargeable: false},
+        {type: 'charger', id: 'charger', power_source: 'power', battery_class: 'aa', energy_per_turn: 3},
+      ],
+    },
+    {
+      type: 'item', id: 'door_controller', name: 'door controller', mass_g: 200, volume_ml: 200,
+      capabilities: [{type: 'door_controller', id: 'timer', delay_ticks: 300}],
+    },
+    {
+      type: 'item', id: 'utility_controller', name: 'utility controller', mass_g: 700, volume_ml: 700,
+      capabilities: [
+        {type: 'door_controller', id: 'timer', delay_ticks: 300},
+        {type: 'energy_store', id: 'power', capacity_energy: 2000, initial_energy: 2000, rechargeable: false},
+        {type: 'charger', id: 'charger', power_source: 'power', battery_class: 'aa', energy_per_turn: 3},
+      ],
+    },
     {
       type: 'terrain', id: 'floor', name: 'floor',
       movement: {passable: true}, blocks_sight: false,

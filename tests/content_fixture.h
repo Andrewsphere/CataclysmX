@@ -22,3 +22,9 @@ inline cataclysmx::TerrainId TestTerrain(eastl::string_view id) {
     REQUIRE(result.value != 0);
     return result;
 }
+
+inline cataclysmx::ItemTypeId TestItem(eastl::string_view id) {
+    const auto result = TestContent().FindItem(id);
+    REQUIRE(result.value != 0);
+    return result;
+}

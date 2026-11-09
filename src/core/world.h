@@ -4,6 +4,9 @@
 #include "content/content.h"
 #include "core/save_result.h"
 #include "core/timing.h"
+#include "core/world_types.h"
+#include "core/item_state.h"
+#include "core/world_result.h"
 
 #include <EASTL/array.h>
 #include <EASTL/expected.h>
@@ -13,32 +16,6 @@
 #include <cstdint>
 
 namespace cataclysmx {
-
-// Handles are weak, typed, and scoped to the World that issued them.
-template<class Tag>
-struct Handle {
-    std::uint64_t value = 0;
-    bool operator==(const Handle&) const = default;
-};
-using ActorHandle = Handle<struct ActorTag>;
-using ItemHandle = Handle<struct ItemTag>;
-using ObjectHandle = Handle<struct ObjectTag>;
-using LoadRequest = Handle<struct LoadRequestTag>;
-using PersistentId = std::uint64_t;
-
-inline constexpr int chunk_size = 16;
-inline constexpr int world_coordinate_limit = 1'000'000;
-
-struct TileCoord {
-    int x = 0;
-    int z = 0;
-    bool operator==(const TileCoord&) const = default;
-};
-struct ChunkCoord {
-    int x = 0;
-    int z = 0;
-    bool operator==(const ChunkCoord&) const = default;
-};
 
 // Authoritative server state captured in the same transaction as chunk values.
 struct SavedPlayer {
@@ -70,8 +47,6 @@ struct Tile {
 };
 bool Passable(const ContentCatalog& content, TerrainId terrain);
 
-enum class ItemKind : std::uint8_t { rock, backpack, bandage };
-const char* item_name(ItemKind kind);
 enum class LocationKind : std::uint8_t { ground, actor, item, object };
 struct ItemLocation {
     LocationKind kind = LocationKind::ground;
@@ -79,10 +54,11 @@ struct ItemLocation {
     ActorHandle actor{};
     ItemHandle item{};
     ObjectHandle object{};
+    ItemCapabilityId installation{};
 
     static ItemLocation Ground(TileCoord position);
     static ItemLocation Carried(ActorHandle actor);
-    static ItemLocation Inside(ItemHandle item);
+    static ItemLocation Inside(ItemHandle item, ItemCapabilityId installation = {});
     static ItemLocation Stored(ObjectHandle object);
     bool operator==(const ItemLocation&) const = default;
 };
@@ -96,12 +72,23 @@ struct Actor {
     std::uint32_t speed = 100;
     Tick remainingTicks = 0;
     bool parked = false;
+    std::uint64_t carryCapacityGrams = 100000;
 };
 struct Item {
+    Item();
+    Item(PersistentId id, ItemTypeId type, ItemLocation location);
+    ~Item();
+    Item(Item&&) noexcept;
+    Item& operator=(Item&&) noexcept;
+    Item(const Item&) = delete;
+    Item& operator=(const Item&) = delete;
     PersistentId id = 0;
-    ItemKind kind = ItemKind::rock;
+    ItemTypeId type{};
     ItemLocation location{};
     Vector<ItemHandle> contents;
+private:
+    friend class ItemSystem;
+    ItemRuntime runtime_;
 };
 struct InteractiveObject {
     PersistentId id = 0;
@@ -120,21 +107,6 @@ struct Chunk {
     Vector<ItemHandle> ground_items;
     Vector<ObjectHandle> objects;
 };
-
-enum class WorldError {
-    invalid_position,
-    invalid_region,
-    invalid_handle,
-    chunk_unavailable,
-    blocked,
-    occupied,
-    containment_cycle,
-    not_container,
-    invalid_request,
-    storage_failure
-};
-template<class T>
-using WorldResult = eastl::expected<T, WorldError>;
 
 enum class LoadMode { resident, active };
 struct ChunkRegion {
@@ -198,9 +170,23 @@ public:
     WorldResult<void> SetActorParked(ActorHandle actor, bool parked);
     // Actor destruction drops possessions at its last position.
     WorldResult<void> DestroyActor(ActorHandle actor);
-    WorldResult<ItemHandle> CreateItem(ItemKind kind, ItemLocation location);
+    WorldResult<ItemHandle> CreateItem(ItemTypeId type, ItemLocation location);
     WorldResult<void> TransferItem(ItemHandle item, ItemLocation destination);
     WorldResult<void> DestroyItem(ItemHandle item);
+    WorldResult<void> SetActorCarryCapacity(ActorHandle actor, std::uint64_t grams);
+    std::uint64_t GetItemMass(ItemHandle item) const;
+    std::uint64_t GetCarriedMass(ActorHandle actor) const;
+    std::uint64_t GetContainerUsedVolume(ItemHandle item) const;
+    bool CanAccessItem(ActorHandle actor, ItemHandle item) const;
+    Vector<ItemActionInfo> QueryItemActions(ActorHandle actor, ItemHandle item) const;
+    ItemUseResult UseItem(ActorHandle actor, ItemHandle item, const ItemUseRequest& request);
+    WorldResult<void> SetItemEnergy(ItemHandle item, ItemCapabilityId capability, std::uint32_t energy);
+    DataObject CaptureItemState(ItemHandle item) const;
+    eastl::optional<ItemEnergyView> GetItemEnergy(ItemHandle item, ItemCapabilityId capability) const;
+    ItemPresentation DescribeItem(ActorHandle actor, ItemHandle item) const;
+    eastl::optional<Tick> NextItemEventIn() const;
+    void ProcessItemEvents();
+    std::size_t ActiveItemCount() const;
     WorldResult<ObjectHandle> CreateObject(TileCoord position, bool enabled = false);
     // Object destruction drops its contents on the ground.
     WorldResult<void> DestroyObject(ObjectHandle object);
@@ -220,6 +206,13 @@ public:
     bool CheckInvariants() const;
 
 private:
+    friend class ItemSystem;
+    friend class ItemReadContext;
+    friend class ItemMutationContext;
+    Item* MutableItem(ItemHandle item);
+    void MarkItemDirty(ItemHandle item);
+    bool ItemEligible(ItemHandle item) const;
+    WorldResult<void> CheckItemTransfer(ItemHandle item, ItemLocation destination) const;
     class Impl;
     eastl::unique_ptr<Impl> impl_;
 };
