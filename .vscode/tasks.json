@@ -2,6 +2,30 @@
   "version": "2.0.0",
   "tasks": [
     {
+      "label": "Build: SDL Linux GCC Debug",
+      "type": "process",
+      "command": "bash",
+      "args": ["${workspaceFolder}/scripts/build.sh", "linux-gcc-sdl", "--skip-tests"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": "$gcc",
+      "group": "build"
+    },
+    {
+      "label": "Build: SDL MSVC Debug",
+      "type": "process",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-File", "${workspaceFolder}/scripts/build.ps1",
+        "-Preset", "win-msvc-sdl",
+        "-SkipTests"
+      ],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": "$msCompile",
+      "group": { "kind": "build", "isDefault": true }
+    },
+    {
       "label": "Build: Linux GCC Debug",
       "type": "process",
       "command": "bash",
@@ -23,7 +47,7 @@
       ],
       "options": { "cwd": "${workspaceFolder}" },
       "problemMatcher": "$msCompile",
-      "group": { "kind": "build", "isDefault": true }
+      "group": "build"
     },
     {
       "label": "Build: MSVC Release",
@@ -39,6 +63,16 @@
       "options": { "cwd": "${workspaceFolder}" },
       "problemMatcher": "$msCompile",
       "group": "build"
+    },
+    {
+      "label": "Run: SDL MSVC Debug",
+      "type": "process",
+      "command": "${workspaceFolder}/out/build/win-msvc-sdl/cataclysmx_sdl_game.exe",
+      "args": ["--tileset", "assets/tiles/gen1_32x32"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "dependsOn": "Build: SDL MSVC Debug",
+      "problemMatcher": [],
+      "presentation": { "focus": true, "panel": "dedicated", "clear": true }
     },
     {
       "label": "Run: MSVC Debug",

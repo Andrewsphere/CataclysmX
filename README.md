@@ -3,6 +3,13 @@
 C++23 roguelike with a deterministic world, chunk loading, an authoritative LAN
 server, FTXUI terminal client, and scriptable headless client.
 
+The optional SDL client (`win-msvc-sdl` preset) defaults to individual PNG graphics
+under `assets/tiles/gen1_32x32`, assembled into atlas pages at startup. See
+[sprite authoring](doc/source_tilesets.md) for package IDs, local metadata,
+animations, variants and anchored sprites. The default uses plain asphalt and
+upright grass tufts. Select another version-2 source pack with
+`--tileset <directory>`; preassembled tileset atlases are unsupported.
+
 ## Play and inspect
 
 After building:
@@ -138,6 +145,22 @@ numbers and server receipts. `--profile` works here too; `--new-character`
 explicitly starts a fresh identity for `--join` and overwrites its saved token
 only after successful admission.
 
+## Git LFS assets
+
+Install [Git LFS](https://git-lfs.com/) before cloning. In an existing checkout,
+initialize its filters and push hook, then download the binary assets:
+
+```sh
+git lfs install --local
+git lfs pull
+```
+
+PNG images (`.png`) and TrueType fonts (`.ttf`) use LFS throughout the repository.
+The `assets/` directory is versioned, including font licenses, tileset metadata
+and artwork references. Text metadata stays in ordinary Git for readable diffs.
+When adding artwork or fonts, use `git add` normally; `.gitattributes` selects
+LFS automatically. Run `git lfs status` before committing to inspect asset changes.
+
 ## Build on Windows
 
 From the repository root, in PowerShell 7:
@@ -150,9 +173,14 @@ The script initializes the latest installed stable x64 Visual Studio C++ develop
 (falling back to an Insiders/preview installation when needed),
 bootstraps a pinned vcpkg checkout in `.tools/vcpkg` when `VCPKG_ROOT` is unset,
 installs manifest dependencies, configures CMake, builds with Ninja, and runs CTest.
+If Ninja is not on PATH, it uses the copy bundled with Visual Studio C++ CMake tools.
 An existing `VCPKG_ROOT` is reused without changing its checkout. No environment-variable
-persistence or OpenCode restart is needed. Git, CMake >= 3.25 and Ninja must be on PATH;
+persistence or OpenCode restart is needed. Git and CMake >= 3.25 must be on PATH;
 Visual Studio needs C++ build tools and a Windows SDK.
+
+For the SDL client, run `./scripts/build.ps1 -Preset win-msvc-sdl`.
+The [Windows VS Code workflow](doc/vscode_windows.md) describes the SDL build,
+run, and debug shortcuts.
 
 ```powershell
 ./scripts/build.ps1 -Preset win-msvc-release
@@ -280,7 +308,11 @@ copies. ENet provides LAN transport; SQLite provides host-side saves.
 
 Python is not a build prerequisite. On Linux, the manifest explicitly disables
 D-Bus's default features to exclude optional systemd integration and its
-Meson/Jinja2/Python build tools. SDL retains IBus, X11, and Wayland support.
+Meson/Jinja2/Python build tools. The optional `sdl` manifest feature retains
+IBus, X11, and Wayland support. Build the local SDL prototype with
+`cmake --preset linux-gcc-sdl` and `cmake --build --preset linux-gcc-sdl`, then run
+`out/build/linux-gcc-sdl/cataclysmx_sdl_game`. See
+[SDL frontend](doc/sdl_client.md#running-the-prototype) for controls and scope.
 Keep this constraint when changing dependency features or updating the baseline.
 
 The project triplets enable `SPDLOG_NO_EXCEPTIONS` **while compiling spdlog**, whose

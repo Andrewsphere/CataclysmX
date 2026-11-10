@@ -1,0 +1,4 @@
+{kind: 'variants', description: 'Upright meadow tufts, mirrored horizontally only.', alternatives: [
+  {visual: 'tile.world.grass.meadow', weight: 4},
+  {visual: 'tile.world.grass.meadow', flip_x: true},
+]}

@@ -3,11 +3,21 @@
   "version-string": "0.1.0",
   "builtin-baseline": "6fdd23fa0a9479a9f9a1c48178696f60cf39255d",
   "dependencies": [
-    "eastl", "spdlog", "catch2", "yyjson", "ftxui", "sqlite3", "enet", "sdl3",
+    "eastl", "spdlog", "catch2", "yyjson", "ftxui", "sqlite3", "enet",
     {
       "name": "dbus",
       "default-features": false,
       "platform": "linux"
     }
-  ]
+  ],
+  "features": {
+    "sdl": {
+      "description": "SDL3 frontend with PNG tilesets and TrueType text",
+      "dependencies": [
+        "sdl3",
+        {"name": "sdl3-image", "default-features": false, "features": ["png"]},
+        {"name": "sdl3-ttf", "default-features": false}
+      ]
+    }
+  }
 }

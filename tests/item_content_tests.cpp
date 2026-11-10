@@ -206,7 +206,13 @@ TEST_CASE("Item capability limit and independent internal stores are accepted", 
 
 TEST_CASE("Bundled items expose physical values and capability combinations", "[content][item-content]") {
     const auto& catalog = TestContent();
-    CHECK(catalog.ItemCount() == 11);
+    CHECK(catalog.ItemCount() == 14);
+    for (const char* id : {"blinking_lightbulb", "toggle_lightbulb", "single_blink_lightbulb"}) {
+        const auto& bulb = catalog.GetItem(catalog.FindItem(id));
+        CHECK(bulb.massGrams == 50);
+        CHECK(bulb.volumeMl == 100);
+        CHECK(bulb.capabilities.empty());
+    }
     const auto& backpack = catalog.GetItem(catalog.FindItem("backpack"));
     CHECK(backpack.name == "backpack");
     CHECK(backpack.massGrams == 1000);

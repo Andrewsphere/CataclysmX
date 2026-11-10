@@ -35,6 +35,7 @@ Build a small, deterministic C++23 roguelike inspired by Cataclysm: Bright Night
 
 ## Workflow
 
+- Do not add, maintain, or run tests for tooling.
 - Read the relevant module and existing tests before editing. Make small, focused changes; add focused tests for changed behavior and edge cases.
 - Run the narrowest applicable CMake/CTest preset when available; report precisely what ran, passed, failed, or could not run. Never claim unrun tests passed.
 - A coordinating agent owns integration. Subagents may work on separate tasks, but must not edit the same files concurrently.

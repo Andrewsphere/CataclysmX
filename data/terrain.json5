@@ -11,6 +11,9 @@
     {type: 'item', id: 'scrap', name: 'scrap', mass_g: 100, volume_ml: 100},
     {type: 'item', id: 'metal_pipe', name: 'metal pipe', mass_g: 1500, volume_ml: 1000},
     {type: 'item', id: 'wood_plank', name: 'wood plank', mass_g: 2000, volume_ml: 3000},
+    {type: 'item', id: 'blinking_lightbulb', name: 'blinking lightbulb', mass_g: 50, volume_ml: 100},
+    {type: 'item', id: 'toggle_lightbulb', name: 'toggle lightbulb', mass_g: 50, volume_ml: 100},
+    {type: 'item', id: 'single_blink_lightbulb', name: 'single-blink lightbulb', mass_g: 50, volume_ml: 100},
     {
       type: 'item', id: 'disposable_battery', name: 'disposable battery', mass_g: 25, volume_ml: 10,
       capabilities: [{type: 'energy_store', id: 'power', capacity_energy: 1000,

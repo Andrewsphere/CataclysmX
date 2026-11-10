@@ -12,7 +12,7 @@ for argument in "$@"; do
     esac
 done
 case "$preset" in
-    linux-clang-debug|linux-clang-sanitizers|linux-gcc-debug) ;;
+    linux-clang-debug|linux-clang-sanitizers|linux-gcc-debug|linux-gcc-sdl) ;;
     *) printf 'Unknown Linux preset: %s\n' "$preset" >&2; exit 1 ;;
 esac
 export VCPKG_ROOT="${VCPKG_ROOT:-$root/.tools/vcpkg}"
