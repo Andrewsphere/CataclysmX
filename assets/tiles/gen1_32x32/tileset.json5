@@ -1,0 +1,23 @@
+{
+  format_version: 2, id: 'gen1_32x32', name: 'Gen1 individual sprites',
+  cell_width: 32, cell_height: 32,
+  source_directories: ['tile', 'sprite'],
+  terrain: {
+    floor: {visual: 'tile.world.floor'}, wall: {visual: 'tile.world.wall'},
+    closed_door: {visual: 'tile.world.door.closed'}, open_door: {visual: 'tile.world.door.open'},
+    grass: {visual: 'tile.world.grass.varied'}, tree: {visual: 'sprite.world.tree.tall', ground: 'tile.world.grass.meadow'},
+    road: {visual: 'tile.world.road.asphalt'}, rubble: {visual: 'tile.world.rubble'},
+    stairs: {visual: 'tile.world.stairs'}, air: {visual: 'tile.world.air'},
+  },
+  items: {
+    backpack: {visual: 'sprite.item.ground_items'},
+    blinking_lightbulb: {visual: 'sprite.item.bulb.loop'},
+    toggle_lightbulb: {visual: 'sprite.item.bulb.off', activation: {animation: 'sprite.item.bulb.loop', mode: 'toggle_loop'}},
+    single_blink_lightbulb: {visual: 'sprite.item.bulb.off', activation: {animation: 'sprite.item.bulb.once', mode: 'once'}},
+  },
+  generic: {
+    player: {visual: 'sprite.character.player'}, other_player: {visual: 'sprite.character.other_player'},
+    npc: {visual: 'sprite.character.zombie.default'}, ground_items: {visual: 'sprite.item.ground_items'},
+    object_enabled: {visual: 'sprite.object.enabled'}, object_disabled: {visual: 'sprite.object.disabled'},
+  },
+}

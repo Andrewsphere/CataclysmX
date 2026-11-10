@@ -2,6 +2,30 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "name": "CataclysmX: SDL Linux GCC Debug",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/out/build/linux-gcc-sdl/cataclysmx_sdl_game",
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "stopAtEntry": false,
+      "externalConsole": false,
+      "MIMode": "gdb",
+      "miDebuggerPath": "/usr/bin/gdb",
+      "preLaunchTask": "Build: SDL Linux GCC Debug"
+    },
+    {
+      "name": "CataclysmX: SDL MSVC Debug",
+      "type": "cppvsdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/out/build/win-msvc-sdl/cataclysmx_sdl_game.exe",
+      "args": ["--tileset", "assets/tiles/gen1_32x32"],
+      "cwd": "${workspaceFolder}",
+      "stopAtEntry": false,
+      "console": "internalConsole",
+      "preLaunchTask": "Build: SDL MSVC Debug"
+    },
+    {
       "name": "CataclysmX: Linux GCC Debug",
       "type": "cppdbg",
       "request": "launch",

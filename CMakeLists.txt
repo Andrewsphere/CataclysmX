@@ -6,9 +6,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 option(CATACLYSMX_BUILD_TESTS "Build the Catch2 integration harness" ON)
 option(CATACLYSMX_BUILD_TERMINAL "Build the FTXUI adapter and manual probe" ON)
+option(CATACLYSMX_BUILD_SDL "Build the SDL3 prototype frontend" OFF)
 option(CATACLYSMX_ENABLE_ASAN "Enable MSVC AddressSanitizer" OFF)
 option(CATACLYSMX_ENABLE_ASAN_UBSAN "Enable Clang/GCC ASan and UBSan" OFF)
 option(CATACLYSMX_ENABLE_PROFILING "Build MSVC symbols and link for Visual Studio instrumentation" OFF)
+option(CATACLYSMX_ENABLE_TSAN "Enable Linux ThreadSanitizer (separate from ASan)" OFF)
 
 if(CATACLYSMX_ENABLE_PROFILING)
     if(NOT MSVC)
@@ -19,6 +21,11 @@ if(CATACLYSMX_ENABLE_PROFILING)
     endif()
 endif()
 
+if(CATACLYSMX_ENABLE_TSAN AND (NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" OR
+    CATACLYSMX_ENABLE_ASAN OR CATACLYSMX_ENABLE_ASAN_UBSAN))
+    message(FATAL_ERROR "TSan requires Linux and cannot combine with ASan/UBSan")
+endif()
+
 find_package(EASTL CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
 find_package(yyjson CONFIG REQUIRED)
@@ -27,6 +34,10 @@ find_package(unofficial-enet CONFIG REQUIRED)
 find_package(Threads REQUIRED)
 
 function(cataclysmx_target target)
+    if(CATACLYSMX_ENABLE_TSAN)
+        target_compile_options(${target} PRIVATE -fsanitize=thread -fno-omit-frame-pointer)
+        target_link_options(${target} PRIVATE -fsanitize=thread)
+    endif()
     if(MSVC)
         target_compile_options(${target} PRIVATE /W4 /utf-8)
     else()
@@ -166,6 +177,38 @@ if(CATACLYSMX_BUILD_TERMINAL)
     cataclysmx_no_exceptions(cataclysmx_perception_benchmark)
 endif()
 
+if(CATACLYSMX_BUILD_SDL)
+    find_package(SDL3 CONFIG REQUIRED)
+    find_package(SDL3_image CONFIG REQUIRED)
+    find_package(SDL3_ttf CONFIG REQUIRED)
+    add_library(cataclysmx_sdl STATIC
+        src/content/tileset.cpp src/content/tileset.h
+        src/content/tileset_source.cpp src/content/tileset_source.h
+        src/sdl/atlas_builder.cpp src/sdl/atlas_builder.h
+        src/sdl/input.cpp src/sdl/input.h
+        src/sdl/channels.cpp src/sdl/channels.h
+        src/sdl/session.cpp src/sdl/session.h
+        src/sdl/assets.cpp src/sdl/assets.h
+        src/sdl/text.cpp src/sdl/text.h
+        src/sdl/map_packet.cpp src/sdl/map_packet.h
+        src/sdl/item_visual.cpp src/sdl/item_visual.h
+        src/sdl/animation.cpp src/sdl/animation.h
+        src/sdl/renderer.cpp src/sdl/renderer.h
+        src/sdl/app.cpp src/sdl/app.h)
+    target_link_libraries(cataclysmx_sdl PUBLIC cataclysmx_client SDL3::SDL3 SDL3_ttf::SDL3_ttf Threads::Threads
+        PRIVATE SDL3_image::SDL3_image yyjson::yyjson)
+    target_compile_definitions(cataclysmx_sdl PRIVATE
+        CATACLYSMX_DEFAULT_TILESET="${CMAKE_CURRENT_SOURCE_DIR}/assets/tiles/gen1_32x32"
+        CATACLYSMX_DEFAULT_FONT="${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/DejaVuSansMono.ttf")
+    cataclysmx_no_exceptions(cataclysmx_sdl)
+    add_executable(cataclysmx_sdl_game src/sdl/main.cpp)
+    target_compile_definitions(cataclysmx_sdl_game PRIVATE
+        CATACLYSMX_TERRAIN_FILE="${CMAKE_CURRENT_SOURCE_DIR}/data/terrain.json5"
+        CATACLYSMX_LOC_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/data/loc")
+    target_link_libraries(cataclysmx_sdl_game PRIVATE cataclysmx_sdl)
+    cataclysmx_no_exceptions(cataclysmx_sdl_game)
+endif()
+
 if(CATACLYSMX_BUILD_TESTS)
     enable_testing()
     find_package(Catch2 3 CONFIG REQUIRED)
@@ -186,6 +229,18 @@ if(CATACLYSMX_BUILD_TESTS)
     target_compile_definitions(cataclysmx_tests PRIVATE CATACLYSMX_TERRAIN_FILE="${CMAKE_CURRENT_SOURCE_DIR}/data/terrain.json5")
     target_compile_definitions(cataclysmx_tests PRIVATE CATACLYSMX_LOC_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/data/loc")
     target_link_libraries(cataclysmx_tests PRIVATE cataclysmx_client cataclysmx_network Catch2::Catch2WithMain unofficial::sqlite3::sqlite3 Threads::Threads)
+    if(CATACLYSMX_BUILD_SDL)
+        target_sources(cataclysmx_tests PRIVATE tests/sdl_input_tests.cpp tests/sdl_app_tests.cpp
+            tests/sdl_session_tests.cpp tests/sdl_render_tests.cpp tests/sdl_tileset_tests.cpp
+            tests/sdl_asset_tests.cpp tests/sdl_text_tests.cpp tests/sdl_map_tests.cpp tests/sdl_animation_tests.cpp)
+        target_sources(cataclysmx_tests PRIVATE tests/sdl_source_tileset_tests.cpp)
+        target_link_libraries(cataclysmx_tests PRIVATE cataclysmx_sdl)
+        add_test(NAME sdl_frontend_smoke COMMAND cataclysmx_sdl_game --smoke
+            --user-dir "${CMAKE_CURRENT_BINARY_DIR}/test-user/sdl-smoke")
+        set_tests_properties(sdl_frontend_smoke PROPERTIES
+            ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_RENDER_DRIVER=software"
+            TIMEOUT 20 PASS_REGULAR_EXPRESSION "SDL smoke: ok")
+    endif()
     if(CATACLYSMX_BUILD_TERMINAL)
         target_sources(cataclysmx_tests PRIVATE tests/terminal_render_tests.cpp tests/terminal_debug_menu_tests.cpp
             tests/terminal_input_tests.cpp tests/terminal_settings_tests.cpp tests/terminal_gameplay_tests.cpp

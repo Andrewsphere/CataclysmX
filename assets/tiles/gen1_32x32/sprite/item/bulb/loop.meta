@@ -1,0 +1,4 @@
+{kind: 'animation', frames: [
+  {sprite: 'sprite.item.bulb.on', duration_ms: 500},
+  {sprite: 'sprite.item.bulb.off', duration_ms: 500},
+]}

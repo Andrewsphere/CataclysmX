@@ -333,6 +333,15 @@ Server::Server(const ContentCatalog& content, std::uint32_t seed) : world_(conte
         const auto table = Take(world_.CreateObject({-3, 2, -1}));
         Require(world_.SetObjectAppearance(table, ObjectKind::Table).has_value());
     }
+    // Append optional visual test items after all existing demo entities.
+    const char* bulbNames[] = {"blinking_lightbulb", "toggle_lightbulb", "single_blink_lightbulb"};
+    constexpr TileCoord bulbPositions[] = {{1, 1}, {2, 1}, {1, 2}};
+    for (unsigned int index = 0; index < 3; ++index) {
+        if (const auto type = content.FindItem(bulbNames[index]); type.value != 0) {
+            Require(world_.SetTile(bulbPositions[index], {content.FindTerrain("floor"), 0}).has_value());
+            Take(world_.CreateItem(type, ItemLocation::Ground(bulbPositions[index])));
+        }
+    }
     world_.UpdatePlayerObservations();
     SynchronizePacing();
 }

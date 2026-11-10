@@ -1,7 +1,18 @@
 # API documentation
 
+- [Graphics tool](graphics_tool.md): standard-library Python PNG operations,
+  sprite editing, contact sheets, and bundled-artwork regeneration commands.
+
+- [Individual sprite tilesets](source_tilesets.md): package names, local metadata,
+  startup atlas assembly, anchored sprites, variants, and connected roads.
+
+- [Windows SDL in VS Code](vscode_windows.md): build, run, debug, and prerequisites.
+- [Default tileset artwork](tileset_artwork.md): individual Gen1 sprites, references,
+  preparation, transparent overlays and lightbulb frames.
 - [SDL sprite client preparation](sdl_client.md): frontend integration points,
   snapshot limits, and a first playable milestone.
+- [Sprite animation](sprite_animation.md): loop/once playback, visual activation,
+  item overlays, and the three lightbulb demos.
 - [Gameplay UI](gameplay_ui.md): responsive map/status layout, on-demand inventory,
   players and controls, selected-item drops and terminal presentation API.
 - [UI navigation controls](ui_navigation.md): baseline keyboard controls, focus,

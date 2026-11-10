@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('win-msvc-debug', 'win-msvc-release', 'win-msvc-asan', 'win-msvc-profile', 'win-vs2022-profile')]
+    [ValidateSet('win-msvc-debug', 'win-msvc-release', 'win-msvc-asan', 'win-msvc-profile', 'win-vs2022-profile', 'win-msvc-sdl')]
     [string]$Preset = 'win-msvc-debug',
     [switch]$SkipTests
 )
@@ -23,6 +23,17 @@ try {
         $vcpkgRootBeforeDevShell = $env:VCPKG_ROOT
         & "$vs/Common7/Tools/Launch-VsDevShell.ps1" -Arch amd64 -HostArch amd64 -SkipAutomaticLocation
         $env:VCPKG_ROOT = $vcpkgRootBeforeDevShell
+    }
+    if (-not (Get-Command ninja -ErrorAction SilentlyContinue)) {
+        if (-not $env:VSINSTALLDIR) {
+            throw 'Install Ninja on PATH or initialize a Visual Studio developer environment with C++ CMake tools.'
+        }
+        $vsNinjaDirectory = Join-Path $env:VSINSTALLDIR 'Common7/IDE/CommonExtensions/Microsoft/CMake/Ninja'
+        if (Test-Path -LiteralPath (Join-Path $vsNinjaDirectory 'ninja.exe')) {
+            $env:PATH = "$vsNinjaDirectory;$env:PATH"
+        } else {
+            throw 'Install Ninja on PATH or the Visual Studio C++ CMake tools component.'
+        }
     }
     if ($Preset -eq 'win-msvc-asan') {
         $compiler = (Get-Command cl.exe -ErrorAction Stop).Source

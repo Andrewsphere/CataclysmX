@@ -1,0 +1,14 @@
+﻿[
+    {
+        "asset":  "tree",
+        "tool":  "built-in image_gen",
+        "prompt":  "Create a single production pixel-art roguelike map sprite matching the attached CataclysmX Gen1 atlas style: muted moss greens, charcoal asphalt, earthy brown, coarse deliberate pixel clusters, top-down with slight upright perspective for tree, no outline frame, no text, no grid, no labels, no watermarks. The attached atlas is a STYLE REFERENCE, not an edit target. Asset: one leafy dark green tree with a brown trunk, taller than wide, isolated on a genuinely transparent background; full trunk visible at bottom center; target sprite proportions 32 pixels wide by 64 pixels tall. Keep foliage within the full sprite width. No ground shadow outside the tree. True alpha transparency.",
+        "transparent_background":  true
+    },
+    {
+        "asset":  "asphalt",
+        "tool":  "built-in image_gen",
+        "prompt":  "Use case: stylized-concept\nAsset type: one seamless opaque pixel-art asphalt terrain texture for a 32x32 roguelike tile.\nPrimary request: plain generic asphalt pavement filling the entire square from edge to edge. Subdued charcoal gray asphalt with very subtle sparse dark-gray and cool-gray aggregate speckles. No central shape, no pattern grid, no directional features. Suitable for repeating across a whole road surface.\nStyle/medium: coarse deliberate 32x32 pixel-art clusters with nearest-neighbor edges, muted low-contrast retro roguelike graphics. Render enlarged as one square texture representing exactly 32 by 32 logical pixels.\nColor palette: very restrained charcoal gray around RGB 45,45,54, small variations of only a few values.\nComposition: flat top-down uniform material, seamless and equally usable in every orientation, opaque full coverage.\nAvoid: lane markings, stripes, painted lines, dashes, grass, verges, curbs, road edges, junctions, cracks, potholes, objects, trees, shadows, outlines, labels, text, watermark, gradients, lighting, perspective.",
+        "transparent_background":  false
+    }
+]

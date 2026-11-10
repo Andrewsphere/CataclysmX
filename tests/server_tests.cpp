@@ -103,6 +103,14 @@ TEST_CASE("Server creates the deterministic demo and advances only successful co
     const ActorHandle npc = world.ActorAt({5, 5});
     REQUIRE(world.GetActor(npc) != nullptr);
     CHECK_FALSE(world.GetActor(npc)->player);
+    const auto table = world.GetObject(world.ObjectAt({-3, 2, -1}));
+    REQUIRE(table != nullptr);
+    CHECK(table->kind == ObjectKind::Table);
+    const auto bulbs = world.ItemsAt({1, 1});
+    REQUIRE(bulbs.size() == 1);
+    CHECK(world.GetItem(bulbs[0])->type == TestItem("blinking_lightbulb"));
+    CHECK(world.GetItem(bulbs[0])->id > table->id);
+    CHECK(world.GetRememberedTile(server.GetHostPlayerId(), {1, 1}).terrain == TestTerrain("floor"));
     // Keep command outcome checks independent of the NPC's chosen route.
     for (TileCoord position : {TileCoord{4, 5}, TileCoord{6, 5}, TileCoord{5, 4}, TileCoord{5, 6}}) {
         REQUIRE(world.SetTile(position, {TestTerrain("wall"), 0}));

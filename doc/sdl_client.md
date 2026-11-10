@@ -1,9 +1,11 @@
 # Parallel SDL3 frontend architecture
 
-This is the proposed frontend architecture, researched on 2026-11-09. The SDL
-client, thread channels, worker jobs, and checkpoint interfaces below are not
-implemented. Existing clients are FTXUI (`cataclysmx_game`) and
-scriptable/headless (`cataclysmx_headless`).
+This is the frontend architecture, researched on 2026-11-09. The local SDL
+prototype has a session thread, bounded channels, worker-prepared native PNG
+tilesets and map packets, and looping/on-demand animations. The bundled default is
+Gen1 32x32 under `assets/tiles/gen1_32x32`. Expanded generation, network, and checkpoint
+interfaces below remain proposals. Existing clients also
+include FTXUI (`cataclysmx_game`) and scriptable/headless (`cataclysmx_headless`).
 
 The first playable SDL client has independent rendering, authoritative session
 execution, and background asset preparation. The process main thread owns SDL
@@ -21,7 +23,10 @@ None establishes a measured speedup for this project.
 | OpenTTD | Its [video driver](https://github.com/OpenTTD/OpenTTD/blob/master/src/video/video_driver.cpp) separates game and drawing loops, with locks around shared game state. | Separate the loops, using owned snapshots so drawing needs no world lock. |
 | Factorio | [FFF #70](https://www.factorio.com/blog/post/fff-70) describes overlapping update and rendering. [FFF #215](https://www.factorio.com/blog/post/fff-215) describes parallel sprite preparation and cache contention between apparently independent mutable systems. | Parallelize immutable preparation and explicitly separate ownership of mutable data. |
 | Godot | Its [threading guidance](https://docs.godotengine.org/en/stable/tutorials/performance/thread_safe_apis.html) distinguishes resource preparation from access to active shared state and GPU resources. | Prepare privately, then hand results to the owning thread for activation. |
-| Bright Nights | Its [tile definitions and texture wrappers](https://github.com/cataclysmbn/Cataclysm-BN/blob/main/src/cata_tiles.h) connect visual identities to atlas regions. | Resolve stable content names into compact sprite tables during loading. |
+| Bright Nights | Its [tileset format](https://docs.cataclysmbn.org/mod/json/reference/graphics/tileset/) separates entity mappings from sprite sheets and pack metadata. | Resolve stable content names into compact sprite tables during loading; use a native format without promising Bright Nights compatibility. |
+| Tiled | Its [animation frames](https://doc.mapeditor.org/en/stable/reference/json-map-format/#frame) reference local tiles and give each frame a duration in milliseconds. | Represent loops as explicit sprite references with individual integer millisecond durations. |
+| Godot atlas animation | [TileSetAtlasSource](https://docs.godotengine.org/en/stable/classes/class_tilesetatlassource.html) exposes atlas regions, animation frames/durations, and synchronized or randomized starts. | Keep atlas regions separate from clips; start with synchronized phases and defer randomized starts. |
+| SDL event waits | [SDL_WaitEventTimeout](https://wiki.libsdl.org/SDL3/SDL_WaitEventTimeout) waits for an event with a bounded timeout on the main thread. | Include the next visible animation boundary in the render deadline, so animation does not require input or a simulation update. |
 | Dungeon Crawl Stone Soup | Its [tiles frontend](https://github.com/crawl/crawl/blob/master/crawl-ref/source/tilesdl.h) separates regions, layout, DPI, and redraw state; [tile buffers](https://github.com/crawl/crawl/blob/master/crawl-ref/source/tilebuf.h) collect drawing work. | Separate map presentation from screen layout and graphics submission. |
 | Brogue CE | Its [platform interface](https://github.com/tmewett/BrogueCE/blob/master/src/platform/platform.h) provides an explicit input/display boundary. | Keep platform events and graphics resources outside simulation APIs. |
 
@@ -95,7 +100,7 @@ wire APIs. Keep them SDL-free so channel tests can run headlessly.
 | `SessionRequest` | An explicit request kind and owned payload, session generation, and request ID. Gameplay requests retain player/opportunity identity; settings, pause, save, and connection requests use the same ordered control boundary. |
 | `SessionReply` | A correlated admission, command result, control acknowledgement, or typed failure. Transport sequence numbers remain distinct from UI request IDs. |
 | `SessionSnapshot` | An owned `WorldView`, session generation, and presentation-facing session state. No borrowed world, transport, or UI storage. |
-| `MapPacket` | Owned sprite/glyph draw data tagged with session, view revision, asset generation, and viewport generation. |
+| `MapPacket` | Owned sprite/glyph draw data tagged with session, view revision, asset generation, and viewport generation. Retains sprite/clip references rather than a baked animation frame. |
 | `CheckpointBatch` | A future owned session/chunk checkpoint with captured dirty versions, consumed by storage and acknowledged to the session. |
 
 ### Ordered control and reliable results
@@ -147,13 +152,19 @@ invalidation must not silently erase their results.
 When an item disappears, do not silently activate its neighboring row. Recheck
 the selected ID against current authoritative data when submitting an action.
 
-Map jobs receive copied cell data and the required immutable visual mapping,
+Map jobs receive copied cell data and the required immutable tileset mapping,
 never a reference to the live mailbox or mutable UI state. Adopt only complete
 packets for the active session, asset generation, and viewport. Older job
 completions cannot overwrite a newer accepted packet. Retain the last matching
 packet while a newer revision is prepared; a layout/asset mismatch invalidates
 it. Hit testing uses the transform of the displayed packet, followed by normal
 authoritative validation.
+
+The active tileset and its resolved tables remain immutable for the frontend's
+lifetime. Map packets refer to that asset generation; advancing an animation
+changes only the sampled atlas region, without submitting another map job or
+capturing another authoritative snapshot. Font/palette changes must not invalidate
+sprite identities; rebuild layout or fallback draw data only when affected.
 
 ## Session timing and deterministic jobs
 
@@ -262,8 +273,9 @@ not an assumed property of the current save API.
 
 ## Frontend modules and build boundary
 
-The following files are proposed. Use small `.h` interfaces, `.cpp`
-implementations, explicit dispatch, and composition.
+The following modules describe the intended split; some already exist in the
+prototype. Use small `.h` interfaces, `.cpp` implementations, explicit dispatch,
+and composition.
 
 ```text
 src/sdl/
@@ -276,6 +288,7 @@ src/sdl/
   renderer.h/.cpp          SDL drawing, clipping, submission
   assets.h/.cpp            GPU resources and resolved sprite tables
   map_view.h/.cpp          camera, transforms, pure map preparation
+  animation.h/.cpp         SDL-free clip sampling from explicit presentation time
   text.h/.cpp              fonts and reusable renderer text objects
   ui/
     controls.h/.cpp        composed focused lists, buttons, editors
@@ -285,7 +298,7 @@ src/sdl/
     lan.h/.cpp             discovery, connection, reconnect screens
     debug.h/.cpp           debug presentation
 src/content/
-  visual_pack.h/.cpp       JSON5 to typed SDL-free visual definitions
+  tileset.h/.cpp           JSON5 to typed SDL-free tileset definitions
 ```
 
 The directory groups responsibilities, not permanent threads. Extract portable
@@ -296,7 +309,7 @@ requests or existing `Command` values; they do not access `World`.
 Add an optional `CATACLYSMX_BUILD_SDL` target group with a small frontend library
 and `cataclysmx_sdl_game` executable. Reuse `cataclysmx_no_exceptions`. SDL headers
 and linkage stay in the frontend; yyjson parsing stays in `src/content`, with
-the visual loader built only for the SDL target group. Keep engine, terminal,
+the tileset loader built only for the SDL target group. Keep engine, terminal,
 and headless targets usable independently. A CMake target option alone does not
 make manifest dependencies optional: select added frontend packages through a
 matching vcpkg feature/build configuration.
@@ -309,25 +322,96 @@ between threads are owned values. Broken invariants and OOM remain fatal.
 
 ## Visual assets, text, and UI
 
-Use one selected visual pack with PNG atlases, stable-name sprite mappings,
-font selection, semantic colors, and spacing values. Screen behavior and layout
-remain C++. Parse and validate pack metadata before touching GPU resources;
-check duplicate mappings, atlas bounds, and referenced files. Resolve terrain
-names into dense catalog-indexed sprite tables once, and item names similarly
-where snapshots provide item types. Catalog-local numeric IDs are not asset
-identities to persist in packs. Visual packs do not alter gameplay content,
-save formats, or the network content fingerprint.
+### Startup selection and independent preferences
+
+Select one native tileset at frontend startup using the
+`--tileset <directory>` option. That directory contains `tileset.json5`.
+Only version-2 source packs are supported. They assemble individual PNGs and local
+metadata into atlas pages in memory at startup; see [sprite authoring](source_tilesets.md).
+PNG paths remain inside the selected pack. With no option, select the bundled
+Gen1 32x32 artwork tileset under `assets/tiles/gen1_32x32`. Omitted mappings use the
+built-in glyph fallback, including when a source pack has no graphics.
+An explicitly selected missing or invalid pack
+is a startup error with diagnostics, never a silent switch to different artwork.
+
+Tilesets contain map graphics, looping animations, and optional activation bindings.
+See [sprite playback](sprite_animation.md) for the implemented loop/once API and
+visual lightbulb controls. Font selection, UI colors,
+spacing, and glyph-fallback palettes are independent frontend preferences, so
+any tileset can use the same UI configuration. Fonts and themes are not required
+pack dependencies. Full-color PNG tiles retain their artwork colors; arbitrary
+recoloring, palette replacement for PNG art, and pack-supplied themes are deferred.
+Screen behavior and layout remain C++.
+
+Changing tilesets requires restarting the frontend. Persisted selection, a picker,
+runtime switching/reload, file watching, layered packs, and format importers are
+deferred. Bright Nights and Tiled are design precedents, not supported inputs.
+Tileset choice never changes gameplay content, saves, simulation replay, or the
+network content fingerprint; LAN clients may use different tilesets.
+
+### Native pack metadata
+
+The version-2 format declares positive cell dimensions, source directories and
+content-to-visual mappings. Individual PNGs and local `.meta` files define sprites,
+clips, weighted variants and optional terrain connections. Atlas rectangles are
+computed during startup. Sprites may exceed cell dimensions and use explicit
+anchors without changing world coordinates or UI font size.
+
+Each terrain, item, or generic mapping selects a base `visual`, with an optional
+`activation` binding for controlled playback. Clip frames reference PNG sprites,
+including frames from uniform animation sheets. The full schema and examples are
+in [individual sprite tilesets](source_tilesets.md).
+
+`terrain` and optional `items` mappings use stable content IDs, resolved into
+dense catalog-indexed tables once during loading. Numeric catalog IDs must not
+be persisted in packs. Item-specific artwork is usable only where the snapshot
+provides an item type, such as inventory entries or the SDL snapshot's owned
+representative ground-item metadata. Map workers/renderers never query the world.
+NPC types remain absent, so NPCs retain generic artwork.
+Generic mapping keys are `player` (the viewing actor), `other_player`, `npc`,
+`ground_items`, `object_enabled`, and `object_disabled`.
+
+Omitted mappings are allowed and use the shared glyph fallback, including a
+visible missing-glyph marker. Validate provided content IDs against the catalog;
+an invalid reference is different from an omitted mapping. Keep visibility and
+actor/items/object priority unchanged. Draw terrain below the selected overlay,
+preserve terrain backgrounds, and alpha-blend PNG artwork without applying the
+glyph foreground palette as a tint.
+
+### Preparation, validation, and activation
+
+Parse metadata into SDL-free `TilesetDefinition`, sprite regions, mappings, and
+`AnimationClip` values using EASTL containers. Parsing and metadata validation
+return `ContentResult<T>` with optional `Diagnostics*`; no yyjson types escape
+the content boundary. Decode/upload failures have typed frontend errors and
+owned diagnostics. A worker prepares its own decoded CPU images and resolved
+tables; only the main/render owner creates, uses, and destroys GPU resources.
+
+Before activation, reject unsupported versions, duplicate IDs/mappings, invalid
+types, missing references, empty clips, non-positive durations, and rectangles
+outside the decoded image. Check rectangle arithmetic, cumulative clip durations,
+and time-unit conversions for overflow. Use pack-relative files contained within
+the selected directory; reject escaping paths and apply bounded metadata and
+decoded-image sizes before allocating resource storage. Validate metadata before
+GPU creation and decoded dimensions before upload.
+
+Startup proceeds through worker preparation, render-owner upload, then activation
+only after every required resource succeeds. Display loading state and process
+events while preparation/upload proceeds; bound upload work per frame. Failures
+report diagnostics and clean up partial resources without entering gameplay.
+Retain the immutable catalog and prepared inputs until workers complete or join.
 
 For pack PNG decoding, propose `sdl3-image` with only its PNG feature. Decode on
 workers into owned CPU surfaces, then upload on the render owner with
 [SDL_CreateTextureFromSurface](https://wiki.libsdl.org/SDL3/SDL_CreateTextureFromSurface).
 SDL3 3.4 also has a [PNG convenience loader](https://wiki.libsdl.org/SDL3/SDL_LoadPNG)
-suited to trusted bundled test assets; it is not the arbitrary-pack decoder.
+suited to trusted bundled test assets; external packs use the PNG-only SDL_image
+path. All clip frames are ordinary atlas regions, not animated-image files.
 Use `sdl3-ttf` and its
 [renderer text engine](https://wiki.libsdl.org/SDL3_ttf/TTF_CreateRendererTextEngine)
 for production UI text. Fonts, renderer text objects, and their destruction stay
-on the render owner. These packages are proposed additions, not dependencies
-already declared in the project manifest.
+on the render owner. Both packages are declared in the optional `sdl` manifest
+feature.
 
 The current pinned baseline provides SDL3 3.4.20. Retain that baseline and the
 existing Linux D-Bus feature constraint. Python must remain unnecessary for
@@ -336,12 +420,47 @@ HarfBuzz port brings Meson/Python. State the resulting complex-script shaping
 limitation rather than promising full Unicode shaping. Recheck the dependency
 graph and clean build when implementing these additions.
 
-Manual asset reload has three stages: worker preparation, render-owner resource
-creation, then activation between frames after all required resources succeed.
-A failure keeps the active pack and reports diagnostics. Old jobs are tagged
-with the old generation and cannot activate against the new resources. Retire
-textures/fonts on the render owner after their last frame use. Bound upload work
-per frame. Defer file watching, layered pack composition, and scripting.
+### Looping and on-demand tile animation
+
+Ambient and enabled toggle loops share a frontend monotonic clock epoch
+established when the tileset becomes active. Instances of the same loop have the
+same phase. A single animation requested through a visual activation binding
+starts at frame zero and restores the base mapping when complete. Per-item
+activation state belongs to the render owner and never consumes simulation time
+or RNG. Authoritative action effects, movement interpolation, randomized phases,
+and scripting remain deferred.
+
+Precompute cumulative frame end times and the total loop duration in integer
+milliseconds. `SampleAnimation(clip, elapsedMilliseconds)` is an SDL-free pure
+operation returning the selected sprite and an optional positive delay until the
+next frame boundary. Static clips return no delay. Select the first cumulative
+end strictly greater than
+`elapsedMilliseconds % totalDuration`; an exact boundary selects the next frame,
+and an exact loop boundary selects the first. A one-frame loop is static and needs
+no animation deadline. One-shot sampling does not wrap and reports completion
+at the total duration; even a single-frame one-shot retains its duration/deadline.
+Sampling a late frame jumps directly to the current phase,
+without replaying missed frames, allocating, decoding, or uploading textures.
+
+The main/render loop supplies presentation time explicitly. Ambient loops keep
+advancing while an acknowledged local modal pauses simulation; menu browsing
+still submits no gameplay commands or elapsed simulation time. While minimized,
+suppress drawing and animation wakeups. On restoration, sample the current phase
+and redraw once rather than processing all missed frames. Presentation timing,
+including time spent minimized, is never input to session pacing or replay.
+
+For visible animated terrain and the chosen visible overlay, find the earliest
+next frame boundary and include it in the main loop's event-wait deadline along
+with pending UI work and the bounded channel-poll fallback. Expiration marks the
+frame dirty even if no key or new snapshot arrived. Hidden cells and occluded
+overlays schedule no animation redraws. Static scenes remain event-driven.
+
+Sample clip references in the current map packet at draw time. Animation alone
+must not request another snapshot, prepare another map packet, recreate textures,
+or touch the session thread. Keep atlas filtering explicitly nearest and UI
+scale independent of map zoom.
+
+### Text and UI
 
 Implement screens with explicit modal/submode dispatch and small composed
 controls. Keyboard and mouse activate the same operations. Reuse the shared
@@ -351,8 +470,17 @@ The active modal consumes input; closing events cannot fall through to gameplay.
 
 Translate SDL key events to `KeyChord`, preserving `j`/`J`, Ctrl case distinctions,
 and Shift+Tab as `BackTab`. Use Unicode text/composition events for editors,
-isolated from gameplay shortcuts. Ignore gameplay keydown repeats initially;
-allow explicit menu-navigation repeat. Binding hints show effective bindings.
+isolated from gameplay shortcuts. `TranslateKey` accepts initial and repeated
+keydown events and ignores key-up events. After resolving the active keymap,
+`AllowsKeyRepeat(InputContext, InputAction)` permits repeated events only for
+gameplay West/East/North/South and MoveDown/MoveUp actions. Applying this policy
+to resolved actions makes rebound movement keys work without repeating other
+actions, interaction prompts, or modal controls. Holding a movement key submits
+one immediate command followed by the operating system's keyboard repeats;
+there is no frontend hold timer. Release stops further repeat input, while an
+already admitted pending command retains the server's existing semantics.
+Repeated commands use the normal session queue and opportunity validation, with
+the server retaining one pending intent. Binding hints show effective bindings.
 Store selection/focus/scroll state separately from draw calls and world entities.
 
 ## Rendering contracts and performance
@@ -365,14 +493,18 @@ Store selection/focus/scroll state separately from draw calls and world entities
 - Check `visible` before resolving terrain or overlays. Hidden cells expose no
   world information, and there is no remembered-terrain snapshot.
 - Visible cells provide terrain/damage, actor ID/player flag, ground-item count,
-  and object ID/enabled state. Use generic actor/item/object map sprites where
-  type information is absent. Compare actor ID with `WorldView::playerId` for
+  and object ID/enabled state. SDL snapshots supplement visible ground-item
+  overlays with the lowest persistent-ID root's ID/type at `overlayDepth`, captured
+  on the session owner. Use its item mapping with generic fallback; other
+  frontends and the wire `WorldView` contract retain generic item metadata.
+  Use generic actor/object map sprites where type information is absent.
+  Compare actor ID with `WorldView::playerId` for
   the viewing player; other player actors can still be distinguished from NPCs.
 - Draw terrain below one chosen overlay: actor, then ground items, then object.
   Preserve terrain backgrounds. Missing terrain mappings use the catalog's
-  resolved glyph/colors, with a visible missing-glyph fallback; missing generic
-  sprites have an explicit fallback. Terrain does not retain its `looks_like`
-  chain for sprite resolution.
+  resolved glyph/colors through the independent fallback palette, with a visible
+  missing-glyph marker; missing generic sprites use the same fallback path.
+  Terrain does not retain its `looks_like` chain for sprite resolution.
 
 Use atlas textures with explicit nearest sampling and `SDL_RenderTexture` first.
 Reuse worker scratch vectors and screen-owned text objects. Update text only
@@ -403,7 +535,9 @@ render-target caches, and finer job partitioning require measurements.
 Startup creates the immutable content/catalog lifetime before launching session
 and worker readers. Initialize SDL window/renderer on main; bring up each owner
 with an explicit success/failure handshake. Display loading state while workers
-prepare assets. A partial startup failure stops and joins started owners before
+prepare the selected tileset and independent font resources. Activate the complete
+tileset before admitting gameplay input; establish its animation epoch then.
+A partial startup failure stops and joins started owners before
 releasing their dependencies; do not enter play with a failed required service.
 
 Cancellation invalidates optional queued/running jobs by generation. A running
@@ -428,12 +562,13 @@ channel lock while joining or waiting for another owner.
 | Milestone | Deliverable and acceptance |
 | --- | --- |
 | 1. Threaded foundation | Optional SDL target, main/render owner, independent session loop, bounded channels, worker asset preparation, one atlas, resizable local play with movement/wait/pickup/drop/interaction and readiness/result feedback. A stalled session must not stop UI/rendering. |
-| 2. Client functionality and jobs | Inventory/item actions, settings, localized responsive screens, parallel map preparation and region/chunk generation with deterministic installation. |
+| 2. Tilesets, client functionality, and jobs | Native tileset selection at startup, validated PNG atlases and static/looping mappings, independent fonts/UI colors, and animation redraws without snapshot changes. Inventory/item actions, settings, localized responsive screens, parallel map preparation and region/chunk generation with deterministic installation. |
 | 3. Independent services | Extract LAN transport ownership, then checkpoint batches and storage ownership. Keep synchronous adapters, current wire/save formats, and receipt/save completion semantics. |
-| 4. Full parity and profiling | Complete LAN/reconnect, debug screens, manual reload, then measured optimization. |
+| 4. Full parity and profiling | Complete LAN/reconnect and debug screens, then measured optimization. Runtime tileset switching/reload remains deferred beyond these milestones. |
 
 Use controlled latches/barriers or fake owners for concurrency tests, rather
-than relying on sleeps to produce a particular interleaving. Add focused checks:
+than relying on sleeps to produce a particular interleaving. The following are
+future implementation acceptance checks, not results of this documentation edit:
 
 - Render/UI progress during a stalled session; session and network progress
   during stalled rendering; continued transport servicing during storage work.
@@ -445,8 +580,24 @@ than relying on sleeps to produce a particular interleaving. Add focused checks:
   actor/item ordering, and generation output.
 - Stale opportunities, replaced sessions and reused IDs/peer slots, pause/resume
   acknowledgement, elapsed-time discard, and input arriving after deadlines.
-- Reload during rendering, obsolete map packets, decode/upload failure, font and
-  viewport changes, and resource release on the correct owner.
+- Startup tileset selection/defaults, cancellation during preparation/upload,
+  decode/upload failure and partial cleanup, obsolete map packets, independent
+  font/palette and viewport changes, and resource release on the correct owner.
+- Static and animated native packs; unsupported versions, duplicate mappings,
+  invalid paths/references, empty clips, atlas bounds, invalid durations, and
+  cumulative-duration/time-conversion overflow. Missing mappings use glyphs;
+  invalid explicitly selected packs fail startup with diagnostics.
+- Pure clip sampling at exact boundaries and loop wrap, unequal durations,
+  one-frame clips, and large delayed-frame jumps, using injected presentation
+  time. Identical clip instances stay synchronized.
+- Software-rendered frame changes without input or new snapshots; animation
+  continues through local modal pauses, stops drawing while minimized, and
+  resumes at the current phase. Hidden cells and lower-priority overlays cannot
+  reveal content or create animation deadlines. Static scenes need no animation
+  redraws; animations trigger no map jobs or texture uploads.
+- The same admitted command/time trace yields identical simulation state/RNG,
+  saves, and network content fingerprints with different tilesets, fonts,
+  palettes, animation times, and render cadences.
 - Checkpoint failure, newer edits during a checkpoint, cross-chunk ownership,
   archive retention, and read/write ordering without losing dirty state.
 - Atlas bounds/fallbacks, hidden cells, overlay order, coordinate round trips,
@@ -462,10 +613,10 @@ tests when extracting shared interaction state.
 
 Measure frame latency, snapshot age, queue depth/high-water marks, session-update
 time, job duration/worker utilization, texture/resource counts, and draw calls.
-Separate cold load/reload, idle UI, active play, and LAN/storage stalls. Publish
-hardware/build configuration with results; make no speedup or latency claim
-before benchmarking. This document changes no code and supplies no build,
-sanitizer, or benchmark result.
+Separate cold tileset load, static idle UI, animated idle UI, active play, and
+LAN/storage stalls. Publish hardware/build configuration with results; make no
+speedup or latency claim before benchmarking. This documentation revision changes
+no code and supplies no build, implementation-test, sanitizer, or benchmark result.
 
 See [server integration](server_api.md), [tick scheduling](tick_scheduling.md),
 [items](items_api.md), [settings](settings_api.md), [terrain rendering](terrain_rendering.md),
