@@ -180,7 +180,7 @@ if(CATACLYSMX_BUILD_TESTS)
         tests/item_save_tests.cpp tests/item_network_tests.cpp tests/item_server_tests.cpp
         tests/item_behavior_tests.cpp
         tests/settings_tests.cpp tests/localization_tests.cpp)
-    target_sources(cataclysmx_tests PRIVATE tests/lighting_tests.cpp tests/memory_tests.cpp
+    target_sources(cataclysmx_tests PRIVATE tests/lighting_tests.cpp tests/surface_lighting_tests.cpp tests/memory_tests.cpp
         tests/lighting_content_tests.cpp tests/perception_save_tests.cpp
         tests/perception_server_tests.cpp tests/bulk_perception_tests.cpp)
     target_compile_definitions(cataclysmx_tests PRIVATE CATACLYSMX_TERRAIN_FILE="${CMAKE_CURRENT_SOURCE_DIR}/data/terrain.json5")

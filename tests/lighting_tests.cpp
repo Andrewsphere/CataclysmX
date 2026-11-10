@@ -121,7 +121,7 @@ TEST_CASE("Sky enters only through open top-down faces and respects roofs", "[li
     world.SetSkyLight(192);
     CHECK(world.GetLightLevel({5,5,0}) == 192);
     REQUIRE(world.SetTile({5,5,2}, {TestTerrain("floor"),0}));
-    CHECK(world.GetLightLevel({5,5,0}) < 64);
+    CHECK(world.GetLightLevel({5,5,0}) < 192);
     world.SetSkyLight(0);
     CHECK(world.GetLightLevel({5,5,0}) == 0);
 }
@@ -286,6 +286,10 @@ TEST_CASE("Daylit facade receives full incident sky beyond dim sight without lig
         REQUIRE(world.SetTile({13,z,0}, {TestTerrain("wall"),0}));
         REQUIRE(world.SetTile({15,z,0}, {TestTerrain("wall"),0}));
     }
+    // Enclose the ends as well: eight-step sky spill can now reach the middle
+    // of this corridor from a neighboring chunk if either end is left open.
+    REQUIRE(world.SetTile({14,0,0}, {TestTerrain("wall"),0}));
+    REQUIRE(world.SetTile({14,15,0}, {TestTerrain("wall"),0}));
     for (int y = 1; y <= world_max_y; ++y) {
         REQUIRE(world.SetTile({12,8,y}, {TestTerrain("air"),0}));
     }
@@ -321,18 +325,19 @@ TEST_CASE("An opposite-side lamp cannot illuminate a wall face or relay through 
     CHECK(world.GetLightLevel({7,8,0}) == 0); // Surface queries never seed propagation.
 }
 
-TEST_CASE("Surface entry faces use dominant axes and conservative edge and corner ties", "[lighting][surface]") {
+TEST_CASE("Surface receivers combine exposed observer-facing sides at shallow angles and corners", "[lighting][surface]") {
     World world(TestContent());
     Prepare(world);
     const TileCoord wall{8,8,0};
     REQUIRE(world.SetTile(wall, {TestTerrain("wall"),0}));
     Lamp(world, {7,8,0}, {255,1});
-    CHECK(TerrainLightLevel(world, {2,7,0}, wall) == 255); // X face only.
-    CHECK(TerrainLightLevel(world, {7,2,0}, wall) == world.GetLightLevel({8,7,0}));
+    CHECK(TerrainLightLevel(world, {2,7,0}, wall) == 255);
+    CHECK(TerrainLightLevel(world, {7,2,0}, wall) == 255); // Non-dominant exposed X face.
+    CHECK(TerrainLightLevel(world, {9,2,0}, wall) == world.GetLightLevel({8,7,0}));
     CHECK(TerrainLightLevel(world, {2,2,0}, wall) == 255); // Both accessible faces.
     REQUIRE(world.SetTile({8,7,0}, {TestTerrain("wall"),0}));
     CHECK(LineVisible(world, {2,2,0}, wall)); // Shared shadowcast permits this corner.
-    CHECK(TerrainLightLevel(world, {2,2,0}, wall) == 0); // No bright-face corner peek.
+    CHECK(TerrainLightLevel(world, {2,2,0}, wall) == 255); // Blocked Z face cannot veto exposed X.
     CHECK(TerrainLightLevel(world, {2,8,0}, wall) == 255);
     REQUIRE(world.SetTile({5,8,0}, {TestTerrain("wall"),0}));
     CHECK_FALSE(LineVisible(world, {2,8,0}, wall)); // Caller rejects hidden terrain.
@@ -435,7 +440,7 @@ void CheckFields(const World& world, const LightingField& incremental) {
     }
 }
 
-TEST_CASE("Uniform sky shortcuts match independent full two-step transport", "[lighting][incremental]") {
+TEST_CASE("Uniform sky shortcuts match independent full configured transport", "[lighting][incremental]") {
     World world(TestContent());
     Prepare(world);
     for (int y = 1; y <= world_max_y; ++y) {
@@ -447,7 +452,8 @@ TEST_CASE("Uniform sky shortcuts match independent full two-step transport", "[l
         struct ReferenceChunk {
             ChunkCoord position;
             eastl::array<std::uint8_t,chunk_size*chunk_size> direct{};
-            eastl::array<std::uint8_t,chunk_size*chunk_size> first{};
+            eastl::array<std::uint8_t,chunk_size*chunk_size> reached{};
+            eastl::array<std::uint8_t,chunk_size*chunk_size> next{};
             eastl::array<std::uint8_t,chunk_size*chunk_size> level{};
         };
         Vector<ReferenceChunk> reference;
@@ -483,32 +489,33 @@ TEST_CASE("Uniform sky shortcuts match independent full two-step transport", "[l
         }
         for (auto& chunk : reference) {
             chunk.level = chunk.direct;
-            for (int i = 0; i < chunk_size*chunk_size; ++i) {
-                const TileCoord p{chunk.position.x*chunk_size+i%chunk_size,
-                    chunk.position.z*chunk_size+i/chunk_size,chunk.position.y};
-                // Intentionally keep first-step seeds even on direct-lit cells.
-                for (const auto offset : offsets) {
-                    const TileCoord q{p.x+offset.x,p.z+offset.z,p.y+offset.y};
-                    if (!connected(p,q)) { continue; }
-                    auto* next = find(q);
-                    REQUIRE(next);
-                    auto& first = next->first[TileIndex(q)];
-                    first = eastl::max(first,static_cast<std::uint8_t>(chunk.direct[i]/4));
+            chunk.reached = chunk.direct;
+        }
+        // Full synchronous world-wide reachability passes, independent of the
+        // production bounded patch/FIFO. Keep direct-lit cells in every pass.
+        for (int distance = 1; distance <= skySpillDistance; ++distance) {
+            for (auto& chunk : reference) { chunk.next = chunk.reached; }
+            for (auto& chunk : reference) {
+                for (int i = 0; i < chunk_size*chunk_size; ++i) {
+                    if (!chunk.reached[i]) { continue; }
+                    const TileCoord p{chunk.position.x*chunk_size+i%chunk_size,
+                        chunk.position.z*chunk_size+i/chunk_size,chunk.position.y};
+                    for (const auto offset : offsets) {
+                        const TileCoord q{p.x+offset.x,p.z+offset.z,p.y+offset.y};
+                        if (!connected(p,q)) { continue; }
+                        auto* next = find(q);
+                        REQUIRE(next);
+                        next->next[TileIndex(q)] = 1;
+                    }
                 }
             }
-        }
-        for (auto& chunk : reference) {
-            for (int i = 0; i < chunk_size*chunk_size; ++i) {
-                chunk.level[i] = eastl::max(chunk.level[i],chunk.first[i]);
-                const TileCoord p{chunk.position.x*chunk_size+i%chunk_size,
-                    chunk.position.z*chunk_size+i/chunk_size,chunk.position.y};
-                for (const auto offset : offsets) {
-                    const TileCoord q{p.x+offset.x,p.z+offset.z,p.y+offset.y};
-                    if (!connected(p,q)) { continue; }
-                    auto* next = find(q);
-                    REQUIRE(next);
-                    auto& level = next->level[TileIndex(q)];
-                    level = eastl::max(level,static_cast<std::uint8_t>(chunk.first[i]/2));
+            for (auto& chunk : reference) {
+                chunk.reached = chunk.next;
+                for (int i = 0; i < chunk_size*chunk_size; ++i) {
+                    if (chunk.reached[i]) {
+                        chunk.level[i] = eastl::max(chunk.level[i],
+                            static_cast<std::uint8_t>(2*world.GetSkyLight()*(skySpillDistance+1-distance)/(3*skySpillDistance)));
+                    }
                 }
             }
         }
@@ -526,16 +533,17 @@ TEST_CASE("Uniform sky shortcuts match independent full two-step transport", "[l
             }
         }
     };
-    for (const int sky : {0,1,3,4,7,8,192,255,0}) {
+    for (const int sky : {0,1,2,3,4,7,8,11,12,23,24,95,96,191,192,255,0}) {
         CAPTURE(sky);
         world.SetSkyLight(static_cast<std::uint8_t>(sky));
         field.Prepare(world);
         CHECK(field.GetWorkStats().outputChunks == 0);
         field.EnsureChunk(world, {0,0,0});
         CHECK(field.Get({5,5,0}) == sky);
-        CHECK(field.Get({6,5,0}) == sky/4);
-        CHECK(field.Get({7,5,0}) == sky/8);
-        CHECK(field.Get({8,5,0}) == 0);
+        for (int distance = 1; distance < chunk_size-5; ++distance) {
+            CHECK(field.Get({5+distance,5,0}) == (distance <= skySpillDistance
+                ? 2*sky*(skySpillDistance+1-distance)/(3*skySpillDistance) : 0));
+        }
         verify();
     }
     world.SetSkyLight(192);
@@ -547,6 +555,174 @@ TEST_CASE("Uniform sky shortcuts match independent full two-step transport", "[l
     REQUIRE(world.SetTile({5,5,2}, {TestTerrain("air"),0}));
     field.Rebuild(world);
     verify();
+    CheckFields(world, field);
+}
+
+TEST_CASE("Sky follows corner path distance and open vertical faces with an exact eight-step cutoff", "[lighting]") {
+    World world(TestContent());
+    Prepare(world);
+    for (int z = 0; z < chunk_size; ++z) {
+        for (int x = 0; x < chunk_size; ++x) {
+            REQUIRE(world.SetTile({x,z,0}, {TestTerrain("wall"),0}));
+            REQUIRE(world.SetTile({x,z,1}, {TestTerrain("wall"),0}));
+        }
+    }
+    const TileCoord path[] = {{2,2,0},{3,2,0},{4,2,0},{5,2,0},{6,2,0},
+        {7,2,0},{7,3,0},{7,4,0},{7,4,1},{8,4,1}};
+    for (const auto p : path) { REQUIRE(world.SetTile(p, {TestTerrain("floor"),0})); }
+    REQUIRE(world.SetTile({7,4,0}, {TestTerrain("stairs"),0}));
+    REQUIRE(world.SetTile({7,4,1}, {TestTerrain("stairs"),0}));
+    REQUIRE(world.SetTile({7,4,2}, {TestTerrain("floor"),0}));
+    REQUIRE(world.SetTile({8,4,2}, {TestTerrain("floor"),0}));
+    for (int y = 1; y <= world_max_y; ++y) {
+        REQUIRE(world.SetTile({2,2,y}, {TestTerrain("air"),0}));
+    }
+    world.SetSkyLight(192);
+    const int expected[] = {192,128,112,96,80,64,48,32,16,0};
+    for (int d = 0; d <= 9; ++d) {
+        CAPTURE(d);
+        CHECK(world.GetLightLevel(path[d]) == expected[d]);
+    }
+    CHECK(ClassifyLight(world.GetLightLevel(path[5])) == LightBand::Ordinary);
+    CHECK(ClassifyLight(world.GetLightLevel(path[6])) == LightBand::Dim);
+    CHECK(ClassifyLight(world.GetLightLevel(path[8])) == LightBand::Dim);
+    CHECK(ClassifyLight(world.GetLightLevel(path[9])) == LightBand::Dark);
+    REQUIRE(world.SetTile({7,4,1}, {TestTerrain("floor"),0}));
+    CHECK(world.GetLightLevel(path[8]) == 0); // Unmatched lower stairs cannot cross a floor.
+    REQUIRE(world.SetTile({7,4,1}, {TestTerrain("stairs"),0}));
+    CHECK(world.GetLightLevel(path[8]) == 16);
+    REQUIRE(world.SetTile({4,2,0}, {TestTerrain("closed_door"),0}));
+    CHECK(world.GetLightLevel(path[7]) == 0);
+    REQUIRE(world.SetTile({4,2,0}, {TestTerrain("open_door"),0}));
+    CHECK(world.GetLightLevel(path[8]) == 16);
+    const auto lamp = Lamp(world, path[8], {8,1});
+    CHECK(world.GetLightLevel(path[8]) == 16); // Local and sky contributions do not add.
+    REQUIRE(world.SetObjectLight(lamp, {64,1}));
+    CHECK(world.GetLightLevel(path[8]) == 64);
+    REQUIRE(world.DestroyObject(lamp));
+    CHECK(world.GetLightLevel(path[8]) == 16);
+    // A directly sky-lit opaque endpoint is still never a transport seed.
+    REQUIRE(world.SetTile(path[0], {TestTerrain("wall"),0}));
+    CHECK(world.GetLightLevel(path[0]) == 192);
+    CHECK(world.GetLightLevel(path[1]) == 0);
+}
+
+TEST_CASE("Sky reach measures the connected detour rather than displacement through a wall", "[lighting][incremental]") {
+    World world(TestContent());
+    Prepare(world);
+    for (int z = 0; z < chunk_size; ++z) {
+        for (int x = 0; x < chunk_size; ++x) {
+            REQUIRE(world.SetTile({x,z,0}, {TestTerrain("wall"),0}));
+            REQUIRE(world.SetTile({x,z,1}, {TestTerrain("wall"),0}));
+        }
+    }
+    const TileCoord path[] = {{2,2,0},{3,2,0},{4,2,0},{5,2,0},{6,2,0},
+        {6,3,0},{6,4,0},{6,5,0},{5,5,0},{4,5,0}};
+    for (const auto p : path) { REQUIRE(world.SetTile(p, {TestTerrain("floor"),0})); }
+    for (int y = 1; y <= world_max_y; ++y) {
+        REQUIRE(world.SetTile({2,2,y}, {TestTerrain("air"),0}));
+    }
+    world.SetSkyLight(192);
+    CHECK(world.GetLightLevel({5,5,0}) == 16); // Eight hops around the corner.
+    CHECK(world.GetLightLevel({4,5,0}) == 0); // Nine hops, despite displacement five.
+    REQUIRE(world.SetTile({4,3,0}, {TestTerrain("floor"),0}));
+    REQUIRE(world.SetTile({4,4,0}, {TestTerrain("open_door"),0}));
+    CHECK(world.GetLightLevel({4,5,0}) == 64); // The new shortest path is five hops.
+    REQUIRE(world.SetTile({4,4,0}, {TestTerrain("closed_door"),0}));
+    CHECK(world.GetLightLevel({4,5,0}) == 0);
+}
+
+TEST_CASE("Configured sky reach preserves falloff and lazy dependencies across negative seams", "[lighting][incremental][lazy]") {
+    World world(TestContent());
+    const auto request = world.RequestChunks({{0,0},1}, LoadMode::resident);
+    REQUIRE(request);
+    REQUIRE(world.ReconcileChunks());
+    // Seal the corridor's sides and roof, including the source's negative chunk.
+    for (int z = 0; z < chunk_size; ++z) {
+        for (int x = -chunk_size; x < chunk_size; ++x) {
+            REQUIRE(world.SetTile({x,z,0}, {TestTerrain("wall"),0}));
+            REQUIRE(world.SetTile({x,z,1}, {TestTerrain("floor"),0}));
+        }
+    }
+    for (int x = -1; x <= skySpillDistance; ++x) {
+        REQUIRE(world.SetTile({x,5,0}, {TestTerrain("floor"),0}));
+    }
+    for (int y = 1; y <= world_max_y; ++y) {
+        REQUIRE(world.SetTile({-1,5,y}, {TestTerrain("air"),0}));
+    }
+    LightingField field;
+    const ChunkCoord receiving{0,0,0};
+    const TileCoord lastStep{skySpillDistance-1,5,0};
+    const TileCoord beyond{skySpillDistance,5,0};
+    // Exercise the actual transported field, including low intensities whose
+    // rounded-to-zero tail shortens the internal flood. This also runs with a
+    // separately configured reach to catch byte wraparound beyond step nine.
+    for (const int sky : {0,1,2,3,11,12,23,24,191,192,255}) {
+        CAPTURE(sky, skySpillDistance);
+        world.SetSkyLight(static_cast<std::uint8_t>(sky));
+        field.Prepare(world);
+        field.EnsureChunk(world, receiving);
+        CHECK(field.GetWorkStats().outputChunks == 1);
+        CHECK(field.Get({0,5,0}) == 2*sky/3);
+        CHECK(field.Get(lastStep) == 2*sky/(3*skySpillDistance));
+        CHECK(field.Get(beyond) == 0);
+        int previous = 2*sky/3;
+        for (int x = 1; x < skySpillDistance; ++x) {
+            const int level = field.Get({x,5,0});
+            CHECK(level <= previous);
+            previous = level;
+        }
+    }
+    world.SetSkyLight(192);
+    const int lastLevel = 128/skySpillDistance;
+    field.Prepare(world);
+    field.EnsureChunk(world, receiving);
+    CHECK(field.GetWorkStats().outputChunks == 1);
+    CHECK(field.GetWorkStats().sourcePatches == 0);
+    CHECK(field.Get(lastStep) == lastLevel);
+    CHECK(field.Get(beyond) == 0);
+    CHECK(field.GetWorkStats().skyFirstChunks == 1);
+    const auto lamp = Lamp(world, {-1,5,0}, {64,1});
+    field.Prepare(world);
+    field.EnsureChunk(world, receiving);
+    CHECK(field.GetWorkStats().outputChunks == 1);
+    CHECK(field.GetWorkStats().skyDirectChunks == 0);
+    CHECK(field.GetWorkStats().skyFirstChunks == 0); // Emitter edits reuse complete sky patches.
+    CHECK(field.GetWorkStats().sourcePatches == 1);
+    CHECK(field.Get(lastStep) == lastLevel);
+    REQUIRE(world.DestroyObject(lamp));
+    field.Prepare(world);
+    field.EnsureChunk(world, receiving);
+    CHECK(field.GetWorkStats().skyFirstChunks == 0);
+    auto revision = field.GetChunkRevision(receiving);
+    // The source output was never ensured; closure must invalidate its consumer.
+    REQUIRE(world.SetTile({-1,5,1}, {TestTerrain("floor"),0}));
+    field.Prepare(world);
+    CHECK(field.GetChunkRevision(receiving) > revision);
+    CHECK(field.GetWorkStats().outputChunks == 0);
+    revision = field.GetChunkRevision(receiving);
+    field.Prepare(world);
+    CHECK(field.GetChunkRevision(receiving) == revision);
+    field.EnsureChunk(world, receiving);
+    CHECK(field.Get(lastStep) == 0);
+    CHECK(field.GetWorkStats().outputChunks == 1);
+    REQUIRE(world.SetTile({-1,5,1}, {TestTerrain("air"),0}));
+    field.Prepare(world);
+    field.EnsureChunk(world, receiving);
+    CHECK(field.Get(lastStep) == lastLevel);
+    // Unloading the seed column retires cached direct dependencies as well.
+    REQUIRE(world.UpdateRequest(*request, {{0,0},0}, LoadMode::resident));
+    REQUIRE(world.ReconcileChunks());
+    field.Prepare(world);
+    field.EnsureChunk(world, receiving);
+    CHECK(field.Get(lastStep) == 0);
+    CHECK(field.GetWorkStats().outputChunks == 1);
+    REQUIRE(world.UpdateRequest(*request, {{0,0},1}, LoadMode::resident));
+    REQUIRE(world.ReconcileChunks());
+    field.Prepare(world);
+    field.EnsureChunk(world, receiving);
+    CHECK(field.Get(lastStep) == lastLevel);
+    for (const auto coord : world.LoadedChunks()) { field.EnsureChunk(world, coord); }
     CheckFields(world, field);
 }
 

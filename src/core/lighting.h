@@ -13,7 +13,7 @@ class World;
 
 // Observer-facing terrain illumination, distinct from transported/actor exposure
 // light. Lower opaque targets use their projected top face; same-level targets
-// use horizontal dominant entry faces. Upward illumination retains 3D entry faces.
+// use exposed horizontal observer-facing sides. Upward illumination retains 3D entry faces.
 // Does not establish target visibility or acquire residency. See doc/surface_lighting.md.
 std::uint8_t TerrainLightLevel(const World& world, TileCoord observer, TileCoord target);
 
@@ -39,7 +39,7 @@ public:
     struct WorkStats {
         std::size_t outputChunks = 0;
         std::size_t skyDirectChunks = 0;
-        std::size_t skyFirstChunks = 0;
+        std::size_t skyFirstChunks = 0; // Bounded sky spill patches (legacy counter name).
         std::size_t sourcePatches = 0;
     };
     // Work since the last Prepare, including explicit dependency computation.
@@ -54,7 +54,6 @@ private:
         Levels sky{};
         Levels skyDirect{};
         Levels flags{};
-        Levels firstStep{};
         eastl::array<Faces, tileCount> incident{};
         eastl::array<Faces, tileCount> skyIncident{};
         eastl::array<std::uint32_t, tileCount> terrain{};
@@ -64,7 +63,7 @@ private:
         std::uint64_t revision = 0;
         bool outputReady = false;
         bool directReady = false;
-        bool firstReady = false;
+        bool skyReady = false;
         bool uniformFlags = false;
         struct Emitter {
             TileCoord position;
@@ -88,6 +87,13 @@ private:
     Vector<eastl::unique_ptr<LightChunk>> chunks_;
     Vector<Source> sources_;
     Vector<ChunkCoord> changedChunks_;
+    struct SkyCell {
+        std::uint8_t flags = 0;
+        std::uint8_t distance = skySpillDistance + 1;
+    };
+    // Reused per requested output, never per tile or direct-sky source.
+    Vector<SkyCell> skyCells_;
+    Vector<int> skyQueue_;
     std::uint64_t generation_ = 0;
     std::uint8_t skyLight_ = 0;
     WorkStats workStats_;
@@ -95,7 +101,6 @@ private:
     std::size_t FindChunk(ChunkCoord position) const;
     void BuildSource(Source& source);
     void EnsureSkyDirect(std::size_t chunk);
-    void EnsureSkyFirst(std::size_t chunk);
     void BuildSky(std::size_t chunk);
 };
 }

@@ -18,32 +18,12 @@ constexpr std::uint8_t transparent = 2;
 constexpr std::uint8_t openSpace = 4;
 constexpr std::uint8_t stairs = 8;
 constexpr int tileCount = chunk_size * chunk_size;
+static_assert(skySpillDistance >= 1 && skySpillDistance < chunk_size); // One horizontal chunk halo bounds invalidation.
 
-template<class OpticalChunk>
-int Neighbor(const OpticalChunk& chunk, int chunkIndex, int index, int direction, int& nextIndex) {
-    switch (direction) {
-    case 0:
-        if (index % chunk_size == chunk_size-1) {
-            nextIndex = index-(chunk_size-1); return chunk.neighbors[direction];
-        }
-        nextIndex = index+1; return chunkIndex;
-    case 1:
-        if (index % chunk_size == 0) {
-            nextIndex = index+(chunk_size-1); return chunk.neighbors[direction];
-        }
-        nextIndex = index-1; return chunkIndex;
-    case 2:
-        if (index >= tileCount-chunk_size) {
-            nextIndex = index-(tileCount-chunk_size); return chunk.neighbors[direction];
-        }
-        nextIndex = index+chunk_size; return chunkIndex;
-    case 3:
-        if (index < chunk_size) {
-            nextIndex = index+(tileCount-chunk_size); return chunk.neighbors[direction];
-        }
-        nextIndex = index-chunk_size; return chunkIndex;
-    default: nextIndex = index; return chunk.neighbors[direction];
-    }
+std::uint8_t SkySpillLevel(std::uint8_t skyLight, int distance) {
+    // Called for distances 1..skySpillDistance. Keep the first step at two-thirds
+    // intensity and fade across the configured reach, with only one integer division.
+    return static_cast<std::uint8_t>(2*skyLight*(skySpillDistance+1-distance)/(3*skySpillDistance));
 }
 
 bool OpenFace(std::uint8_t lower, std::uint8_t upper) {
@@ -97,7 +77,14 @@ std::uint8_t TerrainLightLevel(const World& world, TileCoord observer, TileCoord
     auto level = terrain.light.intensity;
     // Lower terrain is projected through its vertical column, so its receiving
     // surface is the top even when horizontal displacement dominates.
-    const auto mask = observer.y > target.y ? (1U << 4) : EntryFaces(observer, target);
+    auto mask = observer.y > target.y ? (1U << 4) : EntryFaces(observer, target);
+    if (observer.y == target.y) {
+        // A shallow view can see an exposed facade even when the center ray's
+        // dominant entry face points into the next solid tile along the wall.
+        mask = 0;
+        if (observer.x != target.x) { mask |= 1U << (observer.x > target.x ? 0 : 1); }
+        if (observer.z != target.z) { mask |= 1U << (observer.z > target.z ? 2 : 3); }
+    }
     // Incident endpoints belong to faces, never to the observer-independent solid
     // scalar. Do not light-filter the observer-plane air above a projected
     // target. The caller establishes planar/column target visibility separately.
@@ -108,7 +95,10 @@ std::uint8_t TerrainLightLevel(const World& world, TileCoord observer, TileCoord
         const TileCoord sample{target.x+offset.x, target.z+offset.z, target.y+offset.y};
         const Tile* sampleTile = world.GetTile(sample);
         if (!sampleTile || world.GetContent().GetTerrain(sampleTile->terrain).blocksSight
-            || (face >= 4 && !OpenVerticalFace(world, sample, target))) { return level; }
+            || (face >= 4 && !OpenVerticalFace(world, sample, target))) {
+            if (observer.y == target.y) { continue; }
+            return level;
+        }
         incident = eastl::max(incident, world.GetLightLevel(sample));
         incident = eastl::max(incident, world.GetIncidentLightLevel(target, face));
     }
@@ -276,56 +266,87 @@ void LightingField::EnsureSkyDirect(std::size_t c) {
     }
 }
 
-void LightingField::EnsureSkyFirst(std::size_t c) {
-    auto& chunk = *chunks_[c];
-    if (chunk.firstReady) { return; }
-    ++workStats_.skyFirstChunks;
-    EnsureSkyDirect(c);
-    chunk.firstStep.fill(0);
-    chunk.firstReady = true;
-    if (skyLight_ < 4 || (chunk.uniformFlags && !(chunk.flags[0] & transparent))
-        || eastl::all_of(chunk.skyDirect.begin(), chunk.skyDirect.end(),
-            [this](std::uint8_t level) { return level == skyLight_; })) { return; }
-    for (const int neighbor : chunk.neighbors) {
-        if (neighbor >= 0) { EnsureSkyDirect(static_cast<std::size_t>(neighbor)); }
-    }
-    for (int i = 0; i < tileCount; ++i) {
-        if (chunk.skyDirect[i] || !(chunk.flags[i] & transparent)) { continue; }
-        for (int d = 0; d < 6; ++d) {
-            int tile;
-            const int next = Neighbor(chunk, static_cast<int>(c), i, d, tile);
-            if (next < 0 || !chunks_[next]->skyDirect[tile]
-                || !Connected(chunk.flags[i], chunks_[next]->flags[tile], d)) { continue; }
-            chunk.firstStep[i] = static_cast<std::uint8_t>(skyLight_/4);
-            break;
-        }
-    }
-}
-
 void LightingField::BuildSky(std::size_t c) {
     auto& chunk = *chunks_[c];
-    EnsureSkyFirst(c);
+    if (chunk.skyReady) { return; }
+    EnsureSkyDirect(c);
     chunk.sky = chunk.skyDirect;
-    if (skyLight_ < 4 || (chunk.uniformFlags && !(chunk.flags[0] & transparent))) { return; }
-    if (eastl::all_of(chunk.skyDirect.begin(), chunk.skyDirect.end(),
-        [this](std::uint8_t level) { return level == skyLight_; })) { return; }
-    if (skyLight_ >= 8) {
-        for (const int neighbor : chunk.neighbors) {
-            if (neighbor >= 0) { EnsureSkyFirst(static_cast<std::size_t>(neighbor)); }
+    chunk.skyReady = true;
+    if (SkySpillLevel(skyLight_, 1) == 0 || (chunk.uniformFlags && !(chunk.flags[0] & transparent))) { return; }
+    bool needsSpill = false;
+    for (int i = 0; i < tileCount; ++i) {
+        if (!chunk.skyDirect[i] && (chunk.flags[i] & transparent)) { needsSpill = true; break; }
+    }
+    if (!needsSpill) { return; }
+
+    ++workStats_.skyFirstChunks;
+    int reach = skySpillDistance;
+    while (SkySpillLevel(skyLight_, reach) == 0) { --reach; }
+    const int side = chunk_size + 2*reach;
+    const int height = 2*reach+1;
+    const TileCoord minimum{chunk.position.x*chunk_size-reach,
+        chunk.position.z*chunk_size-reach,chunk.position.y-reach};
+    const auto index = [side, minimum](int x, int z, int y) {
+        return ((y-minimum.y)*side+z-minimum.z)*side+x-minimum.x;
+    };
+    skyCells_.clear();
+    skyCells_.resize(side*side*height);
+    skyQueue_.clear();
+    skyQueue_.reserve(skyCells_.size());
+    const auto first = ChunkOf(minimum);
+    const auto last = ChunkOf({minimum.x+side-1,minimum.z+side-1,minimum.y+height-1});
+    // Copy by chunk, not by tile lookup. Only direct caches are dependencies;
+    // no neighboring output is finalized and no transported value is a seed.
+    for (int x = first.x; x <= last.x; ++x) {
+        for (int z = first.z; z <= last.z; ++z) {
+            for (int y = eastl::max(first.y, world_min_y); y <= eastl::min(last.y, world_max_y); ++y) {
+                const auto neighbor = FindChunk({x,z,y});
+                if (neighbor == chunks_.size()) { continue; }
+                EnsureSkyDirect(neighbor);
+                const auto& input = *chunks_[neighbor];
+                for (int tz = eastl::max(z*chunk_size,minimum.z);
+                     tz < eastl::min((z+1)*chunk_size,minimum.z+side); ++tz) {
+                    for (int tx = eastl::max(x*chunk_size,minimum.x);
+                         tx < eastl::min((x+1)*chunk_size,minimum.x+side); ++tx) {
+                        const int tile = (tz-z*chunk_size)*chunk_size+tx-x*chunk_size;
+                        const int i = index(tx,tz,y);
+                        auto& cell = skyCells_[i];
+                        cell.flags = input.flags[tile];
+                        if (input.skyDirect[tile] && (cell.flags & transparent)) {
+                            cell.distance = 0;
+                            skyQueue_.push_back(i);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // Multi-source FIFO visits each cell at most once, at its shortest connected
+    // path distance. Any <= reach path to the output fits inside this halo.
+    const int strides[] = {1,-1,side,-side,side*side,-side*side};
+    for (std::size_t head = 0; head < skyQueue_.size(); ++head) {
+        const int i = skyQueue_[head];
+        const auto cell = skyCells_[i];
+        if (cell.distance >= reach) { continue; }
+        const int x = i%side;
+        const int z = i/side%side;
+        const int y = i/(side*side);
+        const bool boundary[] = {x == side-1,x == 0,z == side-1,z == 0,y == height-1,y == 0};
+        for (int d = 0; d < 6; ++d) {
+            if (boundary[d]) { continue; }
+            const int nextIndex = i+strides[d];
+            auto& next = skyCells_[nextIndex];
+            if (next.distance <= reach || !Connected(cell.flags,next.flags,d)) { continue; }
+            next.distance = static_cast<std::uint8_t>(cell.distance+1);
+            skyQueue_.push_back(nextIndex);
         }
     }
     for (int i = 0; i < tileCount; ++i) {
-        chunk.sky[i] = eastl::max(chunk.sky[i], chunk.firstStep[i]);
-        // Direct-lit first-step seeds can be omitted: their own direct/4
-        // already dominates any second hop into the same connected neighbor.
-        if (chunk.sky[i] || !(chunk.flags[i] & transparent) || skyLight_ < 8) { continue; }
-        for (int d = 0; d < 6; ++d) {
-            int tile;
-            const int next = Neighbor(chunk, static_cast<int>(c), i, d, tile);
-            if (next < 0 || !chunks_[next]->firstStep[tile]
-                || !Connected(chunk.flags[i], chunks_[next]->flags[tile], d)) { continue; }
-            chunk.sky[i] = static_cast<std::uint8_t>(skyLight_/8);
-            break;
+        if (chunk.sky[i]) { continue; }
+        const int distance = skyCells_[index(chunk.position.x*chunk_size+i%chunk_size,
+            chunk.position.z*chunk_size+i/chunk_size,chunk.position.y)].distance;
+        if (distance >= 1 && distance <= reach) {
+            chunk.sky[i] = SkySpillLevel(skyLight_, distance);
         }
     }
 }
@@ -443,7 +464,8 @@ void LightingField::Prepare(const World& world) {
         eastl::sort(columns.begin(), columns.end(), Less);
         columns.erase(eastl::unique(columns.begin(), columns.end()), columns.end());
         for (const auto column : columns) {
-            // Whole columns plus one horizontal chunk contain both spill steps.
+            // Whole columns plus one horizontal chunk contain the configured sky steps
+            // (skySpillDistance < chunk_size), including diagonal paths.
             // Deduplicate Y first: initial residency must not be a quadratic scan.
             for (int x = column.x-1; x <= column.x+1; ++x) {
                 for (int z = column.z-1; z <= column.z+1; ++z) {
@@ -458,7 +480,7 @@ void LightingField::Prepare(const World& world) {
         }
     }
     for (std::size_t c = 0; c < chunks_.size(); ++c) {
-        if (dirty[c]) { chunks_[c]->directReady = false; chunks_[c]->firstReady = false; }
+        if (dirty[c]) { chunks_[c]->directReady = false; chunks_[c]->skyReady = false; }
         if (!chunks_[c]->revision) { dirty[c] = 1; }
     }
     const auto affected = [&opticalChanges](const Source& source) {

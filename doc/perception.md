@@ -32,11 +32,18 @@ vertical faces, and stops at opaque geometry. A closed floor face blocks sky
 even when its terrain is horizontally transparent. There is no ambient basement
 light. Illuminated opaque faces cannot seed or transmit indirect light.
 
-Indirect light uses exactly two open six-neighbor graph steps, including vertical
+Local indirect light uses exactly two open six-neighbor graph steps, including vertical
 spill between layers: direct /4 at the
 first step, direct /8 at the second. First-step values are stored separately;
 second-step values never read final light. This bounds spill at Dim (63), avoids
-query-order dependence, and prevents repeated-query creep. Lighting retains sky
+query-order dependence, and prevents repeated-query creep. Skylight instead uses
+up to `r = skySpillDistance` connected steps, with
+`2 * sky * (r+1-d) / (3*r)` at shortest path distance `d` in 1..r.
+The compile-time reach in `core/light_types.h` supports 1..15 and defaults to 8.
+At default sky 192 and reach 8 this gives 128 at the first step and 16 at the
+eighth, with no spill at nine or more. This makes open-front interiors readable
+while sealed rooms remain dark; walls and closed vertical faces still block every
+hop. Lighting retains sky
 and per-source patches; changed sources recombine affected chunks, while optical
 or residency changes rebuild affected shadow footprints. `World::GetLightingInputRevision(ChunkCoord)`
 tracks local lighting inputs; `LightingField::GetChunkRevision` and `ChangedChunks()`

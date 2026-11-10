@@ -22,20 +22,22 @@ available there; it must not be used as an observer-independent wall-face value.
    terrain returns its own `World::GetLightLevel`, including floors and stairs.
 2. For a lower opaque target (`observer.y > target.y`), select only its upper
    (+Y) face, matching perception's downward column projection regardless of
-   horizontal displacement. Same-level targets select the horizontal dominant
-   observer-minus-target axis and its observer-facing side; equal X/Z
-   displacements select both faces. Upward illumination queries retain the old
+   horizontal displacement. Same-level targets select each horizontal side
+   facing the observer, using the signs of observer-minus-target X/Z rather than
+   a dominant axis. Zero displacement along an axis selects neither of its faces.
+   Upward illumination queries retain the old
    3D dominant-axis/tie helper behavior, but perception rejects upward targets.
    Illumination itself does not establish visibility.
 3. Sample the immediately adjacent tile outside each selected face. Every sample
    must be resident and transmitting (`!blocksSight`). Vertical samples must
    additionally satisfy `OpenVerticalFace(sample, target)`: the upper cell is
-   open space, or both cells are matching stairs. A failure rejects the incident
-   contribution for the entire edge/corner tie.
+   open space, or both cells are matching stairs. A rejected same-level sample is
+   skipped without vetoing another exposed face. Vertical queries retain the
+   conservative rule that a rejected sample rejects the incident contribution.
 4. Max-combine transported light in those adjacent cells with **direct incident
     light recorded for those same faces**. Each opaque endpoint visible in a
     local source's plane records its distance-attenuated direct level only on its
-   source-facing entry face(s), using the same dominant-axis/tie rule. Sky records
+   source-facing entry face(s), retaining the direct-source dominant-axis/tie rule. Sky records
    its direct opaque endpoint on the upper (+Y) face. Neither record is a spill
    seed. Max-combine with the terrain's own emission intensity. When the
    observer equals an opaque target there is no incident face, only intrinsic
@@ -44,10 +46,11 @@ available there; it must not be used as an observer-independent wall-face value.
 The sample is transmitting **space**, never another opaque endpoint scalar.
 Thus daylight 192 makes an exposed facade Bright instead of quarter-strength
 Dim. A lamp behind that facade cannot lend its direct endpoint value to the
-opposite face. A same-level shallow-angle observer samples the dominant entry
-face, and an illumination corner tie cannot select a bright face past a blocked
-face. This receiving-face rule remains conservative even where the shared planar
-shadowcast permits geometric corner visibility. Target visibility is the caller's
+opposite face. A shallow-angle or diagonal view can receive from the facade's
+exposed observer-facing side even when the other candidate points into a solid
+neighbor along the wall. This avoids visible daylight facades becoming dark as
+the observer crosses a dominant-axis boundary. Only observer-facing sides qualify;
+the back face and opaque neighbors cannot lend their endpoint light. Target visibility is the caller's
 responsibility: horizontal shadowcasting followed by an open-space downward column.
 
 Do **not** require illumination of the observer-plane air above a lower target:
@@ -78,14 +81,30 @@ spill steps are retained: first `direct / 4`, then `direct / 8` (integer divisio
 Only spill crosses Y for local sources, using the existing open-face rule.
 Thus even an open vertical shaft receives at most quarter-strength light one
 level away, eighth-strength two levels away, and none three levels away.
-Sky retains vertical column traversal from the world ceiling and the same two
-spill steps. No new persistent or wire data is required.
+Sky retains direct vertical column traversal from the world ceiling, then uses
+up to `skySpillDistance` connected transmitting-neighbor steps (default **8**).
+To tune the reach, edit this constant in `src/core/light_types.h` and rebuild;
+the supported range is **1..15**, enforced at compile time. With `r` equal to
+that configured reach, the level at shortest connected distance `d` in 1..r is
+`2 * skyLight * (r + 1 - d) / (3 * r)`. Use one integer division on the original
+sky intensity, never repeated attenuation. Direct sky remains unchanged, and
+distances beyond `r` receive no sky spill. The first step always receives
+two-thirds intensity, rounded down; increasing reach stretches the fade.
+At the default reach 8 and sky 192, d0..d8 remain
+**192, 128, 112, 96, 80, 64, 48, 32, 16**. The nonzero-reach optimization uses
+the same formula, so low sky levels cannot extend the tail or wrap a light byte.
+Each hop respects transmitting cells and vertical open faces; opaque direct
+endpoints never seed transport. Sky and local contributions combine by maximum.
+`lightSpillDistance = 2` still applies exclusively to ordinary/local sources.
+No new persistent or wire data is required.
 
 ## Regression coverage
 
-`tests/lighting_tests.cpp` covers a roofed facade lit beyond dim sight, a sealed
-dark interior, opposite-side local light, receiving without relaying, dominant
-face selection, conservative tied corners, occluded targets, exposed tops,
+`tests/lighting_tests.cpp` and `tests/surface_lighting_tests.cpp` cover a roofed
+facade lit beyond dim sight, a sealed dark interior, opposite-side local light,
+receiving without relaying, shallow and diagonal exposed faces in four rotations,
+point/bulk perception agreement, opening/reclosing a missing facade and viewing
+its daylit interior beyond dim sight, occluded targets, exposed tops,
 closed floors/roofs, matched and unmatched stairs, negative chunk seams,
 residency clipping, world bounds, planar direct light, and two-step vertical spill.
 Dedicated regressions cover lower walls at underground and elevated levels,
@@ -108,7 +127,7 @@ The sorted `World::LoadedChunks()` contract remains X, then Z, then Y.
 Optical edits invalidate only source patches whose horizontal range-plus-spill
 bounds and source-Y +/- two layers intersect an edited optical chunk. Sky
 invalidates the edited vertical chunk columns and a one-chunk horizontal halo,
-which bounds both spill steps. Added and removed chunks are optical changes;
+which bounds the configured sky reach. Added and removed chunks are optical changes;
 surviving caches outside their dependencies retain both storage and revisions.
 The sorted cache vector owns `unique_ptr<LightChunk>` so residency merges move
 pointers rather than multiple tile arrays per surviving chunk. Source patches
@@ -116,44 +135,48 @@ store chunk coordinates, never indices that residency insertion could remap.
 Lamp movement never invalidates sky. A sky-level change invalidates sky but
 reuses local source contributions. Equal same-coordinate reload inputs retain
 their output revisions; fresh input tokens still trigger descriptor/optics checks.
+Each output's complete sky patch is cached separately from its final combined
+lighting, so emitter changes reuse it without repeating the sky flood.
 
-The localized sky boundary is sufficient for both transport passes: direct sky
-can change only in edited horizontal chunk columns, with all Y layers refreshed.
-The surrounding one-chunk halo is at least 16 tiles wide, larger than the two-tile
-spill reach. `EnsureChunk` requests direct sky above the requested cells and
-direct/first-step caches in neighboring chunks as needed. These dependencies are
-computed before their consumer, independently of query order; there is no eager
-whole-halo output pass. Neighboring valid caches outside the invalidated halo
-remain safe to gather. Final sky values are never used as transport seeds.
+The localized sky boundary is sufficient: direct sky can change only in edited
+horizontal chunk columns, with all Y layers refreshed. Changes to a transmitting
+path can affect a receiver only within `skySpillDistance` hops of the edited geometry.
+Since the supported reach is less than chunk width 16, either effect stays within the edited columns
+plus one horizontal chunk halo (including diagonal neighbors), at every Y.
+Residency changes obey the same bound. Cached outputs outside this set remain valid.
 
-Sky transport takes advantage of uniform direct intensity: every nonzero direct
-sky value equals `skyLight`. Opaque receivers cannot have a connected spill
-neighbor. Direct-lit transmitting cells already have maximal illumination, so
-the first pass gathers only for dark transmitting cells and stops at the first
-connected direct-lit neighbor. All nonzero first steps equal `skyLight / 4`.
-The second pass gathers only for still-dark transmitting cells, stopping at its
-first connected first-step neighbor; the result is `skyLight / 8`. Integer
-thresholds skip a transport pass entirely when its level would be zero, and zero
-sky clears requested caches without tracing columns. Uniform optical flags allow
-whole-array direct fills for sky-exposed transparent or solid chunks. Uniform
-opaque chunks skip connected spill entirely; uniform closed/opaque upper cells
-stop upward dependency traversal. Fully direct-lit chunks skip both spill scans.
+For a requested output, `BuildSky` gathers optics and lazily cached direct sky in
+a tile-aligned box: the output's 16x16 plane plus a `skySpillDistance`-tile horizontal halo
+and that many Y layers above/below. Every path within the configured reach ending in that
+plane fits in this box, even if it turns corners or leaves/reenters the output
+chunk. A deterministic multi-source FIFO seeded by **all transmitting direct-sky
+cells** visits each reachable cell once at its shortest distance. Distances map
+to the curve above; direct opaque endpoints retain only their direct value and
+upper-face incident record. No final sky/output cache is a transport seed.
 
-First-step cache entries on direct-lit cells deliberately remain zero. Omitting
-these seeds is exact: any second hop from such a cell into a connected neighbor
-would be at most `skyLight / 8`, already dominated by that cell's own direct
-one-hop contribution of `skyLight / 4` to the same neighbor. Likewise, a cell
-with any nonzero first step cannot be improved by a second step. All refreshed
-first-step caches are cleared on demand before recomputation, including newly direct-lit
-cells. Cached entries outside the localized halo use the same reduced invariant
-and remain unaffected by the edit; the boundary argument above is unchanged.
+This bounds scratch to `(16 + 2*r)^2 * (2*r + 1)` cells (32x32x17 at the default
+reach) and one queue entry per cell, independent
+of the number of direct-sky sources or total residency. Two field-owned scratch
+vectors reuse capacity across output requests; there is no per-tile or per-source
+allocation. Chunk intersections are copied with one lookup per chunk, not per
+tile. Low sky intensities shrink the box to the last distance with nonzero output.
+Zero/sub-spill sky, uniform opaque outputs and fully direct-lit outputs skip the
+flood. Uniform direct fills and closed/opaque upper dependency early exits remain.
 
-The uniform-sky regression independently computes full direct, first and second
-transport, deliberately retaining first steps on direct-lit cells. It compares
-all final scalar and incident values for zero, sub-spill and threshold intensities,
-192 and 255, plus localized roof closure/reopening and fresh-field equivalence.
+Only direct caches are lazy dependencies. They are computed before gathering,
+including required resident columns above the box; neighboring final outputs are
+never ensured. Direct cache invalidation uses the same conservative column halo.
+There are no cached partial spill passes or distance fields to become stale, so
+query ordering and no-op Prepare calls with pending outputs cannot change results.
 
-Sky is retained separately, including its two-step spill and upper-face incident
+The uniform-sky regression independently computes `skySpillDistance` synchronous, world-wide
+reachability passes, retaining direct cells in every pass. It compares all scalar
+and incident values at zero, night/rounding thresholds, 192 and 255, plus localized
+roof closure/reopening. Focused tests cover exact cutoff, light bands, bent paths,
+matched stairs/closed floors, opaque nonseeds, opening/closing, negative seams,
+never-finalized seed chunks, pending invalidation, and residency removal/reload.
+
+Sky is retained separately, including its configured spill and upper-face incident
 values. Each local source lazily retains a complete sparse contribution patch, computed
 within a horizontal range-plus-two patch and exactly five Y layers, avoiding
 radius-cubed work. Sources with unchanged position/emission and optics reuse
@@ -242,8 +265,10 @@ Prepare clears the list but preserves revisions and outstanding pending work.
    computation itself as the trigger for observer invalidation.
 
 `WorkStats` resets at Prepare and counts final `outputChunks`, dependency
-`skyDirectChunks`, dependency `skyFirstChunks`, and `sourcePatches` built since
-then. These are deterministic work counters, not timings. Prepare leaves all
+`skyDirectChunks`, `skyFirstChunks`, and `sourcePatches` built since
+then. The legacy `skyFirstChunks` member now counts bounded multi-step sky spill
+patches built for requested chunks (fast-path outputs do not increment it).
+These are deterministic work counters, not timings. Prepare leaves all
 counters zero. A source may compute a whole bounded patch as a dependency of
 one requested chunk; other final chunks remain uncomputed. Metadata scanning
 and descriptor sorting still scale with residency/source count. Cache allocation
@@ -255,15 +280,29 @@ remote residency retaining addresses/revisions, negative-index insertion with
 source patch reuse, roof/seam/source changes and removals. The independent full
 sky and combined-source transport regressions also exercise lazy computation and
 compare **both scalar and all six incident faces**, independently of fresh-field
-equivalence. No shared build or test executable was run for these changes;
-coordinator integration owns build/test validation.
+equivalence.
+
+### Eight-step skylight and facade validation (2026-11-10)
+
+Built `cataclysmx_tests` and `cataclysmx_game` with the `win-msvc-debug` build
+preset. The final focused CTest run using that preset passed **64/64 cases**,
+covering lighting, exposed wall faces, point/bulk perception, lazy invalidation,
+and related rendering/server projection behavior. The first run exposed an old
+"sealed interior" fixture with open corridor ends; the longer flood correctly
+reached those ends. Closing the fixture's ends restored the intended sealed-room
+regression. The new open-facade regression verifies the brighter interior and its
+return to darkness after reclosing.
+
+For the configurable-attenuation follow-up, temporarily setting only
+`skySpillDistance` to **12** passed both the independent transport reference and
+configured seam/falloff regressions with `win-msvc-debug`. After restoring **8**,
+the Debug game and tests rebuilt and **14/14 focused CTest cases** passed,
+including the original eight-step curve and ordinary-light spill regressions.
 
 ### Historical validation before the planar model (2026-11-09)
 
 The measurements below describe the previous spherical/ray implementation only.
 They are not validation or performance claims for the planar implementation.
-The planar changes have not been built or tested by the lighting owner: shared
-target builds and integration validation are reserved for the coordinator.
 
 Built `cataclysmx_tests` with the `win-msvc-debug` configure preset in a separate
 temporary directory, terminal disabled, reusing the existing Debug vcpkg
