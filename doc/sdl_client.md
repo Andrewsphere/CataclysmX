@@ -33,8 +33,8 @@ None establishes a measured speedup for this project.
 SDL3 requires [presentation](https://wiki.libsdl.org/SDL3/SDL_RenderPresent) and
 [event polling](https://wiki.libsdl.org/SDL3/SDL_PollEvent) on its main thread.
 Therefore the main thread is the dedicated platform/render owner, with gameplay
-on another thread. SDL's 2D renderer is sufficient for the initial sprite map;
-no graphics-backend change is needed to separate rendering from gameplay.
+on another thread. The current sprite map uses SDL 3.4's GPU renderer and
+runtime-compiled perception shader; see [sprite shading](sprite_shading.md).
 
 ## Current integration points
 
@@ -339,7 +339,7 @@ See [sprite playback](sprite_animation.md) for the implemented loop/once API and
 visual lightbulb controls. Font selection, UI colors,
 spacing, and glyph-fallback palettes are independent frontend preferences, so
 any tileset can use the same UI configuration. Fonts and themes are not required
-pack dependencies. Full-color PNG tiles retain their artwork colors; arbitrary
+pack dependencies. Full-color PNG tiles receive perception shading; arbitrary
 recoloring, palette replacement for PNG art, and pack-supplied themes are deferred.
 Screen behavior and layout remain C++.
 
@@ -490,8 +490,9 @@ Store selection/focus/scroll state separately from draw calls and world entities
 - `Server::View` clamps radius to 0–12, at most 25×25 cells; the default and
   current LAN view are 17×17. Resize and zoom operate within the supplied view.
   Larger views need an explicit server/network contract change.
-- Check `visible` before resolving terrain or overlays. Hidden cells expose no
-  world information, and there is no remembered-terrain snapshot.
+- Check the independent terrain and overlay visibility channels before resolving
+  artwork. Unknown channels expose no artwork; remembered terrain and furniture
+  use observed data and static sepia sprites or glyph fallbacks, never actors/items.
 - Visible cells provide terrain/damage, actor ID/player flag, ground-item count,
   and object ID/enabled state. SDL snapshots supplement visible ground-item
   overlays with the lowest persistent-ID root's ID/type at `overlayDepth`, captured
@@ -605,8 +606,8 @@ future implementation acceptance checks, not results of this documentation edit:
   focus/cancellation, and item action/target/refusal behavior.
 
 Assert SDL thread affinity with `SDL_IsMainThread` and owner assertions for
-session/transport/storage calls. Add an offscreen/software-renderer smoke test
-where supported and a dedicated Linux ThreadSanitizer configuration separate
+session/transport/storage calls. The implemented SDL smoke uses a hidden GPU
+window, not a dummy video driver or software renderer. Use a dedicated Linux ThreadSanitizer configuration separate
 from ASan/UBSan. Run existing deterministic headless, pacing, generation,
 network, item, and save regressions as their boundaries change. Retain terminal
 tests when extracting shared interaction state.

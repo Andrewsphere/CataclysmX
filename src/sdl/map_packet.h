@@ -1,6 +1,7 @@
 #pragma once
 
 #include "client/text.h"
+#include "client/perception_style.h"
 #include "content/tileset.h"
 #include "sdl/item_visual.h"
 #include "sdl/animation.h"
@@ -14,9 +15,11 @@ struct MapIdentity {
     bool operator==(const MapIdentity&) const = default;
 };
 struct PreparedMapCell {
-    // Drawable when either channel is known, including remembered glyphs.
+    // Drawable when either channel is known, including remembered artwork.
     bool visible = false, hasOverlay = false;
     TerminalAppearance terrain, overlay;
+    // Sprite-only transforms; glyph fallback colors already include perception styling.
+    PerceptionTransform terrainShading, overlayShading;
     TilesetMapping terrainSprite, overlaySprite;
     TilesetMapping groundSprite;
     MapItemVisual itemVisual;

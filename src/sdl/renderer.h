@@ -4,6 +4,7 @@
 #include "sdl/animation.h"
 #include "sdl/map_packet.h"
 #include "sdl/text.h"
+#include "sdl/sprite_shader.h"
 
 namespace cataclysmx::sdl {
 
@@ -35,10 +36,12 @@ eastl::optional<std::uint64_t> VisibleAnimationDelay(const MapPacket& packet,
 TerminalAppearance MapAppearance(const ViewCell& cell, PersistentId playerId, const ContentCatalog& content);
 // An injected presentation clock samples clips without rebuilding the supplied packet.
 // A null packet prepares the small map synchronously for isolated rendering tests.
+// Nonidentity PNG shading requires a shader created for this renderer. A null shader
+// supports glyph-only and ordinary, depth-zero artwork tests on a software renderer.
 bool DrawFrame(SDL_Renderer* renderer, SdlText& text, const SdlAssets& assets, const WorldView* view,
     const ContentCatalog& content, const char* status, const char* hints,
     std::uint64_t elapsedMilliseconds = 0, const MapPacket* packet = nullptr,
     int zoom = 0, float uiScale = 1.0f, UiPalette palette = {},
-    const SpritePlaybackController* playback = nullptr);
+    const SpritePlaybackController* playback = nullptr, SpriteShader* shader = nullptr);
 
 }

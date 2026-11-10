@@ -127,6 +127,7 @@ endif()
 cataclysmx_no_exceptions(cataclysmx_network)
 
 add_library(cataclysmx_client STATIC src/client/text.cpp src/client/text.h
+    src/client/perception_style.cpp src/client/perception_style.h
     src/client/worldgen_debug.cpp src/client/worldgen_debug.h
     src/client/lan_profile.cpp src/client/lan_profile.h
     src/client/input.cpp src/client/input.h src/client/settings.cpp src/client/settings.h
@@ -178,9 +179,15 @@ if(CATACLYSMX_BUILD_TERMINAL)
 endif()
 
 if(CATACLYSMX_BUILD_SDL)
-    find_package(SDL3 CONFIG REQUIRED)
+    find_package(SDL3 3.4 CONFIG REQUIRED)
     find_package(SDL3_image CONFIG REQUIRED)
     find_package(SDL3_ttf CONFIG REQUIRED)
+    find_package(directx-dxc CONFIG REQUIRED)
+    # The pinned DXC package misspells this imported configuration property.
+    get_target_property(dxil_release Microsoft::DXIL IMPORTED_LOCATION_RELASE)
+    if(dxil_release)
+        set_property(TARGET Microsoft::DXIL PROPERTY IMPORTED_LOCATION_RELEASE "${dxil_release}")
+    endif()
     add_library(cataclysmx_sdl STATIC
         src/content/tileset.cpp src/content/tileset.h
         src/content/tileset_source.cpp src/content/tileset_source.h
@@ -194,18 +201,25 @@ if(CATACLYSMX_BUILD_SDL)
         src/sdl/item_visual.cpp src/sdl/item_visual.h
         src/sdl/animation.cpp src/sdl/animation.h
         src/sdl/renderer.cpp src/sdl/renderer.h
+        src/sdl/sprite_shader.cpp src/sdl/sprite_shader.h
         src/sdl/app.cpp src/sdl/app.h)
     target_link_libraries(cataclysmx_sdl PUBLIC cataclysmx_client SDL3::SDL3 SDL3_ttf::SDL3_ttf Threads::Threads
-        PRIVATE SDL3_image::SDL3_image yyjson::yyjson)
+        PRIVATE SDL3_image::SDL3_image yyjson::yyjson Microsoft::DirectXShaderCompiler)
     target_compile_definitions(cataclysmx_sdl PRIVATE
         CATACLYSMX_DEFAULT_TILESET="${CMAKE_CURRENT_SOURCE_DIR}/assets/tiles/gen1_32x32"
-        CATACLYSMX_DEFAULT_FONT="${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/DejaVuSansMono.ttf")
+        CATACLYSMX_DEFAULT_FONT="${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/DejaVuSansMono.ttf"
+        CATACLYSMX_SPRITE_SHADER="${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/sprite.hlsl")
     cataclysmx_no_exceptions(cataclysmx_sdl)
     add_executable(cataclysmx_sdl_game src/sdl/main.cpp)
     target_compile_definitions(cataclysmx_sdl_game PRIVATE
         CATACLYSMX_TERRAIN_FILE="${CMAKE_CURRENT_SOURCE_DIR}/data/terrain.json5"
         CATACLYSMX_LOC_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/data/loc")
     target_link_libraries(cataclysmx_sdl_game PRIVATE cataclysmx_sdl)
+    if(WIN32)
+        # DXC loads its validator dynamically, so vcpkg's import scan misses it.
+        add_custom_command(TARGET cataclysmx_sdl_game POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:Microsoft::DXIL>" "$<TARGET_FILE_DIR:cataclysmx_sdl_game>")
+    endif()
     cataclysmx_no_exceptions(cataclysmx_sdl_game)
 endif()
 
@@ -234,11 +248,15 @@ if(CATACLYSMX_BUILD_TESTS)
             tests/sdl_session_tests.cpp tests/sdl_render_tests.cpp tests/sdl_tileset_tests.cpp
             tests/sdl_asset_tests.cpp tests/sdl_text_tests.cpp tests/sdl_map_tests.cpp tests/sdl_animation_tests.cpp)
         target_sources(cataclysmx_tests PRIVATE tests/sdl_source_tileset_tests.cpp)
+        target_sources(cataclysmx_tests PRIVATE tests/sdl_shader_tests.cpp tests/sdl_shading_integration_tests.cpp)
         target_link_libraries(cataclysmx_tests PRIVATE cataclysmx_sdl)
+        if(WIN32)
+            add_custom_command(TARGET cataclysmx_tests POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "$<TARGET_FILE:Microsoft::DXIL>" "$<TARGET_FILE_DIR:cataclysmx_tests>")
+        endif()
         add_test(NAME sdl_frontend_smoke COMMAND cataclysmx_sdl_game --smoke
             --user-dir "${CMAKE_CURRENT_BINARY_DIR}/test-user/sdl-smoke")
         set_tests_properties(sdl_frontend_smoke PROPERTIES
-            ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_RENDER_DRIVER=software"
             TIMEOUT 20 PASS_REGULAR_EXPRESSION "SDL smoke: ok")
     endif()
     if(CATACLYSMX_BUILD_TERMINAL)

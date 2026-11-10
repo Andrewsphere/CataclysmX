@@ -221,6 +221,7 @@ TEST_CASE("SDL default artwork preserves terrain under transparent overlays", "[
     view.playerId = 1;
     view.cells.resize(1);
     view.cells[0].terrainVisibility = view.cells[0].overlayVisibility = Visibility::Visible;
+    view.cells[0].terrainLight = view.cells[0].overlayLight = LightBand::Ordinary;
     view.cells[0].tile.terrain = TestTerrain("floor");
     const auto layout = MakeMapLayout(800, 600, 1, 1);
     REQUIRE(DrawFrame(render.renderer, text, assets, &view, TestContent(), "Ready", ""));
@@ -284,6 +285,7 @@ TEST_CASE("SDL bundled lightbulb artwork animates all three content items", "[sd
     view.width = view.height = 1;
     view.cells.resize(1);
     view.cells[0].terrainVisibility = view.cells[0].overlayVisibility = Visibility::Visible;
+    view.cells[0].terrainLight = view.cells[0].overlayLight = LightBand::Ordinary;
     view.cells[0].ground_items = 1;
     view.cells[0].tile.terrain = TestTerrain("floor");
     const auto layout = MakeMapLayout(800, 600, 1, 1);
@@ -342,6 +344,7 @@ TEST_CASE("SDL rendering samples atlas animation without rebuilding map", "[sdl]
     SdlText text(render.renderer); REQUIRE(text.Ready());
     WorldView view; view.width = 1; view.height = 1; view.playerId = 1; view.cells.resize(1);
     view.cells[0].terrainVisibility = view.cells[0].overlayVisibility = Visibility::Visible;
+    view.cells[0].terrainLight = view.cells[0].overlayLight = LightBand::Ordinary;
     view.cells[0].tile.terrain = TestTerrain("air"); view.cells[0].actor = 1;
     const auto packet = PrepareMapPacket(view,TestContent(),assets.Definition(),{1,2,3,4});
     const auto* packetCells = packet.cells.data();
@@ -356,6 +359,9 @@ TEST_CASE("SDL rendering samples atlas animation without rebuilding map", "[sdl]
         CHECK(packet.cells.data() == packetCells);
     };
     checkPixel(0,255,0); checkPixel(10,0,255); checkPixel(30,255,0);
+    view.cells[0].terrainLight = LightBand::Dim;
+    const auto shaded = PrepareMapPacket(view, TestContent(), assets.Definition(), {});
+    CHECK_FALSE(DrawFrame(render.renderer, text, assets, &view, TestContent(), "Ready", "Move", 0, &shaded));
 }
 
 TEST_CASE("SDL controlled sprites draw one blink and resume the base without new resources", "[sdl][assets][animation]") {
@@ -374,6 +380,7 @@ TEST_CASE("SDL controlled sprites draw one blink and resume the base without new
     view.width = view.height = 1;
     view.cells.resize(1);
     view.cells[0].terrainVisibility = view.cells[0].overlayVisibility = Visibility::Visible;
+    view.cells[0].terrainLight = view.cells[0].overlayLight = LightBand::Ordinary;
     view.cells[0].tile.terrain = TestTerrain("floor");
     view.cells[0].ground_items = 1;
     const Vector<MapItemVisual> items{{77, TestItem("single_blink_lightbulb")}};

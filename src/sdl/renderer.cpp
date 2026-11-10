@@ -87,7 +87,8 @@ bool SpriteBoundsVisible(const SDL_FRect& bounds, SpriteLayer layer,
 }
 
 bool DrawLayer(SDL_Renderer* renderer, const SdlAssets& assets, const TilesetMapping& mapping,
-    const TerminalAppearance& fallback, const SDL_FRect& destination, SpriteLayer pass,
+    const TerminalAppearance& fallback, const PerceptionTransform& shading, SpriteShader* shader,
+    const SDL_FRect& destination, SpriteLayer pass,
     SpriteLayer fallbackLayer = SpriteLayer::Ground) {
     if (mapping.kind == TilesetMappingKind::Missing) {
         if (pass != fallbackLayer) { return true; }
@@ -107,7 +108,14 @@ bool DrawLayer(SDL_Renderer* renderer, const SdlAssets& assets, const TilesetMap
     SDL_Vertex vertices[4]{};
     for (unsigned i = 0; i < 4; ++i) { vertices[i] = {geometry.points[i], {1, 1, 1, 1}, uv[i]}; }
     constexpr int indices[] = {0, 1, 2, 0, 2, 3};
-    return SDL_RenderGeometry(renderer, assets.Texture(sprite.atlasIndex), vertices, 4, indices, 6);
+    if (shader) {
+        if (!shader->Apply(shading)) { return false; }
+    } else if (shading != PerceptionTransform{}) {
+        return SDL_SetError("Perceived PNG artwork requires the GPU sprite shader");
+    }
+    const bool drawn = SDL_RenderGeometry(renderer, assets.Texture(sprite.atlasIndex), vertices, 4, indices, 6);
+    const bool cleared = !shader || shader->Clear();
+    return drawn && cleared;
 }
 
 }
@@ -201,7 +209,7 @@ TerminalAppearance MapAppearance(const ViewCell& cell, PersistentId playerId, co
 bool DrawFrame(SDL_Renderer* renderer, SdlText& text, const SdlAssets& assets, const WorldView* view,
     const ContentCatalog& content, const char* status, const char* hints,
     std::uint64_t elapsedMilliseconds, const MapPacket* packet, int zoom, float uiScale, UiPalette palette,
-    const SpritePlaybackController* playback) {
+    const SpritePlaybackController* playback, SpriteShader* shader) {
     if (!SDL_IsMainThread()) { std::abort(); }
     int width = 0, height = 0;
     if (!SDL_GetCurrentRenderOutputSize(renderer, &width, &height)
@@ -241,12 +249,12 @@ bool DrawFrame(SDL_Renderer* renderer, SdlText& text, const SdlAssets& assets, c
                     const auto& cell = packet->cells[index];
                     const auto destination = CellRect(layout, column, row);
                     if (pass == SpriteLayer::Ground && cell.groundSprite.kind != TilesetMappingKind::Missing
-                        && !DrawLayer(renderer, assets, cell.groundSprite, cell.terrain, destination, pass)) { return false; }
+                        && !DrawLayer(renderer, assets, cell.groundSprite, cell.terrain, cell.terrainShading, shader, destination, pass)) { return false; }
                     const auto terrainSample = controller.Sample(0, cell.terrainSprite, definition, elapsedMilliseconds);
-                    if (!DrawLayer(renderer, assets, terrainSample.mapping, cell.terrain, destination, pass)) { return false; }
+                    if (!DrawLayer(renderer, assets, terrainSample.mapping, cell.terrain, cell.terrainShading, shader, destination, pass)) { return false; }
                     if (cell.hasOverlay) {
                         const auto overlaySample = controller.Sample(cell.itemVisual.item, cell.overlaySprite, definition, elapsedMilliseconds);
-                        if (!DrawLayer(renderer, assets, overlaySample.mapping, cell.overlay, destination, pass, SpriteLayer::Upright)) { return false; }
+                        if (!DrawLayer(renderer, assets, overlaySample.mapping, cell.overlay, cell.overlayShading, shader, destination, pass, SpriteLayer::Upright)) { return false; }
                     }
                 }
             }

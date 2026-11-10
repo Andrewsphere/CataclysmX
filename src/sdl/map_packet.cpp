@@ -3,6 +3,18 @@
 #include <cstdlib>
 
 namespace cataclysmx::sdl {
+namespace {
+TilesetMapping FreezeMemoryMapping(const TilesetDefinition& tileset, TilesetMapping mapping) {
+    if (mapping.kind == TilesetMappingKind::Animation) {
+        if (mapping.index >= tileset.animations.size() || tileset.animations[mapping.index].frames.empty()) { std::abort(); }
+        mapping.kind = TilesetMappingKind::Sprite;
+        mapping.index = tileset.animations[mapping.index].frames.front().spriteIndex;
+    }
+    mapping.activation.reset();
+    return mapping;
+}
+}
+
 MapPacket PrepareMapPacket(const WorldView& view, const ContentCatalog& content,
     const TilesetDefinition& tileset, MapIdentity identity, const Vector<MapItemVisual>& items) {
     MapPacket packet;
@@ -16,6 +28,8 @@ MapPacket PrepareMapPacket(const WorldView& view, const ContentCatalog& content,
         PreparedMapCell prepared;
         prepared.visible = cell.terrainVisibility != Visibility::Unknown || cell.overlayVisibility != Visibility::Unknown;
         if (!prepared.visible) { packet.cells.push_back(eastl::move(prepared)); continue; }
+        prepared.terrainShading = MakePerceptionTransform(cell.terrainVisibility, cell.terrainLight, cell.terrainDepth);
+        prepared.overlayShading = MakePerceptionTransform(cell.overlayVisibility, cell.overlayLight, cell.overlayDepth);
         ViewCell terrain = cell;
         terrain.actor = 0;
         terrain.ground_items = 0;
@@ -23,8 +37,7 @@ MapPacket PrepareMapPacket(const WorldView& view, const ContentCatalog& content,
         terrain.objectAppearance = {};
         terrain.overlayVisibility = Visibility::Unknown;
         prepared.terrain = CellAppearance(terrain, content);
-        // Memory uses the shared sepia glyph fallback rather than live artwork/animation.
-        if (cell.terrainVisibility == Visibility::Visible) {
+        if (cell.terrainVisibility != Visibility::Unknown) {
             if (cell.tile.terrain.value < tileset.terrain.size()) { prepared.terrainSprite = tileset.terrain[cell.tile.terrain.value]; }
             if (cell.tile.terrain.value < tileset.terrainGround.size()) { prepared.groundSprite = tileset.terrainGround[cell.tile.terrain.value]; }
         }
@@ -42,7 +55,7 @@ MapPacket PrepareMapPacket(const WorldView& view, const ContentCatalog& content,
             else { kind = cell.objectAppearance.active ? GenericSprite::ObjectEnabled : GenericSprite::ObjectDisabled; }
             prepared.overlay = CellAppearance(display, content);
             if (liveOverlay && cell.actor != 0 && cell.player && cell.actor != view.playerId) { prepared.overlay.symbol = "P"; }
-            if (liveOverlay) { prepared.overlaySprite = tileset.generic[static_cast<unsigned>(kind)]; }
+            prepared.overlaySprite = tileset.generic[static_cast<unsigned>(kind)];
             if (liveOverlay && kind == GenericSprite::GroundItems && !items.empty()) {
                 prepared.itemVisual = items[packet.cells.size()];
                 const auto type = prepared.itemVisual.type.value;
@@ -71,9 +84,16 @@ MapPacket PrepareMapPacket(const WorldView& view, const ContentCatalog& content,
         }
         prepared.terrainSprite = ResolveVisual(tileset, prepared.terrainSprite, view.origin.x + column,
             view.origin.z + row, view.origin.y - static_cast<int>(cell.terrainDepth), 0, connections);
-        const auto entity = cell.actor ? cell.actor : (prepared.itemVisual.item ? prepared.itemVisual.item : cell.object);
+        const auto entity = liveOverlay ? (cell.actor ? cell.actor : (prepared.itemVisual.item ? prepared.itemVisual.item : cell.object)) : 0;
         prepared.overlaySprite = ResolveVisual(tileset, prepared.overlaySprite, view.origin.x + column,
             view.origin.z + row, view.origin.y - static_cast<int>(cell.overlayDepth), entity);
+        if (cell.terrainVisibility == Visibility::Remembered) {
+            prepared.terrainSprite = FreezeMemoryMapping(tileset, prepared.terrainSprite);
+            prepared.groundSprite = FreezeMemoryMapping(tileset, prepared.groundSprite);
+        }
+        if (cell.overlayVisibility == Visibility::Remembered) {
+            prepared.overlaySprite = FreezeMemoryMapping(tileset, prepared.overlaySprite);
+        }
         packet.cells.push_back(eastl::move(prepared));
     }
     return packet;

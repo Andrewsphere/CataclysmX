@@ -22,7 +22,7 @@ and an oversized upright tree. Separate off/on PNGs supply the three lightbulb
 items. Individual production PNGs and retained asphalt/tree references are
 documented in [the pack notes](tileset_artwork.md). Actors, ground items and
 machines have transparent surroundings so terrain shows through. PNG colors are
-preserved independently of content glyph and UI colors.
+independent of glyph and UI palettes, but receive perception shading.
 
 The built-in monochrome fallback contains sixteen glyphs in a 512x32 texture and
 supplies omitted PNG mappings; unsupported glyphs display `?`. A source pack with
@@ -40,7 +40,8 @@ Press `z` to zoom in and `Z` (Shift+z) to zoom out; the mouse wheel does not zoo
 Zoom stays centered on the character, including when the map extends beyond the
 viewport. These SDL shortcuts do not submit simulation commands and are inactive
 in help modals. `UiPalette` controls screen colors separately from
-artwork; terrain glyph colors still come from the catalog. PNG RGB is never tinted.
+artwork; terrain glyph colors still come from the catalog. PNG RGB receives the
+source cell's light, memory and depth styling; see [sprite shading](sprite_shading.md).
 Font/theme persistence, runtime tileset reload, and font pickers are not implemented.
 SDL_ttf's HarfBuzz/SVG features are disabled: UTF-8 and bundled Latin/Cyrillic text
 are supported, but complex-script shaping is limited.
@@ -65,9 +66,9 @@ are supported, but complex-script shaping is limited.
   alive until workers join.
 - Terrain and overlays use their independent `WorldView` visibility channels.
   Unknown channels contribute no artwork; live actors/items require visible
-  overlays. Remembered terrain and object appearances use the shared sepia glyph
-  fallback (including depth tint), without live item identities or animations.
-  This preserves map memory while retaining the pack's untinted live PNG colors.
+  overlays. Remembered terrain and furniture use sepia PNG artwork where mapped,
+  frozen at the first animation frame without activation; missing mappings use
+  styled glyphs. Memory contains no actors or items.
 - SDL snapshots additionally own representative ground-item IDs/types captured
   on the session owner. Map preparation resolves item artwork with generic
   fallback, keeping visibility, overlay priority, and projection depth intact.
@@ -86,6 +87,10 @@ are supported, but complex-script shaping is limited.
   `VisibleAnimationDelay` uses transformed sprite bounds inside the displayed map
   clip, including upright overhang across fog. Static scenes have no animation deadline. Animation
   draws do not submit map jobs, capture views, or upload textures.
+- `SpriteShader` owns the GPU fragment shader and cached render states on the main
+  thread. Production passes it as the final `DrawFrame` argument; its renderer
+  must be the same one used to draw. See [sprite shading](sprite_shading.md) for
+  the API, null-shader test restriction, color rules and backend requirements.
 - `MakeMapLayout` returns snapped render-pixel geometry, retaining rectangular
   pack aspect ratios and centering the player-centered view even when zoomed.
   Origins can be negative when the map exceeds the viewport. `MapCellAt` uses
@@ -112,18 +117,24 @@ In VS Code, select `CataclysmX: SDL Linux GCC Debug` or
 its SDL preset first. The default pack is `assets/tiles/gen1_32x32`; use
 `--tileset <directory>` to select another pack.
 
-The optional vcpkg `sdl` feature adds `sdl3-image` with PNG and `sdl3-ttf` without
-HarfBuzz/SVG, retaining the pinned baseline and Linux D-Bus constraint. Python is
+The optional vcpkg `sdl` feature enables SDL Vulkan and adds `directx-dxc`,
+`sdl3-image` with PNG and `sdl3-ttf` without HarfBuzz/SVG, retaining the pinned
+baseline and Linux D-Bus constraint. SDL 3.4's GPU renderer is required. Python is
 not a build dependency of these selected features. Use:
 
 ```sh
 VCPKG_ROOT="$PWD/.tools/vcpkg" cmake --preset linux-gcc-sdl
 cmake --build --preset linux-gcc-sdl
 ctest --preset linux-gcc-sdl -R 'SDL|map packet|map animation|map worker|tileset|animation'
+ctest --preset linux-gcc-sdl -R sdl_frontend_smoke
+./out/build/linux-gcc-sdl/cataclysmx_tests '[gpu]'
 ```
 
 Focused tests cover metadata errors, exact animation boundaries, visible overlay
 priority, owned worker results, path containment, PNG bounds/failures, partial
 upload cleanup, UTF-8 text, coordinate mapping, and software-rendered animation
-with an unchanged snapshot/map packet. The SDL smoke test exercises the bundled
-default through movement, pickup, wait, pause, and resume.
+with an unchanged snapshot/map packet. GPU pixel checks cover DXIL/SPIR-V where
+available, alpha, overhang and memory, alongside packet/client checks. The SDL
+smoke test uses an actual hidden GPU window and exercises the bundled default
+through movement, pickup, wait, pause, and resume. It requires a working video/GPU
+environment; do not set dummy video or software-renderer environment variables.

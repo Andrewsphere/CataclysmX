@@ -82,8 +82,12 @@ int RunApp(const ContentCatalog& content, const Settings& settings,
     if (!SDL_Init(SDL_INIT_VIDEO)) { return SdlFailure(); }
     const SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY
         | (options.smoke ? SDL_WINDOW_HIDDEN : 0);
-    if (!SDL_CreateWindowAndRenderer("CataclysmX", 1120, 780,
-        flags, &platform.window, &platform.renderer)) { return SdlFailure(); }
+    platform.window = SDL_CreateWindow("CataclysmX", 1120, 780, flags);
+    if (!platform.window) { return SdlFailure(); }
+    platform.renderer = SDL_CreateGPURenderer(nullptr, platform.window);
+    if (!platform.renderer) { return SdlFailure(); }
+    SpriteShader shader(platform.renderer);
+    if (!shader.Ready()) { return SdlFailure(); }
     if (!SDL_SetWindowMinimumSize(platform.window, 480, 360)) { return SdlFailure(); }
     const auto eventType = SDL_RegisterEvents(1);
     if (!eventType) { return SdlFailure(); }
@@ -269,7 +273,7 @@ int RunApp(const ContentCatalog& content, const Settings& settings,
         if (dirty && !minimized) {
             if (!DrawFrame(platform.renderer, text, assets, mapValid ? &snapshot.view : nullptr,
                 content, message.c_str(), hints.c_str(), elapsedMilliseconds, mapValid ? &mapPacket : nullptr,
-                zoom, options.uiScale, {}, &playback)) { return SdlFailure(); }
+                zoom, options.uiScale, {}, &playback, &shader)) { return SdlFailure(); }
             dirty = false;
             animationDeadline.reset();
             if (mapValid) {

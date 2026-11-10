@@ -1,4 +1,5 @@
 #include "client/text.h"
+#include "client/perception_style.h"
 #include "content_fixture.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -6,6 +7,8 @@
 #include <EASTL/utility.h>
 
 #include <initializer_list>
+#include <cmath>
+#include <limits>
 
 namespace {
 
@@ -143,6 +146,65 @@ TEST_CASE("Depth tint distinguishes terrain background and overlay depth", "[cli
     CHECK(CellAppearance(cell, content).foreground == deepest.foreground);
 }
 
+TEST_CASE("Shared perception colors retain exact terminal integer rules", "[client][perception]") {
+    const RgbColor color{18, 52, 86};
+    CHECK(PerceptionColor(color, Visibility::Visible, LightBand::Dark, 0, false) == RgbColor{28, 37, 45});
+    CHECK(PerceptionColor(color, Visibility::Visible, LightBand::Dark, 0, true) == RgbColor{4, 13, 21});
+    CHECK(PerceptionColor(color, Visibility::Visible, LightBand::Dim, 0, false) == RgbColor{9, 28, 47});
+    CHECK(PerceptionColor(color, Visibility::Visible, LightBand::Ordinary, 0, false) == color);
+    CHECK(PerceptionColor(color, Visibility::Visible, LightBand::Bright, 0, false) == color);
+    CHECK(PerceptionColor(color, Visibility::Visible, LightBand::Ordinary, 1, false) == RgbColor{25, 63, 112});
+    CHECK(PerceptionColor(color, Visibility::Visible, LightBand::Ordinary, 1, true) == RgbColor{21, 57, 98});
+    for (const auto light : {LightBand::Dark, LightBand::Dim, LightBand::Ordinary, LightBand::Bright}) {
+        CHECK(PerceptionColor(color, Visibility::Remembered, light, 0, false) == RgbColor{64, 49, 32});
+        CHECK(PerceptionColor(color, Visibility::Remembered, light, 1, false) == RgbColor{63, 51, 41});
+        CHECK(PerceptionColor(color, Visibility::Remembered, light, 1, true) == RgbColor{63, 50, 36});
+        for (const auto visibility : {Visibility::Visible, Visibility::Remembered}) {
+            for (const bool background : {false, true}) {
+                CHECK(PerceptionColor(color, visibility, light, 6, background)
+                    == PerceptionColor(color, visibility, light, std::numeric_limits<unsigned>::max(), background));
+            }
+        }
+    }
+}
+
+TEST_CASE("Sprite perception transforms approximate exact colors within two byte levels", "[client][perception]") {
+    CHECK(MakePerceptionTransform(Visibility::Visible, LightBand::Ordinary, 0) == PerceptionTransform{});
+    CHECK(MakePerceptionTransform(Visibility::Visible, LightBand::Bright, 0) == PerceptionTransform{});
+    // Asymmetric colors exercise all luminance coefficients, including cross-channel mixing.
+    const RgbColor samples[] = {{0, 0, 0}, {255, 255, 255}, {255, 0, 0}, {0, 255, 0}, {0, 0, 255},
+        {18, 52, 86}, {120, 154, 188}, {1, 2, 3}, {254, 127, 63}, {37, 209, 151}};
+    for (const auto visibility : {Visibility::Visible, Visibility::Remembered}) {
+        for (const auto light : {LightBand::Dark, LightBand::Dim, LightBand::Ordinary, LightBand::Bright}) {
+            for (const unsigned depth : {0U, 1U, 2U, 5U, 6U, 100U, std::numeric_limits<unsigned>::max()}) {
+                for (const bool background : {false, true}) {
+                    const auto transform = MakePerceptionTransform(visibility, light, depth, background);
+                    for (const auto color : samples) {
+                        const auto exact = PerceptionColor(color, visibility, light, depth, background);
+                        const auto channel = [color](const eastl::array<float, 4>& row) {
+                            return std::lround(row[0] * color.red + row[1] * color.green + row[2] * color.blue + row[3] * 255.0f);
+                        };
+                        CHECK(std::abs(channel(transform.red) - exact.red) <= 2);
+                        CHECK(std::abs(channel(transform.green) - exact.green) <= 2);
+                        CHECK(std::abs(channel(transform.blue) - exact.blue) <= 2);
+                    }
+                    CHECK(MakePerceptionTransform(visibility, light, 6, background)
+                        == MakePerceptionTransform(visibility, light, std::numeric_limits<unsigned>::max(), background));
+                    if (visibility == Visibility::Remembered) {
+                        CHECK(transform == MakePerceptionTransform(visibility, LightBand::Ordinary, depth, background));
+                    }
+                }
+            }
+        }
+    }
+    const auto memory = MakePerceptionTransform(Visibility::Remembered, LightBand::Dark, 0);
+    CHECK(memory.red[1] > memory.red[0]);
+    CHECK(memory.red[2] > 0);
+    CHECK(memory.red[3] > memory.green[3]);
+    CHECK(MakePerceptionTransform(Visibility::Visible, LightBand::Dark, 0).red[3] > 0);
+    CHECK(MakePerceptionTransform(Visibility::Visible, LightBand::Dark, 0, true).red[3] == 0);
+}
+
 TEST_CASE("Item command parser accepts vertical direction symbols", "[client]") {
     Command command;
     REQUIRE(ParseItemCommand("use 1 2 activate <", command));
@@ -193,8 +255,7 @@ TEST_CASE("Live light bands preserve ordinary colors and keep dark near vision r
     cell.terrainLight = LightBand::Bright; const auto bright = CellAppearance(cell, content);
     cell.terrainLight = LightBand::Dim; const auto dim = CellAppearance(cell, content);
     cell.terrainLight = LightBand::Dark; const auto dark = CellAppearance(cell, content);
-    CHECK(bright.foreground.red > ordinary.foreground.red);
-    CHECK(bright.background.blue > ordinary.background.blue);
+    CHECK(bright == ordinary);
     CHECK(dim.foreground.blue < ordinary.foreground.blue);
     CHECK(dark.foreground.red >= 24);
     CHECK(dark.foreground != dark.background);

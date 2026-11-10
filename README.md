@@ -9,6 +9,9 @@ under `assets/tiles/gen1_32x32`, assembled into atlas pages at startup. See
 animations, variants and anchored sprites. The default uses plain asphalt and
 upright grass tufts. Select another version-2 source pack with
 `--tileset <directory>`; preassembled tileset atlases are unsupported.
+The client requires SDL 3.4's GPU renderer; PNG sprites receive light, depth and
+memory shading. See [sprite shading](doc/sprite_shading.md) for GPU requirements
+and validation.
 
 ## Play and inspect
 
@@ -330,10 +333,10 @@ copies. ENet provides LAN transport; SQLite provides host-side saves.
 Python is not a build prerequisite. On Linux, the manifest explicitly disables
 D-Bus's default features to exclude optional systemd integration and its
 Meson/Jinja2/Python build tools. The optional `sdl` manifest feature retains
-IBus, X11, and Wayland support. Build the local SDL prototype with
+IBus, X11, Wayland and Vulkan support and adds `directx-dxc`. Build the local SDL prototype with
 `cmake --preset linux-gcc-sdl` and `cmake --build --preset linux-gcc-sdl`, then run
 `out/build/linux-gcc-sdl/cataclysmx_sdl_game`. See
-[SDL frontend](doc/sdl_client.md#running-the-prototype) for controls and scope.
+[SDL rendering](doc/sdl_rendering.md) for controls and scope.
 Keep this constraint when changing dependency features or updating the baseline.
 
 The project triplets enable `SPDLOG_NO_EXCEPTIONS` **while compiling spdlog**, whose

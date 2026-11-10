@@ -1,8 +1,8 @@
 #include "client/text.h"
+#include "client/perception_style.h"
 
 #include <charconv>
 #include <cstdlib>
-#include <algorithm>
 
 namespace cataclysmx {
 namespace {
@@ -14,37 +14,6 @@ void append_number(String& text, T value) {
     const auto result = std::to_chars(buffer, buffer + sizeof(buffer), value);
     if (result.ec != std::errc{}) { std::abort(); }
     text.append(buffer, static_cast<String::size_type>(result.ptr - buffer));
-}
-
-RgbColor DepthTint(RgbColor color, unsigned int depth, bool background, bool memory = false) {
-    const unsigned int percent = depth == 0 ? 0 : std::min(70U, 15U + std::min(depth, 20U) * 10U);
-    const unsigned int strength = (background ? percent / 2 : percent) / (memory ? 4 : 1);
-    const auto blend = [strength](unsigned int value, unsigned int target) {
-        return static_cast<unsigned char>((value * (100U - strength) + target * strength) / 100U);
-    };
-    return {blend(color.red, 48), blend(color.green, 96), blend(color.blue, 192)};
-}
-
-RgbColor PerceptionColor(RgbColor color, Visibility visibility, LightBand light, unsigned depth, bool background) {
-    const bool memory = visibility == Visibility::Remembered;
-    if (memory) {
-        const unsigned value = (unsigned(color.red) * 30 + unsigned(color.green) * 59 + unsigned(color.blue) * 11) / 100;
-        color = {static_cast<unsigned char>(40 + value * 55 / 100),
-            static_cast<unsigned char>(30 + value * 43 / 100), static_cast<unsigned char>(20 + value * 28 / 100)};
-    } else {
-        const auto channel = [light, background](unsigned value) {
-            switch (light) {
-            case LightBand::Dark: return background ? value / 4 : 24 + value / 4;
-            case LightBand::Dim: return value * 55 / 100;
-            case LightBand::Ordinary: return value;
-            case LightBand::Bright: return value + (255 - value) / 3;
-            }
-            return value;
-        };
-        color = {static_cast<unsigned char>(channel(color.red)), static_cast<unsigned char>(channel(color.green)),
-            static_cast<unsigned char>(channel(color.blue))};
-    }
-    return DepthTint(color, depth, background, memory);
 }
 
 }

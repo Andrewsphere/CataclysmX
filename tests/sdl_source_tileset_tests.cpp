@@ -343,7 +343,7 @@ TEST_CASE("source sprites render anchored transforms and visible upright overhan
     Wake wake; SdlAssets assets(&TestContent(), f.Directory(), Wake::Signal, &wake); REQUIRE(wake.Finish(assets, f.renderer) == AssetState::Ready);
     SdlText text(f.renderer); REQUIRE(text.Ready());
     WorldView view; view.width = 1; view.height = 2; view.cells.resize(2);
-    for (auto& cell : view.cells) { cell.terrainVisibility = cell.overlayVisibility = Visibility::Visible; cell.tile.terrain = TestTerrain("grass"); }
+    for (auto& cell : view.cells) { cell.terrainVisibility = cell.overlayVisibility = Visibility::Visible; cell.terrainLight = cell.overlayLight = LightBand::Ordinary; cell.tile.terrain = TestTerrain("grass"); }
     view.cells[1].actor = 99;
     auto packet = PrepareMapPacket(view, TestContent(), assets.Definition(), {});
     const auto layout = MakeMapLayout(800, 600, 1, 2, 2, 2);
@@ -373,7 +373,7 @@ TEST_CASE("upright terrain retains an independent ground PNG beneath its transpa
     Wake wake; SdlAssets assets(&TestContent(), f.Directory(), Wake::Signal, &wake); REQUIRE(wake.Finish(assets, f.renderer) == AssetState::Ready);
     SdlText text(f.renderer); REQUIRE(text.Ready());
     WorldView view; view.width = 1; view.height = 2; view.cells.resize(2);
-    for (auto& cell : view.cells) { cell.terrainVisibility = Visibility::Visible; cell.tile.terrain = TestTerrain("grass"); }
+    for (auto& cell : view.cells) { cell.terrainVisibility = Visibility::Visible; cell.terrainLight = LightBand::Ordinary; cell.tile.terrain = TestTerrain("grass"); }
     view.cells[1].tile.terrain = TestTerrain("tree");
     auto packet = PrepareMapPacket(view, TestContent(), assets.Definition(), {});
     REQUIRE(packet.cells[1].groundSprite.kind == TilesetMappingKind::Sprite);

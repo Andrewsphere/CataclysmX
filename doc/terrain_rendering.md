@@ -43,8 +43,8 @@ perception independently, so unlit unknown air does not hide a visible lit floor
 below. The fallback memory path follows known geometry independently; a hidden
 world edit cannot change how far that remembered path descends.
 
-Visible contributions apply their own `LightBand`: Ordinary preserves original
-colors exactly, Bright blends one third toward white, Dim scales to 55%, and Dark
+Visible contributions apply their own `LightBand`: Ordinary and Bright preserve
+original colors exactly, Dim scales to 55%, and Dark
 scales backgrounds to 25% and foregrounds to `24 + channel / 4`, keeping near vision
 readable. Remembered contributions ignore current light and use sepia: weighted
 luminance `(30R + 59G + 11B) / 100`, then RGB `(40 + 55%L, 30 + 43%L, 20 + 28%L)`.
@@ -57,6 +57,15 @@ background always uses terrain depth. Positive depth blends toward blue
 `(48,96,192)` at `min(70%, 15% + 10% × depth)`; background applies half that
 strength. Memory uses one quarter of those strengths, after sepia conversion.
 See [Y layers](y_layers.md) for projection and visibility rules.
+
+The shared `PerceptionColor` applies these integer rules to glyphs and flat colors;
+`MakePerceptionTransform` supplies the corresponding normalized RGB transform for
+SDL PNG pixels. Terrain and overlay use their own source visibility, light and
+depth, including across sprite overhang. Remembered PNG terrain and furniture
+use static first frames, while missing mappings use glyphs styled once. Memory
+contains no actors or items. A mapped `terrainGround` uses the same foreground-strength
+transform as its terrain sprite; the colored flat background retains its half-strength
+depth tint. See [sprite shading](sprite_shading.md) for precision and API details.
 
 The gameplay status shows localized `Light: <band>` from `WorldView::playerLight`
 in both wide and compact layouts (`game.ui.light`, `game.light.*`).
