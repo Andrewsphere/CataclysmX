@@ -16,6 +16,7 @@
 #include <EASTL/optional.h>
 #include <EASTL/sort.h>
 #include <EASTL/utility.h>
+#include <ankerl/unordered_dense.h>
 
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
 #error Engine must compile without exceptions
@@ -58,6 +59,19 @@ bool ValidMode(LoadMode mode) {
     return mode == LoadMode::resident || mode == LoadMode::active;
 }
 
+bool ColumnLess(ColumnCoord left, ColumnCoord right) {
+    return left.x < right.x || (left.x == right.x && left.z < right.z);
+}
+
+bool ValidCircle(TileCircleRegion region) {
+    const auto x = static_cast<std::int64_t>(region.center.x);
+    const auto z = static_cast<std::int64_t>(region.center.z);
+    const auto radius = static_cast<std::int64_t>(region.radiusTiles);
+    return radius >= 0 && radius <= maxCircleResidencyRadius
+        && x - radius >= -world_coordinate_limit && x + radius <= world_coordinate_limit
+        && z - radius >= -world_coordinate_limit && z + radius <= world_coordinate_limit;
+}
+
 template<class T>
 void EraseOne(Vector<T>& values, T value) {
     const auto found = eastl::find(values.begin(), values.end(), value);
@@ -87,6 +101,7 @@ const T* Live(const dod::slot_map64<T>& slots, Handle<Tag> handle) {
 struct Request {
     ChunkRegion region;
     LoadMode mode;
+    eastl::optional<TileCircleRegion> circle;
 };
 
 using Archive = ChunkArchive;
@@ -215,8 +230,8 @@ bool ValidMemories(const ContentCatalog& content, const Vector<PlayerMemory>& me
     return true;
 }
 
-struct Demand {
-    ChunkCoord position;
+struct ColumnDemand {
+    ColumnCoord position;
     bool active;
 };
 
@@ -276,6 +291,17 @@ ItemLocation ItemLocation::Stored(ObjectHandle object) {
 }
 
 class World::Impl {
+    struct ColumnHash {
+        std::uint64_t operator()(ColumnCoord position) const {
+            const auto key = (static_cast<std::uint64_t>(static_cast<std::uint32_t>(position.x)) << 32)
+                | static_cast<std::uint32_t>(position.z);
+            return ankerl::unordered_dense::hash<std::uint64_t>{}(key);
+        }
+    };
+    struct ChunkColumn {
+        eastl::array<Chunk, world_layer_count> layers;
+    };
+    ankerl::unordered_dense::segmented_map<ColumnCoord, ChunkColumn, ColumnHash> columns_;
 public:
     const ContentCatalog& content;
     TerrainId floor;
@@ -289,10 +315,12 @@ public:
     dod::slot_map64<Item> items;
     dod::slot_map64<InteractiveObject> objects;
     dod::slot_map64<Request> requests;
-    Vector<Chunk> chunks; // Always lexicographic (x, z, y).
-    // Index, not a borrowed pointer: structural edits may relocate/reorder chunks.
-    mutable std::size_t lastChunkLookup = 0;
     Vector<Archive> archives; // Only currently unloaded chunks.
+    // Clean, disposable FIFO values; pending archives are never subject to eviction.
+    Vector<Archive> warmArchives;
+    static constexpr std::size_t maxWarmEntries = 256;
+    static constexpr std::size_t maxWarmBytes = 8 * 1024 * 1024;
+    std::size_t warmBytes = 0;
     Vector<ChunkCoord> dirtyChunks; // Sorted, includes pending unloaded archives.
     Vector<PlayerLocation> playerPositions; // Sorted by ID; survives unload and archive eviction.
     ItemSystem itemSystem;
@@ -313,7 +341,7 @@ public:
     std::uint64_t appearanceRevision = 1;
     mutable std::uint64_t lightingRevision = 1;
     bool demandDirty = true;
-    Vector<Demand> reconciledDemand;
+    Vector<ColumnDemand> reconciledDemand; // Canonical committed X/Z traversal.
     VisionProfile vision;
     mutable PerceptionStats perceptionStats;
     mutable OpticalField optics;
@@ -376,6 +404,16 @@ public:
         } else { where->revision = inputRevision; }
     }
 
+    void EnsureLighting(const World& world, ChunkCoord position) const {
+        const auto before = lighting.GetWorkStats();
+        lighting.EnsureChunk(world, position);
+        const auto& after = lighting.GetWorkStats();
+        perceptionStats.lightingOutputChunks += after.outputChunks - before.outputChunks;
+        perceptionStats.lightingSkyDirectChunks += after.skyDirectChunks - before.skyDirectChunks;
+        perceptionStats.lightingSkyFirstChunks += after.skyFirstChunks - before.skyFirstChunks;
+        perceptionStats.lightingSourcePatches += after.sourcePatches - before.sourcePatches;
+    }
+
     ObserverCache& PerceptionFor(const World& world, const Actor& actor) const {
         auto found = eastl::find_if(observers.begin(), observers.end(), [&](const ObserverCache& cache) {
             return cache.player == actor.id;
@@ -404,7 +442,7 @@ public:
         world.GetLightLevel(actor.position);
         if (geometryChanged || cache.lightingRevision == 0 || cache.vision != vision) {
             ++perceptionStats.filterRebuilds;
-            lightSamples.resize(chunks.size());
+            lightSamples.resize(ChunkCount());
             cache.visible = cache.geometry;
             cache.footprint.clear();
             const auto observerLight = lighting.Get(actor.position);
@@ -413,8 +451,8 @@ public:
                 const int range = VisionRange(vision, static_cast<LightBand>(i), observerLight);
                 squaredRanges[i] = range * range;
             }
-            for (std::size_t chunkIndex = 0; chunkIndex < chunks.size(); ++chunkIndex) {
-                const Chunk& chunk = chunks[chunkIndex];
+            for (std::size_t chunkIndex = 0; chunkIndex < ChunkCount(); ++chunkIndex) {
+                const Chunk& chunk = ChunkAt(chunkIndex);
                 const auto coord = chunk.position;
                 if (coord.y < cache.geometry.minimumY || coord.y > cache.geometry.maximumY
                     || coord.x * chunk_size > actor.position.x + vision.range
@@ -422,6 +460,8 @@ public:
                     || coord.z * chunk_size > actor.position.z + vision.range
                     || (coord.z + 1) * chunk_size <= actor.position.z - vision.range) { continue; }
                 if (!cache.geometry.visibleLayers[coord.y - cache.geometry.minimumY]) { continue; }
+                // Prepare publishes invalidation tokens before output materializes.
+                EnsureLighting(world, coord);
                 auto& samples = lightSamples[chunkIndex];
                 const auto chunkRevision = lighting.GetChunkRevision(coord);
                 if (samples.position != coord || samples.revision != chunkRevision) {
@@ -687,25 +727,77 @@ public:
     }
 
     Chunk* GetChunk(ChunkCoord position) {
-        if (lastChunkLookup < chunks.size() && chunks[lastChunkLookup].position == position) {
-            return &chunks[lastChunkLookup];
-        }
-        const auto found = eastl::lower_bound(chunks.begin(), chunks.end(), position,
-            [](const Chunk& value, ChunkCoord key) { return ChunkLess(value.position, key); });
-        if (found == chunks.end() || found->position != position) { return nullptr; }
-        lastChunkLookup = static_cast<std::size_t>(found-chunks.begin());
-        return &*found;
+        if (!ValidChunk(position)) { return nullptr; }
+        const auto found = columns_.find({position.x, position.z});
+        return found == columns_.end() ? nullptr : &found->second.layers[position.y - world_min_y];
     }
 
     const Chunk* GetChunk(ChunkCoord position) const {
-        if (lastChunkLookup < chunks.size() && chunks[lastChunkLookup].position == position) {
-            return &chunks[lastChunkLookup];
+        if (!ValidChunk(position)) { return nullptr; }
+        const auto found = columns_.find({position.x, position.z});
+        return found == columns_.end() ? nullptr : &found->second.layers[position.y - world_min_y];
+    }
+
+    const eastl::array<Chunk, world_layer_count>& ColumnLayers(ColumnCoord position) const {
+        const auto found = columns_.find(position);
+        Require(found != columns_.end());
+        return found->second.layers;
+    }
+
+    std::size_t ChunkCount() const { return columns_.size() * world_layer_count; }
+
+    const Chunk& ChunkAt(std::size_t index) const {
+        const auto position = reconciledDemand[index / world_layer_count].position;
+        return ColumnLayers(position)[index % world_layer_count];
+    }
+
+    void InstallColumn(ColumnDemand entry) {
+        const auto [where, inserted] = columns_.try_emplace(entry.position);
+        Require(inserted);
+        ++perceptionStats.columnsLoaded;
+        for (int y = world_min_y; y <= world_max_y; ++y) {
+            Chunk& chunk = where->second.layers[y - world_min_y];
+            chunk.position = {entry.position.x, entry.position.z, y};
+            chunk.active = entry.active;
         }
-        const auto found = eastl::lower_bound(chunks.begin(), chunks.end(), position,
-            [](const Chunk& value, ChunkCoord key) { return ChunkLess(value.position, key); });
-        if (found == chunks.end() || found->position != position) { return nullptr; }
-        lastChunkLookup = static_cast<std::size_t>(found-chunks.begin());
-        return &*found;
+    }
+
+    void RemoveColumn(ColumnCoord position) {
+        Require(columns_.erase(position) == 1);
+        ++perceptionStats.columnsUnloaded;
+    }
+
+    static std::size_t WarmCost(const Archive& archive) {
+        // DataObject hides recursive allocation capacities. Only cache item-free
+        // values, whose entire heap ownership can be measured conservatively.
+        return sizeof(Archive) + archive.actors.capacity() * sizeof(SavedActor)
+            + archive.objects.capacity() * sizeof(SavedObject);
+    }
+
+    void ForgetWarm(ChunkCoord position) {
+        const auto found = eastl::find_if(warmArchives.begin(), warmArchives.end(),
+            [position](const Archive& archive) { return archive.position == position; });
+        if (found != warmArchives.end()) {
+            warmBytes -= WarmCost(*found);
+            warmArchives.erase(found);
+        }
+    }
+
+    void RetainWarm(Archive&& archive) {
+        ForgetWarm(archive.position);
+        if (archive.items.capacity() != 0) { return; }
+        const auto cost = WarmCost(archive);
+        constexpr auto valueBudget = maxWarmBytes - maxWarmEntries * sizeof(Archive);
+        if (cost > valueBudget) { return; }
+        while (!warmArchives.empty() && (warmArchives.size() >= maxWarmEntries
+            || cost > valueBudget - warmBytes)) {
+            warmBytes -= WarmCost(warmArchives.front());
+            warmArchives.erase(warmArchives.begin());
+        }
+        // Reserve once to prevent geometric growth beyond the entry bound.
+        warmArchives.reserve(maxWarmEntries);
+        warmBytes += cost;
+        warmArchives.push_back(eastl::move(archive));
     }
 
     WorldResult<void> Available(TileCoord position) const {
@@ -911,6 +1003,7 @@ public:
         for (ObjectHandle handle : value.objects) {
             objects.erase(dod::slot_map64<InteractiveObject>::key{handle.value});
         }
+        ForgetWarm(value.position);
         archives.push_back(eastl::move(saved));
         MarkDirty(value.position);
     }
@@ -945,7 +1038,6 @@ public:
             const auto key = items.emplace(eastl::move(restored));
             Collection(location).push_back({key.raw});
         }
-        for (const SavedItem& item : saved.items) { itemSystem.Attach(FindItem(item.id)); }
     }
 
     SaveResult<void> ValidateSession(const SessionState& session, SaveDatabase* source,
@@ -953,7 +1045,11 @@ public:
         if (session.pacing.ticksPerSecond == 0 || !ValidPosition(session.playerPosition)
             || session.activeRadius < 0
             || session.residentRadius < session.activeRadius
-            || !ValidRegion({ChunkOf(session.playerPosition), session.residentRadius})) {
+            || session.residentRadius > 8
+            || !ValidRegion({ChunkOf(session.playerPosition),
+                session.circleResidency ? session.activeRadius : session.residentRadius})
+            || (session.circleResidency
+                && !ValidCircle({session.playerPosition, session.circleResidency->radiusTiles}))) {
             return SaveFailure(SaveError::InvalidData, "Invalid session pacing or region", diagnostics);
         }
         if (session.players.size() > 32) {
@@ -995,6 +1091,11 @@ public:
             const Archive* archive = nullptr;
             for (const Archive& candidate : archives) {
                 if (candidate.position == position) { archive = &candidate; break; }
+            }
+            if (!archive) {
+                for (const Archive& candidate : warmArchives) {
+                    if (candidate.position == position) { archive = &candidate; break; }
+                }
             }
             eastl::optional<Archive> disk;
             if (!archive && source) {
@@ -1070,6 +1171,8 @@ public:
             return result;
         }
         dirtyChunks.clear();
+        for (const Archive& snapshot : snapshots) { ForgetWarm(snapshot.position); }
+        for (Archive& archive : archives) { RetainWarm(eastl::move(archive)); }
         // clear() alone retains the potentially large outer archive allocation.
         Vector<Archive>().swap(archives);
         return {};
@@ -1089,7 +1192,7 @@ WorldResult<LoadRequest> World::RequestChunks(ChunkRegion region, LoadMode mode)
     }
     region.center.y = 0;
     impl_->demandDirty = true;
-    return LoadRequest{impl_->requests.emplace(Request{region, mode}).raw};
+    return LoadRequest{impl_->requests.emplace(Request{region, mode, eastl::nullopt}).raw};
 }
 
 WorldResult<void> World::UpdateRequest(LoadRequest handle, ChunkRegion region, LoadMode mode) {
@@ -1104,10 +1207,31 @@ WorldResult<void> World::UpdateRequest(LoadRequest handle, ChunkRegion region, L
         return eastl::unexpected(WorldError::invalid_request);
     }
     region.center.y = 0;
-    if (request->region.center == region.center && request->region.radius == region.radius
+    if (!request->circle && request->region.center == region.center && request->region.radius == region.radius
         && request->mode == mode) { return {}; }
     impl_->demandDirty = true;
-    *request = {region, mode};
+    *request = {region, mode, eastl::nullopt};
+    return {};
+}
+
+WorldResult<LoadRequest> World::RequestCircle(TileCircleRegion region, LoadMode mode) {
+    if (!ValidCircle(region)) { return eastl::unexpected(WorldError::invalid_region); }
+    if (!ValidMode(mode)) { return eastl::unexpected(WorldError::invalid_request); }
+    region.center.y = 0;
+    impl_->demandDirty = true;
+    return LoadRequest{impl_->requests.emplace(Request{{}, mode, region}).raw};
+}
+
+WorldResult<void> World::UpdateCircleRequest(LoadRequest handle, TileCircleRegion region, LoadMode mode) {
+    Request* request = Live(impl_->requests, handle);
+    if (!request) { return eastl::unexpected(WorldError::invalid_request); }
+    if (!ValidCircle(region)) { return eastl::unexpected(WorldError::invalid_region); }
+    if (!ValidMode(mode)) { return eastl::unexpected(WorldError::invalid_request); }
+    region.center.y = 0;
+    if (request->circle && request->circle->center == region.center
+        && request->circle->radiusTiles == region.radiusTiles && request->mode == mode) { return {}; }
+    *request = {{}, mode, region};
+    impl_->demandDirty = true;
     return {};
 }
 
@@ -1122,22 +1246,37 @@ WorldResult<void> World::ReleaseRequest(LoadRequest handle) {
 
 SaveResult<void> World::ReconcileChunks(Diagnostics* diagnostics) {
     if (!impl_->demandDirty) { return {}; }
-    Vector<Demand> demand;
+    Vector<ColumnDemand> demand;
     for (const Request& request : impl_->requests) {
+        if (request.circle) {
+            const auto circle = *request.circle;
+            const auto first = ChunkOf({circle.center.x - circle.radiusTiles, circle.center.z - circle.radiusTiles});
+            const auto last = ChunkOf({circle.center.x + circle.radiusTiles, circle.center.z + circle.radiusTiles});
+            for (int x = first.x; x <= last.x; ++x) {
+                for (int z = first.z; z <= last.z; ++z) {
+                    const int nearestX = eastl::clamp(circle.center.x, x * chunk_size, (x + 1) * chunk_size - 1);
+                    const int nearestZ = eastl::clamp(circle.center.z, z * chunk_size, (z + 1) * chunk_size - 1);
+                    const int dx = nearestX - circle.center.x;
+                    const int dz = nearestZ - circle.center.z;
+                    if (dx * dx + dz * dz <= circle.radiusTiles * circle.radiusTiles) {
+                        demand.push_back({{x, z}, request.mode == LoadMode::active});
+                    }
+                }
+            }
+            continue;
+        }
         const ChunkRegion region = request.region;
         for (int x = region.center.x - region.radius; x <= region.center.x + region.radius; ++x) {
             for (int z = region.center.z - region.radius; z <= region.center.z + region.radius; ++z) {
-                for (int y = world_min_y; y <= world_max_y; ++y) {
-                    demand.push_back({{x, z, y}, request.mode == LoadMode::active});
-                }
+                demand.push_back({{x, z}, request.mode == LoadMode::active});
             }
         }
     }
-    eastl::sort(demand.begin(), demand.end(), [](const Demand& a, const Demand& b) {
-        return ChunkLess(a.position, b.position);
+    eastl::sort(demand.begin(), demand.end(), [](const ColumnDemand& a, const ColumnDemand& b) {
+        return ColumnLess(a.position, b.position);
     });
     std::size_t count = 0;
-    for (const Demand entry : demand) {
+    for (const ColumnDemand entry : demand) {
         if (count != 0 && demand[count - 1].position == entry.position) {
             demand[count - 1].active = demand[count - 1].active || entry.active;
         } else {
@@ -1147,7 +1286,7 @@ SaveResult<void> World::ReconcileChunks(Diagnostics* diagnostics) {
     demand.resize(count);
     if (demand.size() == impl_->reconciledDemand.size()
         && eastl::equal(demand.begin(), demand.end(), impl_->reconciledDemand.begin(),
-            [](const Demand& a, const Demand& b) { return a.position == b.position && a.active == b.active; })) {
+            [](const ColumnDemand& a, const ColumnDemand& b) { return a.position == b.position && a.active == b.active; })) {
         impl_->demandDirty = false;
         return {};
     }
@@ -1169,24 +1308,34 @@ SaveResult<void> World::ReconcileChunks(Diagnostics* diagnostics) {
             return SaveFailure(SaveError::InvalidData, "Invalid RAM chunk archive", diagnostics);
         }
     }
+    for (const Archive& archive : impl_->warmArchives) {
+        if (!ValidateArchive(impl_->content, archive, impl_->next_id, ids)) {
+            return SaveFailure(SaveError::InvalidData, "Invalid warm chunk archive", diagnostics);
+        }
+    }
     if (impl_->database) {
-        for (const Demand entry : demand) {
-            if (impl_->GetChunk(entry.position)
-                || eastl::any_of(impl_->archives.begin(), impl_->archives.end(),
-                    [entry](const Archive& archive) { return archive.position == entry.position; })) {
-                continue;
-            }
-            auto saved = impl_->database->ReadChunk(entry.position, impl_->next_id, diagnostics);
-            if (!saved) {
-                if (diagnostics) { diagnostics->Add("Reconciling world chunks"); }
-                return eastl::unexpected(saved.error());
-            }
-            if (*saved) {
-                if ((**saved).position != entry.position
-                    || !ValidateArchive(impl_->content, **saved, impl_->next_id, ids)) {
-                    return SaveFailure(SaveError::InvalidData, "Invalid disk chunk archive", diagnostics);
+        for (const ColumnDemand entry : demand) {
+            for (int y = world_min_y; y <= world_max_y; ++y) {
+                const ChunkCoord position{entry.position.x, entry.position.z, y};
+                if (impl_->GetChunk(position)
+                    || eastl::any_of(impl_->archives.begin(), impl_->archives.end(),
+                        [position](const Archive& archive) { return archive.position == position; })
+                    || eastl::any_of(impl_->warmArchives.begin(), impl_->warmArchives.end(),
+                        [position](const Archive& archive) { return archive.position == position; })) {
+                    continue;
                 }
-                staged.push_back(eastl::move(**saved));
+                auto saved = impl_->database->ReadChunk(position, impl_->next_id, diagnostics);
+                if (!saved) {
+                    if (diagnostics) { diagnostics->Add("Reconciling world chunks"); }
+                    return eastl::unexpected(saved.error());
+                }
+                if (*saved) {
+                    if ((**saved).position != position
+                        || !ValidateArchive(impl_->content, **saved, impl_->next_id, ids)) {
+                        return SaveFailure(SaveError::InvalidData, "Invalid disk chunk archive", diagnostics);
+                    }
+                    staged.push_back(eastl::move(**saved));
+                }
             }
         }
     }
@@ -1195,60 +1344,69 @@ SaveResult<void> World::ReconcileChunks(Diagnostics* diagnostics) {
     }
     // No live state, activity flags, archives, or keys change before this point.
     Impl::GravityBatch batch(*this);
-    for (auto current = impl_->chunks.begin(); current != impl_->chunks.end();) {
-        const auto wanted = eastl::lower_bound(demand.begin(), demand.end(), current->position,
-            [](const Demand& value, ChunkCoord key) { return ChunkLess(value.position, key); });
-        if (wanted == demand.end() || wanted->position != current->position) {
-            impl_->lightingDirty = true;
-            impl_->MarkGeometryDirty(current->position);
-            const auto input = eastl::lower_bound(impl_->lightingInputs.begin(), impl_->lightingInputs.end(), current->position,
-                [](const Impl::LightingInput& entry, ChunkCoord key) { return ChunkLess(entry.position, key); });
-            if (input != impl_->lightingInputs.end() && input->position == current->position) {
-                impl_->lightingInputs.erase(input);
+    for (const ColumnDemand current : impl_->reconciledDemand) {
+        const auto wanted = eastl::lower_bound(demand.begin(), demand.end(), current.position,
+            [](const ColumnDemand& value, ColumnCoord key) { return ColumnLess(value.position, key); });
+        const bool remove = wanted == demand.end() || wanted->position != current.position;
+        for (int y = world_min_y; y <= world_max_y; ++y) {
+            const ChunkCoord position{current.position.x, current.position.z, y};
+            Chunk* chunk = impl_->GetChunk(position);
+            Require(chunk != nullptr);
+            if (remove) {
+                impl_->lightingDirty = true;
+                impl_->MarkGeometryDirty(position);
+                const auto input = eastl::lower_bound(impl_->lightingInputs.begin(), impl_->lightingInputs.end(), position,
+                    [](const Impl::LightingInput& value, ChunkCoord key) { return ChunkLess(value.position, key); });
+                if (input != impl_->lightingInputs.end() && input->position == position) { impl_->lightingInputs.erase(input); }
+                chunk->active = false;
+                impl_->Unload(*chunk);
+            } else {
+                if (chunk->active != wanted->active) { ++impl_->mapRevision; ++impl_->revision; }
+                chunk->active = wanted->active;
             }
+        }
+        // Erase by key: segmented_map erase can move its last value into this slot.
+        if (remove) { impl_->RemoveColumn(current.position); }
+    }
+    const auto incomingArchive = [&](ChunkCoord position) -> const Archive* {
+        for (const Archive& archive : impl_->archives) { if (archive.position == position) { return &archive; } }
+        for (const Archive& archive : impl_->warmArchives) { if (archive.position == position) { return &archive; } }
+        for (const Archive& archive : staged) { if (archive.position == position) { return &archive; } }
+        return nullptr;
+    };
+    Vector<ChunkCoord> incoming;
+    for (const ColumnDemand entry : demand) {
+        if (impl_->GetChunk({entry.position.x, entry.position.z, world_min_y})) { continue; }
+        impl_->InstallColumn(entry);
+        for (int y = world_min_y; y <= world_max_y; ++y) {
+            const ChunkCoord position{entry.position.x, entry.position.z, y};
+            incoming.push_back(position);
+            impl_->MarkLightingDirty(position);
+            impl_->MarkGeometryDirty(position);
             ++impl_->mapRevision;
             ++impl_->revision;
-            current->active = false;
-            impl_->Unload(*current);
-            current = impl_->chunks.erase(current);
-        } else {
-            if (current->active != wanted->active) { ++impl_->mapRevision; ++impl_->revision; }
-            current->active = wanted->active;
-            ++current;
+            Chunk* chunk = impl_->GetChunk(position);
+            if (const Archive* saved = incomingArchive(position)) { chunk->tiles = saved->tiles; }
+            else { impl_->Generate(*chunk); impl_->MarkDirty(position); }
         }
     }
-    for (const Demand entry : demand) {
-        if (impl_->GetChunk(entry.position)) {
-            continue;
-        }
-        Chunk value;
-        impl_->MarkLightingDirty(entry.position);
-        impl_->MarkGeometryDirty(entry.position);
-        ++impl_->mapRevision;
-        ++impl_->revision;
-        value.position = entry.position;
-        value.active = entry.active;
-        const auto where = eastl::lower_bound(impl_->chunks.begin(), impl_->chunks.end(), entry.position,
-            [](const Chunk& chunk, ChunkCoord key) { return ChunkLess(chunk.position, key); });
-        const auto inserted = impl_->chunks.insert(where, eastl::move(value));
-        const auto saved = eastl::find_if(impl_->archives.begin(), impl_->archives.end(),
-            [entry](const Archive& archive) { return archive.position == entry.position; });
-        if (saved == impl_->archives.end()) {
-            const auto disk = eastl::find_if(staged.begin(), staged.end(),
-                [entry](const Archive& archive) { return archive.position == entry.position; });
-            if (disk != staged.end()) {
-                impl_->Restore(*inserted, *disk);
-            } else {
-                impl_->Generate(*inserted);
-                impl_->MarkDirty(entry.position);
-            }
-        } else {
-            impl_->Restore(*inserted, *saved);
-            impl_->archives.erase(saved);
-        }
-    }
-    SettleGravity();
+    // Publish complete terrain/residency before restoration or mutation callbacks.
     impl_->reconciledDemand = eastl::move(demand);
+    Vector<ItemHandle> restoredItems;
+    for (ChunkCoord position : incoming) {
+        if (const Archive* saved = incomingArchive(position)) {
+            impl_->Restore(*impl_->GetChunk(position), *saved);
+            for (const SavedItem& item : saved->items) { restoredItems.push_back(impl_->FindItem(item.id)); }
+        }
+    }
+    for (ChunkCoord position : incoming) {
+        const auto saved = eastl::find_if(impl_->archives.begin(), impl_->archives.end(),
+            [position](const Archive& archive) { return archive.position == position; });
+        if (saved != impl_->archives.end()) { impl_->archives.erase(saved); }
+        impl_->ForgetWarm(position);
+    }
+    for (ItemHandle handle : restoredItems) { impl_->itemSystem.Attach(handle); }
+    SettleGravity();
     impl_->demandDirty = false;
     return {};
 }
@@ -1277,8 +1435,8 @@ SaveResult<void> World::CreateSave(const char* path, const SessionState& session
 
 SaveResult<SessionState> World::LoadSave(const char* path, Diagnostics* diagnostics) {
     if (impl_->database || !impl_->requests.empty() || !impl_->actors.empty()
-        || !impl_->items.empty() || !impl_->objects.empty() || !impl_->chunks.empty()
-        || !impl_->archives.empty() || !impl_->dirtyChunks.empty()
+        || !impl_->items.empty() || !impl_->objects.empty() || impl_->ChunkCount() != 0
+        || !impl_->archives.empty() || !impl_->warmArchives.empty() || !impl_->dirtyChunks.empty()
         || !impl_->playerPositions.empty() || impl_->next_id != 1) {
         SaveFailure(SaveError::InvalidState, "Loading requires a pristine world", diagnostics);
         return eastl::unexpected(SaveError::InvalidState);
@@ -1384,8 +1542,11 @@ bool World::IsActive(TileCoord position) const {
 
 Vector<ChunkCoord> World::LoadedChunks() const {
     Vector<ChunkCoord> result;
-    for (const Chunk& value : impl_->chunks) {
-        result.push_back(value.position);
+    result.reserve(impl_->ChunkCount());
+    for (const ColumnDemand entry : impl_->reconciledDemand) {
+        for (int y = world_min_y; y <= world_max_y; ++y) {
+            result.push_back({entry.position.x, entry.position.z, y});
+        }
     }
     return result;
 }
@@ -1448,14 +1609,16 @@ ObjectHandle World::ObjectAt(TileCoord position) const {
 }
 
 void World::SettleGravity() {
-    for (const Chunk& chunk : impl_->chunks) {
-        if (!chunk.active) { continue; }
-        for (ActorHandle handle : chunk.actors) {
-            const Actor* actor = GetActor(handle);
-            if (!actor->parked) { impl_->QueueGravity(actor->position); }
-        }
-        for (ItemHandle handle : chunk.ground_items) {
-            impl_->QueueGravity(GetItem(handle)->location.position);
+    for (const ColumnDemand entry : impl_->reconciledDemand) {
+        if (!entry.active) { continue; }
+        for (const Chunk& chunk : impl_->ColumnLayers(entry.position)) {
+            for (ActorHandle handle : chunk.actors) {
+                const Actor* actor = GetActor(handle);
+                if (!actor->parked) { impl_->QueueGravity(actor->position); }
+            }
+            for (ItemHandle handle : chunk.ground_items) {
+                impl_->QueueGravity(GetItem(handle)->location.position);
+            }
         }
     }
     FlushGravity();
@@ -1937,8 +2100,7 @@ std::uint64_t World::GetLightingInputRevision(ChunkCoord position) const {
 std::uint8_t World::GetLightLevel(TileCoord position) const {
     if (!ValidPosition(position)) { return 0; }
     if (impl_->lightingDirty) {
-        if (!impl_->GetChunk(ChunkOf(position))) { return 0; }
-        impl_->lighting.Rebuild(*this);
+        impl_->lighting.Prepare(*this);
         for (auto& observer : impl_->observers) {
             for (const auto changed : impl_->lighting.ChangedChunks()) {
                 // Opaque endpoints sample adjacent space, including their upper face.
@@ -1952,6 +2114,8 @@ std::uint8_t World::GetLightLevel(TileCoord position) const {
         ++impl_->lightingRevision;
         impl_->lightingDirty = false;
     }
+    if (!GetChunk(ChunkOf(position))) { return 0; }
+    impl_->EnsureLighting(*this, ChunkOf(position));
     return impl_->lighting.Get(position);
 }
 
@@ -1966,6 +2130,7 @@ eastl::span<const std::uint8_t> World::GetChunkLightLevels(ChunkCoord position) 
 std::uint8_t World::GetIncidentLightLevel(TileCoord position, int face) const {
     if (!ValidPosition(position) || face < 0 || face >= 6) { return 0; }
     GetLightLevel(position);
+    if (!GetChunk(ChunkOf(position))) { return 0; }
     return impl_->lighting.GetIncident(position, face);
 }
 
@@ -2109,33 +2274,36 @@ void World::ElapseTicks(Tick elapsed) {
     Impl::GravityBatch batch(*this);
     if (elapsed == 0) { return; }
     impl_->itemSystem.Elapse(elapsed);
-    for (const Chunk& chunk : impl_->chunks) {
-        if (!chunk.active) { continue; }
-        bool modified = false;
-        for (ActorHandle handle : chunk.actors) {
-            Actor* actor = Live(impl_->actors, handle);
-            Require(actor != nullptr);
-            if (!actor->parked && actor->remainingTicks != 0) {
-                actor->remainingTicks -= eastl::min(actor->remainingTicks, elapsed);
-                modified = true;
+    for (const ColumnDemand entry : impl_->reconciledDemand) {
+        if (!entry.active) { continue; }
+        for (const Chunk& chunk : impl_->ColumnLayers(entry.position)) {
+            bool modified = false;
+            for (ActorHandle handle : chunk.actors) {
+                Actor* actor = Live(impl_->actors, handle);
+                Require(actor != nullptr);
+                if (!actor->parked && actor->remainingTicks != 0) {
+                    actor->remainingTicks -= eastl::min(actor->remainingTicks, elapsed);
+                    modified = true;
+                }
             }
-        }
-        for (ObjectHandle handle : chunk.objects) {
-            InteractiveObject* object = Live(impl_->objects, handle);
-            Require(object != nullptr);
-            if (object->enabled && object->remainingTicks != 0) {
-                object->remainingTicks -= eastl::min(object->remainingTicks, elapsed);
-                modified = true;
+            for (ObjectHandle handle : chunk.objects) {
+                InteractiveObject* object = Live(impl_->objects, handle);
+                Require(object != nullptr);
+                if (object->enabled && object->remainingTicks != 0) {
+                    object->remainingTicks -= eastl::min(object->remainingTicks, elapsed);
+                    modified = true;
+                }
             }
+            if (modified) { impl_->MarkDirty(chunk.position, false); }
         }
-        if (modified) { impl_->MarkDirty(chunk.position, false); }
     }
 }
 
 Vector<ActorHandle> World::ActiveActors() const {
     Vector<ActorHandle> result;
-    for (const Chunk& value : impl_->chunks) {
-        if (value.active) {
+    for (const ColumnDemand entry : impl_->reconciledDemand) {
+        if (!entry.active) { continue; }
+        for (const Chunk& value : impl_->ColumnLayers(entry.position)) {
             for (ActorHandle handle : value.actors) {
                 if (!GetActor(handle)->parked) { result.push_back(handle); }
             }
@@ -2149,8 +2317,9 @@ Vector<ActorHandle> World::ActiveActors() const {
 
 Vector<ObjectHandle> World::ActiveObjects() const {
     Vector<ObjectHandle> result;
-    for (const Chunk& value : impl_->chunks) {
-        if (value.active) {
+    for (const ColumnDemand entry : impl_->reconciledDemand) {
+        if (!entry.active) { continue; }
+        for (const Chunk& value : impl_->ColumnLayers(entry.position)) {
             for (ObjectHandle handle : value.objects) {
                 result.push_back(handle);
             }
@@ -2207,10 +2376,21 @@ bool World::CheckInvariants() const {
         ids.push_back(id);
         return true;
     };
-    for (std::size_t index = 0; index < state.chunks.size(); ++index) {
-        const Chunk& value = state.chunks[index];
+    if (state.ChunkCount() != state.reconciledDemand.size() * world_layer_count) { return false; }
+    for (std::size_t index = 0; index < state.reconciledDemand.size(); ++index) {
+        const auto entry = state.reconciledDemand[index];
+        if ((index && !ColumnLess(state.reconciledDemand[index - 1].position, entry.position))
+            || !state.GetChunk({entry.position.x, entry.position.z, world_min_y})) { return false; }
+        for (int y = world_min_y; y <= world_max_y; ++y) {
+            const Chunk* chunk = state.GetChunk({entry.position.x, entry.position.z, y});
+            if (!chunk || chunk->position != ChunkCoord{entry.position.x, entry.position.z, y}
+                || chunk->active != entry.active) { return false; }
+        }
+    }
+    for (std::size_t index = 0; index < state.ChunkCount(); ++index) {
+        const Chunk& value = state.ChunkAt(index);
         if (!ValidRegion({value.position, 0}) || !ValidChunk(value.position)
-            || (index != 0 && !ChunkLess(state.chunks[index - 1].position, value.position))) {
+            || (index != 0 && !ChunkLess(state.ChunkAt(index - 1).position, value.position))) {
             return false;
         }
         for (const Tile& tile : value.tiles) {
@@ -2394,14 +2574,30 @@ bool World::CheckInvariants() const {
             return false;
         }
     }
-    for (const Chunk& chunk : state.chunks) {
-        Vector<PersistentId> checkedIds;
-        if (!ValidateArchive(state.content, state.Capture(chunk), state.next_id, checkedIds)) { return false; }
+    for (const ColumnDemand entry : state.reconciledDemand) {
+        for (const Chunk& chunk : state.ColumnLayers(entry.position)) {
+            Vector<PersistentId> checkedIds;
+            if (!ValidateArchive(state.content, state.Capture(chunk), state.next_id, checkedIds)) { return false; }
+        }
     }
     for (const Archive& archive : state.archives) {
         Vector<PersistentId> checkedIds;
         if (!ValidateArchive(state.content, archive, state.next_id, checkedIds)) { return false; }
     }
+    if (state.warmArchives.size() > Impl::maxWarmEntries) { return false; }
+    std::size_t warmBytes = 0;
+    for (const Archive& archive : state.warmArchives) {
+        if (archive.items.capacity() != 0 || state.GetChunk(archive.position)
+            || Occurrences(archived_positions, archive.position) != 0
+            || !ValidateArchive(state.content, archive, state.next_id, ids)) { return false; }
+        archived_positions.push_back(archive.position);
+        warmBytes += Impl::WarmCost(archive);
+        for (const SavedActor& actor : archive.actors) {
+            if (actor.player && state.PlayerPosition(actor.id) != actor.position) { return false; }
+        }
+    }
+    if (warmBytes != state.warmBytes
+        || warmBytes + state.warmArchives.capacity() * sizeof(Archive) > Impl::maxWarmBytes) { return false; }
     if (!state.itemSystem.CheckInvariants()) { return false; }
     eastl::sort(ids.begin(), ids.end());
     return eastl::adjacent_find(ids.begin(), ids.end()) == ids.end();

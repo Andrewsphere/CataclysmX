@@ -5,6 +5,7 @@
 #include "core/light_types.h"
 #include <EASTL/array.h>
 #include <EASTL/span.h>
+#include <EASTL/unique_ptr.h>
 #include <cstddef>
 
 namespace cataclysmx {
@@ -19,17 +20,30 @@ std::uint8_t TerrainLightLevel(const World& world, TileCoord observer, TileCoord
 // Disposable, residency-clipped field. Never acquires chunk demand.
 class LightingField {
 public:
+    // Synchronize inputs and publish invalidation revisions without computing output.
+    void Prepare(const World& world);
+    // Prepare must precede this call after any world input/residency change.
+    void EnsureChunk(const World& world, ChunkCoord position);
     void Rebuild(const World& world);
+    // Value reads require ensured resident output; misuse fails fast.
     std::uint8_t Get(TileCoord position) const;
     // Face order: +X, -X, +Z, -Z, +Y, -Y. Direct incident light only.
     std::uint8_t GetIncident(TileCoord position, int face) const;
-    // Borrowed until the next Rebuild. Empty for nonresident chunks.
+    // Reads require EnsureChunk (or Rebuild). Borrowed until the next Prepare.
     eastl::span<const std::uint8_t> GetChunkLevels(ChunkCoord position) const;
-    // Final recombination generation; zero for nonresident chunks.
+    // Invalidation generation, available before EnsureChunk; zero if absent.
     std::uint64_t GetChunkRevision(ChunkCoord position) const;
-    // Last Rebuild's sorted unique dirty coordinates, including removed chunks.
-    // Borrowed until the next Rebuild. Order: X, then Z, then Y.
+    // Last Prepare's sorted unique dirty coordinates, including removed chunks.
+    // Includes outputs never computed. Borrowed until Prepare. Order: X, Z, Y.
     eastl::span<const ChunkCoord> ChangedChunks() const;
+    struct WorkStats {
+        std::size_t outputChunks = 0;
+        std::size_t skyDirectChunks = 0;
+        std::size_t skyFirstChunks = 0;
+        std::size_t sourcePatches = 0;
+    };
+    // Work since the last Prepare, including explicit dependency computation.
+    const WorkStats& GetWorkStats() const;
 private:
     static constexpr int tileCount = chunk_size * chunk_size;
     using Levels = eastl::array<std::uint8_t, tileCount>;
@@ -48,6 +62,10 @@ private:
         eastl::array<int, 6> neighbors{};
         std::uint64_t inputRevision = 0;
         std::uint64_t revision = 0;
+        bool outputReady = false;
+        bool directReady = false;
+        bool firstReady = false;
+        bool uniformFlags = false;
         struct Emitter {
             TileCoord position;
             LightEmission emission;
@@ -55,7 +73,7 @@ private:
         Vector<Emitter> emitters;
     };
     struct Contribution {
-        int chunk = -1;
+        ChunkCoord chunk{};
         int tile = 0;
         std::uint8_t level = 0;
         Faces incident{};
@@ -64,15 +82,20 @@ private:
         TileCoord position;
         LightEmission emission;
         Vector<Contribution> contribution;
+        bool ready = false;
     };
-    Vector<LightChunk> chunks_;
+    // Sorting/residency merges move pointers, not the multi-kilobyte tile caches.
+    Vector<eastl::unique_ptr<LightChunk>> chunks_;
     Vector<Source> sources_;
     Vector<ChunkCoord> changedChunks_;
     std::uint64_t generation_ = 0;
     std::uint8_t skyLight_ = 0;
+    WorkStats workStats_;
     mutable std::size_t lastChunkLookup_ = 0;
     std::size_t FindChunk(ChunkCoord position) const;
     void BuildSource(Source& source);
-    void BuildSky(eastl::span<const std::uint8_t> dirty);
+    void EnsureSkyDirect(std::size_t chunk);
+    void EnsureSkyFirst(std::size_t chunk);
+    void BuildSky(std::size_t chunk);
 };
 }

@@ -105,6 +105,28 @@ void Replace(std::string& text, const char* before, const char* after) {
     text.replace(position, std::char_traits<char>::length(before), after);
 }
 
+void PopulateV7(const char* path) {
+    {
+        SaveDatabase database(TestContent());
+        REQUIRE(database.Create(path));
+        auto snapshot = SampleSnapshot();
+        MemoryChunk memory{};
+        memory.terrain[0] = TestTerrain("floor");
+        snapshot.memories.push_back(PlayerMemory{1, {memory}});
+        REQUIRE(database.Begin());
+        REQUIRE(database.WriteChunk(SampleChunk()));
+        REQUIRE(database.WriteSnapshot(snapshot));
+        REQUIRE(database.Commit());
+    }
+    RawDatabase raw(path);
+    auto payload = raw.Text("SELECT payload FROM world_state");
+    Replace(payload, ",\"circle_residency\":null", "");
+    Replace(payload, "\"active_radius\":1", "\"active_radius\":0");
+    Replace(payload, "\"resident_radius\":5", "\"resident_radius\":2");
+    raw.SetText("UPDATE world_state SET payload=?1", payload);
+    raw.Exec("UPDATE metadata SET format_version=7");
+}
+
 ContentCatalog SaveTestCatalog(eastl::span<const ContentSource> sources) {
     Diagnostics diagnostics;
     auto loaded = LoadContent(sources, &diagnostics);
@@ -151,7 +173,7 @@ TEST_CASE("Save terrain names survive catalog renumbering and missing content fa
     }
     {
         RawDatabase raw(file.path.c_str());
-        CHECK(raw.Text("SELECT format_version FROM metadata") == "7");
+        CHECK(raw.Text("SELECT format_version FROM metadata") == "8");
         const auto payload = raw.Text("SELECT payload FROM chunks");
         CHECK(payload.find("\"terrain\":\"moss\"") != std::string::npos);
         CHECK(payload.find("\"terrain\":\"floor\"") != std::string::npos);
@@ -500,7 +522,7 @@ TEST_CASE("Save database rejects unknown versions and incomplete or extended sch
     Populate(file.path.c_str());
     {
         RawDatabase raw(file.path.c_str());
-        SECTION("future version") { raw.Exec("UPDATE metadata SET format_version=8"); }
+        SECTION("future version") { raw.Exec("UPDATE metadata SET format_version=9"); }
         SECTION("previous v6 format") { raw.Exec("UPDATE metadata SET format_version=6"); }
         SECTION("previous v5 format") { raw.Exec("UPDATE metadata SET format_version=5"); }
         SECTION("previous v4 format") { raw.Exec("UPDATE metadata SET format_version=4"); }
@@ -519,7 +541,7 @@ TEST_CASE("Save database rejects damaged metadata and schemas", "[save][database
         RawDatabase raw(file.path.c_str());
         SECTION("missing metadata") { raw.Exec("DELETE FROM metadata"); }
         SECTION("extra columns") { raw.Exec("ALTER TABLE chunks ADD COLUMN future TEXT"); }
-        SECTION("v5 chunks schema with v7 metadata") {
+        SECTION("v5 chunks schema with current metadata") {
             raw.Exec("ALTER TABLE chunks RENAME TO old_chunks;"
                 "CREATE TABLE chunks(x INTEGER NOT NULL,z INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(x,z));"
                 "INSERT INTO chunks SELECT x,z,payload FROM old_chunks; DROP TABLE old_chunks;");
@@ -623,6 +645,23 @@ TEST_CASE("Save database validates session, counters and generator version", "[s
         SECTION("negative sky light") { Replace(payload, "\"sky_light\":192", "\"sky_light\":-1"); }
         SECTION("duplicate sky light") { Replace(payload, "\"sky_light\":192", "\"sky_light\":192,\"sky_light\":192"); }
         SECTION("invalid radius") { Replace(payload, "\"resident_radius\":5", "\"resident_radius\":9"); }
+        SECTION("negative active radius") { Replace(payload, "\"active_radius\":1", "\"active_radius\":-1"); }
+        SECTION("resident smaller than active") { Replace(payload, "\"resident_radius\":5", "\"resident_radius\":0"); }
+        SECTION("missing circle residency") { Replace(payload, ",\"circle_residency\":null", ""); }
+        SECTION("duplicate circle residency") { Replace(payload, "\"circle_residency\":null", "\"circle_residency\":null,\"circle_residency\":null"); }
+        SECTION("unknown session field") { Replace(payload, "\"circle_residency\":null", "\"circle_residency\":null,\"future\":0"); }
+        SECTION("numeric circle residency") { Replace(payload, "\"circle_residency\":null", "\"circle_residency\":78"); }
+        SECTION("array circle residency") { Replace(payload, "\"circle_residency\":null", "\"circle_residency\":[]"); }
+        SECTION("missing circle radius") { Replace(payload, "\"circle_residency\":null", "\"circle_residency\":{}"); }
+        SECTION("negative circle radius") { Replace(payload, "\"circle_residency\":null", "\"circle_residency\":{\"radius_tiles\":-1}"); }
+        SECTION("excessive circle radius") { Replace(payload, "\"circle_residency\":null", "\"circle_residency\":{\"radius_tiles\":129}"); }
+        SECTION("overflow circle radius") { Replace(payload, "\"circle_residency\":null", "\"circle_residency\":{\"radius_tiles\":18446744073709551615}"); }
+        SECTION("fractional circle radius") { Replace(payload, "\"circle_residency\":null", "\"circle_residency\":{\"radius_tiles\":1.5}"); }
+        SECTION("string circle radius") { Replace(payload, "\"circle_residency\":null", "\"circle_residency\":{\"radius_tiles\":\"78\"}"); }
+        SECTION("boolean circle radius") { Replace(payload, "\"circle_residency\":null", "\"circle_residency\":{\"radius_tiles\":true}"); }
+        SECTION("null circle radius") { Replace(payload, "\"circle_residency\":null", "\"circle_residency\":{\"radius_tiles\":null}"); }
+        SECTION("duplicate circle radius") { Replace(payload, "\"circle_residency\":null", "\"circle_residency\":{\"radius_tiles\":78,\"radius_tiles\":78}"); }
+        SECTION("unknown circle field") { Replace(payload, "\"circle_residency\":null", "\"circle_residency\":{\"radius_tiles\":78,\"future\":0}"); }
         SECTION("invalid next ID") { Replace(payload, "\"next_id\":\"8\"", "\"next_id\":\"7\""); }
         SECTION("player is an object") { Replace(payload, "\"player\":\"1\"", "\"player\":\"2\""); }
         SECTION("player position mismatch") { Replace(payload, "\"x\":0", "\"x\":1"); }
@@ -642,6 +681,291 @@ TEST_CASE("Save database validates session, counters and generator version", "[s
     }
     SaveDatabase database(TestContent());
     CHECK(database.Open(file.path.c_str()) == eastl::unexpected(expected));
+}
+
+TEST_CASE("Save format eight round trips square and tile circle residency", "[save][database][residency]") {
+    SaveFile file;
+    auto snapshot = SampleSnapshot();
+    SECTION("square") {}
+    SECTION("zero circle radius") { snapshot.session.circleResidency = CircleResidency{0}; }
+    SECTION("default circle radius") { snapshot.session.circleResidency = CircleResidency{}; }
+    SECTION("maximum circle radius") { snapshot.session.circleResidency = CircleResidency{128}; }
+    snapshot.session.activeRadius = 0;
+    snapshot.session.residentRadius = 2;
+    {
+        SaveDatabase database(TestContent());
+        REQUIRE(database.Create(file.path.c_str()));
+        REQUIRE(database.Begin());
+        REQUIRE(database.WriteChunk(SampleChunk()));
+        REQUIRE(database.WriteSnapshot(snapshot));
+        REQUIRE(database.Commit());
+    }
+    {
+        RawDatabase raw(file.path.c_str());
+        CHECK(raw.Text("SELECT format_version FROM metadata") == "8");
+        const auto payload = raw.Text("SELECT payload FROM world_state");
+        CHECK(payload.find("\"circle_residency\":") != std::string::npos);
+        if (!snapshot.session.circleResidency) {
+            CHECK(payload.find("\"circle_residency\":null") != std::string::npos);
+        }
+    }
+    SaveDatabase database(TestContent());
+    auto loaded = database.Open(file.path.c_str());
+    REQUIRE(loaded);
+    CHECK(loaded->session.circleResidency == snapshot.session.circleResidency);
+    CHECK(loaded->session.activeRadius == 0);
+    CHECK(loaded->session.residentRadius == 2);
+}
+
+TEST_CASE("Circle snapshots round trip at world boundaries independently of retained square residency", "[save][database][residency]") {
+    SaveFile file;
+    auto snapshot = SampleSnapshot();
+    const int edge = world_coordinate_limit - 1;
+    SECTION("positive X") { snapshot.session.playerPosition = {edge, 0}; }
+    SECTION("negative X") { snapshot.session.playerPosition = {-edge, 0}; }
+    SECTION("positive Z") { snapshot.session.playerPosition = {0, edge}; }
+    SECTION("negative Z") { snapshot.session.playerPosition = {0, -edge}; }
+    snapshot.session.activeRadius = 0;
+    snapshot.session.residentRadius = 5;
+    snapshot.session.circleResidency = CircleResidency{0};
+    auto chunk = SampleChunk(ChunkOf(snapshot.session.playerPosition));
+    chunk.actors[0].position = snapshot.session.playerPosition;
+    {
+        SaveDatabase database(TestContent());
+        REQUIRE(database.Create(file.path.c_str()));
+        REQUIRE(database.Begin());
+        REQUIRE(database.WriteChunk(chunk));
+        REQUIRE(database.WriteSnapshot(snapshot));
+        REQUIRE(database.Commit());
+    }
+    SaveDatabase database(TestContent());
+    auto loaded = database.Open(file.path.c_str());
+    REQUIRE(loaded);
+    CHECK(loaded->session.playerPosition == snapshot.session.playerPosition);
+    CHECK(loaded->session.circleResidency == snapshot.session.circleResidency);
+    CHECK(loaded->session.activeRadius == 0);
+    CHECK(loaded->session.residentRadius == 5);
+
+    // A circle cannot hide an active square or tile circle crossing world bounds.
+    auto invalid = *loaded;
+    invalid.session.activeRadius = 2;
+    REQUIRE(database.Begin());
+    CHECK(database.WriteSnapshot(invalid) == eastl::unexpected(SaveError::InvalidData));
+    invalid = *loaded;
+    invalid.session.circleResidency = CircleResidency{2};
+    REQUIRE(database.Begin());
+    CHECK(database.WriteSnapshot(invalid) == eastl::unexpected(SaveError::InvalidData));
+    invalid = *loaded;
+    invalid.session.circleResidency.reset();
+    REQUIRE(database.Begin());
+    CHECK(database.WriteSnapshot(invalid) == eastl::unexpected(SaveError::InvalidData));
+
+    // Apply the same invalid policies directly to disk to exercise strict decoding.
+    RawDatabase raw(file.path.c_str());
+    const auto original = raw.Text("SELECT payload FROM world_state");
+    auto payload = original;
+    Replace(payload, "\"active_radius\":0", "\"active_radius\":2");
+    raw.SetText("UPDATE world_state SET payload=?1", payload);
+    SaveDatabase activeObserver(TestContent());
+    CHECK(activeObserver.Open(file.path.c_str()) == eastl::unexpected(SaveError::InvalidData));
+    payload = original;
+    Replace(payload, "\"radius_tiles\":0", "\"radius_tiles\":2");
+    raw.SetText("UPDATE world_state SET payload=?1", payload);
+    SaveDatabase circleObserver(TestContent());
+    CHECK(circleObserver.Open(file.path.c_str()) == eastl::unexpected(SaveError::InvalidData));
+}
+
+TEST_CASE("Save database rejects invalid residency before encoding", "[save][database][residency]") {
+    SaveFile file;
+    Populate(file.path.c_str());
+    SaveDatabase database(TestContent());
+    REQUIRE(database.Open(file.path.c_str()));
+    auto snapshot = SampleSnapshot();
+    snapshot.session.circleResidency = CircleResidency{};
+    SECTION("negative circle") { snapshot.session.circleResidency->radiusTiles = -1; }
+    SECTION("excessive circle") { snapshot.session.circleResidency->radiusTiles = 129; }
+    SECTION("negative square active radius") { snapshot.session.activeRadius = -1; }
+    SECTION("excessive square resident radius") { snapshot.session.residentRadius = 9; }
+    SECTION("square radius ordering") { snapshot.session.residentRadius = 0; }
+    REQUIRE(database.Begin());
+    CHECK(database.WriteSnapshot(snapshot) == eastl::unexpected(SaveError::InvalidData));
+    CHECK(database.Commit() == eastl::unexpected(SaveError::InvalidState));
+}
+
+TEST_CASE("Opening genuine v7 preserves square residency until the first committed checkpoint", "[save][database][migration]") {
+    SaveFile file;
+    PopulateV7(file.path.c_str());
+    std::string originalSnapshot;
+    std::string originalChunk;
+    std::string originalMemory;
+    {
+        RawDatabase raw(file.path.c_str());
+        originalSnapshot = raw.Text("SELECT payload FROM world_state");
+        originalChunk = raw.Text("SELECT payload FROM chunks");
+        originalMemory = raw.Text("SELECT payload FROM player_memories");
+    }
+    SaveDatabase database(TestContent());
+    auto loaded = database.Open(file.path.c_str());
+    REQUIRE(loaded);
+    CHECK_FALSE(loaded->session.circleResidency);
+    CHECK(loaded->session.activeRadius == 0);
+    CHECK(loaded->session.residentRadius == 2);
+    {
+        RawDatabase raw(file.path.c_str());
+        CHECK(raw.Text("SELECT format_version FROM metadata") == "7");
+        CHECK(raw.Text("SELECT payload FROM world_state") == originalSnapshot);
+    }
+    REQUIRE(database.Begin());
+    SECTION("snapshot checkpoint") {
+        loaded->session.circleResidency = CircleResidency{78};
+        REQUIRE(database.WriteSnapshot(*loaded));
+    }
+    SECTION("chunk-only checkpoint") { REQUIRE(database.WriteChunk(SampleChunk())); }
+    SECTION("empty checkpoint") {}
+    REQUIRE(database.Commit());
+    {
+        RawDatabase raw(file.path.c_str());
+        CHECK(raw.Text("SELECT format_version FROM metadata") == "8");
+        CHECK(raw.Text("SELECT payload FROM world_state").find("\"circle_residency\":") != std::string::npos);
+        CHECK(raw.Text("SELECT payload FROM chunks") == originalChunk);
+        CHECK(raw.Text("SELECT payload FROM player_memories") == originalMemory);
+    }
+    SaveDatabase observer(TestContent());
+    auto upgraded = observer.Open(file.path.c_str());
+    REQUIRE(upgraded);
+    CHECK(upgraded->session.circleResidency == loaded->session.circleResidency);
+    CHECK(upgraded->session.activeRadius == 0);
+    CHECK(upgraded->session.residentRadius == 2);
+    // The original connection must use the new decoder after its successful commit.
+    REQUIRE(database.Begin());
+    REQUIRE(database.Commit());
+}
+
+TEST_CASE("Failed v7 migration keeps durable version and permits retry on the same connection", "[save][database][migration]") {
+    SaveFile file;
+    PopulateV7(file.path.c_str());
+    SaveDatabase database(TestContent());
+    auto loaded = database.Open(file.path.c_str());
+    REQUIRE(loaded);
+    std::string originalSnapshot;
+    std::string originalChunk;
+    std::string originalMemory;
+    {
+        RawDatabase raw(file.path.c_str());
+        originalSnapshot = raw.Text("SELECT payload FROM world_state");
+        originalChunk = raw.Text("SELECT payload FROM chunks");
+        originalMemory = raw.Text("SELECT payload FROM player_memories");
+    }
+    REQUIRE(database.Begin());
+    auto chunk = SampleChunk();
+    chunk.tiles[0].damage = 73;
+    REQUIRE(database.WriteChunk(chunk));
+    SECTION("explicit rollback after new snapshot") {
+        loaded->session.circleResidency = CircleResidency{78};
+        REQUIRE(database.WriteSnapshot(*loaded));
+        database.Rollback();
+    }
+    SECTION("snapshot encode failure") {
+        loaded->session.circleResidency = CircleResidency{-1};
+        CHECK(database.WriteSnapshot(*loaded) == eastl::unexpected(SaveError::InvalidData));
+    }
+    SECTION("checkpoint validation failure after new snapshot") {
+        loaded->nextId = 7;
+        REQUIRE(database.WriteSnapshot(*loaded));
+        CHECK(database.Commit() == eastl::unexpected(SaveError::InvalidData));
+    }
+    SECTION("migration snapshot SQL failure") {
+        // Inject after Open; schema validation intentionally rejects saved triggers.
+        // This connection already owns the writer lock, so install before retrying.
+        database.Rollback();
+        {
+            RawDatabase raw(file.path.c_str());
+            raw.Exec("CREATE TRIGGER fail_migration BEFORE UPDATE ON world_state "
+                "BEGIN SELECT RAISE(ABORT,'injected migration failure'); END");
+        }
+        REQUIRE(database.Begin());
+        REQUIRE(database.WriteChunk(chunk));
+        CHECK(database.Commit() == eastl::unexpected(SaveError::InvalidData));
+        RawDatabase raw(file.path.c_str());
+        raw.Exec("DROP TRIGGER fail_migration");
+    }
+    SECTION("migration metadata SQL failure") {
+        database.Rollback();
+        {
+            RawDatabase raw(file.path.c_str());
+            raw.Exec("CREATE TRIGGER fail_migration BEFORE UPDATE ON metadata "
+                "BEGIN SELECT RAISE(ABORT,'injected migration failure'); END");
+        }
+        REQUIRE(database.Begin());
+        REQUIRE(database.WriteChunk(chunk));
+        loaded->session.circleResidency = CircleResidency{78};
+        REQUIRE(database.WriteSnapshot(*loaded));
+        CHECK(database.Commit() == eastl::unexpected(SaveError::InvalidData));
+        RawDatabase raw(file.path.c_str());
+        raw.Exec("DROP TRIGGER fail_migration");
+    }
+    SECTION("busy commit after migration SQL") {
+        RawDatabase reader(file.path.c_str());
+        reader.Exec("BEGIN; SELECT * FROM world_state");
+        REQUIRE(database.WriteSnapshot(*loaded));
+        CHECK(database.Commit() == eastl::unexpected(SaveError::Busy));
+        reader.Exec("ROLLBACK");
+    }
+    CHECK(database.Commit() == eastl::unexpected(SaveError::InvalidState));
+    {
+        RawDatabase raw(file.path.c_str());
+        CHECK(raw.Text("SELECT format_version FROM metadata") == "7");
+        CHECK(raw.Text("SELECT payload FROM world_state") == originalSnapshot);
+        CHECK(raw.Text("SELECT payload FROM chunks") == originalChunk);
+        CHECK(raw.Text("SELECT payload FROM player_memories") == originalMemory);
+        SaveDatabase observer(TestContent());
+        auto durable = observer.Open(file.path.c_str());
+        REQUIRE(durable);
+        CHECK_FALSE(durable->session.circleResidency);
+    }
+    // No WriteSnapshot here: this also detects leaked transaction codec state.
+    REQUIRE(database.Begin());
+    REQUIRE(database.WriteChunk(chunk));
+    REQUIRE(database.Commit());
+    SaveDatabase observer(TestContent());
+    auto upgraded = observer.Open(file.path.c_str());
+    REQUIRE(upgraded);
+    CHECK_FALSE(upgraded->session.circleResidency);
+    RawDatabase raw(file.path.c_str());
+    CHECK(raw.Text("SELECT format_version FROM metadata") == "8");
+}
+
+TEST_CASE("Version seven rejects new session fields and retains strict session validation", "[save][database][migration]") {
+    SaveFile file;
+    PopulateV7(file.path.c_str());
+    {
+        RawDatabase raw(file.path.c_str());
+        auto payload = raw.Text("SELECT payload FROM world_state");
+        SECTION("new field with null") { Replace(payload, "\"players\":[]", "\"players\":[],\"circle_residency\":null"); }
+        SECTION("new field with circle") { Replace(payload, "\"players\":[]", "\"players\":[],\"circle_residency\":{\"radius_tiles\":78}"); }
+        SECTION("unknown field") { Replace(payload, "\"players\":[]", "\"players\":[],\"future\":0"); }
+        SECTION("duplicate field") { Replace(payload, "\"players\":[]", "\"players\":[],\"players\":[]"); }
+        SECTION("invalid square radius") { Replace(payload, "\"resident_radius\":2", "\"resident_radius\":9"); }
+        SECTION("v8 metadata with v7 payload") { raw.Exec("UPDATE metadata SET format_version=8"); }
+        raw.SetText("UPDATE world_state SET payload=?1", payload);
+    }
+    SaveDatabase database(TestContent());
+    CHECK(database.Open(file.path.c_str()) == eastl::unexpected(SaveError::InvalidData));
+}
+
+TEST_CASE("Checkpoint rejects metadata version changes after Open", "[save][database][migration]") {
+    SaveFile file;
+    PopulateV7(file.path.c_str());
+    SaveDatabase database(TestContent());
+    REQUIRE(database.Open(file.path.c_str()));
+    {
+        RawDatabase raw(file.path.c_str());
+        raw.Exec("UPDATE metadata SET format_version=8");
+    }
+    REQUIRE(database.Begin());
+    REQUIRE(database.WriteSnapshot(SampleSnapshot()));
+    CHECK(database.Commit() == eastl::unexpected(SaveError::InvalidData));
+    CHECK(database.Commit() == eastl::unexpected(SaveError::InvalidState));
 }
 
 TEST_CASE("Save database rejects cross chunk duplicate IDs on Open and Commit", "[save][database]") {

@@ -128,6 +128,13 @@ target_compile_definitions(cataclysmx_headless PRIVATE CATACLYSMX_TERRAIN_FILE="
 target_link_libraries(cataclysmx_headless PRIVATE cataclysmx_client cataclysmx_network Threads::Threads)
 cataclysmx_no_exceptions(cataclysmx_headless)
 
+# Explicit opt-in headless benchmark for chunk residency transitions.
+add_executable(cataclysmx_chunk_benchmark EXCLUDE_FROM_ALL tools/chunk_streaming_benchmark.cpp)
+target_compile_definitions(cataclysmx_chunk_benchmark PRIVATE
+    CATACLYSMX_TERRAIN_FILE="${CMAKE_CURRENT_SOURCE_DIR}/data/terrain.json5")
+target_link_libraries(cataclysmx_chunk_benchmark PRIVATE cataclysmx_engine)
+cataclysmx_no_exceptions(cataclysmx_chunk_benchmark)
+
 if(CATACLYSMX_BUILD_TERMINAL)
     find_package(ftxui CONFIG REQUIRED)
     add_library(cataclysmx_terminal STATIC src/terminal/render.cpp src/terminal/render.h

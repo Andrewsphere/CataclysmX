@@ -116,37 +116,43 @@ std::uint8_t TerrainLightLevel(const World& world, TileCoord observer, TileCoord
 }
 
 std::size_t LightingField::FindChunk(ChunkCoord coord) const {
-    if (lastChunkLookup_ < chunks_.size() && chunks_[lastChunkLookup_].position == coord) { return lastChunkLookup_; }
+    if (lastChunkLookup_ < chunks_.size() && chunks_[lastChunkLookup_]->position == coord) { return lastChunkLookup_; }
     auto found = eastl::lower_bound(chunks_.begin(), chunks_.end(), coord,
-        [](const LightChunk& chunk, ChunkCoord key) { return Less(chunk.position, key); });
-    if (found == chunks_.end() || found->position != coord) { return chunks_.size(); }
+        [](const eastl::unique_ptr<LightChunk>& chunk, ChunkCoord key) { return Less(chunk->position, key); });
+    if (found == chunks_.end() || (*found)->position != coord) { return chunks_.size(); }
     lastChunkLookup_ = static_cast<std::size_t>(found-chunks_.begin());
     return lastChunkLookup_;
 }
 std::uint8_t LightingField::Get(TileCoord p) const {
     if (!ValidPosition(p)) { return 0; }
     const auto index = FindChunk(ChunkOf(p));
-    return index < chunks_.size() ? chunks_[index].levels[TileIndex(p)] : 0;
+    if (index == chunks_.size()) { return 0; }
+    if (!chunks_[index]->outputReady) { std::abort(); }
+    return chunks_[index]->levels[TileIndex(p)];
 }
 std::uint8_t LightingField::GetIncident(TileCoord p, int face) const {
     if (!ValidPosition(p) || face < 0 || face >= 6) { return 0; }
     const auto index = FindChunk(ChunkOf(p));
-    return index < chunks_.size() ? chunks_[index].incident[TileIndex(p)][face] : 0;
+    if (index == chunks_.size()) { return 0; }
+    if (!chunks_[index]->outputReady) { std::abort(); }
+    return chunks_[index]->incident[TileIndex(p)][face];
 }
 eastl::span<const std::uint8_t> LightingField::GetChunkLevels(ChunkCoord coord) const {
     const auto index = FindChunk(coord);
     if (index == chunks_.size()) { return {}; }
-    return {chunks_[index].levels.data(), chunks_[index].levels.size()};
+    if (!chunks_[index]->outputReady) { std::abort(); }
+    return {chunks_[index]->levels.data(), chunks_[index]->levels.size()};
 }
 std::uint64_t LightingField::GetChunkRevision(ChunkCoord coord) const {
     const auto index = FindChunk(coord);
-    return index < chunks_.size() ? chunks_[index].revision : 0;
+    return index < chunks_.size() ? chunks_[index]->revision : 0;
 }
 eastl::span<const ChunkCoord> LightingField::ChangedChunks() const {
     return {changedChunks_.data(), changedChunks_.size()};
 }
 
 void LightingField::BuildSource(Source& source) {
+    ++workStats_.sourcePatches;
     source.contribution.clear();
     const int r = source.emission.range;
     const int margin = r + lightSpillDistance;
@@ -167,7 +173,7 @@ void LightingField::BuildSource(Source& source) {
                 auto& cell = cells[index(p)];
                 cell.chunk = static_cast<int>(c);
                 cell.tile = TileIndex(p);
-                cell.flags = chunks_[c].flags[cell.tile];
+                cell.flags = chunks_[c]->flags[cell.tile];
             }
         }
     }
@@ -219,112 +225,174 @@ void LightingField::BuildSource(Source& source) {
         }
     }
     for (const auto& cell : cells) {
-        if (cell.level) { source.contribution.push_back({cell.chunk, cell.tile, cell.level, cell.incident}); }
+        if (cell.level) { source.contribution.push_back({chunks_[cell.chunk]->position, cell.tile, cell.level, cell.incident}); }
     }
+    source.ready = true;
 }
 
-void LightingField::BuildSky(eastl::span<const std::uint8_t> dirty) {
-    for (std::size_t c = 0; c < chunks_.size(); ++c) {
-        if (!dirty[c]) { continue; }
-        auto& chunk = chunks_[c];
-        chunk.skyDirect.fill(0); chunk.firstStep.fill(0);
-        if (!skyLight_) { chunk.sky.fill(0); }
-        for (auto& face : chunk.skyIncident) { face.fill(0); }
-    }
+void LightingField::EnsureSkyDirect(std::size_t c) {
+    auto& chunk = *chunks_[c];
+    if (chunk.directReady) { return; }
+    ++workStats_.skyDirectChunks;
+    chunk.skyDirect.fill(0);
+    for (auto& faces : chunk.skyIncident) { faces.fill(0); }
+    chunk.directReady = true;
     if (!skyLight_) { return; }
-    for (std::size_t c = 0; c < chunks_.size(); ++c) {
-        if (!dirty[c] || chunks_[c].position.y != world_max_y) { continue; }
-        for (int i = 0; i < tileCount; ++i) {
-            int cursor = static_cast<int>(c);
-            for (;;) {
-                auto& current = chunks_[cursor];
-                const auto flags = current.flags[i];
-                if (!(flags & resident)) { break; }
-                current.skyDirect[i] = skyLight_;
-                if (!(flags & transparent)) { current.skyIncident[i][4] = skyLight_; break; }
-                const int below = current.neighbors[5];
-                if (below < 0 || !(chunks_[below].flags[i] & resident)
-                    || !OpenFace(chunks_[below].flags[i], flags)) { break; }
-                cursor = below;
+    const int above = chunk.neighbors[4];
+    if (chunk.position.y != world_max_y && above < 0) { return; }
+    if (above >= 0 && chunks_[above]->uniformFlags) {
+        const auto upperFlags = chunks_[above]->flags[0];
+        if (!(upperFlags & transparent)
+            || (chunk.uniformFlags && !OpenFace(chunk.flags[0], upperFlags))) { return; }
+    }
+    if (above >= 0) { EnsureSkyDirect(static_cast<std::size_t>(above)); }
+    // Uniform cells permit whole-array fills (including solid sky endpoints).
+    if (chunk.uniformFlags && (chunk.flags[0] & resident)) {
+        bool all = chunk.position.y == world_max_y;
+        if (!all && above >= 0) {
+            const auto& upper = *chunks_[above];
+            all = upper.uniformFlags && (upper.flags[0] & transparent)
+                && OpenFace(chunk.flags[0], upper.flags[0])
+                && eastl::all_of(upper.skyDirect.begin(), upper.skyDirect.end(),
+                    [this](std::uint8_t level) { return level == skyLight_; });
+        }
+        if (all) {
+            chunk.skyDirect.fill(skyLight_);
+            if (!(chunk.flags[0] & transparent)) {
+                for (auto& faces : chunk.skyIncident) { faces[4] = skyLight_; }
             }
+            return;
         }
     }
-    const auto firstLevel = static_cast<std::uint8_t>(skyLight_/4);
-    const auto secondLevel = static_cast<std::uint8_t>(firstLevel/2);
-    for (std::size_t c = 0; c < chunks_.size(); ++c) {
-        if (!dirty[c]) { continue; }
-        auto& chunk = chunks_[c];
-        chunk.sky = chunk.skyDirect;
-        if (!firstLevel) { continue; }
-        for (int i = 0; i < tileCount; ++i) {
-            if (chunk.skyDirect[i] || !(chunk.flags[i] & transparent)) { continue; }
-            for (int d = 0; d < 6; ++d) {
-                int tile;
-                const int next = Neighbor(chunk, static_cast<int>(c), i, d, tile);
-                if (next < 0 || !chunks_[next].skyDirect[tile]
-                    || !Connected(chunk.flags[i], chunks_[next].flags[tile], d)) { continue; }
-                chunk.firstStep[i] = firstLevel;
-                chunk.sky[i] = firstLevel;
-                break; // Every direct sky seed has the same intensity.
-            }
+    for (int i = 0; i < tileCount; ++i) {
+        if (!(chunk.flags[i] & resident)) { continue; }
+        if (chunk.position.y != world_max_y) {
+            const auto& upper = *chunks_[above];
+            if (!upper.skyDirect[i] || !(upper.flags[i] & transparent)
+                || !OpenFace(chunk.flags[i], upper.flags[i])) { continue; }
         }
+        chunk.skyDirect[i] = skyLight_;
+        if (!(chunk.flags[i] & transparent)) { chunk.skyIncident[i][4] = skyLight_; }
     }
-    if (!secondLevel) { return; }
-    for (std::size_t c = 0; c < chunks_.size(); ++c) {
-        if (!dirty[c]) { continue; }
-        auto& chunk = chunks_[c];
-        for (int i = 0; i < tileCount; ++i) {
-            // A direct-lit cell needs no firstStep cache: its direct/4 at a
-            // connected neighbor dominates any second hop through this cell.
-            // Likewise any first-step value already dominates all second steps.
-            if (chunk.sky[i] || !(chunk.flags[i] & transparent)) { continue; }
-            // All refreshed first steps are complete before this pass. Outside
-            // the whole-column, one-chunk halo, cached first steps are unchanged:
-            // edits cannot reach that boundary in either of the two tile steps.
-            for (int d = 0; d < 6; ++d) {
-                int tile;
-                const int next = Neighbor(chunk, static_cast<int>(c), i, d, tile);
-                if (next < 0 || !chunks_[next].firstStep[tile]
-                    || !Connected(chunk.flags[i], chunks_[next].flags[tile], d)) { continue; }
-                chunk.sky[i] = secondLevel;
-                break;
-            }
+}
+
+void LightingField::EnsureSkyFirst(std::size_t c) {
+    auto& chunk = *chunks_[c];
+    if (chunk.firstReady) { return; }
+    ++workStats_.skyFirstChunks;
+    EnsureSkyDirect(c);
+    chunk.firstStep.fill(0);
+    chunk.firstReady = true;
+    if (skyLight_ < 4 || (chunk.uniformFlags && !(chunk.flags[0] & transparent))
+        || eastl::all_of(chunk.skyDirect.begin(), chunk.skyDirect.end(),
+            [this](std::uint8_t level) { return level == skyLight_; })) { return; }
+    for (const int neighbor : chunk.neighbors) {
+        if (neighbor >= 0) { EnsureSkyDirect(static_cast<std::size_t>(neighbor)); }
+    }
+    for (int i = 0; i < tileCount; ++i) {
+        if (chunk.skyDirect[i] || !(chunk.flags[i] & transparent)) { continue; }
+        for (int d = 0; d < 6; ++d) {
+            int tile;
+            const int next = Neighbor(chunk, static_cast<int>(c), i, d, tile);
+            if (next < 0 || !chunks_[next]->skyDirect[tile]
+                || !Connected(chunk.flags[i], chunks_[next]->flags[tile], d)) { continue; }
+            chunk.firstStep[i] = static_cast<std::uint8_t>(skyLight_/4);
+            break;
         }
     }
 }
 
-void LightingField::Rebuild(const World& world) {
+void LightingField::BuildSky(std::size_t c) {
+    auto& chunk = *chunks_[c];
+    EnsureSkyFirst(c);
+    chunk.sky = chunk.skyDirect;
+    if (skyLight_ < 4 || (chunk.uniformFlags && !(chunk.flags[0] & transparent))) { return; }
+    if (eastl::all_of(chunk.skyDirect.begin(), chunk.skyDirect.end(),
+        [this](std::uint8_t level) { return level == skyLight_; })) { return; }
+    if (skyLight_ >= 8) {
+        for (const int neighbor : chunk.neighbors) {
+            if (neighbor >= 0) { EnsureSkyFirst(static_cast<std::size_t>(neighbor)); }
+        }
+    }
+    for (int i = 0; i < tileCount; ++i) {
+        chunk.sky[i] = eastl::max(chunk.sky[i], chunk.firstStep[i]);
+        // Direct-lit first-step seeds can be omitted: their own direct/4
+        // already dominates any second hop into the same connected neighbor.
+        if (chunk.sky[i] || !(chunk.flags[i] & transparent) || skyLight_ < 8) { continue; }
+        for (int d = 0; d < 6; ++d) {
+            int tile;
+            const int next = Neighbor(chunk, static_cast<int>(c), i, d, tile);
+            if (next < 0 || !chunks_[next]->firstStep[tile]
+                || !Connected(chunk.flags[i], chunks_[next]->flags[tile], d)) { continue; }
+            chunk.sky[i] = static_cast<std::uint8_t>(skyLight_/8);
+            break;
+        }
+    }
+}
+
+namespace {
+bool SourceTouches(TileCoord position, LightEmission emission, ChunkCoord chunk) {
+    const int margin = emission.range + lightSpillDistance;
+    const std::int64_t x = std::int64_t{chunk.x}*chunk_size;
+    const std::int64_t z = std::int64_t{chunk.z}*chunk_size;
+    return std::abs(chunk.y-position.y) <= lightSpillDistance
+        && x <= std::int64_t{position.x}+margin && x+chunk_size-1 >= std::int64_t{position.x}-margin
+        && z <= std::int64_t{position.z}+margin && z+chunk_size-1 >= std::int64_t{position.z}-margin;
+}
+}
+
+void LightingField::Prepare(const World& world) {
     ++generation_;
     if (!generation_) { std::abort(); } // Zero is reserved for absence; never reuse generations.
     changedChunks_.clear();
+    workStats_ = {};
     const auto loaded = world.LoadedChunks();
     bool geometryChanged = loaded.size() != chunks_.size();
     if (!geometryChanged) {
         for (std::size_t c = 0; c < loaded.size(); ++c) {
-            if (loaded[c] != chunks_[c].position) { geometryChanged = true; break; }
+            if (loaded[c] != chunks_[c]->position) { geometryChanged = true; break; }
         }
     }
+    Vector<ChunkCoord> opticalChanges;
     if (geometryChanged) {
-        for (const auto& chunk : chunks_) { changedChunks_.push_back(chunk.position); }
-        chunks_.clear();
-        chunks_.reserve(loaded.size());
-        for (const auto coord : loaded) { chunks_.push_back({coord}); }
+        Vector<eastl::unique_ptr<LightChunk>> next;
+        next.reserve(loaded.size());
+        std::size_t old = 0;
+        for (const auto coord : loaded) {
+            while (old < chunks_.size() && Less(chunks_[old]->position, coord)) {
+                opticalChanges.push_back(chunks_[old]->position);
+                changedChunks_.push_back(chunks_[old++]->position);
+            }
+            if (old < chunks_.size() && chunks_[old]->position == coord) {
+                next.push_back(eastl::move(chunks_[old++]));
+            } else {
+                eastl::unique_ptr<LightChunk> chunk(new LightChunk{});
+                chunk->position = coord;
+                next.push_back(eastl::move(chunk));
+                opticalChanges.push_back(coord);
+            }
+        }
+        while (old < chunks_.size()) {
+            opticalChanges.push_back(chunks_[old]->position);
+            changedChunks_.push_back(chunks_[old++]->position);
+        }
+        chunks_ = eastl::move(next);
+        lastChunkLookup_ = chunks_.size();
         for (std::size_t c = 0; c < loaded.size(); ++c) {
             for (int d = 0; d < 6; ++d) {
                 const auto offset = directions[d];
                 const auto coord = loaded[c];
-                const auto next = FindChunk({coord.x+offset.x,coord.z+offset.z,coord.y+offset.y});
-                chunks_[c].neighbors[d] = next == chunks_.size() ? -1 : static_cast<int>(next);
+                const auto neighbor = FindChunk({coord.x+offset.x,coord.z+offset.z,coord.y+offset.y});
+                chunks_[c]->neighbors[d] = neighbor == chunks_.size() ? -1 : static_cast<int>(neighbor);
             }
         }
     }
     Vector<Source> nextSources;
-    Vector<ChunkCoord> opticalChanges;
     for (std::size_t c = 0; c < chunks_.size(); ++c) {
-        auto& optical = chunks_[c];
+        auto& optical = *chunks_[c];
         const auto coord = loaded[c];
         const auto revision = world.GetLightingInputRevision(coord);
-        if (!geometryChanged && revision == optical.inputRevision) {
+        if (revision == optical.inputRevision) {
             for (const auto& emitter : optical.emitters) { nextSources.push_back({emitter.position, emitter.emission, {}}); }
             continue;
         }
@@ -353,6 +421,8 @@ void LightingField::Rebuild(const World& world) {
             const auto& actor = *world.GetActor(handle);
             if (!actor.parked && actor.light.intensity) { optical.emitters.push_back({actor.position,actor.light}); }
         }
+        optical.uniformFlags = eastl::all_of(optical.flags.begin(), optical.flags.end(),
+            [&optical](std::uint8_t flags) { return flags == optical.flags[0]; });
         if (opticalChanged) { opticalChanges.push_back(coord); }
         for (const auto& emitter : optical.emitters) { nextSources.push_back({emitter.position, emitter.emission, {}}); }
     }
@@ -364,61 +434,96 @@ void LightingField::Rebuild(const World& world) {
         return a.emission.intensity < b.emission.intensity;
     };
     eastl::sort(nextSources.begin(), nextSources.end(), lessSource);
-    const bool skyChanged = geometryChanged || skyLight_ != world.GetSkyLight();
+    const bool skyChanged = skyLight_ != world.GetSkyLight();
     skyLight_ = world.GetSkyLight();
     Vector<std::uint8_t> dirty(chunks_.size(), skyChanged ? 1 : 0);
     if (!skyChanged) {
-        for (std::size_t c = 0; c < chunks_.size(); ++c) {
-            for (const auto changed : opticalChanges) {
-                // Whole vertical columns plus one chunk in X/Z contain both spill steps.
-                if (std::abs(chunks_[c].position.x-changed.x) <= 1
-                    && std::abs(chunks_[c].position.z-changed.z) <= 1) { dirty[c] = 1; break; }
+        Vector<ChunkCoord> columns;
+        for (const auto changed : opticalChanges) { columns.push_back({changed.x,changed.z,0}); }
+        eastl::sort(columns.begin(), columns.end(), Less);
+        columns.erase(eastl::unique(columns.begin(), columns.end()), columns.end());
+        for (const auto column : columns) {
+            // Whole columns plus one horizontal chunk contain both spill steps.
+            // Deduplicate Y first: initial residency must not be a quadratic scan.
+            for (int x = column.x-1; x <= column.x+1; ++x) {
+                for (int z = column.z-1; z <= column.z+1; ++z) {
+                    auto found = eastl::lower_bound(chunks_.begin(), chunks_.end(), ChunkCoord{x,z,world_min_y},
+                        [](const eastl::unique_ptr<LightChunk>& chunk, ChunkCoord key) { return Less(chunk->position,key); });
+                    while (found != chunks_.end() && (*found)->position.x == x && (*found)->position.z == z) {
+                        dirty[static_cast<std::size_t>(found-chunks_.begin())] = 1;
+                        ++found;
+                    }
+                }
             }
         }
     }
-    if (skyChanged || !opticalChanges.empty()) { BuildSky({dirty.data(), dirty.size()}); }
+    for (std::size_t c = 0; c < chunks_.size(); ++c) {
+        if (dirty[c]) { chunks_[c]->directReady = false; chunks_[c]->firstReady = false; }
+        if (!chunks_[c]->revision) { dirty[c] = 1; }
+    }
     const auto affected = [&opticalChanges](const Source& source) {
-        const int margin = source.emission.range + lightSpillDistance;
         for (const auto changed : opticalChanges) {
-            if (std::abs(changed.y-source.position.y) > lightSpillDistance) { continue; }
-            const std::int64_t x = std::int64_t{changed.x}*chunk_size;
-            const std::int64_t z = std::int64_t{changed.z}*chunk_size;
-            if (x <= std::int64_t{source.position.x}+margin && x+chunk_size-1 >= std::int64_t{source.position.x}-margin
-                && z <= std::int64_t{source.position.z}+margin && z+chunk_size-1 >= std::int64_t{source.position.z}-margin) { return true; }
+            if (SourceTouches(source.position, source.emission, changed)) { return true; }
         }
         return false;
     };
-    const auto mark = [&dirty](const Source& source) {
-        for (const auto& contribution : source.contribution) { dirty[contribution.chunk] = 1; }
+    const auto mark = [this, &dirty](const Source& source) {
+        // Bounds, not cached contributions: an unrequested output must publish
+        // invalidation before an observer compares its own cached revision.
+        const int margin = source.emission.range + lightSpillDistance;
+        const auto minimum = ChunkOf({source.position.x-margin,source.position.z-margin,source.position.y-lightSpillDistance});
+        const auto maximum = ChunkOf({source.position.x+margin,source.position.z+margin,source.position.y+lightSpillDistance});
+        for (int x = minimum.x; x <= maximum.x; ++x) {
+            for (int z = minimum.z; z <= maximum.z; ++z) {
+                for (int y = minimum.y; y <= maximum.y; ++y) {
+                    const auto c = FindChunk({x,z,y});
+                    if (c < chunks_.size()) { dirty[c] = 1; }
+                }
+            }
+        }
     };
     std::size_t old = 0;
     for (auto& source : nextSources) {
-        if (!geometryChanged) {
-            while (old < sources_.size() && lessSource(sources_[old], source)) { mark(sources_[old++]); }
-            if (old < sources_.size() && !lessSource(source, sources_[old])) {
-                if (!affected(source)) {
-                    source.contribution = eastl::move(sources_[old++].contribution);
-                    continue;
-                }
-                mark(sources_[old++]);
+        while (old < sources_.size() && lessSource(sources_[old], source)) { mark(sources_[old++]); }
+        if (old < sources_.size() && !lessSource(source, sources_[old])) {
+            if (!affected(source)) {
+                source.contribution = eastl::move(sources_[old].contribution);
+                source.ready = sources_[old++].ready;
+                continue;
             }
+            mark(sources_[old++]);
         }
-        BuildSource(source);
         mark(source);
     }
-    if (!geometryChanged) { while (old < sources_.size()) { mark(sources_[old++]); } }
+    while (old < sources_.size()) { mark(sources_[old++]); }
     sources_ = eastl::move(nextSources);
     for (std::size_t c = 0; c < chunks_.size(); ++c) {
         if (!dirty[c]) { continue; }
-        chunks_[c].levels = chunks_[c].sky;
-        chunks_[c].incident = chunks_[c].skyIncident;
+        chunks_[c]->outputReady = false;
+        chunks_[c]->revision = generation_;
+        changedChunks_.push_back(chunks_[c]->position);
     }
+    eastl::sort(changedChunks_.begin(), changedChunks_.end(), Less);
+    changedChunks_.erase(eastl::unique(changedChunks_.begin(), changedChunks_.end()), changedChunks_.end());
+}
+
+void LightingField::EnsureChunk(const World& world, ChunkCoord position) {
+    // World is explicit so callers follow the same Prepare/Ensure protocol as
+    // Rebuild; no pointer to a World or resident object survives either call.
+    (void)world;
+    const auto c = FindChunk(position);
+    if (c == chunks_.size() || chunks_[c]->outputReady) { return; }
+    auto& chunk = *chunks_[c];
+    BuildSky(c);
+    chunk.levels = chunk.sky;
+    chunk.incident = chunk.skyIncident;
     // Max distributes over both bounded integer spill steps. Independently
     // cached complete source patches therefore combine exactly like one field.
-    for (const auto& source : sources_) {
+    for (auto& source : sources_) {
+        if (!SourceTouches(source.position, source.emission, position)) { continue; }
+        if (!source.ready) { BuildSource(source); }
         for (const auto& contribution : source.contribution) {
-            if (!dirty[contribution.chunk]) { continue; }
-            auto& chunk = chunks_[contribution.chunk];
+            if (contribution.chunk != position) { continue; }
             auto& level = chunk.levels[contribution.tile];
             level = eastl::max(level, contribution.level);
             for (int d = 0; d < 6; ++d) {
@@ -427,15 +532,14 @@ void LightingField::Rebuild(const World& world) {
             }
         }
     }
-    // Publish only after scalar and directional values have their final maxima.
-    for (std::size_t c = 0; c < chunks_.size(); ++c) {
-        if (!dirty[c]) { continue; }
-        chunks_[c].revision = generation_;
-        changedChunks_.push_back(chunks_[c].position);
-    }
-    if (geometryChanged) {
-        eastl::sort(changedChunks_.begin(), changedChunks_.end(), Less);
-        changedChunks_.erase(eastl::unique(changedChunks_.begin(), changedChunks_.end()), changedChunks_.end());
-    }
+    chunk.outputReady = true;
+    ++workStats_.outputChunks;
+}
+
+const LightingField::WorkStats& LightingField::GetWorkStats() const { return workStats_; }
+
+void LightingField::Rebuild(const World& world) {
+    Prepare(world);
+    for (const auto coord : world.LoadedChunks()) { EnsureChunk(world, coord); }
 }
 }

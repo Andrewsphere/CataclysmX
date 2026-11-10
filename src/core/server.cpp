@@ -53,6 +53,73 @@ bool BubbleFits(TileCoord position, int radius) {
         && center.z >= minimum + radius && center.z <= maximum - radius;
 }
 
+bool ResidencyFits(TileCoord position, int active, int resident,
+    eastl::optional<CircleResidency> circle) {
+    if (!BubbleFits(position, active)) { return false; }
+    if (!circle) { return BubbleFits(position, resident); }
+    const int radius = circle->radiusTiles;
+    return radius >= 0 && radius <= maxCircleResidencyRadius
+        && position.x >= -world_coordinate_limit + radius
+        && position.x <= world_coordinate_limit - radius
+        && position.z >= -world_coordinate_limit + radius
+        && position.z <= world_coordinate_limit - radius;
+}
+
+LoadRequest RequestResident(World& world, TileCoord position, int resident,
+    eastl::optional<CircleResidency> circle) {
+    return circle ? Take(world.RequestCircle({position, circle->radiusTiles}, LoadMode::resident))
+        : Take(world.RequestChunks({BubbleCenter(position), resident}, LoadMode::resident));
+}
+
+void UpdateResident(World& world, LoadRequest request, TileCoord position, int resident,
+    eastl::optional<CircleResidency> circle) {
+    if (circle) {
+        Require(world.UpdateCircleRequest(request, {position, circle->radiusTiles}, LoadMode::resident).has_value());
+    } else {
+        Require(world.UpdateRequest(request, {BubbleCenter(position), resident}, LoadMode::resident).has_value());
+    }
+}
+
+bool FootprintLoaded(const World& world, TileCoord position, int active, int resident,
+    eastl::optional<CircleResidency> circle) {
+    const auto center = BubbleCenter(position);
+    const int extent = circle ? (circle->radiusTiles + chunk_size - 1) / chunk_size : resident;
+    const int radius = eastl::max(active, extent);
+    for (int z = center.z - radius; z <= center.z + radius; ++z) {
+        for (int x = center.x - radius; x <= center.x + radius; ++x) {
+            const bool activeColumn = std::abs(x - center.x) <= active && std::abs(z - center.z) <= active;
+            bool residentColumn = true;
+            if (circle) {
+                const int dx = position.x - eastl::clamp(position.x, x * chunk_size, (x + 1) * chunk_size - 1);
+                const int dz = position.z - eastl::clamp(position.z, z * chunk_size, (z + 1) * chunk_size - 1);
+                residentColumn = dx * dx + dz * dz <= circle->radiusTiles * circle->radiusTiles;
+            } else {
+                residentColumn = std::abs(x - center.x) <= resident && std::abs(z - center.z) <= resident;
+            }
+            // World demand always materializes full-height columns.
+            if ((activeColumn || residentColumn) && !world.GetChunk({x, z, 0})) { return false; }
+        }
+    }
+    return true;
+}
+
+void ReleaseStaging(World& world, Vector<LoadRequest>& staging) {
+    for (LoadRequest request : staging) { Require(world.ReleaseRequest(request).has_value()); }
+    staging.clear();
+}
+
+SaveResult<void> StageBubble(World& world, TileCoord position, int active, int resident,
+    eastl::optional<CircleResidency> circle, Vector<LoadRequest>& staging) {
+    if (FootprintLoaded(world, position, active, resident, circle)) { return {}; }
+    staging.push_back(RequestResident(world, position, resident, circle));
+    if (circle) {
+        staging.push_back(Take(world.RequestChunks({BubbleCenter(position), active}, LoadMode::resident)));
+    }
+    const auto result = world.ReconcileChunks();
+    if (!result) { ReleaseStaging(world, staging); }
+    return result;
+}
+
 ItemHandle SelectItem(const World& world, const Vector<ItemHandle>& items, PersistentId id) {
     ItemHandle selected{};
     PersistentId smallest = eastl::numeric_limits<PersistentId>::max();
@@ -215,7 +282,7 @@ ContentResult<void> ValidateServerContent(const ContentCatalog& content, Diagnos
 Server::Server(const ContentCatalog& content, std::uint32_t seed) : world_(content, seed), rng_state_(seed) {
     Require(ValidateServerContent(content).has_value());
     active_request_ = Take(world_.RequestChunks({{0, 0}, active_radius_}, LoadMode::active));
-    resident_request_ = Take(world_.RequestChunks({{0, 0}, resident_radius_}, LoadMode::resident));
+    resident_request_ = RequestResident(world_, {0, 0}, resident_radius_, circleResidency_);
     Require(world_.ReconcileChunks().has_value());
     constexpr TileCoord floors[] = {{0, 0}, {1, 0}, {2, 0}, {5, 5}};
     for (TileCoord position : floors) {
@@ -328,36 +395,24 @@ CommandResult Server::Execute(ActorHandle handle, PlayerSlot& slot, Command comm
         }
         const TileCoord destination{position.x + command.dx, position.z + command.dz, position.y + command.dy};
         // Validate the complete future bubble before acquiring any demand.
-        if (!BubbleFits(destination, resident_radius_)) {
+        if (!ResidencyFits(destination, active_radius_, resident_radius_, circleResidency_)) {
             return failed(Outcome::unavailable);
         }
-        LoadRequest temporary{};
-        const ChunkCoord center = BubbleCenter(destination);
-        bool complete = true;
-        for (int z = center.z - resident_radius_; z <= center.z + resident_radius_; ++z) {
-            for (int x = center.x - resident_radius_; x <= center.x + resident_radius_; ++x) {
-                for (int y = world_min_y; y <= world_max_y; ++y) {
-                    if (!world_.GetChunk({x, z, y})) { complete = false; }
-                }
-            }
-        }
+        Vector<LoadRequest> staging;
         // Preserve the old bubble while staging every chunk the new requests
         // will need. Reconcile failures leave all live world state untouched.
-        if (center != slot.center || !complete) {
-            temporary = Take(world_.RequestChunks({center, resident_radius_}, LoadMode::resident));
-            const auto loaded = world_.ReconcileChunks();
-            if (!loaded) {
-                Require(world_.ReleaseRequest(temporary).has_value());
-                return {Outcome::unavailable, false, tick_, loaded.error()};
-            }
+        const auto loaded = StageBubble(world_, destination, active_radius_, resident_radius_, circleResidency_, staging);
+        if (!loaded) {
+            Require(world_.ReconcileChunks().has_value());
+            return {Outcome::unavailable, false, tick_, loaded.error()};
         }
         if (command.dy != 0) {
             const Tile* source = world_.GetTile(position);
             const Tile* target = world_.GetTile(destination);
             if (!source || !target || !world_.GetContent().GetTerrain(source->terrain).stairs
                 || !world_.GetContent().GetTerrain(target->terrain).stairs) {
-                if (temporary.value != 0) {
-                    Require(world_.ReleaseRequest(temporary).has_value());
+                if (!staging.empty()) {
+                    ReleaseStaging(world_, staging);
                     Require(world_.ReconcileChunks().has_value());
                 }
                 return failed(Outcome::blocked);
@@ -365,8 +420,8 @@ CommandResult Server::Execute(ActorHandle handle, PlayerSlot& slot, Command comm
         }
         const auto moved = world_.MoveActor(handle, destination);
         if (!moved) {
-            if (temporary.value != 0) {
-                Require(world_.ReleaseRequest(temporary).has_value());
+            if (!staging.empty()) {
+                ReleaseStaging(world_, staging);
                 Require(world_.ReconcileChunks().has_value());
             }
             return failed(MovementFailure(moved.error()));
@@ -375,11 +430,9 @@ CommandResult Server::Execute(ActorHandle handle, PlayerSlot& slot, Command comm
         // removed, preserving its runtime key even with zero-radius bubbles.
         // The union is resident now; changing activity and releasing temporary
         // demand below cannot require another storage read.
-        Require(UpdatePlayerBubble(slot, active_radius_, resident_radius_).has_value());
-        if (temporary.value != 0) {
-            Require(world_.ReleaseRequest(temporary).has_value());
-            Require(world_.ReconcileChunks().has_value());
-        }
+        CommitPlayerBubble(slot);
+        ReleaseStaging(world_, staging);
+        Require(world_.ReconcileChunks().has_value());
         outcome = Outcome::moved;
         break;
     }
@@ -549,6 +602,9 @@ SessionResult<PlayerJoin> Server::JoinPlayer(eastl::string_view name,
             }
             const auto position = world_.FindPlayerPosition(slot.id);
             if (!position) { return eastl::unexpected(SessionError::Unavailable); }
+            if (!ValidPosition(*position)) {
+                return eastl::unexpected(SessionError::Unavailable);
+            }
             slot.position = *position;
             slot.center = BubbleCenter(*position);
             slot.residentRequest = Take(world_.RequestChunks(
@@ -588,7 +644,7 @@ SessionResult<PlayerJoin> Server::JoinPlayer(eastl::string_view name,
                 const Tile* tile = world_.GetTile(candidate);
                 if (tile && Passable(world_.GetContent(), tile->terrain)
                     && world_.ActorAt(candidate).value == 0
-                    && BubbleFits(candidate, resident_radius_)) {
+                    && ResidencyFits(candidate, active_radius_, resident_radius_, circleResidency_)) {
                     spawn = candidate;
                     found = true;
                     break;
@@ -619,36 +675,26 @@ SessionResult<void> Server::ActivatePlayer(PersistentId id) {
     if (slot->state != PlayerConnectionState::Joining) {
         return eastl::unexpected(SessionError::AlreadyConnected);
     }
-    const ChunkCoord center = BubbleCenter(slot->position);
-    if (!BubbleFits(slot->position, resident_radius_)) {
+    if (!ResidencyFits(slot->position, active_radius_, resident_radius_, circleResidency_)) {
         return eastl::unexpected(SessionError::Unavailable);
     }
     Require(slot->residentRequest.value != 0);
-    Require(world_.UpdateRequest(slot->residentRequest,
-        {center, resident_radius_}, LoadMode::resident).has_value());
-    slot->activeRequest = Take(world_.RequestChunks({center, active_radius_}, LoadMode::active));
-    const auto rollback = [this, slot, center](LoadRequest temporary) {
-        if (temporary.value != 0) { Require(world_.ReleaseRequest(temporary).has_value()); }
-        Require(world_.ReleaseRequest(slot->activeRequest).has_value());
-        slot->activeRequest = {};
-        Require(world_.UpdateRequest(slot->residentRequest,
-            {center, 0}, LoadMode::resident).has_value());
+    Vector<LoadRequest> staging;
+    const auto rollback = [this, &staging]() {
+        ReleaseStaging(world_, staging);
         Require(world_.ReconcileChunks().has_value());
     };
-    const auto staged = world_.ReconcileChunks();
+    const auto staged = StageBubble(world_, slot->position, active_radius_, resident_radius_, circleResidency_, staging);
     if (!staged) {
-        rollback({});
         return eastl::unexpected(SessionError::StorageFailure);
     }
     const ActorHandle actor = PlayerActor(*slot);
     if (!world_.GetActor(actor)) {
-        rollback({});
+        rollback();
         return eastl::unexpected(SessionError::Unavailable);
     }
     TileCoord spawn{};
     bool found = false;
-    LoadRequest temporary{};
-    ChunkCoord temporaryCenter{};
     // At radius zero, the saved tile may be occupied while another tile in
     // the same chunk is free. Rings can also cross a chunk boundary.
     for (int radius = 0; radius <= chunk_size * (resident_radius_ + 1) && !found; ++radius) {
@@ -656,19 +702,11 @@ SessionResult<void> Server::ActivatePlayer(PersistentId id) {
             for (int dx = -radius; dx <= radius; ++dx) {
                 if (eastl::max(std::abs(dx), std::abs(dz)) != radius) { continue; }
                 const TileCoord candidate{slot->position.x + dx, slot->position.z + dz, slot->position.y};
-                if (!BubbleFits(candidate, resident_radius_)) { continue; }
-                const ChunkCoord candidateCenter = BubbleCenter(candidate);
-                if (candidateCenter != center &&
-                    (!temporary.value || candidateCenter != temporaryCenter)) {
-                    if (temporary.value) {
-                        Require(world_.ReleaseRequest(temporary).has_value());
-                        temporary = {};
-                    }
-                    temporary = Take(world_.RequestChunks(
-                        {candidateCenter, resident_radius_}, LoadMode::resident));
-                    temporaryCenter = candidateCenter;
+                if (!ResidencyFits(candidate, active_radius_, resident_radius_, circleResidency_)) { continue; }
+                if (!world_.GetTile(candidate)) {
+                    staging.push_back(Take(world_.RequestChunks({BubbleCenter(candidate), 0}, LoadMode::resident)));
                     if (!world_.ReconcileChunks()) {
-                        rollback(temporary);
+                        rollback();
                         return eastl::unexpected(SessionError::StorageFailure);
                     }
                 }
@@ -683,22 +721,22 @@ SessionResult<void> Server::ActivatePlayer(PersistentId id) {
         }
     }
     if (!found) {
-        rollback(temporary);
+        rollback();
         return eastl::unexpected(SessionError::Unavailable);
     }
     // Every chunk of the destination bubble is resident before relocating or
     // unparking the actor. Updating the permanent requests cannot need I/O.
-    if (BubbleCenter(spawn) != center && !temporary.value) {
-        std::abort();
+    if (!StageBubble(world_, spawn, active_radius_, resident_radius_, circleResidency_, staging)) {
+        rollback();
+        return eastl::unexpected(SessionError::StorageFailure);
     }
     Require(world_.MoveActor(actor, spawn).has_value());
     Require(world_.SetActorParked(actor, false).has_value());
     slot->state = PlayerConnectionState::Active;
-    Require(UpdatePlayerBubble(*slot, active_radius_, resident_radius_).has_value());
-    if (temporary.value) {
-        Require(world_.ReleaseRequest(temporary).has_value());
-        Require(world_.ReconcileChunks().has_value());
-    }
+    slot->activeRequest = Take(world_.RequestChunks({BubbleCenter(spawn), active_radius_}, LoadMode::active));
+    CommitPlayerBubble(*slot);
+    ReleaseStaging(world_, staging);
+    Require(world_.ReconcileChunks().has_value());
     world_.UpdatePlayerObservations();
     ++revision_;
     SynchronizePacing();
@@ -1017,22 +1055,35 @@ WorldView Server::ViewForPlayer(PersistentId id, int radius) const {
 
 WorldResult<void> Server::SetBubbleRadii(int active_radius, int resident_radius,
     Diagnostics* diagnostics) {
-    const Actor* actor = world_.GetActor(player_);
-    Require(actor != nullptr);
+    return SetResidency(active_radius, resident_radius, {}, diagnostics);
+}
+
+WorldResult<void> Server::SetCircleResidency(int activeRadiusChunks, CircleResidency residency,
+    Diagnostics* diagnostics) {
+    return SetResidency(activeRadiusChunks, eastl::max(resident_radius_, activeRadiusChunks), residency, diagnostics);
+}
+
+eastl::optional<CircleResidency> Server::GetCircleResidency() const { return circleResidency_; }
+int Server::GetActiveRadius() const { return active_radius_; }
+int Server::GetResidentRadius() const { return resident_radius_; }
+
+WorldResult<void> Server::SetResidency(int active_radius, int resident_radius,
+    eastl::optional<CircleResidency> circle, Diagnostics* diagnostics) {
     if (active_radius < 0 || resident_radius < active_radius || resident_radius > 8
-        || !BubbleFits(actor->position, resident_radius)) {
+        || (circle && (circle->radiusTiles < 0 || circle->radiusTiles > maxCircleResidencyRadius))) {
         return eastl::unexpected(WorldError::invalid_region);
     }
     for (const PlayerSlot& slot : players_) {
         if (slot.state != PlayerConnectionState::Active) { continue; }
         const Actor* participant = world_.GetActor(PlayerActor(slot));
         Require(participant);
-        if (!BubbleFits(participant->position, resident_radius)) {
+        if (!ResidencyFits(participant->position, active_radius, resident_radius, circle)) {
             return eastl::unexpected(WorldError::invalid_region);
         }
     }
     const int oldActive = active_radius_;
     const int oldResident = resident_radius_;
+    const auto oldCircle = circleResidency_;
     for (PlayerSlot& slot : players_) {
         if (slot.state != PlayerConnectionState::Active) { continue; }
         const Actor* participant = world_.GetActor(PlayerActor(slot));
@@ -1040,7 +1091,7 @@ WorldResult<void> Server::SetBubbleRadii(int active_radius, int resident_radius,
         const LoadRequest active = slot.id == GetHostPlayerId() ? active_request_ : slot.activeRequest;
         const LoadRequest resident = slot.id == GetHostPlayerId() ? resident_request_ : slot.residentRequest;
         Require(world_.UpdateRequest(active, {center, active_radius}, LoadMode::active).has_value());
-        Require(world_.UpdateRequest(resident, {center, resident_radius}, LoadMode::resident).has_value());
+        UpdateResident(world_, resident, participant->position, resident_radius, circle);
     }
     if (!world_.ReconcileChunks(diagnostics)) {
         for (const PlayerSlot& slot : players_) {
@@ -1048,7 +1099,7 @@ WorldResult<void> Server::SetBubbleRadii(int active_radius, int resident_radius,
             const LoadRequest active = slot.id == GetHostPlayerId() ? active_request_ : slot.activeRequest;
             const LoadRequest resident = slot.id == GetHostPlayerId() ? resident_request_ : slot.residentRequest;
             Require(world_.UpdateRequest(active, {slot.center, oldActive}, LoadMode::active).has_value());
-            Require(world_.UpdateRequest(resident, {slot.center, oldResident}, LoadMode::resident).has_value());
+            UpdateResident(world_, resident, slot.position, oldResident, oldCircle);
         }
         return eastl::unexpected(WorldError::storage_failure);
     }
@@ -1062,32 +1113,23 @@ WorldResult<void> Server::SetBubbleRadii(int active_radius, int resident_radius,
     bubbleCenter_ = FindPlayer(GetHostPlayerId())->center;
     active_radius_ = active_radius;
     resident_radius_ = resident_radius;
+    circleResidency_ = circle;
     ++revision_;
     return {};
 }
 
-SaveResult<void> Server::UpdatePlayerBubble(PlayerSlot& slot, int activeRadius, int residentRadius,
-    Diagnostics* diagnostics) {
+void Server::CommitPlayerBubble(PlayerSlot& slot) {
     const Actor* actor = world_.GetActor(PlayerActor(slot));
     Require(actor != nullptr);
     const ChunkCoord center = BubbleCenter(actor->position);
     LoadRequest active = slot.id == GetHostPlayerId() ? active_request_ : slot.activeRequest;
     LoadRequest resident = slot.id == GetHostPlayerId() ? resident_request_ : slot.residentRequest;
-    Require(world_.UpdateRequest(active, {center, activeRadius}, LoadMode::active).has_value());
-    Require(world_.UpdateRequest(resident, {center, residentRadius}, LoadMode::resident).has_value());
+    Require(world_.UpdateRequest(active, {center, active_radius_}, LoadMode::active).has_value());
+    UpdateResident(world_, resident, actor->position, resident_radius_, circleResidency_);
     const TileCoord position = actor->position;
-    const auto reconciled = world_.ReconcileChunks(diagnostics);
-    if (!reconciled) {
-        Require(world_.UpdateRequest(active, {slot.center, active_radius_}, LoadMode::active).has_value());
-        Require(world_.UpdateRequest(resident, {slot.center, resident_radius_}, LoadMode::resident).has_value());
-        return eastl::unexpected(reconciled.error());
-    }
     slot.center = center;
     slot.position = position;
     if (slot.id == GetHostPlayerId()) { bubbleCenter_ = center; }
-    active_radius_ = activeRadius;
-    resident_radius_ = residentRadius;
-    return {};
 }
 
 Server::Server(const ContentCatalog& content, EmptyTag) : world_(content) {}
@@ -1097,6 +1139,7 @@ SessionState Server::Checkpoint() const {
     Require(actor != nullptr);
     SessionState session{tick_, rng_state_, actor->id, actor->position,
         active_radius_, resident_radius_, autosaveInterval_, pacer_.GetSettings()};
+    session.circleResidency = circleResidency_;
     for (const PlayerSlot& slot : players_) {
         const auto position = world_.FindPlayerPosition(slot.id);
         Require(position.has_value());
@@ -1132,7 +1175,7 @@ SaveResult<eastl::unique_ptr<Server>> Server::LoadSave(const ContentCatalog& con
     const SessionState& session = *loaded;
     if (session.player == 0 || session.activeRadius < 0
         || session.residentRadius < session.activeRadius || session.residentRadius > 8
-        || !BubbleFits(session.playerPosition, session.residentRadius)) {
+        || !ResidencyFits(session.playerPosition, session.activeRadius, session.residentRadius, session.circleResidency)) {
         if (diagnostics) {
             diagnostics->Add("Invalid server session");
         }
@@ -1141,14 +1184,21 @@ SaveResult<eastl::unique_ptr<Server>> Server::LoadSave(const ContentCatalog& con
     server->bubbleCenter_ = BubbleCenter(session.playerPosition);
     server->active_radius_ = session.activeRadius;
     server->resident_radius_ = session.residentRadius;
+    server->circleResidency_ = session.circleResidency;
     server->active_request_ = Take(server->world_.RequestChunks(
         {server->bubbleCenter_, session.activeRadius}, LoadMode::active));
-    server->resident_request_ = Take(server->world_.RequestChunks(
-        {server->bubbleCenter_, session.residentRadius}, LoadMode::resident));
+    server->resident_request_ = RequestResident(server->world_, session.playerPosition,
+        session.residentRadius, session.circleResidency);
     // Materialize the whole roster together: reconciliation settles gravity,
     // and guests may support each other or the host across saved layers.
     Vector<LoadRequest> staging;
     for (const SavedPlayer& saved : session.players) {
+        // Guests return parked and only need their saved column. Their future
+        // active/resident footprint is validated when activation is requested.
+        if (!ValidPosition(saved.position)) {
+            if (diagnostics) { diagnostics->Add("Saved player position exceeds world limits"); }
+            return eastl::unexpected(SaveError::InvalidData);
+        }
         if (saved.actor == session.player) { continue; }
         const auto request = server->world_.RequestChunks(
             {BubbleCenter(saved.position), 0}, LoadMode::resident);

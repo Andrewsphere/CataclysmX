@@ -132,6 +132,58 @@ TEST_CASE("Settings modal edits sparse scopes applies saves resets and never adv
     Event(f.menu, ftxui::Event::Escape); CHECK(f.closed == 1);
 }
 
+TEST_CASE("Settings show current residency and unrelated edits retain it", "[terminal][settings][circle]") {
+    MenuFixture f;
+    REQUIRE(f.server.SetCircleResidency(0, {13}));
+    f.Open();
+    NextCategory(f.menu); // World: seed, active, square radius, mode, circle radius.
+    auto text = DrawSettings(f.menu);
+    CHECK(text.find("Circle") != std::string::npos);
+    CHECK(text.find("Inactive") != std::string::npos);
+    CHECK(text.find("13") != std::string::npos);
+    Event(f.menu, ftxui::Event::ArrowDown); // Active.
+    CHECK(DrawSettings(f.menu).find("Current server policy") != std::string::npos);
+    NextCategory(f.menu); // Timing.
+    Number(f.menu, "37"); Key(f.menu, 'a');
+    REQUIRE(f.server.GetCircleResidency());
+    CHECK(f.server.GetCircleResidency()->radiusTiles == 13);
+    CHECK(f.server.GetActiveRadius() == 0);
+    CHECK(f.server.GetPacing().ticksPerSecond == 37);
+    CHECK_FALSE(HasResidencyOverride(f.store.Overrides(SettingsScope::Global)));
+    CHECK(f.server.GetTick() == 0);
+}
+
+TEST_CASE("Settings radius editors select units and world mode masks the global circle", "[terminal][settings][circle]") {
+    MenuFixture f;
+    NextCategory(f.menu); // World.
+    for (int i = 0; i < 4; ++i) { Event(f.menu, ftxui::Event::ArrowDown); }
+    Number(f.menu, "0"); Key(f.menu, 's'); // Circle radius 0, active radius remains 1.
+    REQUIRE(f.server.GetCircleResidency());
+    CHECK(f.server.GetCircleResidency()->radiusTiles == 0);
+    CHECK(f.server.GetActiveRadius() == 1);
+    CHECK(f.store.Overrides(SettingsScope::Global).residentRadiusTiles == 0);
+    CHECK_FALSE(f.store.Overrides(SettingsScope::Global).residentRadius);
+    Number(f.menu, "129");
+    CHECK(DrawSettings(f.menu).find("Invalid value") != std::string::npos);
+    Event(f.menu, ftxui::Event::Escape);
+    NextScope(f.menu); NextCategory(f.menu); // World scope, World category.
+    for (int i = 0; i < 3; ++i) { Event(f.menu, ftxui::Event::ArrowDown); }
+    Event(f.menu, ftxui::Event::Return); Key(f.menu, 'a'); // Circle -> Square.
+    CHECK_FALSE(f.server.GetCircleResidency());
+    CHECK(f.store.Overrides(SettingsScope::World).residencyMode == ResidencyMode::Square);
+    CHECK(f.store.Overrides(SettingsScope::Global).residentRadiusTiles == 0);
+    Event(f.menu, ftxui::Event::Backspace); Key(f.menu, 'a'); // Inherit global circle again.
+    REQUIRE(f.server.GetCircleResidency());
+    CHECK(f.server.GetCircleResidency()->radiusTiles == 0);
+    Event(f.menu, ftxui::Event::ArrowUp); // Square radius.
+    Number(f.menu, "1"); Key(f.menu, 'a'); // Editing inactive radius explicitly chooses square.
+    CHECK_FALSE(f.server.GetCircleResidency());
+    CHECK(f.server.GetResidentRadius() == 1);
+    CHECK_FALSE(f.store.Overrides(SettingsScope::World).residentRadiusTiles);
+    CHECK(f.store.Source(SettingsField::ResidencyMode) == SettingsSource::World);
+    CHECK(f.server.GetTick() == 0);
+}
+
 TEST_CASE("Settings capture rejects conflicts preserves case and key inspection consumes gameplay keys", "[terminal][settings]") {
     MenuFixture f;
     NextSection(f.menu);

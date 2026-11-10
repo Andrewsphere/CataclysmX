@@ -101,13 +101,13 @@ SettingsResult<void> ParseDocument(eastl::string_view text, Document& document, 
     }
     return {};
 }
-SettingsResult<void> Version(yyjson_val* root, Diagnostics* diagnostics) {
+SettingsResult<void> Version(yyjson_val* root, Diagnostics* diagnostics, std::uint64_t maximum = 1) {
     const auto* version = yyjson_obj_get(root, "format_version");
     if (!yyjson_is_uint(version)) {
         Report(diagnostics, "expected unsigned format_version");
         return eastl::unexpected(SettingsError::InvalidData);
     }
-    if (yyjson_get_uint(version) != 1) {
+    if (yyjson_get_uint(version) < 1 || yyjson_get_uint(version) > maximum) {
         Report(diagnostics, "unsupported configuration/catalog version");
         return eastl::unexpected(SettingsError::UnsupportedVersion);
     }
@@ -223,7 +223,7 @@ SettingsResult<SettingsOverrides> ParseSettings(eastl::string_view text, Diagnos
     if (!parsed) { return eastl::unexpected(parsed.error()); }
     auto* root = yyjson_doc_get_root(document.value);
     if (!Object(root, {"format_version", "settings"}, diagnostics)) { return eastl::unexpected(SettingsError::InvalidData); }
-    const auto version = Version(root, diagnostics);
+    const auto version = Version(root, diagnostics, 2);
     if (!version) { return eastl::unexpected(version.error()); }
     auto* settings = yyjson_obj_get(root, "settings");
     if (!Object(settings, {}, diagnostics)) { return eastl::unexpected(SettingsError::InvalidData); }
@@ -232,22 +232,24 @@ SettingsResult<SettingsOverrides> ParseSettings(eastl::string_view text, Diagnos
     yyjson_val* key; yyjson_val* value;
     yyjson_obj_foreach(settings, index, count, key, value) {
         const auto field = ParseSettingName(JsonText(key));
-        if (!field) { Report(diagnostics, "unknown setting", {}, JsonText(key)); return eastl::unexpected(SettingsError::InvalidData); }
+        if (!field || (yyjson_get_uint(yyjson_obj_get(root, "format_version")) == 1
+            && (*field == SettingsField::ResidencyMode || *field == SettingsField::ResidentRadiusTiles))) {
+            Report(diagnostics, "unknown setting", {}, JsonText(key)); return eastl::unexpected(SettingsError::InvalidData);
+        }
         String encoded;
-        if (*field == SettingsField::Language && StringValue(value)) { encoded.assign(yyjson_get_str(value), yyjson_get_len(value)); }
+        if ((*field == SettingsField::Language || *field == SettingsField::ResidencyMode) && StringValue(value)) { encoded.assign(yyjson_get_str(value), yyjson_get_len(value)); }
         else if ((*field == SettingsField::RateLimited || *field == SettingsField::PauseWhenIdle) && yyjson_is_bool(value)) {
             encoded = yyjson_get_bool(value) ? "true" : "false";
-        } else if (*field != SettingsField::Language && *field != SettingsField::RateLimited
+        } else if (*field != SettingsField::Language && *field != SettingsField::ResidencyMode && *field != SettingsField::RateLimited
             && *field != SettingsField::PauseWhenIdle && yyjson_is_int(value)) {
             encoded = yyjson_is_uint(value) ? UnsignedText(yyjson_get_uint(value)) : NumberText(yyjson_get_sint(value));
         } else { Report(diagnostics, "invalid setting type", {}, JsonText(key)); return eastl::unexpected(SettingsError::InvalidData); }
         if (!SetOverride(overrides, *field, View(encoded), diagnostics)) { return eastl::unexpected(SettingsError::InvalidData); }
     }
-    // Validate individual values here; relationships are validated after layering.
-    auto individual = ResolveSettings({}, overrides);
-    if (overrides.activeRadius && !overrides.residentRadius) { individual.residentRadius = 8; }
-    if (overrides.residentRadius && !overrides.activeRadius) { individual.activeRadius = 0; }
-    if (!ValidateSettings(individual, diagnostics)) { return eastl::unexpected(SettingsError::InvalidData); }
+    // V1 bubble fields always meant square chunk radii, even active-only files.
+    if (yyjson_get_uint(yyjson_obj_get(root, "format_version")) == 1
+        && (overrides.activeRadius || overrides.residentRadius)) { overrides.residencyMode = ResidencyMode::Square; }
+    if (!ValidateOverrides(overrides, diagnostics)) { return eastl::unexpected(SettingsError::InvalidData); }
     return overrides;
 }
 SettingsResult<Keymap> ParseKeymap(eastl::string_view text, Diagnostics* diagnostics) {
@@ -308,16 +310,13 @@ SettingsResult<Keymap> LoadKeymapFile(const char* path, Diagnostics* diagnostics
     return parsed;
 }
 SettingsResult<void> SaveSettingsFile(const char* path, const SettingsOverrides& overrides, Diagnostics* diagnostics) {
-    auto individual = ResolveSettings({}, overrides);
-    if (overrides.activeRadius && !overrides.residentRadius) { individual.residentRadius = 8; }
-    if (overrides.residentRadius && !overrides.activeRadius) { individual.activeRadius = 0; }
-    if (!ValidateSettings(individual, diagnostics)) { return eastl::unexpected(SettingsError::InvalidData); }
+    if (!ValidateOverrides(overrides, diagnostics)) { return eastl::unexpected(SettingsError::InvalidData); }
     const auto existing = LoadSettingsFile(path, diagnostics);
     if (!existing) { return eastl::unexpected(existing.error()); }
     MutableDocument document;
     auto* root = yyjson_mut_obj(document.value);
     yyjson_mut_doc_set_root(document.value, root);
-    yyjson_mut_obj_add_uint(document.value, root, "format_version", 1);
+    yyjson_mut_obj_add_uint(document.value, root, "format_version", 2);
     auto* settings = yyjson_mut_obj_add_obj(document.value, root, "settings");
     const auto resolved = ResolveSettings({}, overrides);
     for (unsigned i = 0; i < static_cast<unsigned>(SettingsField::Count); ++i) {
@@ -331,6 +330,8 @@ SettingsResult<void> SaveSettingsFile(const char* path, const SettingsOverrides&
         case SettingsField::AutosaveInterval: yyjson_mut_obj_add_uint(document.value, settings, name.data(), resolved.autosaveInterval); break;
         case SettingsField::ActiveRadius: yyjson_mut_obj_add_sint(document.value, settings, name.data(), resolved.activeRadius); break;
         case SettingsField::ResidentRadius: yyjson_mut_obj_add_sint(document.value, settings, name.data(), resolved.residentRadius); break;
+        case SettingsField::ResidencyMode: AddString(document.value, settings, name.data(), View(SettingValue(resolved, field))); break;
+        case SettingsField::ResidentRadiusTiles: yyjson_mut_obj_add_sint(document.value, settings, name.data(), resolved.residentRadiusTiles); break;
         case SettingsField::Seed: yyjson_mut_obj_add_uint(document.value, settings, name.data(), resolved.seed); break;
         case SettingsField::TicksPerSecond: yyjson_mut_obj_add_uint(document.value, settings, name.data(), resolved.pacing.ticksPerSecond); break;
         case SettingsField::RateLimited: yyjson_mut_obj_add_bool(document.value, settings, name.data(), resolved.pacing.rateLimited); break;

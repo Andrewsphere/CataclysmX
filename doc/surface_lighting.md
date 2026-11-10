@@ -96,30 +96,35 @@ removals while comparing incremental fields to fresh scalar/incident fields.
 
 ## Incremental lighting
 
-`LightingField::Rebuild` scans resident chunk metadata and compares
+`LightingField::Prepare` scans resident chunk metadata and compares
 `World::GetLightingInputRevision(ChunkCoord) const` with each cached revision.
 The revision is zero for absent chunks and changes monotonically on optical or
 terrain emission edits and emitting actor/object movement, toggles, parking,
 creation, or removal. Only changed chunks have their tiles and source lists
 rescanned. Cached source descriptors avoid global terrain/source rediscovery
-when one lamp moves. No chunk or entity pointers survive rebuilds.
+when one lamp moves. No World chunk or entity pointers survive synchronization.
+The sorted `World::LoadedChunks()` contract remains X, then Z, then Y.
 
 Optical edits invalidate only source patches whose horizontal range-plus-spill
 bounds and source-Y +/- two layers intersect an edited optical chunk. Sky
-refreshes the edited vertical chunk columns and a one-chunk horizontal halo,
-which bounds both spill steps. Direct sky and first-step sky are cached
-separately: each refreshed cell gathers from neighboring direct/first-step data,
-including unchanged boundary data, before the final max combination. Lamp
-movement never rebuilds sky. Residency changes conservatively rebuild everything;
-a sky-level change rebuilds sky but reuses local source contributions.
+invalidates the edited vertical chunk columns and a one-chunk horizontal halo,
+which bounds both spill steps. Added and removed chunks are optical changes;
+surviving caches outside their dependencies retain both storage and revisions.
+The sorted cache vector owns `unique_ptr<LightChunk>` so residency merges move
+pointers rather than multiple tile arrays per surviving chunk. Source patches
+store chunk coordinates, never indices that residency insertion could remap.
+Lamp movement never invalidates sky. A sky-level change invalidates sky but
+reuses local source contributions. Equal same-coordinate reload inputs retain
+their output revisions; fresh input tokens still trigger descriptor/optics checks.
 
 The localized sky boundary is sufficient for both transport passes: direct sky
 can change only in edited horizontal chunk columns, with all Y layers refreshed.
 The surrounding one-chunk halo is at least 16 tiles wide, larger than the two-tile
-spill reach. First-step values are recomputed throughout that halo before the
-second pass begins. Neighboring cached direct/first-step values outside the halo
-are therefore unchanged and safe to gather at the boundary. Final sky values
-are never used as transport seeds.
+spill reach. `EnsureChunk` requests direct sky above the requested cells and
+direct/first-step caches in neighboring chunks as needed. These dependencies are
+computed before their consumer, independently of query order; there is no eager
+whole-halo output pass. Neighboring valid caches outside the invalidated halo
+remain safe to gather. Final sky values are never used as transport seeds.
 
 Sky transport takes advantage of uniform direct intensity: every nonzero direct
 sky value equals `skyLight`. Opaque receivers cannot have a connected spill
@@ -129,14 +134,17 @@ connected direct-lit neighbor. All nonzero first steps equal `skyLight / 4`.
 The second pass gathers only for still-dark transmitting cells, stopping at its
 first connected first-step neighbor; the result is `skyLight / 8`. Integer
 thresholds skip a transport pass entirely when its level would be zero, and zero
-sky clears selected caches without tracing columns.
+sky clears requested caches without tracing columns. Uniform optical flags allow
+whole-array direct fills for sky-exposed transparent or solid chunks. Uniform
+opaque chunks skip connected spill entirely; uniform closed/opaque upper cells
+stop upward dependency traversal. Fully direct-lit chunks skip both spill scans.
 
 First-step cache entries on direct-lit cells deliberately remain zero. Omitting
 these seeds is exact: any second hop from such a cell into a connected neighbor
 would be at most `skyLight / 8`, already dominated by that cell's own direct
 one-hop contribution of `skyLight / 4` to the same neighbor. Likewise, a cell
 with any nonzero first step cannot be improved by a second step. All refreshed
-first-step caches are cleared before recomputation, including newly direct-lit
+first-step caches are cleared on demand before recomputation, including newly direct-lit
 cells. Cached entries outside the localized halo use the same reduced invariant
 and remain unaffected by the edit; the boundary argument above is unchanged.
 
@@ -146,12 +154,13 @@ all final scalar and incident values for zero, sub-spill and threshold intensiti
 192 and 255, plus localized roof closure/reopening and fresh-field equivalence.
 
 Sky is retained separately, including its two-step spill and upper-face incident
-values. Each local source retains a complete sparse contribution patch, computed
+values. Each local source lazily retains a complete sparse contribution patch, computed
 within a horizontal range-plus-two patch and exactly five Y layers, avoiding
 radius-cubed work. Sources with unchanged position/emission and optics reuse
 their patch. Source movement, removal, toggling, parking or emission changes mark
-chunks touched by the old/new patches; only those final chunks are reset to sky
-and max-combined with **all** remaining source patches. No contribution is
+resident chunks intersecting the old/new range-plus-spill bounds, including chunks
+whose output or source patch has **never been computed**. Requested final chunks
+are reset to sky and max-combined with **all** remaining intersecting source patches. No contribution is
 subtracted from a maximum. Duplicate equal sources are valid and deterministic.
 
 This decomposition is exact: max distributes through each integer division and
@@ -170,41 +179,84 @@ intensity/range changes, geometry, sky, and parking changes.
 ### Field access APIs
 
 ```cpp
+void LightingField::Prepare(const World& world);
+void LightingField::EnsureChunk(const World& world, ChunkCoord position);
+void LightingField::Rebuild(const World& world);
+std::uint8_t LightingField::Get(TileCoord position) const;
 std::uint8_t LightingField::GetIncident(TileCoord position, int face) const;
 eastl::span<const std::uint8_t> LightingField::GetChunkLevels(ChunkCoord position) const;
 std::uint64_t LightingField::GetChunkRevision(ChunkCoord position) const;
 eastl::span<const ChunkCoord> LightingField::ChangedChunks() const;
+const LightingField::WorkStats& LightingField::GetWorkStats() const;
 ```
 
-Face order is `+X, -X, +Z, -Z, +Y, -Y`. `GetIncident` returns direct incident light,
-zero for an invalid face or nonresident position. World owns lazy cache refresh:
-`World::GetIncidentLightLevel(position, face)` forwards to this query after the
-same refresh as `GetLightLevel`. `GetChunkLevels` returns the final transported
-256-cell row-major chunk field, or an empty span for a nonresident chunk. The
-borrowed span expires at the next `Rebuild`; it owns nothing and acquires no
-residency. This lets bulk perception consume contiguous light without per-tile
-chunk searches.
+`Prepare` publishes dependency invalidation and revisions, with **no output,
+source transport, or sky transport computation**. `EnsureChunk` consumes that
+prepared snapshot and computes only the requested final chunk plus its transport
+dependencies. Its World parameter makes the calling protocol explicit; it does
+not resynchronize. Always call `Prepare` after input/residency changes before
+ensuring output. `Rebuild` is the eager convenience: Prepare, then EnsureChunk
+for every loaded chunk. Existing eager callers continue to work.
+
+Face order is `+X, -X, +Z, -Z, +Y, -Y`. After ensuring the corresponding chunk,
+`Get`, `GetIncident` and `GetChunkLevels` read its final values. Reading an
+unensured resident output fails fast instead of returning stale/zero bytes.
+Invalid/nonresident positions return zero; absent chunk spans are empty.
+`GetIncident` returns zero for an invalid face. `GetChunkLevels` returns the
+256-cell row-major transported field. Borrowed spans expire at the next Prepare
+(Rebuild includes Prepare). No query acquires residency, teaches memory, changes
+simulation state, or depends on an observer or player Y.
 
 `GetChunkRevision` returns zero for absent chunks. Every field has a monotonic
-nonzero rebuild generation; after final recombination, dirty resident chunks
-receive that generation. Unchanged chunks retain their revision, including on a
-rebuild with no dirty chunks. Generation exhaustion fails fast rather than
+nonzero synchronization generation; during Prepare, invalidated resident chunks
+receive that generation **before computation**. EnsureChunk never changes a
+revision. Unchanged chunks retain their revision, including across a no-op
+Prepare while their output is still pending. Generation exhaustion fails fast rather than
 reusing zero or an older generation. These are derived output revisions, separate
 from World's input revisions: a remote lamp can change a chunk's lighting without
 changing its terrain or emitter inputs.
 
-`ChangedChunks` borrows the last rebuild's sorted unique dirty coordinates, ordered
-by X, then Z, then Y; the span expires at the next rebuild. A residency rebuild
-reports the union of old and loaded coordinates, including removed chunks whose
-current revision is zero. Other rebuilds report precisely the existing conservative
-dirty set, which may include recomputed chunks whose resulting bytes are equal.
-The list is empty before the first rebuild and after a rebuild with no dirty chunks.
+`ChangedChunks` borrows the last Prepare's sorted unique invalidated coordinates,
+ordered by X, then Z, then Y, including removed chunks whose current revision is
+zero. The set is conservative and includes pending/uncomputed outputs and outputs
+whose resulting bytes may be equal. The list is empty before the first Prepare
+and after a no-op Prepare. Consume it immediately when syncing: a later no-op
+Prepare clears the list but preserves revisions and outstanding pending work.
 
-World can retain residency-sized light sample storage, lazily refreshing samples
-when `GetChunkRevision` differs from their cached output revision. It can invalidate
-an observer's lighting revision only when `ChangedChunks` intersects that cached
-volume's horizontal footprint and Y layers. These two APIs expose finalized cache
-invalidation without coupling the field to observer caches or sample ownership.
+### Coordinator integration in World
+
+1. Replace the global eager refresh's `lighting.Rebuild(world)` with
+   `lighting.Prepare(world)` when lighting inputs/residency are dirty. Immediately
+   consume `ChangedChunks` to invalidate intersecting observer lighting footprints.
+   This synchronization must run **before** an observer cache-validity comparison,
+   even if no observer will request lighting output on this call.
+2. `GetLightLevel(p)` and `GetIncidentLightLevel(p, face)` must synchronize first,
+   then call `lighting.EnsureChunk(world, ChunkOf(p))` before forwarding to Get or
+   GetIncident. Apply the same rule for every caller and elevation.
+3. Bulk sample refresh must synchronize first, compare GetChunkRevision with its
+   cached sample revision, then EnsureChunk before GetChunkLevels/copying the
+   bytes on a mismatch. Publish the sample revision only after copying. New sample
+   slots start at revision zero. Removed chunks have revision zero/empty output.
+4. Ensuring output does not publish new invalidations. Do not resynchronize or
+   clear ChangedChunks between Prepare and consuming it, and do not use output
+   computation itself as the trigger for observer invalidation.
+
+`WorkStats` resets at Prepare and counts final `outputChunks`, dependency
+`skyDirectChunks`, dependency `skyFirstChunks`, and `sourcePatches` built since
+then. These are deterministic work counters, not timings. Prepare leaves all
+counters zero. A source may compute a whole bounded patch as a dependency of
+one requested chunk; other final chunks remain uncomputed. Metadata scanning
+and descriptor sorting still scale with residency/source count. Cache allocation
+is residency-sized; tile optics are eagerly synchronized, output work is lazy.
+
+New lazy regressions cover never-computed dependency invalidation, repeated no-op
+syncs with pending work, arbitrary elevation/query ordering, inactive sources,
+remote residency retaining addresses/revisions, negative-index insertion with
+source patch reuse, roof/seam/source changes and removals. The independent full
+sky and combined-source transport regressions also exercise lazy computation and
+compare **both scalar and all six incident faces**, independently of fresh-field
+equivalence. No shared build or test executable was run for these changes;
+coordinator integration owns build/test validation.
 
 ### Historical validation before the planar model (2026-11-09)
 

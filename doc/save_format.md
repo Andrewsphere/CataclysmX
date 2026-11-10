@@ -1,10 +1,10 @@
 # Save format
 
-CataclysmX saves are SQLite database files. The strict v7 format is governed by
-one authoritative `metadata.format_version = 7` for both SQL and JSON. The
+CataclysmX saves are SQLite database files. The strict v8 format is governed by
+one authoritative `metadata.format_version = 8` for both SQL and JSON. The
 `metadata` columns are `singleton INTEGER PRIMARY KEY CHECK(singleton=1)`,
 `format_version INTEGER NOT NULL`, and `game_version TEXT NOT NULL`; its single
-row is `(1, 7, "0.1.0")`. The other tables are
+row is `(1, 8, "0.1.0")`. The other tables are
 `world_state(singleton INTEGER PRIMARY KEY CHECK(singleton=1), payload TEXT NOT
 NULL)` and `chunks(x INTEGER NOT NULL, z INTEGER NOT NULL, y INTEGER NOT NULL,
 payload TEXT NOT NULL, PRIMARY KEY(x,z,y))`, and
@@ -19,7 +19,24 @@ The single `world_state.payload` object has exactly `seed`,
 required integer in 0–255: the fixed environment illumination (new-world default
 192), independent of wall-clock time. The session object has exactly
 `tick`, `rng_state`, `player`, `position` (`x`, `z`, `y`), `active_radius`,
-`resident_radius`, `autosave_interval`, `pacing`, and `players`. `players` is an
+`resident_radius`, `autosave_interval`, `pacing`, `players`, and `circle_residency`.
+`circle_residency` is required in v8 and is either JSON `null` (legacy square
+residency) or an exact object `{ "radius_tiles": integer }` with radius in
+0–128 inclusive. Zero is a valid circle radius; the default `CircleResidency`
+value is 78 tiles. Missing, duplicate, unknown, noninteger or out-of-range fields
+are invalid. `SessionState::circleResidency` stores this as an optional value;
+absence selects square residency. `active_radius` and `resident_radius` retain
+their existing chunk units and numeric validation in both modes:
+`0 <= active_radius <= resident_radius <= 8`. In square mode the resident
+square must fit the saved host's chunk-coordinate bounds. In circle mode only
+the active square must fit those chunk bounds, and the actual tile circle must
+fit the world X/Z bounds around the saved host position. The retained legacy
+resident radius does not impose an additional spatial restriction in circle
+mode. These spatial checks match the World/Server residency policy.
+Keeping the optional circle separate preserves
+the exact legacy square policy rather than inferring a circle from chunk radii.
+
+`players` is an
 array of at most 32 exact objects `{ "actor": decimal-string,
 "position": {"x": int, "z": int, "y": int}, "name": string,
 "reconnect_token": decimal-string }`. Names contain 1–32 bytes and no NUL;
@@ -101,7 +118,7 @@ tree directly. The controller target is a world position and includes its Y
 coordinate in the v6 state representation. `ValidateItemSnapshot` is the shared item-state and ownership-tree
 validator for both archive paths, dispatching behavior-owned local and relational
 validation. Installation names resolve against the parent definition and its
-`AcceptsInstallation` policy. Metadata is version 7. Energy and charger state
+`AcceptsInstallation` policy. Metadata is version 8. Energy and charger state
 remain version 1; door state version 2 adds required signed Y. These schemas use
 unsigned JSON numbers and signed `$i64` target
 coordinates. No capacity clamping or implicit state migration is introduced.
@@ -118,13 +135,36 @@ ownership, chunks and session player identity/position are validated. Generic
 `generation_version` accepts 1 and 2 (legacy) and 3 (current); other values fail with
 `SaveError::UnsupportedVersion`. New worlds use generation version 3. Versions 1
 and 2 retain their prior surface generation; nonsurface slices use the layered
-terrain rules. The SQL/JSON save schema is version 7: save formats v1 through v6
-and all other schema versions are rejected, with no migrations or backup
-files. In particular, v2 command-count ticks are not silently reinterpreted as
+terrain rules. The SQL/JSON save schema is version 8; strict v7 saves are also
+accepted as described below. Save formats v1 through v6 and all other schema
+versions are rejected. In particular, v2 command-count ticks are not silently reinterpreted as
 simulation ticks. Content's own format version is independent of both versions.
 Version 7 explicitly adds illumination sources, object semantic identity,
 fixed skylight and independent per-player observations. Individual state migrations are a separate,
 explicit capability-version policy; no generic auto-clamp or fallback applies.
+
+### Version 7 compatibility and checkpoint upgrade
+
+Version 7 has the same tables, chunk payloads, memory payloads and world-state
+fields as v8, except its exact session field set excludes `circle_residency`.
+Opening v7 decodes that omission as an absent optional (square residency) and
+preserves the saved chunk radii. It validates without upgrading or rewriting
+the snapshot or metadata. A v7 payload containing the new field is invalid,
+even if null; a v8 payload omitting it is likewise invalid. Metadata selects
+the decoder, so relabeling one payload as the other version is not accepted.
+
+The first successful checkpoint upgrades metadata and the session snapshot to
+v8 inside the same transaction as chunk and memory changes. This includes
+checkpoints that write only chunks or make no explicit writes: the unchanged
+legacy session is encoded with `circle_residency: null`. Migration itself does
+not rewrite chunk or memory payloads and creates no backup file. An explicitly
+supplied session may instead select a circle on that checkpoint.
+
+Validation, SQL, busy-commit failures and explicit rollback leave the durable
+v7 checkpoint intact. The connection advances its committed format version only
+after SQLite commits successfully; transaction-local snapshot codec state is
+cleared on rollback, allowing retry on the same connection. The public
+`SaveDatabase` transaction methods and dirty-state contracts are unchanged.
 
 `session.tick` counts global simulation ticks (100 per standard turn), while
 `pacing.ticks_per_second` only maps simulation ticks to real time.

@@ -10,14 +10,23 @@ namespace cataclysmx {
 namespace {
 
 constexpr eastl::string_view fieldNames[] = {"language", "view_radius", "autosave_interval",
-    "active_radius", "resident_radius", "seed", "ticks_per_second", "rate_limited", "pause_when_idle"};
+    "active_radius", "resident_radius", "seed", "ticks_per_second", "rate_limited", "pause_when_idle",
+    "residency_mode", "resident_radius_tiles"};
 
 void Overlay(Settings& settings, const SettingsOverrides& overrides) {
     if (overrides.language) { settings.language = *overrides.language; }
     if (overrides.viewRadius) { settings.viewRadius = *overrides.viewRadius; }
     if (overrides.autosaveInterval) { settings.autosaveInterval = *overrides.autosaveInterval; }
     if (overrides.activeRadius) { settings.activeRadius = *overrides.activeRadius; }
-    if (overrides.residentRadius) { settings.residentRadius = *overrides.residentRadius; }
+    if (overrides.residentRadius) {
+        settings.residentRadius = *overrides.residentRadius;
+        settings.residencyMode = ResidencyMode::Square;
+    }
+    if (overrides.residentRadiusTiles) {
+        settings.residentRadiusTiles = *overrides.residentRadiusTiles;
+        settings.residencyMode = ResidencyMode::Circle;
+    }
+    if (overrides.residencyMode) { settings.residencyMode = *overrides.residencyMode; }
     if (overrides.seed) { settings.seed = *overrides.seed; }
     if (overrides.ticksPerSecond) { settings.pacing.ticksPerSecond = *overrides.ticksPerSecond; }
     if (overrides.rateLimited) { settings.pacing.rateLimited = *overrides.rateLimited; }
@@ -36,6 +45,9 @@ template<class T> bool ParseDecimal(eastl::string_view text, T& number) {
 SettingsResult<void> Invalid(Diagnostics* diagnostics, eastl::string_view message) {
     if (diagnostics) { diagnostics->Add(message); }
     return eastl::unexpected(SettingsError::InvalidData);
+}
+bool SelectsResidencyMode(const SettingsOverrides& overrides) {
+    return overrides.residencyMode || overrides.residentRadius || overrides.residentRadiusTiles;
 }
 
 }
@@ -56,6 +68,35 @@ Settings ResolveSettings(const SettingsOverrides& global, const SettingsOverride
     Overlay(settings, global); Overlay(settings, world);
     return settings;
 }
+Settings ResolveSettingsForServer(const Server& server, const SettingsOverrides& global,
+    const SettingsOverrides& world) {
+    Settings settings;
+    settings.activeRadius = server.GetActiveRadius();
+    const auto circle = server.GetCircleResidency();
+    if (circle) {
+        settings.residencyMode = ResidencyMode::Circle;
+        settings.residentRadiusTiles = circle->radiusTiles;
+    } else { settings.residentRadius = server.GetResidentRadius(); }
+    Overlay(settings, global); Overlay(settings, world);
+    return settings;
+}
+bool HasResidencyOverride(const SettingsOverrides& overrides) {
+    return overrides.activeRadius || overrides.residentRadius || overrides.residencyMode || overrides.residentRadiusTiles;
+}
+SettingsResult<void> ValidateOverrides(const SettingsOverrides& overrides, Diagnostics* diagnostics) {
+    if (overrides.residentRadius && overrides.residentRadiusTiles) {
+        return Invalid(diagnostics, "one layer cannot select both chunk and tile residency radii");
+    }
+    if (overrides.residencyMode
+        && ((*overrides.residencyMode == ResidencyMode::Square && overrides.residentRadiusTiles)
+            || (*overrides.residencyMode == ResidencyMode::Circle && overrides.residentRadius))) {
+        return Invalid(diagnostics, "residency_mode conflicts with radius units");
+    }
+    auto individual = ResolveSettings({}, overrides);
+    if (overrides.activeRadius && !overrides.residentRadius) { individual.residentRadius = 8; }
+    if (overrides.residentRadius && !overrides.activeRadius) { individual.activeRadius = 0; }
+    return ValidateSettings(individual, diagnostics);
+}
 SettingsResult<void> ValidateSettings(const Settings& settings, Diagnostics* diagnostics) {
     if (settings.language.empty() || settings.language.size() > 32) { return Invalid(diagnostics, "invalid language identifier"); }
     for (char ch : settings.language) {
@@ -64,8 +105,15 @@ SettingsResult<void> ValidateSettings(const Settings& settings, Diagnostics* dia
         }
     }
     if (settings.viewRadius < 0 || settings.viewRadius > 64) { return Invalid(diagnostics, "view_radius must be in [0,64]"); }
-    if (settings.activeRadius < 0 || settings.residentRadius < settings.activeRadius || settings.residentRadius > 8) {
+    if (settings.activeRadius < 0 || settings.activeRadius > 8 || settings.residentRadius < 0 || settings.residentRadius > 8
+        || (settings.residencyMode == ResidencyMode::Square && settings.residentRadius < settings.activeRadius)) {
         return Invalid(diagnostics, "expected 0 <= active_radius <= resident_radius <= 8");
+    }
+    if (settings.residentRadiusTiles < 0 || settings.residentRadiusTiles > maxCircleResidencyRadius) {
+        return Invalid(diagnostics, "resident_radius_tiles must be in [0,128]");
+    }
+    if (settings.residencyMode != ResidencyMode::Square && settings.residencyMode != ResidencyMode::Circle) {
+        return Invalid(diagnostics, "invalid residency mode");
     }
     if (settings.pacing.ticksPerSecond == 0 || settings.pacing.ticksPerSecond > 1000000) {
         return Invalid(diagnostics, "ticks_per_second must be in [1,1000000]");
@@ -75,10 +123,24 @@ SettingsResult<void> ValidateSettings(const Settings& settings, Diagnostics* dia
 SettingsResult<void> ApplySettings(Server& server, const Settings& settings, Diagnostics* diagnostics) {
     const auto valid = ValidateSettings(settings, diagnostics);
     if (!valid) { return valid; }
-    if (!server.SetBubbleRadii(settings.activeRadius, settings.residentRadius, diagnostics)) {
+    const bool applied = settings.residencyMode == ResidencyMode::Circle
+        ? static_cast<bool>(server.SetCircleResidency(settings.activeRadius, CircleResidency{settings.residentRadiusTiles}, diagnostics))
+        : static_cast<bool>(server.SetBubbleRadii(settings.activeRadius, settings.residentRadius, diagnostics));
+    if (!applied) {
         return eastl::unexpected(SettingsError::ApplyFailed);
     }
     // These cannot fail after ValidateSettings. No command or elapsed update occurs.
+    if (!server.SetPacing(settings.pacing)) { std::abort(); }
+    server.SetAutosaveInterval(settings.autosaveInterval);
+    return {};
+}
+SettingsResult<void> ApplySettings(Server& server, const SettingsStore& store, Diagnostics* diagnostics) {
+    const auto& global = store.Overrides(SettingsScope::Global);
+    const auto& world = store.Overrides(SettingsScope::World);
+    const auto settings = ResolveSettingsForServer(server, global, world);
+    if (HasResidencyOverride(global) || HasResidencyOverride(world)) { return ApplySettings(server, settings, diagnostics); }
+    const auto valid = ValidateSettings(settings, diagnostics);
+    if (!valid) { return valid; }
     if (!server.SetPacing(settings.pacing)) { std::abort(); }
     server.SetAutosaveInterval(settings.autosaveInterval);
     return {};
@@ -94,6 +156,8 @@ bool HasOverride(const SettingsOverrides& overrides, SettingsField field) {
     case SettingsField::TicksPerSecond: return overrides.ticksPerSecond.has_value();
     case SettingsField::RateLimited: return overrides.rateLimited.has_value();
     case SettingsField::PauseWhenIdle: return overrides.pauseWhenIdle.has_value();
+    case SettingsField::ResidencyMode: return overrides.residencyMode.has_value();
+    case SettingsField::ResidentRadiusTiles: return overrides.residentRadiusTiles.has_value();
     case SettingsField::Count: break;
     }
     std::abort();
@@ -109,6 +173,8 @@ void ResetOverride(SettingsOverrides& overrides, SettingsField field) {
     case SettingsField::TicksPerSecond: overrides.ticksPerSecond.reset(); return;
     case SettingsField::RateLimited: overrides.rateLimited.reset(); return;
     case SettingsField::PauseWhenIdle: overrides.pauseWhenIdle.reset(); return;
+    case SettingsField::ResidencyMode: overrides.residencyMode.reset(); return;
+    case SettingsField::ResidentRadiusTiles: overrides.residentRadiusTiles.reset(); return;
     case SettingsField::Count: break;
     }
     std::abort();
@@ -124,6 +190,8 @@ String SettingValue(const Settings& settings, SettingsField field) {
     case SettingsField::TicksPerSecond: return Decimal(settings.pacing.ticksPerSecond);
     case SettingsField::RateLimited: return settings.pacing.rateLimited ? "true" : "false";
     case SettingsField::PauseWhenIdle: return settings.pacing.pauseWhenIdle ? "true" : "false";
+    case SettingsField::ResidencyMode: return settings.residencyMode == ResidencyMode::Circle ? "circle" : "square";
+    case SettingsField::ResidentRadiusTiles: return Decimal(settings.residentRadiusTiles);
     case SettingsField::Count: break;
     }
     std::abort();
@@ -133,13 +201,18 @@ SettingsResult<void> SetOverride(SettingsOverrides& overrides, SettingsField fie
     int signedNumber = 0;
     std::uint64_t number = 0;
     switch (field) {
+    case SettingsField::ResidencyMode:
+        if (value != "square" && value != "circle") { break; }
+        overrides.residencyMode = value == "circle" ? ResidencyMode::Circle : ResidencyMode::Square;
+        return {};
     case SettingsField::Language:
         overrides.language = String(value.data(), value.size()); return {};
-    case SettingsField::ViewRadius: case SettingsField::ActiveRadius: case SettingsField::ResidentRadius:
+    case SettingsField::ViewRadius: case SettingsField::ActiveRadius: case SettingsField::ResidentRadius: case SettingsField::ResidentRadiusTiles:
         if (!ParseDecimal(value, signedNumber)) { break; }
         if (field == SettingsField::ViewRadius) { overrides.viewRadius = signedNumber; }
         else if (field == SettingsField::ActiveRadius) { overrides.activeRadius = signedNumber; }
-        else { overrides.residentRadius = signedNumber; }
+        else if (field == SettingsField::ResidentRadius) { overrides.residentRadius = signedNumber; }
+        else { overrides.residentRadiusTiles = signedNumber; }
         return {};
     case SettingsField::Seed: case SettingsField::TicksPerSecond: case SettingsField::AutosaveInterval:
         if (!ParseDecimal(value, number)) { break; }
@@ -194,10 +267,19 @@ SettingsResult<void> SettingsStore::SetOverrides(SettingsScope scope, SettingsOv
     Keymap keys, Diagnostics* diagnostics) {
     const auto& global = scope == SettingsScope::Global ? settings : global_;
     const auto& world = scope == SettingsScope::World ? settings : world_;
-    const auto globalValid = ValidateSettings(ResolveSettings(global, {}), diagnostics);
+    if (!ValidateOverrides(global, diagnostics) || !ValidateOverrides(world, diagnostics)) {
+        return eastl::unexpected(SettingsError::InvalidData);
+    }
+    auto globalValidation = ResolveSettings(global, {});
+    // Active-only v2 overrides inherit runtime mode/radius. Defer that relation
+    // to ApplySettings, where the saved/default policy is available.
+    if (!SelectsResidencyMode(global)) { globalValidation.residentRadius = 8; }
+    const auto globalValid = ValidateSettings(globalValidation, diagnostics);
     if (!globalValid) { return globalValid; }
     const auto resolved = ResolveSettings(global, world);
-    const auto valid = ValidateSettings(resolved, diagnostics);
+    auto validation = resolved;
+    if (!SelectsResidencyMode(global) && !SelectsResidencyMode(world)) { validation.residentRadius = 8; }
+    const auto valid = ValidateSettings(validation, diagnostics);
     if (!valid) { return valid; }
     if (!ValidateKeymap(keys, diagnostics)) { return eastl::unexpected(SettingsError::InvalidData); }
     const auto& globalKeys = scope == SettingsScope::Global ? keys : globalKeys_;
@@ -242,6 +324,10 @@ const Keymap& SettingsStore::KeyOverrides(SettingsScope scope) const { return sc
 const String& SettingsStore::UserRoot() const { return userRoot_; }
 const String& SettingsStore::WorldDirectory() const { return worldDirectory_; }
 SettingsSource SettingsStore::Source(SettingsField field) const {
+    if (field == SettingsField::ResidencyMode) {
+        if (SelectsResidencyMode(world_)) { return SettingsSource::World; }
+        return SelectsResidencyMode(global_) ? SettingsSource::Global : SettingsSource::BuiltIn;
+    }
     if (HasOverride(world_, field)) { return SettingsSource::World; }
     return HasOverride(global_, field) ? SettingsSource::Global : SettingsSource::BuiltIn;
 }

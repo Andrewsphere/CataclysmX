@@ -9,9 +9,10 @@ enum class SettingsError { Io, InvalidData, UnsupportedVersion, ApplyFailed };
 template<class T> using SettingsResult = eastl::expected<T, SettingsError>;
 enum class SettingsScope { Global, World };
 enum class SettingsSource { BuiltIn, Global, World };
+enum class ResidencyMode { Square, Circle };
 enum class SettingsField {
     Language, ViewRadius, AutosaveInterval, ActiveRadius, ResidentRadius, Seed,
-    TicksPerSecond, RateLimited, PauseWhenIdle, Count
+    TicksPerSecond, RateLimited, PauseWhenIdle, ResidencyMode, ResidentRadiusTiles, Count
 };
 struct Settings {
     String language = "en";
@@ -21,6 +22,8 @@ struct Settings {
     int residentRadius = 5;
     std::uint32_t seed = 42;
     PacingSettings pacing{};
+    ResidencyMode residencyMode = ResidencyMode::Square;
+    int residentRadiusTiles = CircleResidency{}.radiusTiles;
     bool operator==(const Settings&) const = default;
 };
 struct SettingsOverrides {
@@ -33,12 +36,19 @@ struct SettingsOverrides {
     eastl::optional<std::uint32_t> ticksPerSecond;
     eastl::optional<bool> rateLimited;
     eastl::optional<bool> pauseWhenIdle;
+    eastl::optional<ResidencyMode> residencyMode;
+    eastl::optional<int> residentRadiusTiles;
     bool operator==(const SettingsOverrides&) const = default;
 };
 
 eastl::string_view SettingName(SettingsField field);
 eastl::optional<SettingsField> ParseSettingName(eastl::string_view name);
 Settings ResolveSettings(const SettingsOverrides& global, const SettingsOverrides& world);
+// Runtime baseline supplies residency only; all other defaults remain Settings defaults.
+Settings ResolveSettingsForServer(const Server& server, const SettingsOverrides& global,
+    const SettingsOverrides& world);
+bool HasResidencyOverride(const SettingsOverrides& overrides);
+SettingsResult<void> ValidateOverrides(const SettingsOverrides& overrides, Diagnostics* diagnostics = nullptr);
 SettingsResult<void> ValidateSettings(const Settings& settings, Diagnostics* diagnostics = nullptr);
 // Application boundary only. Validation precedes the one fallible world update.
 // Seed is a creation default and is never applied to an existing Server.
@@ -90,5 +100,9 @@ private:
     bool globalDirty_ = false;
     bool worldDirty_ = false;
 };
+
+// Absent residency overrides preserve the server's saved/default policy.
+SettingsResult<void> ApplySettings(Server& server, const SettingsStore& store,
+    Diagnostics* diagnostics = nullptr);
 
 }

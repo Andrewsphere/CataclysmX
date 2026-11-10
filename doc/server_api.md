@@ -211,9 +211,30 @@ multi-player activity/deadline rules, rounding, and transient-state details.
 
 ## Player bubble and administrative loading
 
-Each connected player has a bubble centered on their **chunk**. Defaults are active radius
-`1` (a `3 × 3` square) and resident radius `5` (`11 × 11`), with active chunks
-included in the resident total. `SetBubbleRadii(active, resident)` requires
+Each active player has an active **chunk-centered square**, default radius `1`
+(a `3 × 3` square), and a resident policy. New sessions default to
+`CircleResidency{78}`: a **tile-centered circle**, with radius equal to
+`playerSightRange + maxLightRange + lightSpillDistance`. A column intersects the
+circle when the squared distance to its nearest tile in the inclusive `16 × 16`
+tile rectangle is at most the squared radius. Demand loads every world layer;
+there is no implicit halo. At the origin the default loads 88 columns (1848
+chunks), including the active square. The circle follows every committed tile
+move, even within the same chunk and across negative-coordinate seams.
+
+`SetCircleResidency(int activeRadiusChunks, CircleResidency residency,
+Diagnostics* diagnostics = nullptr)` selects circular residency. Active radius
+must be `0..8`, circle radius must be `0..128`, and both complete footprints
+must fit the world for every active player. The active square always contributes
+its own demand, even with a radius-zero circle.
+`GetCircleResidency()` returns the optional policy; absence means legacy square.
+`GetActiveRadius()` returns the active chunk radius. `GetResidentRadius()` returns
+the retained legacy square configuration, initially `5`, even in circle mode.
+Selecting circle mode retains `max(oldResidentRadius, activeRadiusChunks)` so
+that configuration remains valid and at least as large as the active radius.
+These explicit units keep activity independent of sight and lighting residency.
+
+`SetBubbleRadii(active, resident)` explicitly selects legacy square residency,
+clears the circle policy, and requires
 `0 <= active <= resident <= 8` and the full resident region to fit world limits.
 Invalid settings return `invalid_region` without changing the bubble; valid
 settings reconcile immediately without consuming a tick. Explicit smaller bubbles
@@ -230,9 +251,14 @@ cataclysmx::WorldResult<void> shrink_bubble(cataclysmx::Server& server) {
 ```
 
 A successful move recenters/reconciles the bubble before simulation advances.
-When necessary, the destination is loaded before moving and before old demand
-is removed, preserving the player's runtime handle even with zero radii.
-Moves whose future resident bubble would cross the coordinate limits fail as
+Resident-only staging covers the union of the entire future active square and
+resident shape while retaining old demand. Only after preflight succeeds does
+the actor move; permanent requests are updated and temporary requests released
+before final reconciliation. Rejected moves release staging and reconcile the
+old demand. This preserves the player's runtime handle even with zero radii or
+a circle smaller than the active square. Column presence checks use World's
+full-height invariant rather than scanning every layer.
+Moves whose future active or resident footprint would cross the coordinate limits fail as
 `unavailable`. Interact does not load unavailable neighboring chunks.
 
 `GetWorld()`, `GetPlayer()` and `GetTick()` provide administrative/headless access.
@@ -423,7 +449,15 @@ player. Administrative load-request handles are runtime-only; the host bubble is
 recreated on load, while guests return parked until activated again. Checkpoints
 read guest positions from live or archived world state, including administrative
 relocations of a parked character; a parked host is an invalid session.
-`Server::LoadSave` restores saved bubble radii; the terminal subsequently applies
+Checkpoints include the optional circle policy and retained legacy radii.
+`Server::LoadSave` honors an absent policy as legacy square residency and a
+present policy as circular residency. Restoration requires the host's complete
+footprint to fit. Guests return parked and require only a valid saved position
+and containing column, so enlarging the host policy cannot invalidate a save
+with a parked guest near a world boundary. Reconnection stages that column;
+activation validates the guest's complete future footprint and returns
+`Unavailable` if it does not fit, leaving the guest Joining and parked.
+`Server::LoadSave` restores saved bubble policy; the terminal subsequently applies
 effective settings, including inherited defaults or explicit overrides, before input.
 
 Loading stages all roster guest regions together with the host bubble and

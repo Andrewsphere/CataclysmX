@@ -34,5 +34,10 @@ struct ChunkCoord {
     int y = 0;
     bool operator==(const ChunkCoord&) const = default;
 };
+struct ColumnCoord {
+    std::int32_t x = 0;
+    std::int32_t z = 0;
+    bool operator==(const ColumnCoord&) const = default;
+};
 
 }

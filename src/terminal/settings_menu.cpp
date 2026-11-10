@@ -41,7 +41,7 @@ String MessageKey(eastl::string_view prefix, eastl::string_view name) {
     String key(prefix.data(), prefix.size()); key.append(name.data(), name.size()); return key;
 }
 
-enum class EditorKind { Number, Boolean, Language };
+enum class EditorKind { Number, Boolean, Language, ResidencyMode };
 enum class FocusArea { Scope, Section, Category, List, Details, Count };
 enum class EditorMode { Browse, Number, Language, Capture, Inspect };
 enum class FeedbackKind { None, Success, Error };
@@ -58,6 +58,8 @@ constexpr FieldPresentation fields[] = {
     {SettingsField::Seed, 1, EditorKind::Number, 0, UINT32_MAX},
     {SettingsField::ActiveRadius, 1, EditorKind::Number, 0, 8},
     {SettingsField::ResidentRadius, 1, EditorKind::Number, 0, 8},
+    {SettingsField::ResidencyMode, 1, EditorKind::ResidencyMode},
+    {SettingsField::ResidentRadiusTiles, 1, EditorKind::Number, 0, maxCircleResidencyRadius},
     {SettingsField::TicksPerSecond, 2, EditorKind::Number, 1, 1000000},
     {SettingsField::RateLimited, 2, EditorKind::Boolean},
     {SettingsField::PauseWhenIdle, 2, EditorKind::Boolean},
@@ -90,6 +92,16 @@ bool SameOverride(const SettingsOverrides& first, const SettingsOverrides& secon
     if (HasOverride(first, field) != HasOverride(second, field)) { return false; }
     return !HasOverride(first, field)
         || SettingValue(ResolveSettings({}, first), field) == SettingValue(ResolveSettings({}, second), field);
+}
+bool ResidencyField(SettingsField field) {
+    return field == SettingsField::ActiveRadius || field == SettingsField::ResidentRadius
+        || field == SettingsField::ResidencyMode || field == SettingsField::ResidentRadiusTiles;
+}
+bool SuppliesField(const SettingsOverrides& overrides, SettingsField field) {
+    if (field == SettingsField::ResidencyMode) {
+        return overrides.residencyMode || overrides.residentRadius || overrides.residentRadiusTiles;
+    }
+    return HasOverride(overrides, field);
 }
 
 // FTXUI's frame centers focus. These two local DOM nodes instead preserve an
@@ -341,8 +353,8 @@ private:
     PageState& Page() { return pages_[Index()][sections_[Index()]][Category()]; }
     std::string T(eastl::string_view key) const { return Frontend(localization_.Text(key)); }
     Settings Preview() const {
-        return scope_ == SettingsScope::Global ? ResolveSettings(drafts_[0], {})
-            : ResolveSettings(store_.Overrides(SettingsScope::Global), drafts_[1]);
+        return scope_ == SettingsScope::Global ? ResolveSettingsForServer(server_, drafts_[0], {})
+            : ResolveSettingsForServer(server_, store_.Overrides(SettingsScope::Global), drafts_[1]);
     }
     Keymap PreviewKeys() const {
         return scope_ == SettingsScope::Global ? ResolveKeymap(keyDrafts_[0], {})
@@ -374,6 +386,13 @@ private:
         if (ReadOnly(field)) { return UnsignedText(server_.GetWorld().GetSeed()); }
         if (field == SettingsField::RateLimited) { return localization_.Text(settings.pacing.rateLimited ? "settings.ui.on" : "settings.ui.off"); }
         if (field == SettingsField::PauseWhenIdle) { return localization_.Text(settings.pacing.pauseWhenIdle ? "settings.ui.on" : "settings.ui.off"); }
+        if (field == SettingsField::ResidencyMode) {
+            return localization_.Text(settings.residencyMode == ResidencyMode::Circle ? "settings.ui.circle" : "settings.ui.square");
+        }
+        if ((field == SettingsField::ResidentRadius && settings.residencyMode == ResidencyMode::Circle)
+            || (field == SettingsField::ResidentRadiusTiles && settings.residencyMode == ResidencyMode::Square)) {
+            return localization_.Text("settings.ui.inactive_radius");
+        }
         return SettingValue(settings, field);
     }
     String Source(bool local, bool global) const {
@@ -506,17 +525,24 @@ private:
                 lines.push_back(ftxui::paragraph(T("settings.ui.seed_fixed")));
                 DetailLine(lines, "settings.ui.generation", UnsignedText(server_.GetWorld().GetGenerationVersion()));
             } else {
-                const bool local = HasOverride(drafts_[Index()], field);
-                const bool global = scope_ == SettingsScope::World && HasOverride(store_.Overrides(SettingsScope::Global), field);
-                DetailLine(lines, "settings.ui.source", Source(local, global));
-                const auto inherited = scope_ == SettingsScope::Global ? Settings{} : ResolveSettings(store_.Overrides(SettingsScope::Global), {});
+                const bool local = SuppliesField(drafts_[Index()], field);
+                const bool global = scope_ == SettingsScope::World && SuppliesField(store_.Overrides(SettingsScope::Global), field);
+                DetailLine(lines, "settings.ui.source", ResidencyField(field) && !local && !global
+                    ? localization_.Text("settings.ui.source_runtime") : Source(local, global));
+                const auto inherited = scope_ == SettingsScope::Global ? ResolveSettingsForServer(server_, {}, {})
+                    : ResolveSettingsForServer(server_, store_.Overrides(SettingsScope::Global), {});
                 DetailLine(lines, "settings.ui.inherited_value", DisplayValue(inherited, field));
                 if (!SameOverride(drafts_[Index()], store_.Overrides(scope_), field)) {
-                    const auto applied = scope_ == SettingsScope::Global ? ResolveSettings(store_.Overrides(scope_), {}) : store_.Effective();
+                    const auto applied = scope_ == SettingsScope::Global ? ResolveSettingsForServer(server_, store_.Overrides(scope_), {})
+                        : ResolveSettingsForServer(server_, store_.Overrides(SettingsScope::Global), store_.Overrides(SettingsScope::World));
                     DetailLine(lines, "settings.ui.applied_value", DisplayValue(applied, field), ftxui::Color::Yellow);
                 }
                 if (scope_ == SettingsScope::Global && HasOverride(store_.Overrides(SettingsScope::World), field)) {
                     lines.push_back(ftxui::paragraph(T("settings.ui.world_masks_global")));
+                }
+                if (ResidencyField(field)) {
+                    lines.push_back(ftxui::paragraph(T("settings.ui.residency_inheritance")));
+                    DetailLine(lines, "settings.ui.runtime_policy", DisplayValue(ResolveSettingsForServer(server_, {}, {}), SettingsField::ResidencyMode));
                 }
             }
             lines.push_back(ftxui::separatorLight());
@@ -550,7 +576,12 @@ private:
         const auto* presentation = VisibleFields()[Page().selected];
         const auto field = presentation->field;
         if (ReadOnly(field)) { return; }
-        if (presentation->editor == EditorKind::Boolean) {
+        if (presentation->editor == EditorKind::ResidencyMode) {
+            auto& draft = drafts_[Index()];
+            draft.residencyMode = Preview().residencyMode == ResidencyMode::Circle ? ResidencyMode::Square : ResidencyMode::Circle;
+            if (*draft.residencyMode == ResidencyMode::Square) { draft.residentRadiusTiles.reset(); }
+            else { draft.residentRadius.reset(); }
+        } else if (presentation->editor == EditorKind::Boolean) {
             const auto value = SettingValue(Preview(), field) == "true" ? "false" : "true";
             if (!SetOverride(drafts_[Index()], field, value)) { std::abort(); }
         } else if (presentation->editor == EditorKind::Language) {
@@ -589,6 +620,13 @@ private:
             Diagnostics diagnostics;
             const auto result = SetOverride(drafts_[Index()], field->field, View(editText_), &diagnostics);
             if (!result) { Error("settings.ui.invalid_value", FormatDiagnostics(diagnostics)); return; }
+            if (field->field == SettingsField::ResidentRadius) {
+                drafts_[Index()].residentRadiusTiles.reset();
+                drafts_[Index()].residencyMode.reset();
+            } else if (field->field == SettingsField::ResidentRadiusTiles) {
+                drafts_[Index()].residentRadius.reset();
+                drafts_[Index()].residencyMode.reset();
+            }
             mode_ = EditorMode::Browse; ClearFeedback();
         } else if (chord && chord->key == "Backspace" && !chord->ctrl) {
             if (!editText_.empty()) {
@@ -635,7 +673,7 @@ private:
         Localization translated;
         const auto& settings = candidate.Effective();
         const auto loaded = translated.Load(directory_.c_str(), View(settings.language), &diagnostics);
-        if (!loaded || !ApplySettings(server_, settings, &diagnostics)) { Error("settings.ui.apply_failed", FormatDiagnostics(diagnostics)); return false; }
+        if (!loaded || !ApplySettings(server_, candidate, &diagnostics)) { Error("settings.ui.apply_failed", FormatDiagnostics(diagnostics)); return false; }
         store_ = eastl::move(candidate); localization_ = eastl::move(translated);
         Success("settings.ui.applied"); return true;
     }

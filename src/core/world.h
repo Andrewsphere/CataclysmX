@@ -8,6 +8,7 @@
 #include "core/item_state.h"
 #include "core/world_result.h"
 #include "core/perception_types.h"
+#include "core/light_types.h"
 
 #include <EASTL/array.h>
 #include <EASTL/expected.h>
@@ -29,6 +30,12 @@ struct SavedPlayer {
     std::uint64_t reconnectToken = 0;
 };
 
+inline constexpr int maxCircleResidencyRadius = 128;
+struct CircleResidency {
+    int radiusTiles = playerSightRange + maxLightRange + lightSpillDistance;
+    bool operator==(const CircleResidency&) const = default;
+};
+
 struct SessionState {
     std::uint64_t tick = 0;
     std::uint32_t rngState = 0;
@@ -39,6 +46,7 @@ struct SessionState {
     std::uint64_t autosaveInterval = 0;
     PacingSettings pacing{};
     Vector<SavedPlayer> players;
+    eastl::optional<CircleResidency> circleResidency;
 };
 ChunkCoord ChunkOf(TileCoord position);
 int TileIndex(TileCoord position);
@@ -124,6 +132,10 @@ struct ChunkRegion {
     ChunkCoord center{};
     int radius = 0;
 };
+struct TileCircleRegion {
+    TileCoord center{};
+    int radiusTiles = 0;
+};
 
 // All mutations go through World. Returned pointers are read-only borrows:
 // reacquire after mutation, and never retain them across unloading/deletion.
@@ -141,6 +153,9 @@ public:
 
     WorldResult<LoadRequest> RequestChunks(ChunkRegion region, LoadMode mode);
     WorldResult<void> UpdateRequest(LoadRequest request, ChunkRegion region, LoadMode mode);
+    // Tile-space circle, full-height columns, center.y ignored; no implicit halo.
+    WorldResult<LoadRequest> RequestCircle(TileCircleRegion region, LoadMode mode);
+    WorldResult<void> UpdateCircleRequest(LoadRequest request, TileCircleRegion region, LoadMode mode);
     WorldResult<void> ReleaseRequest(LoadRequest request);
     // Synchronous boundary operation. Overlapping requests combine; active wins.
     SaveResult<void> ReconcileChunks(Diagnostics* diagnostics = nullptr);
@@ -233,7 +248,7 @@ public:
     std::uint64_t GetLightingInputRevision(ChunkCoord position) const;
     // Derived caches may refresh; these queries never change player memories.
     std::uint8_t GetLightLevel(TileCoord position) const;
-    // Chunk-contiguous projection borrow; expires at the next lighting rebuild.
+    // Chunk-contiguous projection borrow; expires at the next lighting preparation.
     eastl::span<const std::uint8_t> GetChunkLightLevels(ChunkCoord position) const;
     // Direct incident endpoint light; faces +X,-X,+Z,-Z,+Y,-Y (0..5).
     std::uint8_t GetIncidentLightLevel(TileCoord position, int face) const;

@@ -179,6 +179,11 @@ public:
     void ResetViewStats() const;
     WorldResult<void> SetBubbleRadii(int active_radius, int resident_radius,
         Diagnostics* diagnostics = nullptr);
+    WorldResult<void> SetCircleResidency(int activeRadiusChunks, CircleResidency residency,
+        Diagnostics* diagnostics = nullptr);
+    eastl::optional<CircleResidency> GetCircleResidency() const;
+    int GetActiveRadius() const;
+    int GetResidentRadius() const;
     SaveResult<void> CreateSave(const char* path, Diagnostics* diagnostics = nullptr);
     SaveResult<void> Save(Diagnostics* diagnostics = nullptr);
     static SaveResult<eastl::unique_ptr<Server>> LoadSave(const ContentCatalog& content, const char* path,
@@ -201,6 +206,7 @@ private:
     LoadRequest resident_request_{};
     int active_radius_ = 1;
     int resident_radius_ = 5;
+    eastl::optional<CircleResidency> circleResidency_ = CircleResidency{};
     std::uint64_t tick_ = 0;
     std::uint32_t rng_state_ = 0;
     ChunkCoord bubbleCenter_{};
@@ -232,8 +238,9 @@ private:
     PlayerSlot* FindPlayer(PersistentId id);
     const PlayerSlot* FindPlayer(PersistentId id) const;
     ActorHandle PlayerActor(const PlayerSlot& slot) const;
-    SaveResult<void> UpdatePlayerBubble(PlayerSlot& slot, int activeRadius, int residentRadius,
-        Diagnostics* diagnostics = nullptr);
+    void CommitPlayerBubble(PlayerSlot& slot);
+    WorldResult<void> SetResidency(int activeRadius, int residentRadius,
+        eastl::optional<CircleResidency> circle, Diagnostics* diagnostics);
     bool ResolveRound(SessionUpdate& result, const Vector<ActorHandle>& expired);
     void SynchronizePacing();
     eastl::optional<SaveError> Autosave();

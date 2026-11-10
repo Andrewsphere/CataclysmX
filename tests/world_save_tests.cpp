@@ -65,6 +65,7 @@ void CheckSession(const SessionState& actual, const SessionState& expected) {
     CHECK(actual.residentRadius == expected.residentRadius);
     CHECK(actual.autosaveInterval == expected.autosaveInterval);
     CHECK(actual.pacing == expected.pacing);
+    CHECK(actual.circleResidency == expected.circleResidency);
     REQUIRE(actual.players.size() == expected.players.size());
     for (std::size_t index = 0; index < actual.players.size(); ++index) {
         CHECK(actual.players[index].actor == expected.players[index].actor);
@@ -614,12 +615,131 @@ void Corrupt(const char* path, const char* sql) {
     REQUIRE(result == SQLITE_OK);
 }
 
+TEST_CASE("Checkpoint warm values survive failed preflight and FIFO eviction falls back to disk",
+          "[world][save][streaming][warm]") {
+    SaveDirectory files;
+    World world(TestContent());
+    Vector<LoadRequest> requests;
+    // 273 layers exceed the 256-entry FIFO cache. X=0's surface is evicted;
+    // X=12's surface is retained. Pending archives must retain all 273 first.
+    for (int x = 0; x < 13; ++x) {
+        requests.push_back(Take(world.RequestChunks({{x, 0}, 0}, LoadMode::active)));
+    }
+    REQUIRE(world.ReconcileChunks());
+    REQUIRE(world.SetTile({192, 1}, {TestTerrain("floor"), 37}));
+    const auto actor = Take(world.CreateActor({192, 1}));
+    const auto actorId = world.GetActor(actor)->id;
+    const auto lamp = Take(world.CreateObject({193, 1}, true));
+    const auto lampId = world.GetObject(lamp)->id;
+    REQUIRE(world.SetObjectLight(lamp, {192, 4}));
+    world.SetSkyLight(0);
+    CHECK(world.GetLightLevel({193, 1}) == 192);
+    REQUIRE(world.SetObjectEnabled(lamp, false));
+    REQUIRE(world.CreateSave(files.database.c_str(), {}));
+    for (LoadRequest request : requests) { REQUIRE(world.ReleaseRequest(request)); }
+    REQUIRE(world.ReconcileChunks());
+    CHECK(world.ArchivedChunkCount() == 13 * world_layer_count);
+    CHECK_FALSE(world.GetActor(actor));
+    REQUIRE(world.Save({}));
+    CHECK(world.ArchivedChunkCount() == 0);
+    REQUIRE(world.CheckInvariants());
+    // Both disk rows are invalid, but only the evicted one must be read.
+    Corrupt(files.database.c_str(), "UPDATE chunks SET payload='invalid' WHERE (x=0 OR x=12) AND z=0 AND y=0");
+    const auto cold = Take(world.RequestCircle({{0, 0}, 0}, LoadMode::active));
+    const auto warm = Take(world.RequestCircle({{192, 0}, 0}, LoadMode::resident));
+    CHECK(world.ReconcileChunks() == eastl::unexpected(SaveError::InvalidData));
+    CHECK(world.LoadedChunks().empty());
+    CHECK(world.ArchivedChunkCount() == 0);
+    CHECK(world.CheckInvariants());
+    REQUIRE(world.ReleaseRequest(cold));
+    REQUIRE(world.ReconcileChunks()); // Warm values were not consumed by the failed attempt.
+    const auto freshActor = world.FindActor(actorId);
+    const auto freshLamp = world.FindObject(lampId);
+    REQUIRE(world.GetActor(freshActor));
+    REQUIRE(world.GetObject(freshLamp));
+    CHECK(freshActor != actor);
+    CHECK(freshLamp != lamp);
+    CHECK_FALSE(world.GetObject(freshLamp)->enabled);
+    CHECK(world.ActiveActors().empty());
+    CHECK(*world.GetTile({192, 1}) == Tile{TestTerrain("floor"), 37});
+    CHECK(world.GetLightLevel({193, 1}) == 0); // Same coordinates, new source token.
+    Corrupt(files.database.c_str(), "DELETE FROM chunks WHERE x=0 AND z=0 AND y=0");
+    REQUIRE(world.SetTile({192, 1}, {TestTerrain("floor"), 91}));
+    REQUIRE(world.ReleaseRequest(warm));
+    REQUIRE(world.ReconcileChunks());
+    CHECK(world.ArchivedChunkCount() == world_layer_count);
+    REQUIRE(world.Save({})); // Replaces the old clean value with the new authoritative capture.
+    CHECK(world.ArchivedChunkCount() == 0);
+    Corrupt(files.database.c_str(), "UPDATE chunks SET payload='invalid' WHERE x=12 AND z=0 AND y=0");
+    Load(world, {12, 0});
+    CHECK(*world.GetTile({192, 1}) == Tile{TestTerrain("floor"), 91});
+    CHECK(world.FindActor(actorId) != freshActor);
+    CHECK(world.CheckInvariants());
+}
+
+TEST_CASE("Session circle validation retains the legacy radius contract", "[world][save][circle]") {
+    SaveDirectory files;
+    World world(TestContent());
+    SessionState session;
+    session.circleResidency = CircleResidency{0};
+    REQUIRE(world.CreateSave(files.database.c_str(), session));
+    REQUIRE(world.Save(session));
+    auto invalid = session;
+    invalid.circleResidency->radiusTiles = -1;
+    CHECK(world.Save(invalid) == eastl::unexpected(SaveError::InvalidData));
+    invalid.circleResidency->radiusTiles = maxCircleResidencyRadius + 1;
+    CHECK(world.Save(invalid) == eastl::unexpected(SaveError::InvalidData));
+    invalid = session;
+    invalid.residentRadius = 9;
+    CHECK(world.Save(invalid) == eastl::unexpected(SaveError::InvalidData));
+    invalid = session;
+    invalid.activeRadius = 2;
+    invalid.residentRadius = 1;
+    CHECK(world.Save(invalid) == eastl::unexpected(SaveError::InvalidData));
+    invalid = session;
+    invalid.playerPosition = {world_coordinate_limit - 127, 0};
+    invalid.residentRadius = 0;
+    invalid.circleResidency->radiusTiles = 128;
+    CHECK(world.Save(invalid) == eastl::unexpected(SaveError::InvalidData));
+    session.circleResidency->radiusTiles = maxCircleResidencyRadius;
+    REQUIRE(world.Save(session));
+    World restored(TestContent());
+    CheckSession(Take(restored.LoadSave(files.database.c_str())), session);
+}
+
 ChunkArchive ActorChunk(ChunkCoord position, PersistentId id) {
     ChunkArchive chunk{};
     chunk.tiles.fill(Tile{TestTerrain("floor"), 0});
     chunk.position = position;
     chunk.actors.push_back({id, {position.x * chunk_size, position.z * chunk_size, position.y}, false, 0});
     return chunk;
+}
+
+TEST_CASE("Incoming circle disk IDs cannot alias clean warm values", "[world][save][streaming][warm][circle]") {
+    SaveDirectory files;
+    WriteFixture(files.database.c_str(), {ActorChunk({0, 0}, 1), ActorChunk({1, 0, world_max_y}, 2)});
+    World world(TestContent());
+    Take(world.LoadSave(files.database.c_str()));
+    const auto origin = Load(world);
+    const auto oldActor = world.FindActor(1);
+    REQUIRE(world.ReleaseRequest(origin));
+    REQUIRE(world.ReconcileChunks());
+    REQUIRE(world.Save({}));
+    CHECK(world.ArchivedChunkCount() == 0);
+    Corrupt(files.database.c_str(),
+        "UPDATE chunks SET payload=replace(payload,'\"id\":\"2\"','\"id\":\"1\"') WHERE x=1 AND z=0 AND y=10");
+    const auto request = Take(world.RequestCircle({{16, 0}, 0}, LoadMode::active));
+    CHECK(world.ReconcileChunks() == eastl::unexpected(SaveError::InvalidData));
+    CHECK(world.LoadedChunks().empty());
+    CHECK(world.FindActor(2) == ActorHandle{});
+    CHECK(world.CheckInvariants());
+    REQUIRE(world.UpdateCircleRequest(request, {{0, 0}, 0}, LoadMode::resident));
+    REQUIRE(world.ReconcileChunks()); // Incoming warm IDs are counted once, not twice.
+    REQUIRE(world.GetActor(world.FindActor(1)));
+    CHECK(world.FindActor(1) != oldActor);
+    CHECK(world.ActiveActors().empty());
+    CHECK(world.LoadedChunks().size() == world_layer_count);
+    CHECK(world.CheckInvariants());
 }
 
 TEST_CASE("Failed reconciliation preserves live keys activity and loaded set", "[world][save][streaming]") {
@@ -692,6 +812,33 @@ TEST_CASE("Incoming disk chunks cannot alias IDs in pending RAM archives", "[wor
     CHECK(world.LoadedChunks().empty());
     CHECK(world.ArchivedChunkCount() == world_layer_count);
     CHECK(world.CheckInvariants());
+}
+
+TEST_CASE("Circle world checkpoints validate actual demand at horizontal limits", "[world][save][streaming]") {
+    for (const TileCoord position : {TileCoord{world_coordinate_limit, 0},
+        TileCoord{-world_coordinate_limit, 0}, TileCoord{0, world_coordinate_limit},
+        TileCoord{0, -world_coordinate_limit}}) {
+        SaveDirectory files;
+        World world(TestContent());
+        REQUIRE(world.RequestCircle({position, 0}, LoadMode::resident));
+        REQUIRE(world.ReconcileChunks());
+        SessionState session;
+        session.playerPosition = position;
+        session.activeRadius = 0;
+        session.residentRadius = 5; // Retained square configuration is not demand.
+        session.circleResidency = CircleResidency{0};
+        REQUIRE(world.CreateSave(files.database.c_str(), session));
+        World restored(TestContent());
+        const auto loaded = Take(restored.LoadSave(files.database.c_str()));
+        CHECK(loaded.playerPosition == position);
+        CHECK(loaded.circleResidency == session.circleResidency);
+        CHECK(loaded.residentRadius == 5);
+        session.activeRadius = 1;
+        CHECK(world.Save(session) == eastl::unexpected(SaveError::InvalidData));
+        session.activeRadius = 0;
+        session.circleResidency.reset();
+        CHECK(world.Save(session) == eastl::unexpected(SaveError::InvalidData));
+    }
 }
 
 TEST_CASE("World saves preserve unsigned persistent IDs up to exhaustion", "[world][save]") {

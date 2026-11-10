@@ -119,7 +119,7 @@ bool Execute(eastl::unique_ptr<Server>& ownedServer, eastl::string_view line, bo
             const String path(words[1].data(), words[1].size());
             if (configuration.enabled) {
                 auto candidate = configuration.LoadFor(path.c_str(), &diagnostics);
-                if (!candidate || !ApplySettings(server, candidate->Effective(), &diagnostics)) {
+                if (!candidate || !ApplySettings(server, *candidate, &diagnostics)) {
                     std::fprintf(stderr, "Configuration failed: %s\n", FormatDiagnostics(diagnostics).c_str()); return false;
                 }
                 configuration.store = eastl::move(*candidate);
@@ -147,7 +147,7 @@ bool Execute(eastl::unique_ptr<Server>& ownedServer, eastl::string_view line, bo
         }
         if (configuration.enabled) {
             auto candidate = configuration.LoadFor(path.c_str(), &diagnostics);
-            if (!candidate || !ApplySettings(**loaded, candidate->Effective(), &diagnostics)) {
+            if (!candidate || !ApplySettings(**loaded, *candidate, &diagnostics)) {
                 std::fprintf(stderr, "Configuration failed: %s\n", FormatDiagnostics(diagnostics).c_str()); return false;
             }
             configuration.store = eastl::move(*candidate);
@@ -352,7 +352,7 @@ int main(int argc, char** argv) {
     } else {
         server = eastl::make_unique<Server>(*content, configuration.store ? configuration.store->Effective().seed : 42);
     }
-    if (configuration.store && !ApplySettings(*server, configuration.store->Effective(), &diagnostics)) {
+    if (configuration.store && !ApplySettings(*server, *configuration.store, &diagnostics)) {
         std::fprintf(stderr, "Configuration application failed: %s\n", FormatDiagnostics(diagnostics).c_str()); return 1;
     }
     if (loadPath == nullptr) {

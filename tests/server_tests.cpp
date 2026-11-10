@@ -84,7 +84,8 @@ TEST_CASE("Server creates the deterministic demo and advances only successful co
     CHECK(world.GetActor(server.GetPlayer())->position == TileCoord{0, 0});
     CHECK(world.GetActor(server.GetPlayer())->player);
     CHECK(server.GetTick() == 0);
-    CHECK(world.LoadedChunks().size() == 121 * world_layer_count);
+    CHECK(world.LoadedChunks().size() == 88 * world_layer_count);
+    CHECK(server.GetCircleResidency() == CircleResidency{78});
     CHECK(world.IsActive({-16, -16}));
     CHECK_FALSE(world.IsActive({-32, -32}));
     const auto backpack = world.ItemsAt({0, 0});
@@ -393,6 +394,95 @@ TEST_CASE("Zero-radius movement loads before crossing and restores frozen archiv
         CHECK(chunk.x == 0);
         CHECK(chunk.z == 0);
     }
+    CHECK(world.CheckInvariants());
+}
+
+TEST_CASE("Circle residency follows tiles inside a chunk and across the negative seam", "[server][streaming][circle]") {
+    Server server(TestContent());
+    World& world = server.GetWorld();
+    const ActorHandle player = server.GetPlayer();
+    REQUIRE(world.SetTile({-2, 0}, {TestTerrain("floor"), 0}));
+    REQUIRE(world.SetTile({-1, 0}, {TestTerrain("floor"), 0}));
+    REQUIRE(server.SetCircleResidency(0, {15}));
+    CHECK_FALSE(world.GetChunk({1, 0}));
+    expect(server, {CommandKind::move, 1, 0}, Outcome::moved, true);
+    CHECK(world.GetChunk({1, 0})); // Same player chunk, newly intersected circle column.
+    expect(server, {CommandKind::move, -1, 0}, Outcome::moved, true);
+    CHECK_FALSE(world.GetChunk({1, 0}));
+    expect(server, {CommandKind::move, -1, 0}, Outcome::moved, true);
+    CHECK_FALSE(world.GetChunk({-2, 0}));
+    expect(server, {CommandKind::move, -1, 0}, Outcome::moved, true);
+    CHECK(world.GetChunk({-2, 0})); // -1 to -2 stays inside chunk -1.
+    CHECK(server.GetPlayer() == player);
+    CHECK(world.CheckInvariants());
+}
+
+TEST_CASE("A radius zero circle still stages the entire future active square", "[server][streaming][circle]") {
+    Server server(TestContent());
+    World& world = server.GetWorld();
+    REQUIRE(world.MoveActor(server.GetPlayer(), {15, 0}));
+    REQUIRE(world.SetTile({16, 0}, {TestTerrain("floor"), 0}));
+    REQUIRE(server.SetCircleResidency(1, {0}));
+    CHECK_FALSE(world.GetChunk({2, 0}));
+    expect(server, {CommandKind::move, 1, 0}, Outcome::moved, true);
+    CHECK(world.GetChunk({2, 0}));
+    CHECK(world.IsActive({32, 0}));
+    CHECK_FALSE(world.GetChunk({-1, 0}));
+    CHECK(world.LoadedChunks().size() == 9 * world_layer_count);
+}
+
+TEST_CASE("Circle policy switches preserve retained square configuration and reject atomically", "[server][streaming][circle]") {
+    Server server(TestContent());
+    REQUIRE(server.SetBubbleRadii(0, 0));
+    CHECK_FALSE(server.GetCircleResidency());
+    REQUIRE(server.SetCircleResidency(2, {0}));
+    CHECK(server.GetActiveRadius() == 2);
+    CHECK(server.GetResidentRadius() == 2);
+    const auto before = server.GetWorld().LoadedChunks();
+    CHECK(server.SetCircleResidency(0, {-1}) == eastl::unexpected(WorldError::invalid_region));
+    CHECK(server.SetCircleResidency(0, {129}) == eastl::unexpected(WorldError::invalid_region));
+    CHECK(server.SetCircleResidency(9, {0}) == eastl::unexpected(WorldError::invalid_region));
+    CHECK(server.GetCircleResidency() == CircleResidency{0});
+    CHECK(server.GetWorld().LoadedChunks() == before);
+    REQUIRE(server.SetBubbleRadii(0, 0));
+    CHECK_FALSE(server.GetCircleResidency());
+    CHECK(server.GetWorld().LoadedChunks().size() == world_layer_count);
+}
+
+TEST_CASE("Rejected circle movement releases every staged request", "[server][streaming][circle]") {
+    Server server(TestContent());
+    World& world = server.GetWorld();
+    REQUIRE(world.SetTile({1, 0}, {TestTerrain("wall"), 0}));
+    REQUIRE(server.SetCircleResidency(0, {15}));
+    const auto before = world.LoadedChunks();
+    const auto player = server.GetPlayer();
+    expect(server, {CommandKind::move, 1, 0}, Outcome::blocked, false);
+    CHECK(world.LoadedChunks() == before);
+    REQUIRE(world.ReconcileChunks());
+    CHECK(world.LoadedChunks() == before);
+    CHECK(server.GetPlayer() == player);
+    CHECK(world.GetActor(player)->position == TileCoord{0, 0});
+}
+
+TEST_CASE("Guest activation and disconnect apply circular residency", "[server][streaming][circle][players]") {
+    Server server(TestContent());
+    REQUIRE(server.SetCircleResidency(0, {15}));
+    const auto joined = server.JoinPlayer("Guest", 0, 901);
+    REQUIRE(joined);
+    World& world = server.GetWorld();
+    const auto guest = world.FindActor(joined->player);
+    REQUIRE(world.GetActor(guest));
+    REQUIRE(world.SetTile({15, 0}, {TestTerrain("floor"), 0}));
+    REQUIRE(world.MoveActor(guest, {15, 0}));
+    REQUIRE(server.DisconnectPlayer(joined->player));
+    const auto hostOnly = world.LoadedChunks();
+    REQUIRE(server.JoinPlayer("Guest", 901, 0));
+    REQUIRE(server.ActivatePlayer(joined->player));
+    CHECK(world.GetChunk({1, 0}));
+    CHECK_FALSE(world.IsActive({16, 0}));
+    CHECK(world.GetActor(world.FindActor(joined->player))->position == TileCoord{15, 0});
+    REQUIRE(server.DisconnectPlayer(joined->player));
+    CHECK(world.LoadedChunks() == hostOnly);
     CHECK(world.CheckInvariants());
 }
 

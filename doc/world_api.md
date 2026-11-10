@@ -52,6 +52,14 @@ not ownership or lifetime guarantees.
   ignored. The entire square must fit horizontal chunk coordinates `[-62'500, 62'500]`.
   Edge chunks still contain slots outside valid tile coordinates; use
   `ValidPosition`/`GetTile` for tile access.
+- `ColumnCoord{int32_t x, int32_t z}` identifies a horizontal full-height column.
+  `TileCircleRegion{center, radiusTiles}` selects columns by an integer circle in
+  **tile units**, ignoring `center.y`. Radius is `0..maxCircleResidencyRadius`
+  (`128`). For each column, the nearest integer tile in its inclusive 16×16
+  rectangle must have squared horizontal distance at most `radiusTiles²`.
+  Tangencies are included; radius zero selects exactly the containing column.
+  The entire circle's horizontal footprint must fit valid world tile bounds;
+  invalid circles are rejected rather than clipped. There is no implicit halo.
 - Spatial mutations require loaded destination chunks. A valid but unloaded
   destination returns `chunk_unavailable`; an out-of-bounds tile returns
   `invalid_position`. Queries and mutations do not implicitly load chunks.
@@ -112,6 +120,15 @@ changes. See [surface lighting](surface_lighting.md) for incident faces and
 incremental recombination, [perception](perception.md) for source rules, and
 [the view contract](server_api.md#views-and-line-of-sight).
 
+The first dirty light query calls `LightingField::Prepare`, publishes invalidation
+tokens, and invalidates affected observer filters before any filter-cache decision.
+Output is then computed lazily with `EnsureChunk` for the requested chunk;
+chunk-contiguous and incident queries ensure their own target as well. Perception
+ensures each sampled chunk before reading its field. Published chunk revisions are
+invalidation tokens even when output has not yet been materialized. Full unload
+and reload at the same coordinates obtains fresh source-input tokens, including
+when no light query occurred between the two boundaries.
+
 `CanPlayerSee` provides residency-clipped authoritative terrain visibility without
 loading or learning. `SetVisionProfile` validates session-local sight policy;
 default maximum range is 64. `GetRevision` tracks presentation-relevant changes,
@@ -135,6 +152,11 @@ current views can be fresh without updating memory.
 
 `RequestChunks` acquires demand; `UpdateRequest` replaces that request's region
 and mode; `ReleaseRequest` retires it. These operations change demand only.
+`RequestCircle(TileCircleRegion, LoadMode)` returns `WorldResult<LoadRequest>`;
+`UpdateCircleRequest(LoadRequest, TileCircleRegion, LoadMode)` returns
+`WorldResult<void>`. These use the same handles and lifecycle as square demand.
+Either update API can replace the other shape. Invalid regions return
+`invalid_region`; invalid handles or modes return `invalid_request`.
 Call `ReconcileChunks()` explicitly at a synchronous boundary to apply it. It
 returns `SaveResult<void>` because storage-backed loads can fail; see the
 [save format and checkpoint contract](save_format.md).
@@ -153,6 +175,35 @@ Active demand includes residency and wins overlaps. Releasing one request
 cannot cancel another request's demand. Residency does not prohibit explicit
 administrative mutations. Reconciliation itself never advances turns.
 `LoadedChunks()` includes both modes in lexicographic `(x, z, y)` order.
+All request shapes first enumerate horizontal columns, then sort and merge them
+with active demand winning. Every selected column owns all 21 layers with uniform
+activity. A sorted committed `(ColumnCoord, active)` index drives deterministic
+traversal; keyed column ownership avoids shifting large terrain arrays when demand
+slides. Chunk queries use an explicit private column hash and a Y-array index.
+Map iterator order never determines simulation or serialization order, and erase
+does not assume map iterator/reference stability. Actor and object snapshots retain
+persistent-ID order.
+
+`GetPerceptionStats()` also counts `columnsLoaded`/`columnsUnloaded` and actual lazy
+lighting work: `lightingOutputChunks`, `lightingSkyDirectChunks`,
+`lightingSkyFirstChunks`, and `lightingSourcePatches`. These cumulative diagnostic
+counters reset through `ResetPerceptionStats()` without invalidating caches;
+`lightingRebuilds` counts input synchronization, not eager whole-field rebuilds.
+
+Storage reads and incoming archive validation (including cross-source ID aliases)
+complete before live ownership, activity, archives, or runtime keys change. A failed
+reconciliation leaves the committed index and live world intact for retry. All new
+columns and their terrain are installed before restoration; the committed index is
+published and complete item ownership restored before item callbacks are attached.
+Gravity settles at the completed boundary.
+
+`SessionState::circleResidency` is an appended optional `CircleResidency` policy.
+Its default radius is `playerSightRange + maxLightRange + lightSpillDistance`
+(78 tiles); absence retains legacy square residency. Checkpoint/load validation
+checks the active square plus the selected resident footprint. Retained legacy
+radii still satisfy `0 <= activeRadius <= residentRadius <= 8`, but an unused
+resident square does not constrain a circle session's position. The policy does not itself acquire demand;
+session/server code issues the corresponding circle request.
 
 ```cpp
 #include "core/world.h"
@@ -292,9 +343,25 @@ rebuilt on materialization; no runtime handles are persisted. Archive validation
 checks definitions, capability state, mounts, volume, depth, root mass and
 deployed timer targets before creating live keys.
 Resident-only and archived entities do not advance or catch up on reactivation.
-Archives exist only for currently unloaded chunks in this `World`, and disappear
-with it. See the [save format](save_format.md) for disk checkpointing and archive
-eviction; validation scans all durable chunks and is not constant-cost streaming.
+Pending archives exist only for currently unloaded chunks in this `World`, and
+disappear with it. `ArchivedChunkCount()` counts these authoritative pending values
+only. They are never evicted before a successful checkpoint, and failed checkpoints
+retain them. After commit, a bounded subset transfers to a separate clean FIFO warm
+cache before the pending vector's outer allocation is released; the pending count
+is then zero. Load precedence is live, pending, warm, disk, then generation.
+Warm hits consume their cached value only after successful preflight, restore fresh
+handles, and retain no runtime light fields. New authoritative captures/checkpoint
+replacements invalidate stale same-coordinate cache values.
+
+The warm cache holds at most 256 layer archives with an 8 MiB conservative owned
+storage budget (including its outer capacity and actor/object vector capacities).
+Currently only item-free archives with zero item-vector capacity are eligible:
+`DataObject` does not expose recursive allocation capacities, so item-bearing
+archives use disk after checkpoint instead of an inaccurate heap-size estimate.
+Oversized eligible values are skipped. FIFO insertion follows deterministic unload
+order, with no wall-clock policy. Eviction changes performance only; the committed
+database remains authoritative. See the [save format](save_format.md) for disk
+checkpointing; validation scans all durable chunks and is not constant-cost streaming.
 
 Internally, central slot maps own live entities, while chunks hold spatial
 indexes. Keeping these separate preserves live handles across chunk movement.

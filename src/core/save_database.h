@@ -7,7 +7,7 @@ namespace cataclysmx {
 
 class ContentCatalog;
 
-inline constexpr int save_format_version = 7;
+inline constexpr int save_format_version = 8;
 
 // SQLite and JSON remain private to this subsystem. A connection is exclusively
 // owned by one World; transactions are synchronous simulation-boundary calls.

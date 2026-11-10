@@ -103,7 +103,7 @@ int main(int argc, char** argv) {
         ownedServer = eastl::move(*loaded);
     } else { ownedServer = eastl::make_unique<Server>(*content, settings.Effective().seed); }
     Server& server = *ownedServer;
-    if (!ApplySettings(server, settings.Effective(), &diagnostics)) { return Failure("Settings application failed", diagnostics); }
+    if (!ApplySettings(server, settings, &diagnostics)) { return Failure("Settings application failed", diagnostics); }
     if (!savePath.empty()) {
         if (!server.CreateSave(savePath.c_str(), &diagnostics)) { return Failure("Save creation failed", diagnostics); }
         if (!settings.Save(SettingsScope::World, &diagnostics)) { return Failure("World configuration creation failed", diagnostics); }

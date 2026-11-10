@@ -76,6 +76,12 @@ struct PerceptionStats {
     std::uint64_t observationScans = 0;
     std::uint64_t memoryTilesChanged = 0;
     std::uint64_t demandReconciliations = 0;
+    std::uint64_t columnsLoaded = 0;
+    std::uint64_t columnsUnloaded = 0;
+    std::uint64_t lightingOutputChunks = 0;
+    std::uint64_t lightingSkyDirectChunks = 0;
+    std::uint64_t lightingSkyFirstChunks = 0;
+    std::uint64_t lightingSourcePatches = 0;
 };
 
 constexpr bool ValidVisionProfile(const VisionProfile& vision) {

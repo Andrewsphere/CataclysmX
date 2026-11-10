@@ -78,6 +78,9 @@ void SameState(const Server& first, const Server& second) {
     CHECK(a.remainingTicks == b.remainingTicks);
     CHECK(a.pacing == b.pacing);
     CHECK(first.GetPacing() == second.GetPacing());
+    CHECK(first.GetCircleResidency() == second.GetCircleResidency());
+    CHECK(first.GetActiveRadius() == second.GetActiveRadius());
+    CHECK(first.GetResidentRadius() == second.GetResidentRadius());
     const World& left = first.GetWorld();
     const World& right = second.GetWorld();
     REQUIRE(left.LoadedChunks() == right.LoadedChunks());
@@ -137,6 +140,7 @@ TEST_CASE("Server checkpoint reopens tick RNG bubble and nested inventory for de
     CHECK(session.player == playerId);
     CHECK(session.activeRadius == 1);
     CHECK(session.residentRadius == 1);
+    CHECK_FALSE(session.circleResidency);
     auto restored = Take(Server::LoadSave(TestContent(), file.path.c_str()));
     CHECK(restored->GetAutosaveInterval() == 1000);
     CHECK(restored->GetWorld().GetChunk({10, 10}) == nullptr);
@@ -208,6 +212,95 @@ TEST_CASE("Server manual checkpoints reset autosave cadence and rejected command
     CHECK(ReadSession(file).tick == 700);
     REQUIRE(restored->Send({}).advanced);
     CHECK(ReadSession(file).tick == 900);
+}
+
+TEST_CASE("Circle checkpoints continue tile centered streaming deterministically", "[server][save][circle][determinism]") {
+    SaveFile file;
+    Server original(TestContent(), 918);
+    REQUIRE(original.SetCircleResidency(0, {15}));
+    REQUIRE(original.Send({CommandKind::move, 1, 0}).advanced);
+    REQUIRE(original.CreateSave(file.path.c_str()));
+    CHECK(ReadSession(file).circleResidency == CircleResidency{15});
+    auto restored = Take(Server::LoadSave(TestContent(), file.path.c_str()));
+    SameState(original, *restored);
+    for (Command command : {Command{CommandKind::move, -1, 0}, Command{CommandKind::move, -1, 0},
+             Command{CommandKind::move, -1, 0}, Command{}, Command{CommandKind::move, 1, 0}}) {
+        const auto a = original.Send(command);
+        const auto b = restored->Send(command);
+        CHECK(a.outcome == b.outcome);
+        CHECK(a.advanced == b.advanced);
+        CHECK(a.tick == b.tick);
+        CHECK_FALSE(a.storageError);
+        CHECK_FALSE(b.storageError);
+        SameState(original, *restored);
+    }
+    REQUIRE(original.Save());
+    const auto uninterrupted = ReadSession(file);
+    REQUIRE(restored->Save());
+    CHECK(ReadSession(file).rngState == uninterrupted.rngState);
+    REQUIRE(restored->SetBubbleRadii(0, 0));
+    REQUIRE(restored->Save());
+    auto square = Take(Server::LoadSave(TestContent(), file.path.c_str()));
+    CHECK_FALSE(square->GetCircleResidency());
+    CHECK(square->GetWorld().LoadedChunks().size() == world_layer_count);
+}
+
+TEST_CASE("Small circles preflight active square storage and restore policy on resize failure", "[server][save][streaming][circle]") {
+    SaveFile file;
+    Server server(TestContent());
+    World& world = server.GetWorld();
+    REQUIRE(world.MoveActor(server.GetPlayer(), {15, 0}));
+    REQUIRE(world.SetTile({16, 0}, {TestTerrain("floor"), 0}));
+    REQUIRE(server.SetCircleResidency(1, {0}));
+    REQUIRE(server.CreateSave(file.path.c_str()));
+    {
+        RawDatabase raw(file.path.c_str());
+        raw.Exec("UPDATE chunks SET payload='{}' WHERE x=2 AND z=0 AND y=0");
+    }
+    const auto before = world.LoadedChunks();
+    const auto player = server.GetPlayer();
+    const auto result = server.Send({CommandKind::move, 1, 0});
+    CHECK(result.outcome == Outcome::unavailable);
+    CHECK_FALSE(result.advanced);
+    REQUIRE(result.storageError);
+    CHECK(*result.storageError == SaveError::InvalidData);
+    CHECK(world.GetActor(player)->position == TileCoord{15, 0});
+    CHECK(world.LoadedChunks() == before);
+    CHECK(server.SetBubbleRadii(1, 2) == eastl::unexpected(WorldError::storage_failure));
+    CHECK(server.GetCircleResidency() == CircleResidency{0});
+    CHECK(server.GetActiveRadius() == 1);
+    CHECK(server.GetResidentRadius() == 5);
+    REQUIRE(world.ReconcileChunks());
+    CHECK(world.LoadedChunks() == before);
+    CHECK(server.GetPlayer() == player);
+    CHECK(world.CheckInvariants());
+}
+
+TEST_CASE("Within chunk circle expansion rejects corrupt resident columns before moving", "[server][save][streaming][circle]") {
+    SaveFile file;
+    Server server(TestContent());
+    REQUIRE(server.SetCircleResidency(0, {15}));
+    REQUIRE(server.CreateSave(file.path.c_str()));
+    {
+        RawDatabase raw(file.path.c_str());
+        raw.Exec("UPDATE chunks SET payload='{}' WHERE x=1 AND z=0 AND y=0");
+    }
+    World& world = server.GetWorld();
+    const auto before = world.LoadedChunks();
+    const auto player = server.GetPlayer();
+    const auto view = server.View();
+    const auto result = server.Send({CommandKind::move, 1, 0});
+    CHECK(result.outcome == Outcome::unavailable);
+    CHECK_FALSE(result.advanced);
+    REQUIRE(result.storageError);
+    CHECK(*result.storageError == SaveError::InvalidData);
+    CHECK(server.GetPlayer() == player);
+    CHECK(world.GetActor(player)->position == TileCoord{0, 0});
+    CHECK(server.GetTick() == 0);
+    CHECK(server.View().cells == view.cells);
+    REQUIRE(world.ReconcileChunks());
+    CHECK(world.LoadedChunks() == before);
+    CHECK_FALSE(world.GetChunk({1, 0}));
 }
 
 TEST_CASE("Server checkpoints retain dirty layered archives after eviction and disk reload",
@@ -811,6 +904,51 @@ TEST_CASE("Checkpoint reads administratively moved archived parked player positi
     REQUIRE(loaded->JoinPlayer("Guest", 871, 0));
     REQUIRE(loaded->ActivatePlayer(joined->player));
     CHECK(loaded->ViewForPlayer(joined->player).player_position == moved);
+}
+
+TEST_CASE("Parked boundary guests reload after the host enlarges residency",
+    "[server][save][multiplayer][streaming][circle]") {
+    bool circle = true;
+    SECTION("circle policy") {}
+    SECTION("legacy square policy") { circle = false; }
+    for (int boundary : {world_coordinate_limit - 1, -world_coordinate_limit + 1}) {
+        CAPTURE(boundary, circle);
+        SaveFile file;
+        Server server(TestContent());
+        REQUIRE(server.SetBubbleRadii(0, 0));
+        const TileCoord position{boundary, boundary};
+        const auto joined = Take(server.JoinPlayer("Boundary guest", 0, 873));
+        World& world = server.GetWorld();
+        const auto request = Take(world.RequestChunks({ChunkOf(position), 0}, LoadMode::resident));
+        REQUIRE(world.ReconcileChunks());
+        REQUIRE(world.SetTile(position, {TestTerrain("floor"), 0}));
+        REQUIRE(world.MoveActor(world.FindActor(joined.player), position));
+        REQUIRE(server.DisconnectPlayer(joined.player));
+        REQUIRE(world.ReleaseRequest(request));
+        REQUIRE(world.ReconcileChunks());
+        if (circle) {
+            REQUIRE(server.SetCircleResidency(0, {78}));
+        } else {
+            REQUIRE(server.SetBubbleRadii(1, 5));
+        }
+        REQUIRE(server.CreateSave(file.path.c_str()));
+        auto restored = Take(Server::LoadSave(TestContent(), file.path.c_str()));
+        REQUIRE(restored->GetPlayers().size() == 2);
+        CHECK(restored->GetPlayers()[1].state == PlayerConnectionState::Parked);
+        CHECK(restored->GetWorld().FindPlayerPosition(joined.player) == position);
+        CHECK(restored->GetCircleResidency() == server.GetCircleResidency());
+        CHECK(restored->GetActiveRadius() == server.GetActiveRadius());
+        REQUIRE(restored->Save());
+        REQUIRE(restored->JoinPlayer("Boundary guest", 873, 0));
+        CHECK(restored->ActivatePlayer(joined.player)
+            == eastl::unexpected(SessionError::Unavailable));
+        CHECK(restored->GetPlayers()[1].state == PlayerConnectionState::Joining);
+        const auto* guest = restored->GetWorld().GetActor(restored->GetWorld().FindActor(joined.player));
+        REQUIRE(guest);
+        CHECK(guest->parked);
+        CHECK(guest->position == position);
+        CHECK(restored->GetWorld().CheckInvariants());
+    }
 }
 
 TEST_CASE("Reconnect staging failure leaves parked guest joining without relocating",

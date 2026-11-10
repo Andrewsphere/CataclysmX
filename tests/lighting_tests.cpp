@@ -513,6 +513,7 @@ TEST_CASE("Uniform sky shortcuts match independent full two-step transport", "[l
             }
         }
         for (const auto& chunk : reference) {
+            field.EnsureChunk(world, chunk.position);
             const auto actual = field.GetChunkLevels(chunk.position);
             REQUIRE(eastl::equal(actual.begin(),actual.end(),chunk.level.begin()));
             for (int i = 0; i < chunk_size*chunk_size; ++i) {
@@ -528,7 +529,9 @@ TEST_CASE("Uniform sky shortcuts match independent full two-step transport", "[l
     for (const int sky : {0,1,3,4,7,8,192,255,0}) {
         CAPTURE(sky);
         world.SetSkyLight(static_cast<std::uint8_t>(sky));
-        field.Rebuild(world);
+        field.Prepare(world);
+        CHECK(field.GetWorkStats().outputChunks == 0);
+        field.EnsureChunk(world, {0,0,0});
         CHECK(field.Get({5,5,0}) == sky);
         CHECK(field.Get({6,5,0}) == sky/4);
         CHECK(field.Get({7,5,0}) == sky/8);
@@ -908,7 +911,14 @@ TEST_CASE("Planar source lighting matches bulk visibility and independently comb
             && (p.y == q.y || OpenVerticalFace(world,p,q));
     };
     LightingField actual;
-    actual.Rebuild(world);
+    actual.Prepare(world);
+    CHECK(actual.GetWorkStats().sourcePatches == 0);
+    CHECK(actual.GetWorkStats().outputChunks == 0);
+    // Request arbitrary elevations in reverse order; the oracle below computes
+    // combined direct/first/second transport independently of the source cache.
+    for (std::size_t c = world.LoadedChunks().size(); c > 0; --c) {
+        actual.EnsureChunk(world, world.LoadedChunks()[c-1]);
+    }
     for (auto& chunk : reference) {
         for (int i = 0; i < chunk_size*chunk_size; ++i) {
             const TileCoord p{chunk.position.x*chunk_size+i%chunk_size,
@@ -973,6 +983,164 @@ TEST_CASE("Planar source lighting matches bulk visibility and independently comb
         const auto levels = actual.GetChunkLevels(chunk.position);
         REQUIRE(eastl::equal(levels.begin(),levels.end(),chunk.level.begin()));
     }
+}
+
+TEST_CASE("Prepare publishes never-computed dependencies and Ensure only finalizes requested chunks", "[lighting][incremental][lazy]") {
+    World world(TestContent());
+    Prepare(world);
+    REQUIRE(world.SetTile({5,5,1}, {TestTerrain("air"),0}));
+    const auto lamp = Lamp(world, {5,5,0}, {192,1});
+    LightingField field;
+    field.Prepare(world);
+    const ChunkCoord local{0,0,0};
+    const ChunkCoord receiving{0,0,1};
+    const auto before = field.GetChunkRevision(receiving);
+    REQUIRE(before != 0);
+    CHECK(field.GetWorkStats().outputChunks == 0);
+    CHECK(field.GetWorkStats().sourcePatches == 0);
+    field.EnsureChunk(world, local);
+    CHECK(field.Get({5,5,0}) == 192);
+    CHECK(field.GetWorkStats().outputChunks == 1);
+    CHECK(field.GetWorkStats().sourcePatches == 1);
+    field.EnsureChunk(world, local);
+    CHECK(field.GetWorkStats().outputChunks == 1);
+    REQUIRE(world.SetObjectEnabled(lamp, false));
+    field.Prepare(world);
+    const auto changed = field.ChangedChunks();
+    CHECK(eastl::find(changed.begin(), changed.end(), receiving) != changed.end());
+    CHECK(field.GetChunkRevision(receiving) > before);
+    CHECK(field.GetWorkStats().outputChunks == 0);
+    const auto revision = field.GetChunkRevision(receiving);
+    // A second no-op sync must retain the outstanding lazy invalidation.
+    field.Prepare(world);
+    CHECK(field.ChangedChunks().empty());
+    CHECK(field.GetChunkRevision(receiving) == revision);
+    field.EnsureChunk(world, receiving);
+    CHECK(field.Get({5,5,1}) == 0);
+    CHECK(field.GetWorkStats().outputChunks == 1);
+    CHECK(field.GetWorkStats().sourcePatches == 0);
+    CHECK(field.GetChunkRevision(receiving) == revision);
+    field.EnsureChunk(world, {99,99,0});
+    CHECK(field.GetChunkLevels({99,99,0}).empty());
+    CHECK(field.GetWorkStats().outputChunks == 1);
+}
+
+TEST_CASE("Remote residency retains output bytes revisions and source patches across index remapping", "[lighting][incremental][lazy]") {
+    World world(TestContent());
+    Prepare(world);
+    const auto lamp = Lamp(world, {5,5,0}, {192,1});
+    LightingField field;
+    field.Rebuild(world);
+    const ChunkCoord local{0,0,0};
+    const auto revision = field.GetChunkRevision(local);
+    const auto* storage = field.GetChunkLevels(local).data();
+    const auto remote = world.RequestChunks({{-4,-4},0}, LoadMode::resident);
+    REQUIRE(remote);
+    REQUIRE(world.ReconcileChunks());
+    field.Prepare(world);
+    CHECK(field.GetChunkRevision(local) == revision);
+    CHECK(field.GetChunkLevels(local).data() == storage);
+    CHECK(field.Get({5,5,0}) == 192);
+    CHECK(field.GetWorkStats().outputChunks == 0);
+    CHECK(field.GetWorkStats().sourcePatches == 0);
+    // Force local recombination while retaining the source patch whose old
+    // vector indices were shifted by insertion of a negative remote column.
+    world.SetSkyLight(1);
+    field.Prepare(world);
+    field.EnsureChunk(world, local);
+    CHECK(field.Get({5,5,0}) == 192);
+    CHECK(field.GetWorkStats().sourcePatches == 0);
+    for (const auto coord : world.LoadedChunks()) { field.EnsureChunk(world, coord); }
+    CheckFields(world, field);
+    const auto preservedRevision = field.GetChunkRevision(local);
+    REQUIRE(world.ReleaseRequest(*remote));
+    REQUIRE(world.ReconcileChunks());
+    field.Prepare(world);
+    CHECK(field.GetChunkRevision(local) == preservedRevision);
+    CHECK(field.GetChunkLevels(local).data() == storage);
+    CHECK(field.GetWorkStats().outputChunks == 0);
+    for (const auto coord : field.ChangedChunks()) { CHECK(coord.x == -4); }
+    REQUIRE(world.DestroyObject(lamp));
+    field.Prepare(world);
+    field.EnsureChunk(world, local);
+    CHECK(field.Get({5,5,0}) < 192);
+}
+
+TEST_CASE("Uniform sky and solid lazy paths preserve direct endpoints and incident faces", "[lighting][incremental][lazy]") {
+    World world(TestContent());
+    Prepare(world);
+    for (int z = 0; z < chunk_size; ++z) {
+        for (int x = 0; x < chunk_size; ++x) {
+            REQUIRE(world.SetTile({x,z,world_max_y}, {TestTerrain("air"),0}));
+            REQUIRE(world.SetTile({x,z,world_max_y-1}, {TestTerrain("wall"),0}));
+            REQUIRE(world.SetTile({x,z,world_max_y-2}, {TestTerrain("floor"),0}));
+        }
+    }
+    LightingField field;
+    for (const int sky : {0,1,3,4,7,8,192,255}) {
+        world.SetSkyLight(static_cast<std::uint8_t>(sky));
+        field.Prepare(world);
+        field.EnsureChunk(world, {0,0,world_max_y-2});
+        CHECK(field.GetWorkStats().outputChunks == 1);
+        CHECK(field.Get({5,5,world_max_y-2}) == 0); // Solid above stops sky.
+        field.EnsureChunk(world, {0,0,world_max_y-1});
+        field.EnsureChunk(world, {0,0,world_max_y});
+        CHECK(field.GetWorkStats().outputChunks == 3);
+        CHECK(field.GetWorkStats().sourcePatches == 0);
+        for (int z = 0; z < chunk_size; ++z) {
+            for (int x = 0; x < chunk_size; ++x) {
+                const TileCoord wall{x,z,world_max_y-1};
+                CHECK(field.Get(wall) == sky);
+                CHECK(field.Get({x,z,world_max_y}) == sky);
+                for (int face = 0; face < 6; ++face) {
+                    CHECK(field.GetIncident(wall,face) == (face == 4 ? sky : 0));
+                    CHECK(field.GetIncident({x,z,world_max_y},face) == 0);
+                }
+            }
+        }
+    }
+}
+
+TEST_CASE("Lazy roof source and seam updates are independent of query order", "[lighting][incremental][lazy]") {
+    World world(TestContent());
+    Prepare(world);
+    const auto neighbor = world.RequestChunks({{-1,0},0}, LoadMode::resident);
+    REQUIRE(neighbor);
+    REQUIRE(world.ReconcileChunks());
+    for (int x = -2; x <= 2; ++x) {
+        REQUIRE(world.SetTile({x,5,0}, {TestTerrain("floor"),0}));
+        for (int y = 1; y <= world_max_y; ++y) {
+            REQUIRE(world.SetTile({x,5,y}, {TestTerrain("air"),0}));
+        }
+    }
+    world.SetSkyLight(192);
+    const auto first = Lamp(world, {-1,5,0}, {255,2});
+    Lamp(world, {1,5,0}, {128,2});
+    LightingField forward;
+    LightingField reverse;
+    const auto verify = [&] {
+        forward.Prepare(world);
+        reverse.Prepare(world);
+        CHECK(forward.GetWorkStats().outputChunks == 0);
+        CHECK(reverse.GetWorkStats().outputChunks == 0);
+        const auto loaded = world.LoadedChunks();
+        for (const auto coord : loaded) { forward.EnsureChunk(world, coord); }
+        for (std::size_t i = loaded.size(); i > 0; --i) { reverse.EnsureChunk(world, loaded[i-1]); }
+        CheckFields(world, forward);
+        CheckFields(world, reverse);
+    };
+    verify();
+    REQUIRE(world.SetTile({0,5,3}, {TestTerrain("floor"),0}));
+    REQUIRE(world.SetTile({0,5,0}, {TestTerrain("wall"),0}));
+    verify();
+    REQUIRE(world.SetObjectEnabled(first, false));
+    verify();
+    REQUIRE(world.ReleaseRequest(*neighbor));
+    REQUIRE(world.ReconcileChunks());
+    verify();
+    REQUIRE(world.RequestChunks({{-1,0},0}, LoadMode::resident));
+    REQUIRE(world.ReconcileChunks());
+    verify();
 }
 
 // Explicit opt-in benchmark: timings are diagnostics, never pass/fail thresholds.

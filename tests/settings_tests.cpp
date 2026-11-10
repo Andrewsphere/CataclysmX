@@ -114,7 +114,7 @@ TEST_CASE("Invalid configuration never replaces valid state or overwrites a malf
         "{format_version:1,settings:{seed:-1}}",
         "{format_version:1,settings:{autosave_interval:1.5}}",
         "{format_version:1,settings:{view_radius:null}}"}) { CHECK_FALSE(ParseSettings(text)); }
-    const auto future = ParseSettings("{format_version:2,settings:{}}");
+    const auto future = ParseSettings("{format_version:3,settings:{}}");
     REQUIRE_FALSE(future); CHECK(future.error() == SettingsError::UnsupportedVersion);
 }
 
@@ -197,12 +197,180 @@ TEST_CASE("Multiple saves use one world configuration and current globals overri
         auto loaded = Server::LoadSave(TestContent(), files.File(file).c_str());
         REQUIRE(loaded);
         REQUIRE(store.Load());
-        REQUIRE(ApplySettings(**loaded, store.Effective()));
+        REQUIRE(ApplySettings(**loaded, store));
         CHECK((*loaded)->GetWorld().GetSeed() == 321);
         CHECK((*loaded)->GetAutosaveInterval() == 222);
         CHECK(store.Effective().viewRadius == 2);
         CHECK_FALSE(std::filesystem::exists(files.File("world/a.sqlite.settings.json5")));
     }
+}
+
+TEST_CASE("Settings v1 migrates bubble choices to square and v2 circle choices round trip", "[settings][circle]") {
+    for (const char* text : {"{format_version:1,settings:{active_radius:1}}",
+        "{format_version:1,settings:{resident_radius:5}}"}) {
+        const auto legacy = ParseSettings(text);
+        REQUIRE(legacy);
+        CHECK(legacy->residencyMode == ResidencyMode::Square);
+        CHECK(ResolveSettings({}, *legacy).residencyMode == ResidencyMode::Square);
+    }
+    const auto unrelated = ParseSettings("{format_version:1,settings:{language:'en'}}");
+    REQUIRE(unrelated);
+    CHECK_FALSE(HasResidencyOverride(*unrelated));
+    const auto circle = ParseSettings("{format_version:2,settings:{residency_mode:'circle',resident_radius_tiles:0,active_radius:8}}");
+    REQUIRE(circle);
+    CHECK(ResolveSettings({}, *circle).residentRadiusTiles == 0);
+    CHECK(ValidateSettings(ResolveSettings({}, *circle)));
+    SettingsDirectory files;
+    REQUIRE(SaveSettingsFile(files.File("circle.json5").c_str(), *circle));
+    const auto loaded = LoadSettingsFile(files.File("circle.json5").c_str());
+    REQUIRE(loaded);
+    CHECK(*loaded == *circle);
+    CHECK(files.Read("circle.json5").find("resident_radius\"") == std::string::npos);
+    CHECK(ParseSettings("{format_version:2,settings:{resident_radius_tiles:128}}"));
+    for (const char* text : {
+        "{format_version:1,settings:{residency_mode:'square'}}",
+        "{format_version:1,settings:{resident_radius_tiles:78}}",
+        "{format_version:1,settings:{active_radius:2,resident_radius:1}}",
+        "{format_version:2,settings:{unknown:1}}",
+        "{format_version:2,settings:{residency_mode:'triangle'}}",
+        "{format_version:2,settings:{residency_mode:1}}",
+        "{format_version:2,settings:{resident_radius_tiles:'78'}}",
+        "{format_version:2,settings:{resident_radius_tiles:-1}}",
+        "{format_version:2,settings:{resident_radius_tiles:129}}",
+        "{format_version:2,settings:{active_radius:9}}",
+        "{format_version:2,settings:{resident_radius:1,resident_radius_tiles:78}}",
+        "{format_version:2,settings:{residency_mode:'square',resident_radius_tiles:78}}",
+        "{format_version:2,settings:{residency_mode:'circle',resident_radius:5}}"}) {
+        CHECK_FALSE(ParseSettings(text));
+    }
+    CHECK_FALSE(ParseKeymap("{format_version:2,bindings:[]}"));
+}
+
+TEST_CASE("Store application preserves default and saved residency without bubble overrides", "[settings][server][save][circle]") {
+    SettingsDirectory files;
+    SettingsStore store("");
+    Server original(TestContent());
+    REQUIRE(original.GetCircleResidency());
+    CHECK(original.GetCircleResidency()->radiusTiles == 78);
+    REQUIRE(ApplySettings(original, store));
+    REQUIRE(original.GetCircleResidency());
+    CHECK(original.GetCircleResidency()->radiusTiles == 78);
+    const auto legacy = ParseSettings("{format_version:1,settings:{active_radius:1}}");
+    REQUIRE(legacy);
+    SettingsStore legacyStore("");
+    REQUIRE(legacyStore.SetOverrides(SettingsScope::Global, *legacy, {}));
+    REQUIRE(ApplySettings(original, legacyStore));
+    CHECK_FALSE(original.GetCircleResidency()); // Explicit even though active equals its default.
+    REQUIRE(SaveSettingsFile(files.File("migrated.json5").c_str(), *legacy));
+    const auto migrated = LoadSettingsFile(files.File("migrated.json5").c_str());
+    REQUIRE(migrated);
+    CHECK(*migrated == *legacy);
+    REQUIRE(original.SetCircleResidency(0, {13}));
+    REQUIRE(original.CreateSave(files.File("circle.sqlite").c_str()));
+    auto loaded = Server::LoadSave(TestContent(), files.File("circle.sqlite").c_str());
+    REQUIRE(loaded);
+    SettingsOverrides global; global.language = "en"; global.ticksPerSecond = 37;
+    REQUIRE(store.SetOverrides(SettingsScope::Global, global, {}));
+    SettingsOverrides world; world.autosaveInterval = 17;
+    REQUIRE(store.SetOverrides(SettingsScope::World, world, {}));
+    const auto chunks = (*loaded)->GetWorld().LoadedChunks();
+    REQUIRE(ApplySettings(**loaded, store));
+    REQUIRE((*loaded)->GetCircleResidency());
+    CHECK((*loaded)->GetCircleResidency()->radiusTiles == 13);
+    CHECK((*loaded)->GetActiveRadius() == 0);
+    CHECK((*loaded)->GetWorld().LoadedChunks() == chunks);
+    CHECK((*loaded)->GetPacing().ticksPerSecond == 37);
+    CHECK((*loaded)->GetAutosaveInterval() == 17);
+    CHECK((*loaded)->GetTick() == 0);
+
+    world.residencyMode = ResidencyMode::Square; world.residentRadius = 0; world.activeRadius = 0;
+    REQUIRE(store.SetOverrides(SettingsScope::World, world, {}));
+    REQUIRE(ApplySettings(**loaded, store));
+    CHECK_FALSE((*loaded)->GetCircleResidency());
+    CHECK((*loaded)->GetResidentRadius() == 0);
+    // Removing overrides retains the now-current square policy, not circle defaults.
+    world.residencyMode.reset(); world.residentRadius.reset(); world.activeRadius.reset();
+    REQUIRE(store.SetOverrides(SettingsScope::World, world, {}));
+    REQUIRE(ApplySettings(**loaded, store));
+    CHECK_FALSE((*loaded)->GetCircleResidency());
+    CHECK((*loaded)->GetResidentRadius() == 0);
+    REQUIRE(ApplySettings(**loaded, Settings{}));
+    CHECK_FALSE((*loaded)->GetCircleResidency());
+    CHECK((*loaded)->GetResidentRadius() == 5);
+}
+
+TEST_CASE("World residency selectors mask global mode while active and radius values inherit explicitly", "[settings][circle]") {
+    SettingsStore store("");
+    SettingsOverrides global; global.residentRadiusTiles = 20; global.activeRadius = 0;
+    REQUIRE(store.SetOverrides(SettingsScope::Global, global, {}));
+    CHECK(store.Source(SettingsField::ResidencyMode) == SettingsSource::Global);
+    SettingsOverrides world; world.language = "en";
+    REQUIRE(store.SetOverrides(SettingsScope::World, world, {}));
+    CHECK(store.Effective().residencyMode == ResidencyMode::Circle);
+    world.residentRadius = 1;
+    REQUIRE(store.SetOverrides(SettingsScope::World, world, {}));
+    CHECK(store.Effective().residencyMode == ResidencyMode::Square);
+    CHECK(store.Source(SettingsField::ResidencyMode) == SettingsSource::World);
+    global.residentRadiusTiles = 31;
+    REQUIRE(store.SetOverrides(SettingsScope::Global, global, {}));
+    CHECK(store.Effective().residencyMode == ResidencyMode::Square);
+    ResetOverride(world, SettingsField::ResidentRadius);
+    world.activeRadius = 2; // Active chunks imply residency beyond a small circle.
+    REQUIRE(store.SetOverrides(SettingsScope::World, world, {}));
+    CHECK(store.Effective().residencyMode == ResidencyMode::Circle);
+    CHECK(store.Effective().residentRadiusTiles == 31);
+    CHECK(store.Effective().activeRadius == 2);
+    world.residentRadiusTiles = 31; // Explicit equality is retained across parent edits.
+    REQUIRE(store.SetOverrides(SettingsScope::World, world, {}));
+    global.residentRadiusTiles = 0;
+    REQUIRE(store.SetOverrides(SettingsScope::Global, global, {}));
+    CHECK(store.Effective().residentRadiusTiles == 31);
+    ResetOverride(world, SettingsField::ResidentRadiusTiles);
+    REQUIRE(store.SetOverrides(SettingsScope::World, world, {}));
+    CHECK(store.Effective().residentRadiusTiles == 0);
+    world.residencyMode = ResidencyMode::Square;
+    REQUIRE(store.SetOverrides(SettingsScope::World, world, {}));
+    CHECK(store.Effective().residencyMode == ResidencyMode::Square);
+}
+
+TEST_CASE("Active-only v2 overrides retain current mode and failed policy updates preserve preferences", "[settings][server][circle]") {
+    Server server(TestContent());
+    REQUIRE(server.SetCircleResidency(0, {0}));
+    SettingsStore store("");
+    SettingsOverrides active; active.activeRadius = 2;
+    REQUIRE(store.SetOverrides(SettingsScope::Global, active, {}));
+    REQUIRE(ApplySettings(server, store));
+    REQUIRE(server.GetCircleResidency());
+    CHECK(server.GetCircleResidency()->radiusTiles == 0);
+    CHECK(server.GetActiveRadius() == 2);
+
+    REQUIRE(server.SetBubbleRadii(0, 0));
+    World& world = server.GetWorld();
+    const auto request = world.RequestChunks({{world_coordinate_limit / chunk_size, 0}, 0}, LoadMode::resident);
+    REQUIRE(request);
+    REQUIRE(world.ReconcileChunks());
+    REQUIRE(world.SetTile({world_coordinate_limit, 0}, {TestTerrain("floor"), 0}));
+    REQUIRE(world.MoveActor(server.GetPlayer(), {world_coordinate_limit, 0}));
+    REQUIRE(server.SetBubbleRadii(0, 0));
+    REQUIRE(world.ReleaseRequest(*request));
+    REQUIRE(world.ReconcileChunks());
+    const auto chunks = world.LoadedChunks();
+    const auto pacing = server.GetPacing();
+    const auto autosave = server.GetAutosaveInterval();
+    SettingsOverrides invalidAtBoundary;
+    invalidAtBoundary.activeRadius = 0; invalidAtBoundary.residentRadius = 1;
+    invalidAtBoundary.ticksPerSecond = 17; invalidAtBoundary.autosaveInterval = 91;
+    REQUIRE(store.SetOverrides(SettingsScope::Global, invalidAtBoundary, {}));
+    const auto result = ApplySettings(server, store);
+    REQUIRE_FALSE(result);
+    CHECK(result.error() == SettingsError::ApplyFailed);
+    CHECK(server.GetActiveRadius() == 0);
+    CHECK(server.GetResidentRadius() == 0);
+    CHECK_FALSE(server.GetCircleResidency());
+    CHECK(world.LoadedChunks() == chunks);
+    CHECK(server.GetPacing() == pacing);
+    CHECK(server.GetAutosaveInterval() == autosave);
+    CHECK(server.GetTick() == 0);
 }
 
 TEST_CASE("Keybindings inherit per action and distinguish both ordinary and Ctrl letter case", "[settings][input]") {

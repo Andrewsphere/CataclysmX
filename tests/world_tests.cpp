@@ -177,6 +177,170 @@ TEST_CASE("Only active chunks accrue turns and enabled object updates", "[world]
     CHECK(world.CheckInvariants());
 }
 
+TEST_CASE("Tile circles use integer tile tangencies and ignore elevation", "[world][streaming][circle]") {
+    World world(TestContent());
+    CHECK(world.RequestCircle({{0, 0}, -1}, LoadMode::active)
+        == eastl::unexpected(WorldError::invalid_region));
+    CHECK(world.RequestCircle({{0, 0}, maxCircleResidencyRadius + 1}, LoadMode::active)
+        == eastl::unexpected(WorldError::invalid_region));
+    CHECK(world.RequestCircle({{INT_MIN, INT_MAX}, 0}, LoadMode::active)
+        == eastl::unexpected(WorldError::invalid_region));
+    CHECK(world.RequestCircle({{world_coordinate_limit, 0}, 1}, LoadMode::active)
+        == eastl::unexpected(WorldError::invalid_region));
+    CHECK(world.RequestCircle({{0, -world_coordinate_limit}, 1}, LoadMode::active)
+        == eastl::unexpected(WorldError::invalid_region));
+    CHECK(world.RequestCircle({{0, 0}, 0}, static_cast<LoadMode>(99))
+        == eastl::unexpected(WorldError::invalid_request));
+    const auto maximum = take(world.RequestCircle(
+        {{world_coordinate_limit - maxCircleResidencyRadius, 0}, maxCircleResidencyRadius}, LoadMode::resident));
+    REQUIRE(world.ReleaseRequest(maximum));
+    const auto edge = take(world.RequestCircle({{world_coordinate_limit, -world_coordinate_limit}, 0}, LoadMode::resident));
+    REQUIRE(world.ReleaseRequest(edge));
+    const auto request = take(world.RequestCircle({{-1, -1, INT_MIN}, 0}, LoadMode::resident));
+    REQUIRE(world.ReconcileChunks());
+    REQUIRE(world.LoadedChunks().size() == world_layer_count);
+    CHECK(world.LoadedChunks().front() == ChunkCoord{-1, -1, world_min_y});
+    CHECK(world.LoadedChunks().back() == ChunkCoord{-1, -1, world_max_y});
+    CHECK_FALSE(world.IsActive({-1, -1}));
+    REQUIRE(world.UpdateCircleRequest(request, {{0, 0, INT_MAX}, 1}, LoadMode::active));
+    REQUIRE(world.ReconcileChunks());
+    CHECK(world.LoadedChunks().size() == 3 * world_layer_count);
+    CHECK(world.GetChunk({-1, 0}));
+    CHECK(world.GetChunk({0, -1}));
+    CHECK(world.GetChunk({0, 0}));
+    CHECK_FALSE(world.GetChunk({-1, -1})); // Nearest tile is (-1,-1), outside radius one.
+    REQUIRE(world.UpdateCircleRequest(request, {{0, 0}, 16}, LoadMode::active));
+    REQUIRE(world.ReconcileChunks());
+    CHECK(world.GetChunk({1, 0})); // Tile (16,0) is exactly tangent.
+    CHECK(world.GetChunk({0, 1}));
+    CHECK_FALSE(world.GetChunk({1, 1}));
+    CHECK(world.LoadedChunks().size() == 6 * world_layer_count);
+    CHECK(world.CheckInvariants());
+
+    const auto before = world.LoadedChunks();
+    CHECK(world.UpdateCircleRequest(request, {{0, 0}, 129}, LoadMode::resident)
+        == eastl::unexpected(WorldError::invalid_region));
+    CHECK(world.UpdateCircleRequest(request, {{0, 0}, 0}, static_cast<LoadMode>(99))
+        == eastl::unexpected(WorldError::invalid_request));
+    REQUIRE(world.ReconcileChunks());
+    CHECK(world.LoadedChunks() == before);
+    CHECK(world.IsActive({0, 0}));
+    REQUIRE(world.ReleaseRequest(request));
+    CHECK(world.UpdateCircleRequest(request, {{0, 0}, 0}, LoadMode::active)
+        == eastl::unexpected(WorldError::invalid_request));
+    REQUIRE(world.ReconcileChunks());
+    CHECK(world.LoadedChunks().empty());
+    CHECK(world.CheckInvariants());
+}
+
+TEST_CASE("Circle footprints change inside a chunk and combine with square activity", "[world][streaming][circle]") {
+    World world(TestContent());
+    const auto circle = take(world.RequestCircle({{7, 7}, 8}, LoadMode::resident));
+    const auto active = take(world.RequestChunks({{0, 0}, 0}, LoadMode::active));
+    const auto corner = take(world.RequestChunks({{1, 1}, 0}, LoadMode::active));
+    REQUIRE(world.ReconcileChunks());
+    CHECK(world.GetChunk({-1, 0}));
+    CHECK_FALSE(world.GetChunk({1, 0}));
+    const auto actor = take(world.CreateActor({1, 1}));
+    const auto id = world.GetActor(actor)->id;
+    for (int y = world_min_y; y <= world_max_y; ++y) {
+        CHECK(world.GetChunk({0, 0, y})->active);
+        CHECK(world.GetChunk({1, 1, y})->active); // Full active union, outside the circle.
+        CHECK_FALSE(world.GetChunk({-1, 0, y})->active);
+    }
+    REQUIRE(world.UpdateCircleRequest(circle, {{8, 8}, 8}, LoadMode::resident));
+    REQUIRE(world.ReconcileChunks());
+    CHECK_FALSE(world.GetChunk({-1, 0}));
+    CHECK(world.GetChunk({1, 0}));
+    CHECK(world.FindActor(id) == actor);
+    REQUIRE(world.ReleaseRequest(active));
+    REQUIRE(world.ReconcileChunks());
+    CHECK_FALSE(world.IsActive({1, 1}));
+    CHECK(world.GetActor(actor));
+    REQUIRE(world.ReleaseRequest(corner));
+    REQUIRE(world.ReconcileChunks());
+    CHECK_FALSE(world.GetChunk({1, 1}));
+    CHECK(world.CheckInvariants());
+
+    // Both update APIs replace a request's shape, preserving the handle.
+    REQUIRE(world.UpdateRequest(circle, {{-2, -2}, 0}, LoadMode::active));
+    REQUIRE(world.ReconcileChunks());
+    CHECK(world.LoadedChunks().size() == world_layer_count);
+    CHECK_FALSE(world.GetActor(actor));
+    REQUIRE(world.UpdateCircleRequest(circle, {{1, 1}, 0}, LoadMode::active));
+    REQUIRE(world.ReconcileChunks());
+    CHECK(world.FindActor(id) != actor);
+    REQUIRE(world.GetActor(world.FindActor(id)));
+    CHECK(world.ActiveActors() == Vector<ActorHandle>{world.FindActor(id)});
+    CHECK(world.CheckInvariants());
+}
+
+TEST_CASE("Column erasure preserves canonical traversal and retained entity keys", "[world][streaming][determinism]") {
+    World world(TestContent());
+    Vector<LoadRequest> requests;
+    for (const int x : {3, -2, 1, 0, -1, 2}) {
+        requests.push_back(take(world.RequestChunks({{x, 0}, 0}, LoadMode::active)));
+    }
+    REQUIRE(world.ReconcileChunks());
+    const auto actor = take(world.CreateActor({1, 1}));
+    const auto id = world.GetActor(actor)->id;
+    // Erases exercise relocation of the map's final value, rather than iterator stability.
+    for (const int index : {2, 0, 1, 4, 5}) {
+        REQUIRE(world.ReleaseRequest(requests[index]));
+        REQUIRE(world.ReconcileChunks());
+        CHECK(world.FindActor(id) == actor);
+        CHECK(world.CheckInvariants());
+    }
+    REQUIRE(world.LoadedChunks().size() == world_layer_count);
+    for (int y = world_min_y; y <= world_max_y; ++y) {
+        CHECK(world.LoadedChunks()[y - world_min_y] == ChunkCoord{0, 0, y});
+    }
+}
+
+TEST_CASE("Lighting refreshes source inputs after an unqueried same-coordinate reload", "[world][lighting][streaming]") {
+    World world(TestContent());
+    const auto request = load(world);
+    world.SetSkyLight(0);
+    const auto lamp = take(world.CreateObject({1, 1}, true));
+    REQUIRE(world.SetObjectLight(lamp, {192, 4}));
+    const auto lampId = world.GetObject(lamp)->id;
+    CHECK(world.GetLightLevel({1, 1}) == 192);
+    REQUIRE(world.SetObjectEnabled(lamp, false));
+    REQUIRE(world.ReleaseRequest(request));
+    REQUIRE(world.ReconcileChunks());
+    load(world);
+    const auto fresh = world.FindObject(lampId);
+    CHECK(fresh != lamp);
+    REQUIRE(world.GetObject(fresh));
+    CHECK_FALSE(world.GetObject(fresh)->enabled);
+    CHECK(world.GetLightLevel({1, 1}) == 0);
+    const auto levels = world.GetChunkLightLevels({0, 0});
+    REQUIRE(levels.size() == chunk_size * chunk_size);
+    CHECK(levels[TileIndex({1, 1})] == 0);
+    CHECK(world.CheckInvariants());
+}
+
+TEST_CASE("Perception ensures lazy neighbor output and invalidates before reusing its filter", "[world][lighting][perception]") {
+    World world(TestContent());
+    load(world, {{0, 0}, 1});
+    REQUIRE(world.SetVisionProfile({8, 6, 1, 240, 3}));
+    world.SetSkyLight(0);
+    const auto observer = take(world.CreateActor({15, 7}, true));
+    const auto lamp = take(world.CreateObject({18, 7}, true));
+    REQUIRE(world.SetObjectLight(lamp, {192, 4}));
+    CHECK(world.GetLightLevel({15, 7}) > 0); // Prepares inputs; only ensures observer's chunk.
+    world.ResetPerceptionStats();
+    CHECK(world.CanPlayerSee(observer, {18, 7})); // Requires output in the neighboring chunk.
+    CHECK(world.GetPerceptionStats().filterRebuilds == 1);
+    CHECK(world.CanPlayerSee(observer, {18, 7}));
+    CHECK(world.GetPerceptionStats().filterRebuilds == 1);
+    REQUIRE(world.SetObjectEnabled(lamp, false));
+    CHECK_FALSE(world.CanPlayerSee(observer, {18, 7}));
+    CHECK(world.GetPerceptionStats().filterRebuilds == 2);
+    CHECK(world.GetPerceptionStats().lightingRebuilds == 1);
+    CHECK(world.CheckInvariants());
+}
+
 TEST_CASE("World schedules committed actor delays and freezes inactive timers", "[world][timing]") {
     World world(TestContent());
     const auto request = load(world);

@@ -331,7 +331,9 @@ bool ValidSnapshot(const SaveSnapshot& snapshot) {
     if (session.pacing.ticksPerSecond == 0 || snapshot.nextId == 0 || session.player >= snapshot.nextId
         || !ValidPosition(session.playerPosition) || session.activeRadius < 0
         || session.residentRadius < session.activeRadius || session.residentRadius > 8
-        || session.players.size() > 32) {
+        || session.players.size() > 32
+        || (session.circleResidency && (session.circleResidency->radiusTiles < 0
+            || session.circleResidency->radiusTiles > maxCircleResidencyRadius))) {
         return false;
     }
     Vector<PersistentId> actorIds;
@@ -353,7 +355,16 @@ bool ValidSnapshot(const SaveSnapshot& snapshot) {
         || (session.player != 0 && !session.players.empty() && !hostFound)) { return false; }
     const auto center = ChunkOf(session.playerPosition);
     constexpr int limit = world_coordinate_limit / chunk_size;
-    const int radius = session.residentRadius;
+    const int radius = session.circleResidency ? session.activeRadius : session.residentRadius;
+    if (session.circleResidency) {
+        const auto x = static_cast<std::int64_t>(session.playerPosition.x);
+        const auto z = static_cast<std::int64_t>(session.playerPosition.z);
+        const auto circleRadius = static_cast<std::int64_t>(session.circleResidency->radiusTiles);
+        if (x - circleRadius < -world_coordinate_limit || x + circleRadius > world_coordinate_limit
+            || z - circleRadius < -world_coordinate_limit || z + circleRadius > world_coordinate_limit) {
+            return false;
+        }
+    }
     return center.x >= -limit + radius && center.x <= limit - radius
         && center.z >= -limit + radius && center.z <= limit - radius;
 }
@@ -646,11 +657,19 @@ String EncodeSnapshot(const SaveSnapshot& snapshot) {
         writer.Append(players, entry);
     }
     writer.Add(session, "players", players);
+    if (snapshot.session.circleResidency) {
+        auto* circle = writer.Object();
+        writer.Integer(circle, "radius_tiles", snapshot.session.circleResidency->radiusTiles);
+        writer.Add(session, "circle_residency", circle);
+    } else {
+        writer.Add(session, "circle_residency", yyjson_mut_null(writer.doc));
+    }
     writer.Add(root, "session", session);
     return writer.Finish(root);
 }
 
-SaveResult<SaveSnapshot> DecodeSnapshot(const char* text, std::size_t length, Diagnostics* diagnostics) {
+SaveResult<SaveSnapshot> DecodeSnapshot(const char* text, std::size_t length,
+    int formatVersion, Diagnostics* diagnostics) {
     Document document;
     SaveSnapshot snapshot;
     if (!document.Parse(text, length)) {
@@ -670,8 +689,12 @@ SaveResult<SaveSnapshot> DecodeSnapshot(const char* text, std::size_t length, Di
     auto* session = Get(root, "session");
     auto& state = snapshot.session;
     auto* pacing = Get(session, "pacing");
-    if (!Fields(session, {"tick", "rng_state", "player", "position", "active_radius",
+    const bool sessionFields = formatVersion == 7
+        ? Fields(session, {"tick", "rng_state", "player", "position", "active_radius",
             "resident_radius", "autosave_interval", "pacing", "players"})
+        : Fields(session, {"tick", "rng_state", "player", "position", "active_radius",
+            "resident_radius", "autosave_interval", "pacing", "players", "circle_residency"});
+    if (!sessionFields
         || !Fields(pacing, {"ticks_per_second", "rate_limited", "pause_when_idle"})
         || !Unsigned32(Get(pacing, "ticks_per_second"), state.pacing.ticksPerSecond)
         || !yyjson_is_bool(Get(pacing, "rate_limited"))
@@ -684,6 +707,17 @@ SaveResult<SaveSnapshot> DecodeSnapshot(const char* text, std::size_t length, Di
         || !Integer(Get(session, "resident_radius"), state.residentRadius)
         || !Counter(Get(session, "autosave_interval"), state.autosaveInterval)) {
         return Failure(SaveError::InvalidData, "Invalid session or next_id", diagnostics);
+    }
+    if (formatVersion == 8) {
+        auto* circle = Get(session, "circle_residency");
+        if (!yyjson_is_null(circle)) {
+            CircleResidency residency;
+            if (!Fields(circle, {"radius_tiles"})
+                || !Integer(Get(circle, "radius_tiles"), residency.radiusTiles)) {
+                return Failure(SaveError::InvalidData, "Invalid circle residency", diagnostics);
+            }
+            state.circleResidency = residency;
+        }
     }
     auto* players = Get(session, "players");
     if (!yyjson_is_arr(players) || yyjson_arr_size(players) > 32) {
@@ -1116,11 +1150,7 @@ SaveResult<void> CheckTable(sqlite3* db, const char* pragma,
     return {};
 }
 
-SaveResult<void> CheckSchema(sqlite3* db, Diagnostics* diagnostics) {
-    auto result = CheckTable(db, "PRAGMA table_info(metadata)",
-        {"singleton", "format_version", "game_version"}, {"INTEGER", "INTEGER", "TEXT"},
-        {0, 1, 1}, {1, 0, 0}, diagnostics);
-    if (!result) { return result; }
+SaveResult<int> ReadFormatVersion(sqlite3* db, Diagnostics* diagnostics) {
     Statement metadata;
     int code = metadata.Prepare(db, "SELECT singleton,format_version,game_version FROM metadata");
     if (code != SQLITE_OK) { return Failure(SqlError(code), sqlite3_errmsg(db), diagnostics); }
@@ -1135,7 +1165,8 @@ SaveResult<void> CheckSchema(sqlite3* db, Diagnostics* diagnostics) {
         || sqlite3_column_type(metadata.value, 2) != SQLITE_TEXT) {
         return Failure(SaveError::InvalidData, "Invalid save metadata", diagnostics);
     }
-    if (sqlite3_column_int64(metadata.value, 1) != save_format_version) {
+    const auto version = sqlite3_column_int64(metadata.value, 1);
+    if (version != 7 && version != save_format_version) {
         return Failure(SaveError::UnsupportedVersion, "Unsupported save format version", diagnostics);
     }
     code = sqlite3_step(metadata.value);
@@ -1143,19 +1174,29 @@ SaveResult<void> CheckSchema(sqlite3* db, Diagnostics* diagnostics) {
         return Failure(code == SQLITE_ROW ? SaveError::InvalidData : SqlError(code),
             "Metadata must contain one singleton", diagnostics);
     }
+    return static_cast<int>(version);
+}
+
+SaveResult<int> CheckSchema(sqlite3* db, Diagnostics* diagnostics) {
+    auto result = CheckTable(db, "PRAGMA table_info(metadata)",
+        {"singleton", "format_version", "game_version"}, {"INTEGER", "INTEGER", "TEXT"},
+        {0, 1, 1}, {1, 0, 0}, diagnostics);
+    if (!result) { return eastl::unexpected(result.error()); }
+    auto version = ReadFormatVersion(db, diagnostics);
+    if (!version) { return version; }
     result = CheckTable(db, "PRAGMA table_info(world_state)",
         {"singleton", "payload"}, {"INTEGER", "TEXT"}, {0, 1}, {1, 0}, diagnostics);
-    if (!result) { return result; }
+    if (!result) { return eastl::unexpected(result.error()); }
     result = CheckTable(db, "PRAGMA table_info(chunks)",
         {"x", "z", "y", "payload"}, {"INTEGER", "INTEGER", "INTEGER", "TEXT"},
         {1, 1, 1, 1}, {1, 2, 3, 0}, diagnostics);
-    if (!result) { return result; }
+    if (!result) { return eastl::unexpected(result.error()); }
     result = CheckTable(db, "PRAGMA table_info(player_memories)",
         {"player_id", "x", "z", "y", "payload"}, {"TEXT", "INTEGER", "INTEGER", "INTEGER", "TEXT"},
         {1, 1, 1, 1, 1}, {1, 2, 3, 4, 0}, diagnostics);
-    if (!result) { return result; }
+    if (!result) { return eastl::unexpected(result.error()); }
     Statement tables;
-    code = tables.Prepare(db,
+    int code = tables.Prepare(db,
         "SELECT count(*) FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' AND "
         "(type != 'table' OR name NOT IN ('metadata','world_state','chunks','player_memories'))");
     if (code != SQLITE_OK) { return Failure(SqlError(code), sqlite3_errmsg(db), diagnostics); }
@@ -1164,7 +1205,7 @@ SaveResult<void> CheckSchema(sqlite3* db, Diagnostics* diagnostics) {
     if (sqlite3_column_int64(tables.value, 0) != 0) {
         return Failure(SaveError::InvalidData, "Unknown save schema objects", diagnostics);
     }
-    return {};
+    return version;
 }
 
 SaveResult<void> ReadMemories(const ContentCatalog& content, sqlite3* db,
@@ -1216,7 +1257,8 @@ SaveResult<void> ReadMemories(const ContentCatalog& content, sqlite3* db,
     return {};
 }
 
-SaveResult<SaveSnapshot> ReadSnapshot(const ContentCatalog& content, sqlite3* db, Diagnostics* diagnostics) {
+SaveResult<SaveSnapshot> ReadSnapshot(const ContentCatalog& content, sqlite3* db,
+    int formatVersion, Diagnostics* diagnostics) {
     Statement statement;
     int code = statement.Prepare(db, "SELECT singleton,payload FROM world_state");
     if (code != SQLITE_OK) { return Failure(SqlError(code), sqlite3_errmsg(db), diagnostics); }
@@ -1232,7 +1274,7 @@ SaveResult<SaveSnapshot> ReadSnapshot(const ContentCatalog& content, sqlite3* db
         || !TextColumn(statement.value, 1, text, length)) {
         return Failure(SaveError::InvalidData, "Invalid world_state row", diagnostics);
     }
-    auto snapshot = DecodeSnapshot(text, length, diagnostics);
+    auto snapshot = DecodeSnapshot(text, length, formatVersion, diagnostics);
     if (!snapshot) { return snapshot; }
     code = sqlite3_step(statement.value);
     if (code != SQLITE_DONE) {
@@ -1349,9 +1391,12 @@ public:
     CreatedFile createdFile;
     Connection connection;
     bool transaction = false;
+    int formatVersion = save_format_version; // Durable version; changed only after commit.
+    bool snapshotWritten = false;
     Vector<PersistentId> emptyMemoryOwners;
 
     void Rollback() {
+        snapshotWritten = false;
         emptyMemoryOwners.clear();
         if (transaction) {
             const int code = sqlite3_exec(connection.value, "ROLLBACK", nullptr, nullptr, nullptr);
@@ -1388,7 +1433,7 @@ SaveResult<void> SaveDatabase::Create(const char* path, Diagnostics* diagnostics
         "BEGIN IMMEDIATE;"
         "CREATE TABLE metadata(singleton INTEGER PRIMARY KEY CHECK(singleton=1),"
         "format_version INTEGER NOT NULL,game_version TEXT NOT NULL);"
-        "INSERT INTO metadata VALUES(1,7,'0.1.0');"
+        "INSERT INTO metadata VALUES(1,8,'0.1.0');"
         "CREATE TABLE world_state(singleton INTEGER PRIMARY KEY CHECK(singleton=1),payload TEXT NOT NULL);"
         "CREATE TABLE chunks(x INTEGER NOT NULL,z INTEGER NOT NULL,y INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(x,z,y));"
         "CREATE TABLE player_memories(player_id TEXT NOT NULL,x INTEGER NOT NULL,z INTEGER NOT NULL,y INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(player_id,x,z,y));"
@@ -1421,7 +1466,7 @@ SaveResult<SaveSnapshot> SaveDatabase::Open(const char* path, Diagnostics* diagn
         if (diagnostics) { diagnostics->Add("Opening save: validating schema"); }
         return eastl::unexpected(schema.error());
     }
-    auto snapshot = ReadSnapshot(content_, candidate->connection.value, diagnostics);
+    auto snapshot = ReadSnapshot(content_, candidate->connection.value, *schema, diagnostics);
     if (!snapshot) {
         if (diagnostics) { diagnostics->Add("Opening save: reading world state"); }
         return snapshot;
@@ -1437,6 +1482,7 @@ SaveResult<SaveSnapshot> SaveDatabase::Open(const char* path, Diagnostics* diagn
         return eastl::unexpected(committed.error());
     }
     candidate->transaction = false;
+    candidate->formatVersion = *schema;
     impl_ = eastl::move(candidate);
     return snapshot;
 }
@@ -1556,13 +1602,21 @@ SaveResult<void> SaveDatabase::WriteSnapshot(const SaveSnapshot& snapshot, Diagn
     for (const auto& memory : snapshot.memories) {
         if (memory.chunks.empty()) { impl_->emptyMemoryOwners.push_back(memory.player); }
     }
+    impl_->snapshotWritten = true;
     return {};
 }
 
 SaveResult<void> SaveDatabase::Commit(Diagnostics* diagnostics) {
     if (!impl_) { return Failure(SaveError::NotOpen, "Database is not open", diagnostics); }
     if (!impl_->transaction) { return Failure(SaveError::InvalidState, "No active transaction", diagnostics); }
-    auto snapshot = ReadSnapshot(content_, impl_->connection.value, diagnostics);
+    auto version = ReadFormatVersion(impl_->connection.value, diagnostics);
+    if (!version || *version != impl_->formatVersion) {
+        impl_->Rollback();
+        if (!version) { return eastl::unexpected(version.error()); }
+        return Failure(SaveError::InvalidData, "Save format changed while open", diagnostics);
+    }
+    auto snapshot = ReadSnapshot(content_, impl_->connection.value,
+        impl_->snapshotWritten ? save_format_version : impl_->formatVersion, diagnostics);
     if (!snapshot) {
         impl_->Rollback();
         if (diagnostics) { diagnostics->Add("Committing save: reading world state"); }
@@ -1577,6 +1631,21 @@ SaveResult<void> SaveDatabase::Commit(Diagnostics* diagnostics) {
         if (diagnostics) { diagnostics->Add("Committing save: validating saved world"); }
         return valid;
     }
+    if (impl_->formatVersion == 7) {
+        // Even a chunk-only checkpoint upgrades the untouched legacy session.
+        // Do not rewrite memory or chunk payloads as part of this migration.
+        if (!impl_->snapshotWritten) {
+            Statement statement;
+            int code = statement.Prepare(impl_->connection.value, "UPDATE world_state SET payload=?1 WHERE singleton=1");
+            const String payload = EncodeSnapshot(*snapshot);
+            if (code == SQLITE_OK) { code = BindText(statement.value, 1, payload); }
+            if (code == SQLITE_OK) { code = sqlite3_step(statement.value); }
+            if (code != SQLITE_DONE) { return impl_->WriteFailure(code, diagnostics); }
+        }
+        auto upgraded = Execute(impl_->connection.value,
+            "UPDATE metadata SET format_version=8 WHERE singleton=1", diagnostics);
+        if (!upgraded) { impl_->Rollback(); return upgraded; }
+    }
     auto result = Execute(impl_->connection.value, "COMMIT", diagnostics);
     if (!result) {
         impl_->Rollback();
@@ -1584,6 +1653,8 @@ SaveResult<void> SaveDatabase::Commit(Diagnostics* diagnostics) {
         return result;
     }
     impl_->transaction = false;
+    impl_->formatVersion = save_format_version;
+    impl_->snapshotWritten = false;
     impl_->emptyMemoryOwners.clear();
     impl_->createdFile.Keep();
     return {};
