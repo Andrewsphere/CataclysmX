@@ -202,6 +202,12 @@ bool UniqueIds(Vector<PersistentId>& ids) {
     return eastl::adjacent_find(ids.begin(), ids.end()) == ids.end();
 }
 
+void CollectArchiveIds(const Archive& archive, Vector<PersistentId>& ids) {
+    for (const SavedActor& actor : archive.actors) { ids.push_back(actor.id); }
+    for (const SavedObject& object : archive.objects) { ids.push_back(object.id); }
+    for (const SavedItem& item : archive.items) { ids.push_back(item.id); }
+}
+
 bool ValidMemories(const ContentCatalog& content, const Vector<PlayerMemory>& memories,
     PersistentId nextId) {
     PersistentId previousPlayer = 0;
@@ -303,6 +309,15 @@ class World::Impl {
     };
     ankerl::unordered_dense::segmented_map<ColumnCoord, ChunkColumn, ColumnHash> columns_;
 public:
+    struct ChunkHash {
+        std::uint64_t operator()(ChunkCoord position) const {
+            const auto horizontal = ColumnHash{}({position.x, position.z});
+            return ankerl::unordered_dense::hash<std::uint64_t>{}(
+                horizontal ^ (static_cast<std::uint64_t>(static_cast<std::uint32_t>(position.y))
+                    * 0x9e3779b97f4a7c15ULL));
+        }
+    };
+    using ArchiveMap = ankerl::unordered_dense::segmented_map<ChunkCoord, Archive, ChunkHash>;
     const ContentCatalog& content;
     TerrainId floor;
     TerrainId wall;
@@ -315,9 +330,11 @@ public:
     dod::slot_map64<Item> items;
     dod::slot_map64<InteractiveObject> objects;
     dod::slot_map64<Request> requests;
-    Vector<Archive> archives; // Only currently unloaded chunks.
+    ArchiveMap archives; // Authoritative, unloaded, unsaved values; never bounded.
+    Vector<ChunkCoord> archiveOrder; // Unload order, preserved through arbitrary erases.
     // Clean, disposable FIFO values; pending archives are never subject to eviction.
-    Vector<Archive> warmArchives;
+    ArchiveMap warmArchives;
+    Vector<ChunkCoord> warmOrder; // FIFO, independent of dense-map relocation on erase.
     static constexpr std::size_t maxWarmEntries = 256;
     static constexpr std::size_t maxWarmBytes = 8 * 1024 * 1024;
     std::size_t warmBytes = 0;
@@ -770,34 +787,49 @@ public:
     static std::size_t WarmCost(const Archive& archive) {
         // DataObject hides recursive allocation capacities. Only cache item-free
         // values, whose entire heap ownership can be measured conservatively.
-        return sizeof(Archive) + archive.actors.capacity() * sizeof(SavedActor)
+        return archive.actors.capacity() * sizeof(SavedActor)
             + archive.objects.capacity() * sizeof(SavedObject);
     }
 
+    std::size_t WarmStorageBytes() const {
+        // capacity() counts allocated value slots, not bytes or segment count.
+        // segmented_vector::reserve allocates whole blocks; capacity() is their
+        // count times slots per block. Its pointer vector reserves the requested
+        // block count, or doubles on growth. Two pointers per value slot cover
+        // that spare capacity even for one-value blocks. Warm storage is only
+        // reserved to maxWarmEntries and pop_back/erase never release blocks.
+        return sizeof(warmArchives) + sizeof(warmOrder)
+            + warmArchives.values().capacity() * (sizeof(ArchiveMap::value_type) + 2 * sizeof(void*))
+            + warmArchives.index_bytes() + warmOrder.capacity() * sizeof(ChunkCoord);
+    }
+
     void ForgetWarm(ChunkCoord position) {
-        const auto found = eastl::find_if(warmArchives.begin(), warmArchives.end(),
-            [position](const Archive& archive) { return archive.position == position; });
+        const auto found = warmArchives.find(position);
         if (found != warmArchives.end()) {
-            warmBytes -= WarmCost(*found);
+            warmBytes -= WarmCost(found->second);
             warmArchives.erase(found);
+            EraseOne(warmOrder, position);
         }
     }
 
     void RetainWarm(Archive&& archive) {
         ForgetWarm(archive.position);
         if (archive.items.capacity() != 0) { return; }
+        // Fix outer allocations before budgeting; erasure retains this storage.
+        warmArchives.reserve(maxWarmEntries);
+        warmOrder.reserve(maxWarmEntries);
         const auto cost = WarmCost(archive);
-        constexpr auto valueBudget = maxWarmBytes - maxWarmEntries * sizeof(Archive);
+        Require(WarmStorageBytes() <= maxWarmBytes);
+        const auto valueBudget = maxWarmBytes - WarmStorageBytes();
         if (cost > valueBudget) { return; }
         while (!warmArchives.empty() && (warmArchives.size() >= maxWarmEntries
             || cost > valueBudget - warmBytes)) {
-            warmBytes -= WarmCost(warmArchives.front());
-            warmArchives.erase(warmArchives.begin());
+            ForgetWarm(warmOrder.front());
         }
-        // Reserve once to prevent geometric growth beyond the entry bound.
-        warmArchives.reserve(maxWarmEntries);
         warmBytes += cost;
-        warmArchives.push_back(eastl::move(archive));
+        const auto position = archive.position;
+        Require(warmArchives.try_emplace(position, eastl::move(archive)).second);
+        warmOrder.push_back(position);
     }
 
     WorldResult<void> Available(TileCoord position) const {
@@ -1004,7 +1036,8 @@ public:
             objects.erase(dod::slot_map64<InteractiveObject>::key{handle.value});
         }
         ForgetWarm(value.position);
-        archives.push_back(eastl::move(saved));
+        Require(archives.try_emplace(value.position, eastl::move(saved)).second);
+        archiveOrder.push_back(value.position);
         MarkDirty(value.position);
     }
 
@@ -1089,13 +1122,11 @@ public:
                 return SaveFailure(SaveError::InvalidData, "Roster player missing from loaded chunk", diagnostics);
             }
             const Archive* archive = nullptr;
-            for (const Archive& candidate : archives) {
-                if (candidate.position == position) { archive = &candidate; break; }
-            }
+            const auto pending = archives.find(position);
+            if (pending != archives.end()) { archive = &pending->second; }
             if (!archive) {
-                for (const Archive& candidate : warmArchives) {
-                    if (candidate.position == position) { archive = &candidate; break; }
-                }
+                const auto warm = warmArchives.find(position);
+                if (warm != warmArchives.end()) { archive = &warm->second; }
             }
             eastl::optional<Archive> disk;
             if (!archive && source) {
@@ -1140,6 +1171,7 @@ public:
             return valid;
         }
         Vector<Archive> snapshots;
+        snapshots.reserve(eastl::min(dirtyChunks.size(), ChunkCount()));
         for (ChunkCoord position : dirtyChunks) {
             if (const Chunk* chunk = GetChunk(position)) {
                 snapshots.push_back(Capture(*chunk));
@@ -1150,7 +1182,8 @@ public:
         if (auto result = target.Begin(diagnostics); !result) {
             return result;
         }
-        for (const Archive& archive : archives) {
+        for (ChunkCoord position : archiveOrder) {
+            const Archive& archive = archives.at(position);
             if (auto result = target.WriteChunk(archive, diagnostics); !result) {
                 target.Rollback();
                 return result;
@@ -1172,9 +1205,10 @@ public:
         }
         dirtyChunks.clear();
         for (const Archive& snapshot : snapshots) { ForgetWarm(snapshot.position); }
-        for (Archive& archive : archives) { RetainWarm(eastl::move(archive)); }
+        for (ChunkCoord position : archiveOrder) { RetainWarm(eastl::move(archives.at(position))); }
         // clear() alone retains the potentially large outer archive allocation.
-        Vector<Archive>().swap(archives);
+        ArchiveMap().swap(archives);
+        Vector<ChunkCoord>().swap(archiveOrder);
         return {};
     }
 };
@@ -1291,37 +1325,31 @@ SaveResult<void> World::ReconcileChunks(Diagnostics* diagnostics) {
         return {};
     }
     ++impl_->perceptionStats.demandReconciliations;
-    Vector<Archive> staged;
-    Vector<PersistentId> ids;
-    // Include entities about to unload: their IDs still belong to this world.
-    for (const Actor& actor : impl_->actors) {
-        ids.push_back(actor.id);
-    }
-    for (const Item& item : impl_->items) {
-        ids.push_back(item.id);
-    }
-    for (const InteractiveObject& object : impl_->objects) {
-        ids.push_back(object.id);
-    }
-    for (const Archive& archive : impl_->archives) {
-        if (!ValidateArchive(impl_->content, archive, impl_->next_id, ids)) {
-            return SaveFailure(SaveError::InvalidData, "Invalid RAM chunk archive", diagnostics);
+    if (demand.size() == impl_->reconciledDemand.size()
+        && eastl::equal(demand.begin(), demand.end(), impl_->reconciledDemand.begin(),
+            [](const ColumnDemand& a, const ColumnDemand& b) { return a.position == b.position; })) {
+        // Skip archive work, but retain the structural path's gravity boundary:
+        // newly active disk-restored entities may still be suspended in air.
+        Impl::GravityBatch batch(*this);
+        for (const ColumnDemand entry : demand) {
+            for (int y = world_min_y; y <= world_max_y; ++y) {
+                Chunk* chunk = impl_->GetChunk({entry.position.x, entry.position.z, y});
+                if (chunk->active != entry.active) { ++impl_->mapRevision; ++impl_->revision; }
+                chunk->active = entry.active;
+            }
         }
+        impl_->reconciledDemand = eastl::move(demand);
+        SettleGravity();
+        impl_->demandDirty = false;
+        return {};
     }
-    for (const Archive& archive : impl_->warmArchives) {
-        if (!ValidateArchive(impl_->content, archive, impl_->next_id, ids)) {
-            return SaveFailure(SaveError::InvalidData, "Invalid warm chunk archive", diagnostics);
-        }
-    }
+    Impl::ArchiveMap staged;
     if (impl_->database) {
         for (const ColumnDemand entry : demand) {
             for (int y = world_min_y; y <= world_max_y; ++y) {
                 const ChunkCoord position{entry.position.x, entry.position.z, y};
                 if (impl_->GetChunk(position)
-                    || eastl::any_of(impl_->archives.begin(), impl_->archives.end(),
-                        [position](const Archive& archive) { return archive.position == position; })
-                    || eastl::any_of(impl_->warmArchives.begin(), impl_->warmArchives.end(),
-                        [position](const Archive& archive) { return archive.position == position; })) {
+                    || impl_->archives.contains(position) || impl_->warmArchives.contains(position)) {
                     continue;
                 }
                 auto saved = impl_->database->ReadChunk(position, impl_->next_id, diagnostics);
@@ -1330,17 +1358,30 @@ SaveResult<void> World::ReconcileChunks(Diagnostics* diagnostics) {
                     return eastl::unexpected(saved.error());
                 }
                 if (*saved) {
-                    if ((**saved).position != position
-                        || !ValidateArchive(impl_->content, **saved, impl_->next_id, ids)) {
+                    // ReadChunk fully validates external terrain, ownership,
+                    // state, local IDs and bounds before returning a value.
+                    if ((**saved).position != position) {
                         return SaveFailure(SaveError::InvalidData, "Invalid disk chunk archive", diagnostics);
                     }
-                    staged.push_back(eastl::move(**saved));
+                    Require(staged.try_emplace(position, eastl::move(**saved)).second);
                 }
             }
         }
     }
-    if (!UniqueIds(ids)) {
-        return SaveFailure(SaveError::InvalidData, "Duplicate persistent ID in incoming chunks", diagnostics);
+    if (!staged.empty()) {
+        Vector<PersistentId> ids;
+        ids.reserve(impl_->actors.size() + impl_->items.size() + impl_->objects.size());
+        // Include live entities about to unload. Trusted Capture values need
+        // only ID collection here, not another tile/item-tree validation.
+        for (const Actor& actor : impl_->actors) { ids.push_back(actor.id); }
+        for (const Item& item : impl_->items) { ids.push_back(item.id); }
+        for (const InteractiveObject& object : impl_->objects) { ids.push_back(object.id); }
+        for (const auto& entry : impl_->archives) { CollectArchiveIds(entry.second, ids); }
+        for (const auto& entry : impl_->warmArchives) { CollectArchiveIds(entry.second, ids); }
+        for (const auto& entry : staged) { CollectArchiveIds(entry.second, ids); }
+        if (!UniqueIds(ids)) {
+            return SaveFailure(SaveError::InvalidData, "Duplicate persistent ID in incoming chunks", diagnostics);
+        }
     }
     // No live state, activity flags, archives, or keys change before this point.
     Impl::GravityBatch batch(*this);
@@ -1369,9 +1410,12 @@ SaveResult<void> World::ReconcileChunks(Diagnostics* diagnostics) {
         if (remove) { impl_->RemoveColumn(current.position); }
     }
     const auto incomingArchive = [&](ChunkCoord position) -> const Archive* {
-        for (const Archive& archive : impl_->archives) { if (archive.position == position) { return &archive; } }
-        for (const Archive& archive : impl_->warmArchives) { if (archive.position == position) { return &archive; } }
-        for (const Archive& archive : staged) { if (archive.position == position) { return &archive; } }
+        const auto pending = impl_->archives.find(position);
+        if (pending != impl_->archives.end()) { return &pending->second; }
+        const auto warm = impl_->warmArchives.find(position);
+        if (warm != impl_->warmArchives.end()) { return &warm->second; }
+        const auto disk = staged.find(position);
+        if (disk != staged.end()) { return &disk->second; }
         return nullptr;
     };
     Vector<ChunkCoord> incoming;
@@ -1400,9 +1444,7 @@ SaveResult<void> World::ReconcileChunks(Diagnostics* diagnostics) {
         }
     }
     for (ChunkCoord position : incoming) {
-        const auto saved = eastl::find_if(impl_->archives.begin(), impl_->archives.end(),
-            [position](const Archive& archive) { return archive.position == position; });
-        if (saved != impl_->archives.end()) { impl_->archives.erase(saved); }
+        if (impl_->archives.erase(position)) { EraseOne(impl_->archiveOrder, position); }
         impl_->ForgetWarm(position);
     }
     for (ItemHandle handle : restoredItems) { impl_->itemSystem.Attach(handle); }
@@ -2501,7 +2543,10 @@ bool World::CheckInvariants() const {
         }
     }
     Vector<ChunkCoord> archived_positions;
-    for (const Archive& saved : state.archives) {
+    if (state.archiveOrder.size() != state.archives.size()) { return false; }
+    for (const auto& entry : state.archives) {
+        const Archive& saved = entry.second;
+        if (entry.first != saved.position || Occurrences(state.archiveOrder, entry.first) != 1) { return false; }
         if (!ValidRegion({saved.position, 0}) || !ValidChunk(saved.position) || state.GetChunk(saved.position)
             || Occurrences(archived_positions, saved.position) != 0) {
             return false;
@@ -2580,13 +2625,17 @@ bool World::CheckInvariants() const {
             if (!ValidateArchive(state.content, state.Capture(chunk), state.next_id, checkedIds)) { return false; }
         }
     }
-    for (const Archive& archive : state.archives) {
+    for (const auto& entry : state.archives) {
+        const Archive& archive = entry.second;
         Vector<PersistentId> checkedIds;
         if (!ValidateArchive(state.content, archive, state.next_id, checkedIds)) { return false; }
     }
-    if (state.warmArchives.size() > Impl::maxWarmEntries) { return false; }
+    if (state.warmArchives.size() > Impl::maxWarmEntries
+        || state.warmOrder.size() != state.warmArchives.size()) { return false; }
     std::size_t warmBytes = 0;
-    for (const Archive& archive : state.warmArchives) {
+    for (const auto& entry : state.warmArchives) {
+        const Archive& archive = entry.second;
+        if (entry.first != archive.position || Occurrences(state.warmOrder, entry.first) != 1) { return false; }
         if (archive.items.capacity() != 0 || state.GetChunk(archive.position)
             || Occurrences(archived_positions, archive.position) != 0
             || !ValidateArchive(state.content, archive, state.next_id, ids)) { return false; }
@@ -2597,7 +2646,7 @@ bool World::CheckInvariants() const {
         }
     }
     if (warmBytes != state.warmBytes
-        || warmBytes + state.warmArchives.capacity() * sizeof(Archive) > Impl::maxWarmBytes) { return false; }
+        || warmBytes + state.WarmStorageBytes() > Impl::maxWarmBytes) { return false; }
     if (!state.itemSystem.CheckInvariants()) { return false; }
     eastl::sort(ids.begin(), ids.end());
     return eastl::adjacent_find(ids.begin(), ids.end()) == ids.end();

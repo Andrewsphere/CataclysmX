@@ -39,24 +39,27 @@ second-step values never read final light. This bounds spill at Dim (63), avoids
 query-order dependence, and prevents repeated-query creep. Skylight instead uses
 up to `r = skySpillDistance` connected steps, with
 `2 * sky * (r+1-d) / (3*r)` at shortest path distance `d` in 1..r.
-The compile-time reach in `core/light_types.h` supports 1..15 and defaults to 8.
-At default sky 192 and reach 8 this gives 128 at the first step and 16 at the
-eighth, with no spill at nine or more. This makes open-front interiors readable
+The compile-time reach in `core/light_types.h` supports 1..15 and is currently 12.
+At default sky 192 and reach 12 this gives 128 at the first step and 10 at the
+twelfth, with no spill at thirteen or more. This makes open-front interiors readable
 while sealed rooms remain dark; walls and closed vertical faces still block every
 hop. Lighting retains sky
 and per-source patches; changed sources recombine affected chunks, while optical
 or residency changes rebuild affected shadow footprints. `World::GetLightingInputRevision(ChunkCoord)`
 tracks local lighting inputs; `LightingField::GetChunkRevision` and `ChangedChunks()`
-track recombined output and let observers invalidate locally. `ChangedChunks()` is
-borrowed until the next rebuild and includes removed chunks. See [surface lighting](surface_lighting.md)
+track recombined output and let observers invalidate locally. `ChangedChunks()`
+contains unique coordinates in unspecified order, is borrowed until the next
+Prepare (including Rebuild), and includes removed chunks and uncomputed outputs.
+Observers only test whether any entry intersects their region. See [surface lighting](surface_lighting.md)
 for invalidation and the observer-facing opaque-face rule. Terrain perception uses
 that face illumination; actor exposure uses transported space light. Opaque faces
 receive light without relaying it.
 
-World and light-field lookups also keep a last-chunk index hint, checking both
-its bounds and coordinate before reuse. Hints never retain chunk pointers across
-structural changes. Clean light queries read the derived field directly rather
-than looking up the same resident chunk in World first.
+World and light-field lookups hash the X/Z column and index its Y-layer array.
+Lighting owns heap-stable columns and scans them in map order without a separate
+sorted pointer index. Chunk-local synchronization and order-independent invalidation
+keep lighting results independent of insertion/erase history. World light queries
+synchronize pending inputs and lazily ensure the requested resident output.
 
 Default active-radius 1 / resident-radius 5 bubbles provide sight 64 plus a
 14-tile source-and-spill margin. Explicit smaller bubbles deliberately clip light

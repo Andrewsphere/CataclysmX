@@ -24,7 +24,7 @@ void PrepareFacade(World& world, int rotation) {
     world.SetSkyLight(0);
     // Close the entire working area first, then explicitly open every exterior
     // sky column. The room is enclosed on all four sides and has a solid roof,
-    // so even an eight-step sky flood cannot find a path into it.
+    // so the sky flood cannot find a path into it.
     for (int v = -12; v <= 12; ++v) {
         for (int u = -12; u <= 12; ++u) {
             REQUIRE(world.SetTile(Position(rotation, u, v), {TestTerrain("floor"), 0}));
@@ -125,7 +125,8 @@ TEST_CASE("Daylight through a missing facade reveals the interior beyond dim sig
     vision.range = 16;
     REQUIRE(world.SetVisionProfile(vision));
     const TileCoord observer{-8,0,0};
-    const TileCoord interior{3,0,0};
+    // At reach one only the missing facade itself receives spill light.
+    const TileCoord interior{skySpillDistance >= 2 ? 1 : 0,0,0};
     const auto player = world.CreateActor(observer, true);
     REQUIRE(player);
     CHECK(world.GetLightLevel(interior) == 0);
@@ -134,15 +135,29 @@ TEST_CASE("Daylight through a missing facade reveals the interior beyond dim sig
     for (int z = -9; z <= 9; ++z) {
         REQUIRE(world.SetTile({0,z,0}, {TestTerrain("floor"),0}));
     }
-    const int expected[] = {128,112,96,80,64,48,32,16,0};
     for (int x = 0; x <= 8; ++x) {
         CAPTURE(x);
-        CHECK(world.GetLightLevel({x,0,0}) == expected[x]);
+        const int distance = x+1; // The nearest direct-sky column is x = -1.
+        const int expected = distance <= skySpillDistance
+            ? 128*(skySpillDistance+1-distance)/skySpillDistance : 0;
+        CHECK(world.GetLightLevel({x,0,0}) == expected);
     }
     CHECK(CanSeeTile(world, observer, interior, vision));
     CHECK(world.CanPlayerSee(*player, interior));
-    CHECK_FALSE(CanSeeTile(world, observer, {5,0,0}, vision)); // Dim at distance thirteen.
-    CHECK(CanSeeTile(world, interior, {5,0,0}, vision)); // Visible when approached.
+    // Find a dim cell in the room when this reach produces one. Very short
+    // reaches can transition straight from ordinary light to darkness.
+    for (int x = 1; x <= 8; ++x) {
+        const int distance = x+1;
+        const int level = distance <= skySpillDistance
+            ? 128*(skySpillDistance+1-distance)/skySpillDistance : 0;
+        if (level >= 16 && level < 64) {
+            const TileCoord dim{x,0,0};
+            CHECK(ClassifyLight(world.GetLightLevel(dim)) == LightBand::Dim);
+            CHECK_FALSE(CanSeeTile(world, observer, dim, vision));
+            CHECK(CanSeeTile(world, {x-1,0,0}, dim, vision));
+            break;
+        }
+    }
 
     for (int z = -9; z <= 9; ++z) {
         REQUIRE(world.SetTile({0,z,0}, {TestTerrain("wall"),0}));

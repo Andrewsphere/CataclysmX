@@ -440,6 +440,23 @@ void CheckFields(const World& world, const LightingField& incremental) {
     }
 }
 
+template <typename Range>
+void CheckUniqueCoords(const Range& coords) {
+    for (auto it = coords.begin(); it != coords.end(); ++it) {
+        REQUIRE(eastl::find(it + 1, coords.end(), *it) == coords.end());
+    }
+}
+
+template <typename Left, typename Right>
+void CheckCoordSets(const Left& left, const Right& right) {
+    REQUIRE(left.size() == right.size());
+    CheckUniqueCoords(left);
+    CheckUniqueCoords(right);
+    for (const auto coord : left) {
+        REQUIRE(eastl::find(right.begin(), right.end(), coord) != right.end());
+    }
+}
+
 TEST_CASE("Uniform sky shortcuts match independent full configured transport", "[lighting][incremental]") {
     World world(TestContent());
     Prepare(world);
@@ -558,7 +575,7 @@ TEST_CASE("Uniform sky shortcuts match independent full configured transport", "
     CheckFields(world, field);
 }
 
-TEST_CASE("Sky follows corner path distance and open vertical faces with an exact eight-step cutoff", "[lighting]") {
+TEST_CASE("Sky follows corner path distance and open vertical faces", "[lighting]") {
     World world(TestContent());
     Prepare(world);
     for (int z = 0; z < chunk_size; ++z) {
@@ -578,29 +595,32 @@ TEST_CASE("Sky follows corner path distance and open vertical faces with an exac
         REQUIRE(world.SetTile({2,2,y}, {TestTerrain("air"),0}));
     }
     world.SetSkyLight(192);
-    const int expected[] = {192,128,112,96,80,64,48,32,16,0};
+    const auto expected = [](int distance) {
+        if (distance == 0) { return 192; }
+        return distance <= skySpillDistance ? 128*(skySpillDistance+1-distance)/skySpillDistance : 0;
+    };
     for (int d = 0; d <= 9; ++d) {
         CAPTURE(d);
-        CHECK(world.GetLightLevel(path[d]) == expected[d]);
+        const int level = expected(d);
+        CHECK(world.GetLightLevel(path[d]) == level);
+        const auto band = level < 16 ? LightBand::Dark : level < 64 ? LightBand::Dim
+            : level < 192 ? LightBand::Ordinary : LightBand::Bright;
+        CHECK(ClassifyLight(world.GetLightLevel(path[d])) == band);
     }
-    CHECK(ClassifyLight(world.GetLightLevel(path[5])) == LightBand::Ordinary);
-    CHECK(ClassifyLight(world.GetLightLevel(path[6])) == LightBand::Dim);
-    CHECK(ClassifyLight(world.GetLightLevel(path[8])) == LightBand::Dim);
-    CHECK(ClassifyLight(world.GetLightLevel(path[9])) == LightBand::Dark);
     REQUIRE(world.SetTile({7,4,1}, {TestTerrain("floor"),0}));
     CHECK(world.GetLightLevel(path[8]) == 0); // Unmatched lower stairs cannot cross a floor.
     REQUIRE(world.SetTile({7,4,1}, {TestTerrain("stairs"),0}));
-    CHECK(world.GetLightLevel(path[8]) == 16);
+    CHECK(world.GetLightLevel(path[8]) == expected(8));
     REQUIRE(world.SetTile({4,2,0}, {TestTerrain("closed_door"),0}));
     CHECK(world.GetLightLevel(path[7]) == 0);
     REQUIRE(world.SetTile({4,2,0}, {TestTerrain("open_door"),0}));
-    CHECK(world.GetLightLevel(path[8]) == 16);
-    const auto lamp = Lamp(world, path[8], {8,1});
-    CHECK(world.GetLightLevel(path[8]) == 16); // Local and sky contributions do not add.
-    REQUIRE(world.SetObjectLight(lamp, {64,1}));
-    CHECK(world.GetLightLevel(path[8]) == 64);
+    CHECK(world.GetLightLevel(path[8]) == expected(8));
+    const auto lamp = Lamp(world, path[1], {8,1});
+    CHECK(world.GetLightLevel(path[1]) == expected(1)); // Local and sky contributions do not add.
+    REQUIRE(world.SetObjectLight(lamp, {255,1}));
+    CHECK(world.GetLightLevel(path[1]) == 255);
     REQUIRE(world.DestroyObject(lamp));
-    CHECK(world.GetLightLevel(path[8]) == 16);
+    CHECK(world.GetLightLevel(path[1]) == expected(1));
     // A directly sky-lit opaque endpoint is still never a transport seed.
     REQUIRE(world.SetTile(path[0], {TestTerrain("wall"),0}));
     CHECK(world.GetLightLevel(path[0]) == 192);
@@ -623,13 +643,16 @@ TEST_CASE("Sky reach measures the connected detour rather than displacement thro
         REQUIRE(world.SetTile({2,2,y}, {TestTerrain("air"),0}));
     }
     world.SetSkyLight(192);
-    CHECK(world.GetLightLevel({5,5,0}) == 16); // Eight hops around the corner.
-    CHECK(world.GetLightLevel({4,5,0}) == 0); // Nine hops, despite displacement five.
+    const auto expected = [](int distance) {
+        return distance <= skySpillDistance ? 128*(skySpillDistance+1-distance)/skySpillDistance : 0;
+    };
+    CHECK(world.GetLightLevel({5,5,0}) == expected(8)); // Eight hops around the corner.
+    CHECK(world.GetLightLevel({4,5,0}) == expected(9)); // Nine hops, despite displacement five.
     REQUIRE(world.SetTile({4,3,0}, {TestTerrain("floor"),0}));
     REQUIRE(world.SetTile({4,4,0}, {TestTerrain("open_door"),0}));
-    CHECK(world.GetLightLevel({4,5,0}) == 64); // The new shortest path is five hops.
+    CHECK(world.GetLightLevel({4,5,0}) == expected(5)); // The new shortest path is five hops.
     REQUIRE(world.SetTile({4,4,0}, {TestTerrain("closed_door"),0}));
-    CHECK(world.GetLightLevel({4,5,0}) == 0);
+    CHECK(world.GetLightLevel({4,5,0}) == expected(9));
 }
 
 TEST_CASE("Configured sky reach preserves falloff and lazy dependencies across negative seams", "[lighting][incremental][lazy]") {
@@ -743,10 +766,10 @@ TEST_CASE("Chunk input and output revisions track localized changes independentl
         for (const auto coord : world.LoadedChunks()) { old.push_back(field.GetChunkRevision(coord)); }
         field.Rebuild(world);
         const auto changed = field.ChangedChunks();
-        for (std::size_t i = 1; i < changed.size(); ++i) {
-            const auto a = changed[i-1];
-            const auto b = changed[i];
-            REQUIRE((a.x < b.x || (a.x == b.x && (a.z < b.z || (a.z == b.z && a.y < b.y)))));
+        const auto loaded = world.LoadedChunks();
+        CheckUniqueCoords(changed);
+        for (const auto coord : changed) {
+            REQUIRE(eastl::find(loaded.begin(), loaded.end(), coord) != loaded.end());
         }
         std::size_t index = 0;
         for (const auto coord : world.LoadedChunks()) {
@@ -823,8 +846,7 @@ TEST_CASE("Residency changed chunks include removed lighting and fresh-equivalen
     REQUIRE(world.UpdateRequest(*request, {{0,0},0}, LoadMode::resident));
     REQUIRE(world.ReconcileChunks());
     field.Rebuild(world);
-    REQUIRE(original.size() == field.ChangedChunks().size());
-    REQUIRE(eastl::equal(original.begin(), original.end(), field.ChangedChunks().begin()));
+    CheckCoordSets(original, field.ChangedChunks());
     CHECK(field.GetChunkRevision({-1,0,0}) == 0);
     CHECK(world.GetLightingInputRevision({-1,0,0}) == 0);
     CHECK(field.GetChunkRevision({0,0,0}) > initialRevision);
@@ -832,19 +854,100 @@ TEST_CASE("Residency changed chunks include removed lighting and fresh-equivalen
     REQUIRE(world.UpdateRequest(*request, {{0,0},1}, LoadMode::resident));
     REQUIRE(world.ReconcileChunks());
     field.Rebuild(world);
-    REQUIRE(original.size() == field.ChangedChunks().size());
-    REQUIRE(eastl::equal(original.begin(), original.end(), field.ChangedChunks().begin()));
+    CheckCoordSets(original, field.ChangedChunks());
     CHECK(field.Get({-1,5,0}) == 255);
     CheckFields(world, field);
     REQUIRE(world.ReleaseRequest(*request));
     REQUIRE(world.ReconcileChunks());
     field.Rebuild(world);
-    REQUIRE(original.size() == field.ChangedChunks().size());
-    REQUIRE(eastl::equal(original.begin(), original.end(), field.ChangedChunks().begin()));
+    CheckCoordSets(original, field.ChangedChunks());
     CHECK(field.GetChunkRevision({0,0,0}) == 0);
     CheckFields(world, field);
     field.Rebuild(world);
     CHECK(field.ChangedChunks().empty());
+}
+
+TEST_CASE("Residency reconciliation ignores insertion history and publishes mixed invalidations", "[lighting][incremental][lazy]") {
+    World world(TestContent());
+    Prepare(world);
+    REQUIRE(world.SetTile({6,5,0}, {TestTerrain("wall"),0}));
+    const auto lamp = Lamp(world, {5,5,0}, {192,1});
+    LightingField history;
+    LightingField direct;
+    // Populate one field before adding the other columns; the second field
+    // encounters the same final residents together on its first Prepare.
+    history.Prepare(world);
+    const auto remote = world.RequestChunks({{-4,0},0}, LoadMode::resident);
+    REQUIRE(remote);
+    REQUIRE(world.RequestChunks({{2,0},0}, LoadMode::resident));
+    REQUIRE(world.ReconcileChunks());
+    history.Prepare(world);
+    direct.Prepare(world);
+    const ChunkCoord local{0,0,0};
+    const ChunkCoord pending{0,0,1};
+    const ChunkCoord removed{-4,0,0};
+    const ChunkCoord added{4,0,0};
+    history.EnsureChunk(world, local);
+    direct.EnsureChunk(world, local);
+    REQUIRE(history.Get({5,5,0}) == 192);
+    REQUIRE(history.GetIncident({6,5,0}, 1) == 96);
+    const auto historyLocal = history.GetChunkRevision(local);
+    const auto directLocal = direct.GetChunkRevision(local);
+    const auto historyPending = history.GetChunkRevision(pending);
+    const auto directPending = direct.GetChunkRevision(pending);
+    REQUIRE(historyPending != 0);
+    REQUIRE(directPending != 0);
+    const auto old = world.LoadedChunks();
+
+    REQUIRE(world.UpdateRequest(*remote, {{4,0},0}, LoadMode::resident));
+    REQUIRE(world.ReconcileChunks());
+    const auto current = world.LoadedChunks();
+    REQUIRE(old.size() == current.size());
+    Vector<ChunkCoord> expected = old;
+    for (const auto coord : current) {
+        if (eastl::find(expected.begin(), expected.end(), coord) == expected.end()) { expected.push_back(coord); }
+    }
+    // Sky and source invalidations overlap on the surviving column while the
+    // equally sized remote resident set is replaced in the same Prepare.
+    world.SetSkyLight(1);
+    REQUIRE(world.SetObjectEnabled(lamp, false));
+    history.Prepare(world);
+    direct.Prepare(world);
+    CheckCoordSets(history.ChangedChunks(), expected);
+    CheckCoordSets(direct.ChangedChunks(), expected);
+    CheckCoordSets(history.ChangedChunks(), direct.ChangedChunks());
+    for (const auto coord : old) {
+        if (coord.x == -4) {
+            CHECK(history.GetChunkRevision(coord) == 0);
+            CHECK(direct.GetChunkRevision(coord) == 0);
+        }
+    }
+    for (const auto coord : current) {
+        CHECK(history.GetChunkRevision(coord) != 0);
+        CHECK(direct.GetChunkRevision(coord) != 0);
+    }
+    CHECK(history.GetChunkRevision(removed) == 0);
+    CHECK(history.GetChunkRevision(added) != 0);
+    CHECK(history.GetChunkRevision(local) > historyLocal);
+    CHECK(direct.GetChunkRevision(local) > directLocal);
+    CHECK(history.GetChunkRevision(pending) > historyPending);
+    CHECK(direct.GetChunkRevision(pending) > directPending);
+    const auto pendingRevision = history.GetChunkRevision(pending);
+    const auto retainedRevision = history.GetChunkRevision(local);
+    history.Prepare(world);
+    CHECK(history.ChangedChunks().empty());
+    CHECK(history.GetChunkRevision(pending) == pendingRevision);
+    CHECK(history.GetChunkRevision(local) == retainedRevision);
+    for (const auto coord : current) {
+        history.EnsureChunk(world, coord);
+        direct.EnsureChunk(world, coord);
+    }
+    CHECK(history.GetChunkRevision(pending) == pendingRevision);
+    CHECK(history.GetChunkRevision(local) == retainedRevision);
+    CHECK(history.Get({5,5,0}) == 0);
+    CHECK(history.GetIncident({6,5,0}, 1) == 0);
+    CheckFields(world, history);
+    CheckFields(world, direct);
 }
 
 TEST_CASE("Same-coordinate reload reuses lighting patches and restored emitter edits invalidate visibility", "[lighting][incremental][perception][streaming]") {
@@ -884,7 +987,7 @@ TEST_CASE("Same-coordinate reload reuses lighting patches and restored emitter e
     REQUIRE(world.ReconcileChunks());
     REQUIRE(world.RequestChunks({{0,0},0}, LoadMode::active));
     REQUIRE(world.ReconcileChunks());
-    REQUIRE(world.LoadedChunks() == original);
+    CheckCoordSets(world.LoadedChunks(), original);
     const auto restoredObserver = world.FindActor(observerId);
     const auto restoredLamp = world.FindObject(lampId);
     REQUIRE(world.GetActor(restoredObserver));
@@ -1183,6 +1286,7 @@ TEST_CASE("Prepare publishes never-computed dependencies and Ensure only finaliz
     REQUIRE(world.SetObjectEnabled(lamp, false));
     field.Prepare(world);
     const auto changed = field.ChangedChunks();
+    CheckUniqueCoords(changed);
     CHECK(eastl::find(changed.begin(), changed.end(), receiving) != changed.end());
     CHECK(field.GetChunkRevision(receiving) > before);
     CHECK(field.GetWorkStats().outputChunks == 0);
@@ -1201,7 +1305,7 @@ TEST_CASE("Prepare publishes never-computed dependencies and Ensure only finaliz
     CHECK(field.GetWorkStats().outputChunks == 1);
 }
 
-TEST_CASE("Remote residency retains output bytes revisions and source patches across index remapping", "[lighting][incremental][lazy]") {
+TEST_CASE("Remote residency retains output bytes revisions and source patches across column mutations", "[lighting][incremental][lazy]") {
     World world(TestContent());
     Prepare(world);
     const auto lamp = Lamp(world, {5,5,0}, {192,1});
@@ -1219,8 +1323,8 @@ TEST_CASE("Remote residency retains output bytes revisions and source patches ac
     CHECK(field.Get({5,5,0}) == 192);
     CHECK(field.GetWorkStats().outputChunks == 0);
     CHECK(field.GetWorkStats().sourcePatches == 0);
-    // Force local recombination while retaining the source patch whose old
-    // vector indices were shifted by insertion of a negative remote column.
+    // Force local recombination while retaining the source patch across the
+    // insertion of a negative remote column.
     world.SetSkyLight(1);
     field.Prepare(world);
     field.EnsureChunk(world, local);
@@ -1235,11 +1339,81 @@ TEST_CASE("Remote residency retains output bytes revisions and source patches ac
     CHECK(field.GetChunkRevision(local) == preservedRevision);
     CHECK(field.GetChunkLevels(local).data() == storage);
     CHECK(field.GetWorkStats().outputChunks == 0);
-    for (const auto coord : field.ChangedChunks()) { CHECK(coord.x == -4); }
+    Vector<ChunkCoord> removed;
+    for (int y = world_min_y; y <= world_max_y; ++y) { removed.push_back({-4,-4,y}); }
+    CheckCoordSets(field.ChangedChunks(), removed);
     REQUIRE(world.DestroyObject(lamp));
     field.Prepare(world);
     field.EnsureChunk(world, local);
     CHECK(field.Get({5,5,0}) < 192);
+}
+
+TEST_CASE("Column map growth and early erasure preserve cached lighting addresses and source identity", "[lighting][incremental][lazy]") {
+    World world(TestContent());
+    const auto early = world.RequestChunks({{-8,0},0}, LoadMode::resident);
+    REQUIRE(early);
+    REQUIRE(world.RequestChunks({{-1,-1},0}, LoadMode::resident));
+    REQUIRE(world.ReconcileChunks());
+    world.SetSkyLight(0);
+    for (int y = 0; y <= 1; ++y) {
+        for (int z = -8; z <= -2; ++z) {
+            for (int x = -8; x <= -2; ++x) {
+                REQUIRE(world.SetTile({x,z,y}, {TestTerrain("floor"),0}));
+            }
+        }
+    }
+    REQUIRE(world.SetTile({-4,-5,0}, {TestTerrain("wall"),0}));
+    Lamp(world, {-5,-5,0}, {255,1});
+    const ChunkCoord local{-1,-1,0};
+    LightingField field;
+    field.Prepare(world);
+    field.EnsureChunk(world, local);
+    REQUIRE(field.GetWorkStats().sourcePatches == 1);
+    REQUIRE(field.Get({-5,-5,0}) == 255);
+    REQUIRE(field.GetIncident({-4,-5,0}, 1) == 127);
+    const auto* storage = field.GetChunkLevels(local).data();
+    const auto revision = field.GetChunkRevision(local);
+    // Grow well beyond the initial two columns, then erase an earlier column
+    // (also exercising dense-map relocation of a surviving map entry).
+    REQUIRE(world.RequestChunks({{8,8},2}, LoadMode::resident));
+    REQUIRE(world.ReconcileChunks());
+    const auto checkRetained = [&] {
+        field.Prepare(world);
+        CHECK(field.GetWorkStats().outputChunks == 0);
+        CHECK(field.GetWorkStats().sourcePatches == 0);
+        CHECK(field.GetChunkRevision(local) == revision);
+        // Reacquire the borrow after Prepare before reading; only compare the
+        // old address, whose public borrow lifetime has ended.
+        CHECK(field.GetChunkLevels(local).data() == storage);
+        field.EnsureChunk(world, local);
+        CHECK(field.GetWorkStats().outputChunks == 0);
+        CHECK(field.Get({-5,-5,0}) == 255);
+        CHECK(field.GetIncident({-4,-5,0}, 1) == 127);
+        CheckUniqueCoords(field.ChangedChunks());
+    };
+    checkRetained();
+    REQUIRE(world.ReleaseRequest(*early));
+    REQUIRE(world.ReconcileChunks());
+    checkRetained();
+    CHECK(field.GetChunkRevision({-8,0,0}) == 0);
+    CHECK(field.GetChunkLevels({-8,0,0}).empty());
+    CHECK(field.Get({-8*chunk_size,0,0}) == 0);
+    CHECK(field.GetChunkLevels({-1,-1,world_min_y-1}).empty());
+    CHECK(field.GetChunkLevels({-1,-1,world_max_y+1}).empty());
+    CHECK(field.GetChunkRevision({-1,-1,world_min_y-1}) == 0);
+    CHECK(field.Get({-5,-5,world_max_y+1}) == 0);
+    CHECK(field.GetIncident({-5,-5,world_min_y-1}, 4) == 0);
+    // Recombine after both residency changes. The unchanged source must reuse
+    // its coordinate-based patch across column insertion and erasure.
+    Lamp(world, {-6,-5,0}, {64,1}); // Separate object tile; old source remains the maximum.
+    field.Prepare(world);
+    field.EnsureChunk(world, local);
+    CHECK(field.GetWorkStats().sourcePatches == 1); // Only the new source.
+    CHECK(field.Get({-5,-5,0}) == 255);
+    CHECK(field.GetIncident({-4,-5,0}, 1) == 127);
+    CHECK(field.GetChunkLevels(local).data() == storage);
+    for (const auto coord : world.LoadedChunks()) { field.EnsureChunk(world, coord); }
+    CheckFields(world, field);
 }
 
 TEST_CASE("Uniform sky and solid lazy paths preserve direct endpoints and incident faces", "[lighting][incremental][lazy]") {

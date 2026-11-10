@@ -177,6 +177,54 @@ TEST_CASE("Only active chunks accrue turns and enabled object updates", "[world]
     CHECK(world.CheckInvariants());
 }
 
+TEST_CASE("Activity-only reconciliation preserves archives handles and relative timers", "[world][streaming][activity]") {
+    World world(TestContent());
+    const auto archived = load(world, {{3, 0}, 0});
+    REQUIRE(world.SetTile({48, 0}, {TestTerrain("floor"), 73}));
+    REQUIRE(world.ReleaseRequest(archived));
+    REQUIRE(world.ReconcileChunks());
+    const auto request = load(world);
+    const auto actor = take(world.CreateActor({0, 0}));
+    const auto object = take(world.CreateObject({1, 0}, true));
+    const auto item = take(world.CreateItem(TestItem("rock"), ItemLocation::Carried(actor)));
+    REQUIRE(world.ScheduleActorAction(actor));
+    world.ElapseTicks(23);
+    const auto actorDelay = world.GetActor(actor)->remainingTicks;
+    const auto objectDelay = world.GetObject(object)->remainingTicks;
+    const auto loaded = world.LoadedChunks();
+    const auto revision = world.GetRevision();
+    const auto mapRevision = world.GetMapRevision();
+    const auto lightInput = world.GetLightingInputRevision({0, 0});
+    world.ResetPerceptionStats();
+    REQUIRE(world.UpdateRequest(request, {{0, 0}, 0}, LoadMode::resident));
+    REQUIRE(world.ReconcileChunks());
+    CHECK(world.GetRevision() == revision + world_layer_count);
+    CHECK(world.GetMapRevision() == mapRevision + world_layer_count);
+    CHECK(world.GetLightingInputRevision({0, 0}) == lightInput);
+    CHECK(world.LoadedChunks() == loaded);
+    CHECK(world.ArchivedChunkCount() == world_layer_count);
+    REQUIRE(world.GetActor(actor));
+    REQUIRE(world.GetObject(object));
+    REQUIRE(world.GetItem(item));
+    world.ElapseTicks(1000);
+    CHECK(world.GetActor(actor)->remainingTicks == actorDelay);
+    CHECK(world.GetObject(object)->remainingTicks == objectDelay);
+    REQUIRE(world.UpdateRequest(request, {{0, 0}, 0}, LoadMode::active));
+    REQUIRE(world.ReconcileChunks());
+    CHECK(world.GetActor(actor)->remainingTicks == actorDelay);
+    CHECK(world.GetObject(object)->remainingTicks == objectDelay);
+    CHECK(world.ActiveActors() == Vector<ActorHandle>{actor});
+    CHECK(world.GetPerceptionStats().columnsLoaded == 0);
+    CHECK(world.GetPerceptionStats().columnsUnloaded == 0);
+    const auto committed = world.GetRevision();
+    REQUIRE(world.ReconcileChunks());
+    CHECK(world.GetRevision() == committed);
+    load(world, {{3, 0}, 0});
+    CHECK(*world.GetTile({48, 0}) == Tile{TestTerrain("floor"), 73});
+    CHECK(world.GetActor(actor));
+    CHECK(world.CheckInvariants());
+}
+
 TEST_CASE("Tile circles use integer tile tangencies and ignore elevation", "[world][streaming][circle]") {
     World world(TestContent());
     CHECK(world.RequestCircle({{0, 0}, -1}, LoadMode::active)

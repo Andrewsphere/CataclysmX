@@ -677,6 +677,56 @@ TEST_CASE("Checkpoint warm values survive failed preflight and FIFO eviction fal
     CHECK(world.CheckInvariants());
 }
 
+TEST_CASE("Archive removals preserve pending promotion and warm FIFO order", "[world][save][streaming][warm]") {
+    SaveDirectory files;
+    World world(TestContent());
+    Vector<LoadRequest> requests;
+    for (int x = 0; x < 13; ++x) {
+        requests.push_back(Take(world.RequestChunks({{x, 0}, 0}, LoadMode::resident)));
+    }
+    REQUIRE(world.ReconcileChunks());
+    REQUIRE(world.SetTile({0, 0}, {TestTerrain("floor"), 61}));
+    REQUIRE(world.CreateSave(files.database.c_str(), {}));
+    for (const auto request : requests) { REQUIRE(world.ReleaseRequest(request)); }
+    REQUIRE(world.ReconcileChunks());
+    // Remove early keys from the dense map, then append a fresh capture.
+    // Promotion must follow original unload order, with column 0 now last.
+    auto middle = Load(world, {0, 0});
+    CHECK(*world.GetTile({0, 0}) == Tile{TestTerrain("floor"), 61});
+    REQUIRE(world.ReleaseRequest(middle));
+    REQUIRE(world.ReconcileChunks());
+    CHECK(world.ArchivedChunkCount() == 13 * world_layer_count);
+    REQUIRE(world.Save({}));
+    REQUIRE(world.CheckInvariants());
+    // Consume arbitrary warm entries and append them again; this must not
+    // change the age of surviving entries moved by dense-map erase.
+    middle = Load(world, {2, 0});
+    REQUIRE(world.ReleaseRequest(middle));
+    REQUIRE(world.ReconcileChunks());
+    REQUIRE(world.Save({}));
+    const auto extra = Load(world, {13, 0});
+    REQUIRE(world.ReleaseRequest(extra));
+    REQUIRE(world.ReconcileChunks());
+    REQUIRE(world.Save({}));
+    // Initial promotion loses column 1 through Y=6. Consuming/reappending
+    // column 2 makes it youngest; adding column 13 then loses column 1's
+    // tail and column 3 through Y=6. Columns 0, 2 and 4..13 survive fully.
+    Corrupt(files.database.c_str(), "UPDATE chunks SET payload='invalid'");
+    for (int x = 0; x <= 13; ++x) {
+        if (x == 1 || x == 3) { continue; }
+        Take(world.RequestChunks({{x, 0}, 0}, LoadMode::resident));
+    }
+    REQUIRE(world.ReconcileChunks());
+    CHECK(*world.GetTile({0, 0}) == Tile{TestTerrain("floor"), 61});
+    CHECK(world.ArchivedChunkCount() == 0);
+    const auto cold = Take(world.RequestChunks({{3, 0}, 0}, LoadMode::active));
+    CHECK(world.ReconcileChunks() == eastl::unexpected(SaveError::InvalidData));
+    CHECK(world.LoadedChunks().size() == 12 * world_layer_count);
+    REQUIRE(world.ReleaseRequest(cold));
+    REQUIRE(world.ReconcileChunks());
+    CHECK(world.CheckInvariants());
+}
+
 TEST_CASE("Session circle validation retains the legacy radius contract", "[world][save][circle]") {
     SaveDirectory files;
     World world(TestContent());
@@ -713,6 +763,68 @@ ChunkArchive ActorChunk(ChunkCoord position, PersistentId id) {
     chunk.position = position;
     chunk.actors.push_back({id, {position.x * chunk_size, position.z * chunk_size, position.y}, false, 0});
     return chunk;
+}
+
+TEST_CASE("Activating resident disk snapshots settles suspended entities without advancing timers",
+          "[world][save][streaming][activity][gravity]") {
+    SaveDirectory files;
+    ChunkArchive landing{};
+    landing.position = {0, 0, 0};
+    landing.tiles.fill(Tile{TestTerrain("floor"), 0});
+    ChunkArchive shaft = landing;
+    shaft.position.y = 1;
+    shaft.tiles[0] = {TestTerrain("air"), 0};
+    shaft.tiles[1] = {TestTerrain("air"), 0};
+    auto suspended = ActorChunk({0, 0, 2}, 1);
+    suspended.tiles[0] = {TestTerrain("air"), 0};
+    suspended.tiles[1] = {TestTerrain("air"), 0};
+    suspended.actors.front().player = true;
+    suspended.actors.front().remainingTicks = 37;
+    suspended.items.push_back({2, TestItem("rock"), LocationKind::ground, {1, 0, 2}, 0, {}, {}});
+    WriteFixture(files.database.c_str(), {landing, shaft, suspended});
+
+    World world(TestContent());
+    Take(world.LoadSave(files.database.c_str()));
+    const auto request = Take(world.RequestChunks({{0, 0}, 0}, LoadMode::resident));
+    REQUIRE(world.ReconcileChunks());
+    const auto actor = world.FindActor(1);
+    const auto item = world.FindItem(2);
+    REQUIRE(world.GetActor(actor));
+    REQUIRE(world.GetItem(item));
+    CHECK(world.GetActor(actor)->position == TileCoord{0, 0, 2});
+    CHECK(world.GetItem(item)->location == ItemLocation::Ground({1, 0, 2}));
+    CHECK(world.FindPlayerPosition(1) == TileCoord{0, 0, 2});
+    world.ElapseTicks(1000);
+    CHECK(world.GetActor(actor)->remainingTicks == 37);
+    REQUIRE(world.CheckInvariants());
+
+    const auto loaded = world.LoadedChunks();
+    world.ResetPerceptionStats();
+    REQUIRE(world.UpdateRequest(request, {{0, 0}, 0}, LoadMode::active));
+    REQUIRE(world.ReconcileChunks());
+    REQUIRE(world.GetActor(actor));
+    REQUIRE(world.GetItem(item));
+    CHECK(world.FindActor(1) == actor);
+    CHECK(world.FindItem(2) == item);
+    CHECK(world.GetActor(actor)->position == TileCoord{0, 0, 0});
+    CHECK(world.GetItem(item)->location == ItemLocation::Ground({1, 0, 0}));
+    CHECK(world.FindPlayerPosition(1) == TileCoord{0, 0, 0});
+    CHECK(world.ActorAt({0, 0, 0}) == actor);
+    CHECK(world.ActorAt({0, 0, 2}) == ActorHandle{});
+    CHECK(world.ItemsAt({1, 0, 0}) == Vector<ItemHandle>{item});
+    CHECK(world.ItemsAt({1, 0, 2}).empty());
+    CHECK(world.GetActor(actor)->remainingTicks == 37);
+    CHECK(world.LoadedChunks() == loaded);
+    CHECK(world.ArchivedChunkCount() == 0);
+    CHECK(world.GetPerceptionStats().columnsLoaded == 0);
+    CHECK(world.GetPerceptionStats().columnsUnloaded == 0);
+    REQUIRE(world.CheckInvariants());
+    world.ElapseTicks(7);
+    CHECK(world.GetActor(actor)->remainingTicks == 30);
+    const auto revision = world.GetRevision();
+    REQUIRE(world.ReconcileChunks());
+    CHECK(world.GetRevision() == revision);
+    CHECK(world.GetActor(actor)->remainingTicks == 30);
 }
 
 TEST_CASE("Incoming circle disk IDs cannot alias clean warm values", "[world][save][streaming][warm][circle]") {
@@ -811,6 +923,55 @@ TEST_CASE("Incoming disk chunks cannot alias IDs in pending RAM archives", "[wor
     CHECK(world.ReconcileChunks() == eastl::unexpected(SaveError::InvalidData));
     CHECK(world.LoadedChunks().empty());
     CHECK(world.ArchivedChunkCount() == world_layer_count);
+    CHECK(world.CheckInvariants());
+}
+
+TEST_CASE("Mixed warm pending and disk preflight failure retains every source", "[world][save][streaming][warm]") {
+    SaveDirectory files;
+    WriteFixture(files.database.c_str(), {ActorChunk({0, 0}, 1), ActorChunk({1, 0}, 2),
+        ActorChunk({2, 0}, 3), ActorChunk({3, 0}, 4)});
+    World world(TestContent());
+    Take(world.LoadSave(files.database.c_str()));
+    auto request = Load(world);
+    REQUIRE(world.ReleaseRequest(request));
+    REQUIRE(world.ReconcileChunks());
+    REQUIRE(world.Save({})); // Column 0 is clean and warm.
+    request = Load(world, {1, 0});
+    REQUIRE(world.SetTile({16, 1}, {TestTerrain("floor"), 84}));
+    REQUIRE(world.ReleaseRequest(request));
+    REQUIRE(world.ReconcileChunks()); // Column 1 is authoritative and pending.
+    const auto live = Load(world, {2, 0});
+    const auto liveActor = world.FindActor(3);
+    REQUIRE(world.GetActor(liveActor));
+    REQUIRE(world.UpdateRequest(live, {{2, 0}, 0}, LoadMode::resident));
+    Take(world.RequestChunks({{0, 0}, 0}, LoadMode::resident));
+    Take(world.RequestChunks({{1, 0}, 0}, LoadMode::active));
+    const auto disk = Take(world.RequestChunks({{3, 0}, 0}, LoadMode::active));
+    Corrupt(files.database.c_str(),
+        "UPDATE chunks SET payload=replace(payload,'\"id\":\"4\"','\"id\":\"2\"') WHERE x=3 AND z=0");
+    const auto revision = world.GetRevision();
+    const auto mapRevision = world.GetMapRevision();
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        CHECK(world.ReconcileChunks() == eastl::unexpected(SaveError::InvalidData));
+        CHECK(world.GetRevision() == revision);
+        CHECK(world.GetMapRevision() == mapRevision);
+        CHECK(world.LoadedChunks().size() == world_layer_count);
+        CHECK(world.ArchivedChunkCount() == world_layer_count);
+        CHECK(world.FindActor(3) == liveActor);
+        CHECK(world.IsActive({32, 0}));
+        CHECK(world.CheckInvariants());
+    }
+    // Invalid disk rows for both RAM sources prove the retry uses the retained
+    // values rather than silently consuming them during the failed preflight.
+    Corrupt(files.database.c_str(), "UPDATE chunks SET payload='invalid' WHERE x=0 OR x=1");
+    REQUIRE(world.ReleaseRequest(disk));
+    REQUIRE(world.ReconcileChunks());
+    CHECK(world.ArchivedChunkCount() == 0);
+    CHECK(world.FindActor(3) == liveActor);
+    CHECK_FALSE(world.IsActive({32, 0}));
+    REQUIRE(world.GetActor(world.FindActor(1)));
+    REQUIRE(world.GetActor(world.FindActor(2)));
+    CHECK(*world.GetTile({16, 1}) == Tile{TestTerrain("floor"), 84});
     CHECK(world.CheckInvariants());
 }
 

@@ -82,7 +82,7 @@ Only spill crosses Y for local sources, using the existing open-face rule.
 Thus even an open vertical shaft receives at most quarter-strength light one
 level away, eighth-strength two levels away, and none three levels away.
 Sky retains direct vertical column traversal from the world ceiling, then uses
-up to `skySpillDistance` connected transmitting-neighbor steps (default **8**).
+up to `skySpillDistance` connected transmitting-neighbor steps (currently **12**).
 To tune the reach, edit this constant in `src/core/light_types.h` and rebuild;
 the supported range is **1..15**, enforced at compile time. With `r` equal to
 that configured reach, the level at shortest connected distance `d` in 1..r is
@@ -90,8 +90,8 @@ that configured reach, the level at shortest connected distance `d` in 1..r is
 sky intensity, never repeated attenuation. Direct sky remains unchanged, and
 distances beyond `r` receive no sky spill. The first step always receives
 two-thirds intensity, rounded down; increasing reach stretches the fade.
-At the default reach 8 and sky 192, d0..d8 remain
-**192, 128, 112, 96, 80, 64, 48, 32, 16**. The nonzero-reach optimization uses
+At reach 12 and sky 192, d0..d12 are
+**192, 128, 117, 106, 96, 85, 74, 64, 53, 42, 32, 21, 10**. The nonzero-reach optimization uses
 the same formula, so low sky levels cannot extend the tail or wrap a light byte.
 Each hop respects transmitting cells and vertical open faces; opaque direct
 endpoints never seed transport. Sky and local contributions combine by maximum.
@@ -110,7 +110,7 @@ residency clipping, world bounds, planar direct light, and two-step vertical spi
 Dedicated regressions cover lower walls at underground and elevated levels,
 remote projected tops with dark sides and dark observer-plane air, and closed
 roofs. Input/output revision tests check unchanged rebuilds, emitter movement,
-parking and toggles, conservative sky columns, and sorted unique residency
+parking and toggles, conservative sky columns, and unique residency
 removals while comparing incremental fields to fresh scalar/incident fields.
 
 ## Incremental lighting
@@ -129,9 +129,33 @@ bounds and source-Y +/- two layers intersect an edited optical chunk. Sky
 invalidates the edited vertical chunk columns and a one-chunk horizontal halo,
 which bounds the configured sky reach. Added and removed chunks are optical changes;
 surviving caches outside their dependencies retain both storage and revisions.
-The sorted cache vector owns `unique_ptr<LightChunk>` so residency merges move
-pointers rather than multiple tile arrays per surviving chunk. Source patches
-store chunk coordinates, never indices that residency insertion could remap.
+An ordinary `ankerl::unordered_dense::map<ColumnCoord, unique_ptr<LightColumn>, ColumnHash>`
+owns heap-stable columns. Each column contains one inline array of all 21 Y-layer
+`LightChunk` caches, matching World's whole-column residency; there is no per-layer
+allocation. Map growth and dense-entry relocation during erasure move owning pointers,
+not surviving tile arrays. Residency is reconciled by column key; all map insertion
+and erasure finishes before scanning resident layers directly in map order. No
+separate sorted pointer list is maintained. Chunk lookup hashes
+the horizontal column and directly indexes Y, returning absence outside world Y bounds.
+Direct sky indexes the above layer in the same column without rebuilding neighbor links.
+Sky and source patch gathering look up each intersected column once and copy its layer
+intersections rather than hashing per tile. Source patches store chunk coordinates,
+never indices that residency insertion or removal could remap.
+
+Metadata synchronization is independent of column iteration order: input refreshes
+are chunk-local, invalidation flags accumulate by union, and affected outputs receive
+the same Prepare generation. Source descriptors are still sorted because matching
+them against the previous source list uses an ordered merge. Optical-change chunks
+and horizontal sky-invalidation columns use ordinary dense hash sets: these small
+coordinate keys need uniqueness but no order. Transport retains explicit spatial
+traversal and max-combination, so cache enumeration cannot alter light values.
+
+The map lives in a private storage implementation in `lighting.cpp`, keeping its
+third-party header out of the public lighting API and exception-enabled consumers.
+Construction, destruction and move operations are defined out of line. Moving a field
+transfers its owned caches; a moved-from field
+can be prepared again. Physical address stability does not extend the public borrow
+contract: callers still reacquire output spans after every Prepare.
 Lamp movement never invalidates sky. A sky-level change invalidates sky but
 reuses local source contributions. Equal same-coordinate reload inputs retain
 their output revisions; fresh input tokens still trigger descriptor/optics checks.
@@ -154,8 +178,8 @@ cells** visits each reachable cell once at its shortest distance. Distances map
 to the curve above; direct opaque endpoints retain only their direct value and
 upper-face incident record. No final sky/output cache is a transport seed.
 
-This bounds scratch to `(16 + 2*r)^2 * (2*r + 1)` cells (32x32x17 at the default
-reach) and one queue entry per cell, independent
+This bounds scratch to `(16 + 2*r)^2 * (2*r + 1)` cells (40x40x25 at the current
+reach of 12) and one queue entry per cell, independent
 of the number of direct-sky sources or total residency. Two field-owned scratch
 vectors reuse capacity across output requests; there is no per-tile or per-source
 allocation. Chunk intersections are copied with one lookup per chunk, not per
@@ -239,12 +263,18 @@ reusing zero or an older generation. These are derived output revisions, separat
 from World's input revisions: a remote lamp can change a chunk's lighting without
 changing its terrain or emitter inputs.
 
-`ChangedChunks` borrows the last Prepare's sorted unique invalidated coordinates,
-ordered by X, then Z, then Y, including removed chunks whose current revision is
-zero. The set is conservative and includes pending/uncomputed outputs and outputs
+`ChangedChunks` borrows the last Prepare's unique invalidated coordinates in
+**unspecified order**, including removed chunks whose current revision is zero.
+The set is conservative and includes pending/uncomputed outputs and outputs
 whose resulting bytes may be equal. The list is empty before the first Prepare
 and after a no-op Prepare. Consume it immediately when syncing: a later no-op
 Prepare clears the list but preserves revisions and outstanding pending work.
+Each removed layer is appended once during keyed residency reconciliation, and
+each surviving dirty layer once during the final scan. These sets are disjoint,
+so the vector-backed span requires neither sorting nor a separate deduplication
+container. World's observer invalidation only asks whether any changed coordinate
+intersects its region. Consumers needing canonical diagnostic output can sort a
+copy; processing this notification must not depend on its enumeration order.
 
 ### Coordinator integration in World
 
@@ -277,7 +307,11 @@ is residency-sized; tile optics are eagerly synchronized, output work is lazy.
 New lazy regressions cover never-computed dependency invalidation, repeated no-op
 syncs with pending work, arbitrary elevation/query ordering, inactive sources,
 remote residency retaining addresses/revisions, negative-index insertion with
-source patch reuse, roof/seam/source changes and removals. The independent full
+source patch reuse, column-map growth followed by early-column erasure and cached
+source recombination, different insertion/erase histories with same-sized residency
+replacement, mixed removed/dirty notification sets, roof/seam/source changes and
+removals. Notification tests check uniqueness and set equality rather than order.
+The independent full
 sky and combined-source transport regressions also exercise lazy computation and
 compare **both scalar and all six incident faces**, independently of fresh-field
 equivalence.

@@ -1,12 +1,13 @@
 # Chunk streaming benchmark
 
-`tools/chunk_streaming_benchmark.cpp` is a headless, synchronous benchmark using the bundled production content and seed 42. It reports nearest-rank median, p95, p99 and maximum in milliseconds, with no timing assertions. Invocation: `cataclysmx_chunk_benchmark.exe [samples] [2|5] [all|split|fresh|server|circle|disk] [circle_radius_tiles]`; defaults are `10 2 all` and the production `CircleResidency` default (currently 78 tiles). The square radius is in chunks; the optional circle radius is in tiles (0–128). Circle cases use that tile radius regardless of the square radius: explicitly pass 30 for a smaller radius-2 comparison or 78 for production. These shapes are not identical and are not equal-area comparisons. `all` includes both new modes. Each scenario uses the requested sample count. Small counts are useful for smoke runs, but cannot characterize tail latency.
+`tools/chunk_streaming_benchmark.cpp` is a headless, synchronous benchmark using the bundled production content and seed 42. It reports nearest-rank median, p95, p99 and maximum in milliseconds, with no timing assertions. Invocation: `cataclysmx_chunk_benchmark.exe [samples] [2|5] [all|split|fresh|server|circle|disk|forward] [circle_radius_tiles]`; defaults are `10 2 all` and the production `CircleResidency` default (currently 78 tiles). The square radius is in chunks; the optional circle radius is in tiles (0–128). Circle cases use that tile radius regardless of the square radius: explicitly pass 30 for a smaller radius-2 comparison or 78 for production. These shapes are not identical and are not equal-area comparisons. `all` includes every mode. Each scenario uses the requested sample count. Small counts are useful for smoke runs, but cannot characterize tail latency.
 
 * `archive_reconcile`: alternate a world request across X=15/16 after both sides were materialized. Its timer includes both request updates and `ReconcileChunks`; movement is outside the timer. Evicted columns reload from the in-memory archive.
 * `archive_light_observe`: immediately after each reconciliation, time `GetLightLevel` and `UpdatePlayerObservations`. Counters are accumulated independently for each timed phase. The phase depends on the preceding reconciliation and is not an independent experiment.
 * `fresh_reconcile`: move the request east one chunk per sample into previously ungenerated columns. It does not move the player or time observations; the archive grows during the run.
 * `server_*`: move a player back and forth across X or Z at 15/16 or -1/0, including `Server::Send` and a radius-12 `Server::View`. Setup clears the route and removes initially active non-player actors and objects; surrounding generated terrain is retained. Warmup visits both sides. Setup is untimed, including the administrative teleport, and the moves synchronize the server bubble. This measures in-memory archive reload, simulation, observation and view construction together, not terminal rendering.
 * `circle_*`: the same end-to-end seam scenarios explicitly select tile-circle residency before setup. `circle_forward_x_step_01` through `_16` instead report each forward step from X=0 through X=16 separately, including send and view. Each sample first returns over the same route outside timing; a complete out-and-back warmup precedes measurement. These are warm repeated traversals, not fresh generation. Step 16 crosses the chunk seam; steps 1–15 remain within the starting chunk. Per-step column counters make distributed loading visible. Loaded/archive values on these rows describe the world after the final return, not each step.
+* `fresh_circle_forward` (`forward` mode): continuously walk east from X=0 through X=`samples`, timing `Server::Send` and radius-12 `Server::View` for each tile without returning or preloading the future route. The initial resident region is generated outside timing; entering further columns happens inside the timed actions. Before each action, only the destination's floor and two headroom cells are cleared outside timing to guarantee a traversable route; generated surroundings remain intact. Derived lighting/observation work caused by those edits is included in the timed action. The archive grows during the run, so percentiles summarize different route positions rather than repeated identical steps. Initial observation/view setup and final invariant checking are untimed. This mode uses tile-circle residency and the requested circle radius.
 * `disk_reopen_reconcile`: checkpoint both square regions, including a distinctive marker in the incoming edge; evict that edge. For every sample, reopen a pristine `World` and load the starting square outside timing, then time the request update and reconciliation into the checkpointed edge. `disk_reopen_light_observe` separately times the following light query and observation. Reopening clears the world's in-process archive, but does not flush OS or SQLite caches; this is not a guaranteed physical cold read. The marker is checked after loading.
 * `disk_same_world_reconcile` and `disk_same_world_light_observe`: repeatedly evict the incoming edge and checkpoint **outside** timing, then time the same reload and subsequent light/observation separately in one open world. Checkpoint makes evicted archives eligible for the bounded warm cache; eviction, cache capacity and item content can prevent retention. There are no cache hit or database I/O counters, so neither hits nor physical reads are asserted. A unique temporary directory owns the database and SQLite sidecars and is removed after the world closes on normal completion; abnormal termination can leave it behind.
 
@@ -169,3 +170,94 @@ passed 527/527 in one run, including headless/LAN/settings integration tests.
 
 These measurements describe this machine and these scenes, not a universal frame
 budget or a guarantee for populated worlds, teleports, or cold physical storage.
+
+## Column lighting and keyed archives, 2026-11-10
+
+Baseline engine: clean commit `61a81ec`, rebuilt with `win-msvc-debug` before
+production source edits. The added `forward` benchmark was compiled separately
+against that original engine library before rebuilding the integrated engine;
+its public World/Server API and benchmark source are the same for both runs.
+Both sides use the existing `skySpillDistance = 12`, seed 42 and bundled content.
+Runs were sequential, with no concurrent builds/tests. These are Debug results.
+
+The lighting map now owns one stable full-height column per X/Z key, avoids the
+six-neighbor lookup rebuild, and gathers source/sky inputs by column. Pending and
+warm archives use XYZ-keyed segmented maps with explicit ordered-key retention.
+Reconciliation trusts immutable captures and validated disk reads while preserving
+cross-chunk incoming ID preflight; activity-only changes skip archive work.
+
+| Scenario | Samples | Baseline median / p99 ms | Updated median / p99 ms |
+|---|---:|---:|---:|
+| Fresh square-radius-5 reconciliation | 100 | 29.066 / 53.882 | 3.705 / 4.357 |
+| RAM archive square-radius-5 reconciliation | 100 | 19.246 / 20.404 | 0.947 / 1.064 |
+| Following lighting + observation | 100 | 13.087 / 14.048 | 6.156 / 7.388 |
+| Continuous fresh forward server + view, circle 78 | 256 | 8.299 / 12.573 | 2.862 / 5.310 |
+| Reopened-world disk reconciliation, radius 5 | 10 | 38.575 / 62.588 | 35.752 / 50.314 |
+| Same-world post-checkpoint reconciliation, radius 5 | 10 | 8.201 / 10.201 | 1.425 / 1.629 |
+
+The fresh square run ends with 23,100 archived layers and 2,541 loaded layers.
+Its old repeated archive validation grows with the explored area; the updated
+100-sample timings remain much flatter. The continuous forward run ends with
+3,360 archived and 1,848 loaded layers after loading/unloading 160 columns each.
+Its before/after counters agree: 208 demand reconciliations, 194 lighting
+synchronizations, 256 observation/view builds, 1,179 lighting outputs, 12,966
+direct-sky dependencies and 11 sky spill patches. The paired archive observation
+work counters also agree. These scenes have no local source patches; source
+transport equivalence is covered by the focused lighting tests.
+
+The disk rows have only ten samples (p99 is the maximum) and do not flush OS/SQLite
+caches. They retain full decoding and validation of incoming disk data. Component
+and end-to-end results are distinct: `fresh_reconcile` does not include lighting,
+and the following light/observation phase is not a standalone Prepare timer.
+
+Reproduction after building the benchmark target:
+
+```powershell
+cmake --build --preset win-msvc-debug --target cataclysmx_chunk_benchmark -j 6
+.\out\build\win-msvc-debug\cataclysmx_chunk_benchmark.exe 100 5 fresh
+.\out\build\win-msvc-debug\cataclysmx_chunk_benchmark.exe 100 5 split
+.\out\build\win-msvc-debug\cataclysmx_chunk_benchmark.exe 256 5 forward
+.\out\build\win-msvc-debug\cataclysmx_chunk_benchmark.exe 10 5 disk
+```
+
+Validation for this refactor: built `cataclysmx_tests`, `cataclysmx_headless`,
+`cataclysmx_game` and `cataclysmx_chunk_benchmark` with `win-msvc-debug`. The first
+focused CTest run passed 106/109 cases; three existing sky/facade fixtures still
+hard-coded the old eight-step falloff despite the configured reach of twelve.
+After expressing those expectations using the fixtures' known shortest-path
+distances and configured reach, the focused run passed **109/109**. Full
+`ctest --preset win-msvc-debug --output-on-failure -j 4` then passed **538/538**,
+including headless, save, LAN and terminal integration. New regressions cover
+column-map growth/early erasure, pending/warm FIFO order, failed mixed-source
+preflight, activity-only timing and activation gravity. No Release performance
+claim is inferred from these Debug measurements.
+
+### Unordered lighting traversal follow-up
+
+The next comparison starts from the column-map/keyed-archive implementation above,
+including its sorted light-chunk pointer index and sorted change notifications.
+The follow-up removes that index, reconciles residency by column key, traverses
+the owning map directly, and publishes unique change coordinates in unspecified
+order. Actual optical-change and horizontal-column deduplication uses ordinary
+dense hash sets. Source descriptors retain the sort used for matching old patches.
+
+Both measurements used the same Debug preset, content and reach of twelve, with
+sequential runs and no concurrent builds/tests:
+
+| Scenario | Samples | Before median / p99 ms | After median / p99 ms |
+|---|---:|---:|---:|
+| Following lighting + observation (`100 5 split`) | 100 | 6.276 / 6.831 | 6.277 / 6.744 |
+| Continuous forward server + view (`256 5 forward`) | 256 | 2.910 / 5.288 | 2.944 / 5.189 |
+
+All reported work counters match. These timings are essentially unchanged and do
+not establish a speedup from this follow-up; it removes redundant ordering and
+pointer bookkeeping. The paired archive reconciliation medians were 0.972 and
+0.952 ms, respectively, with no additional archive changes in this follow-up.
+
+Rebuilt Debug tests, headless, game and benchmark targets. Focused CTest coverage
+passed **110/110**, followed by **8/8** additional lazy-lighting, source-boundary,
+surface and retained-cache cases. The new regression reaches the same residents
+through different insertion/erase histories, replaces remote residency without
+changing its size, and compares unique notification sets, pending revisions and
+scalar/incident output. `git diff --check` passed. These are targeted runs; the
+538-case full-suite result above belongs to the preceding refactor.

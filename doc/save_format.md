@@ -236,6 +236,56 @@ including pending changes, until a successful save; only then may saved archives
 be evicted. A failed save rolls back, preserving the prior durable state and
 retaining dirty memory for retry.
 
+### Internal archive ownership and reconciliation
+
+Unloaded pending snapshots are owned by a segmented hash map keyed by the full
+`ChunkCoord` (X, Z and Y). They remain authoritative and may grow without bound
+until a successful checkpoint; cache pressure never discards unsaved values.
+Segmented storage avoids relocating a growing contiguous array of inline tile
+payloads, and erasing a key moves at most one other payload. Separate ordered key
+metadata preserves unload order through arbitrary removals: reloading consumes
+that key, and a later unload appends its new capture at the end.
+
+After commit, pending values are promoted in that explicit unload order into a
+separate clean warm map. Warm values are disposable, item-free snapshots with a
+256-entry and 8 MiB limit. FIFO age is stored in ordered keys, independently of
+hash iteration and dense-value relocation. Consuming a middle value leaves the
+relative age of every survivor intact; replacing a value appends a fresh age.
+Oldest values are evicted first. The byte budget includes allocated map value
+capacity (including keys and unused slots), index storage, a conservative bound
+for segment pointers, ordered-key capacity and actor/object allocation capacities.
+Item allocations, including reserved-but-empty item storage, are excluded by
+rejecting those snapshots from the warm cache. This keeps recursive `DataObject`
+storage out of the bounded-cache accounting. Eviction falls back to validated
+disk loading and does not change persistent identity or saved values.
+
+`Capture` produces trusted immutable RAM values from invariant-preserving world
+operations. Demand changes do not repeatedly validate their terrain or item trees.
+`CheckInvariants` still fully validates live, pending and warm snapshots.
+External disk values cross the full validation boundary in
+`SaveDatabase::ReadChunk`: decoding invokes `ValidateItemSnapshot` and chunk
+validation, checking content, ownership, state, positions, timers and local IDs.
+Reconciliation uses those results directly and collects IDs without revalidating
+payloads to reject conflicts against all live entities (including ones about to
+unload), pending values, warm values and other staged disk inputs. Known incoming
+RAM values are counted once. With no external incoming values, the existing
+identity invariant makes this global preflight unnecessary.
+
+All disk reads and cross-chunk identity checks finish before reconciliation
+consumes any RAM snapshot, retires live keys, or changes activity/residency.
+Failures retain all sources for retry. When the demanded column set is unchanged,
+reconciliation skips archive work and publishes activity, per-layer world/map
+revisions and committed demand before retaining the usual deferred gravity
+boundary. Resident disk-restored actors and ground items may still be suspended:
+activation must settle them using the newly committed activity set. As on the
+structural path, gravity is queued before clearing demand-dirty bookkeeping and
+flushed when the gravity batch exits. Movement uses the normal mutation helpers,
+including spatial indexes, player tracking, item notifications and lighting
+invalidation where needed. Handles and relative timers remain intact; settling
+does not advance time. Activity changes themselves do not invalidate geometry or
+lighting. These choices keep storage validation at its boundary while preserving
+deterministic retention, callbacks and failure atomicity.
+
 `ReconcileChunks` returns `SaveResult<void>` because storage-backed loads can
 fail. It stages chunk changes and leaves live world state unchanged on failure.
 Save operations similarly return typed `SaveResult<T>` errors; optional

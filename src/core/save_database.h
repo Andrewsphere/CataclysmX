@@ -21,6 +21,9 @@ public:
 
     SaveResult<void> Create(const char* path, Diagnostics* diagnostics = nullptr);
     SaveResult<SaveSnapshot> Open(const char* path, Diagnostics* diagnostics = nullptr);
+    // A present value is fully validated against content and nextId, including
+    // local identity, ownership and behavior state. Cross-chunk identity against
+    // the caller's newer RAM state remains the caller's responsibility.
     SaveResult<eastl::optional<ChunkArchive>> ReadChunk(ChunkCoord position,
         PersistentId nextId, Diagnostics* diagnostics = nullptr);
     SaveResult<void> Begin(Diagnostics* diagnostics = nullptr);

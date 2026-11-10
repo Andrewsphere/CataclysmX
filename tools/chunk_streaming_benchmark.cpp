@@ -200,6 +200,41 @@ void CircleForward(const ContentCatalog& content, int radius, int circleTiles, i
     Require(world.CheckInvariants());
 }
 
+// Continuous one-way travel: unlike CircleForward, each sample visits a new
+// tile and the unloaded archive grows throughout the run. Only the walking
+// route is cleared, outside timing; generated surroundings remain intact.
+void FreshForward(const ContentCatalog& content, int radius, int circleTiles, int count) {
+    Server server(content, 42);
+    Require(server.SetCircleResidency(1, {circleTiles}).has_value());
+    World& world = server.GetWorld();
+    ClearActors(world, server.GetPlayer());
+    ClearRoute(world, content, false, 0, 0);
+    Require(world.MoveActor(server.GetPlayer(), {0, 0, 0}).has_value());
+    world.UpdatePlayerObservations();
+    (void)server.View(12);
+    Samples samples;
+    PerceptionStats stats{};
+    ViewStats views{};
+    for (int step = 1; step <= count; ++step) {
+        ClearRoute(world, content, false, step, step);
+        world.ResetPerceptionStats();
+        server.ResetViewStats();
+        const auto start = Clock::now();
+        const auto result = server.Send({CommandKind::move, 1, 0});
+        Require(result.outcome == Outcome::moved && result.advanced && !result.storageError);
+        const auto view = server.View(12);
+        Require(view.cells.size() == 25 * 25);
+        samples.Add(start);
+        Require(world.GetActor(server.GetPlayer())->position == TileCoord{step, 0, 0});
+        AddStats(stats, world.GetPerceptionStats());
+        const auto viewStats = server.GetViewStats();
+        views.requests += viewStats.requests;
+        views.mapConstructions += viewStats.mapConstructions;
+    }
+    samples.Print("fresh_circle_forward", radius, world, views, &stats);
+    Require(world.CheckInvariants());
+}
+
 // A newly created directory gives this invocation exclusive ownership of every
 // SQLite sidecar as well as the database. Never remove a pre-existing path.
 struct SaveDirectory {
@@ -327,8 +362,8 @@ int main(int argc, char** argv) {
         circleTiles > maxCircleResidencyRadius ||
         (std::strcmp(scenario, "all") && std::strcmp(scenario, "split") &&
          std::strcmp(scenario, "fresh") && std::strcmp(scenario, "server") &&
-         std::strcmp(scenario, "circle") && std::strcmp(scenario, "disk"))) {
-        std::fprintf(stderr, "usage: cataclysmx_chunk_benchmark [samples:1..10000] [radius:2|5] [all|split|fresh|server|circle|disk] [circle_radius_tiles:0..128]\n");
+          std::strcmp(scenario, "circle") && std::strcmp(scenario, "disk") && std::strcmp(scenario, "forward"))) {
+        std::fprintf(stderr, "usage: cataclysmx_chunk_benchmark [samples:1..10000] [radius:2|5] [all|split|fresh|server|circle|disk|forward] [circle_radius_tiles:0..128]\n");
         return 2;
     }
     auto content = LoadContentFile(CATACLYSMX_TERRAIN_FILE);
@@ -350,4 +385,5 @@ int main(int argc, char** argv) {
         CircleForward(*content, radius, circleTiles, count);
     }
     if (!std::strcmp(scenario, "all") || !std::strcmp(scenario, "disk")) { Disk(*content, radius, count); }
+    if (!std::strcmp(scenario, "all") || !std::strcmp(scenario, "forward")) { FreshForward(*content, radius, circleTiles, count); }
 }
