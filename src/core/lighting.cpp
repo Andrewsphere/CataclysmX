@@ -410,7 +410,7 @@ void LightingField::Prepare(const World& world) {
         }
         it = storage_->columns.erase(it);
     }
-    // LoadedChunks supplies complete columns in X/Z/Y order.
+    // LoadedChunks supplies complete contiguous columns in ascending Y; column order is unspecified.
     for (std::size_t c = 0; c < loaded.size(); c += world_layer_count) {
         const auto coord = loaded[c];
         const ColumnCoord position{coord.x,coord.z};

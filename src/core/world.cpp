@@ -59,10 +59,6 @@ bool ValidMode(LoadMode mode) {
     return mode == LoadMode::resident || mode == LoadMode::active;
 }
 
-bool ColumnLess(ColumnCoord left, ColumnCoord right) {
-    return left.x < right.x || (left.x == right.x && left.z < right.z);
-}
-
 bool ValidCircle(TileCircleRegion region) {
     const auto x = static_cast<std::int64_t>(region.center.x);
     const auto z = static_cast<std::int64_t>(region.center.z);
@@ -208,6 +204,24 @@ void CollectArchiveIds(const Archive& archive, Vector<PersistentId>& ids) {
     for (const SavedItem& item : archive.items) { ids.push_back(item.id); }
 }
 
+bool ValidMemoryChunk(const ContentCatalog& content, const MemoryChunk& chunk) {
+    if (!ValidChunk(chunk.position) || !ValidRegion({chunk.position, 0})) { return false; }
+    bool observed = false;
+    for (TerrainId terrain : chunk.terrain) {
+        if (terrain.value && !content.TryGetTerrain(terrain)) { return false; }
+        observed = observed || terrain.value != 0;
+    }
+    if (!observed) { return false; }
+    int previousIndex = -1;
+    for (const RememberedObject& object : chunk.objects) {
+        if (object.tileIndex <= previousIndex || !chunk.terrain[object.tileIndex].value
+            || object.appearance.kind == ObjectKind::None
+            || !ValidObjectAppearance(object.appearance)) { return false; }
+        previousIndex = object.tileIndex;
+    }
+    return true;
+}
+
 bool ValidMemories(const ContentCatalog& content, const Vector<PlayerMemory>& memories,
     PersistentId nextId) {
     PersistentId previousPlayer = 0;
@@ -216,35 +230,12 @@ bool ValidMemories(const ContentCatalog& content, const Vector<PlayerMemory>& me
         previousPlayer = memory.player;
         for (std::size_t c = 0; c < memory.chunks.size(); ++c) {
             const MemoryChunk& chunk = memory.chunks[c];
-            if (!ValidChunk(chunk.position) || !ValidRegion({chunk.position, 0})
+            if (!ValidMemoryChunk(content, chunk)
                 || (c && !ChunkLess(memory.chunks[c-1].position, chunk.position))) { return false; }
-            bool observed = false;
-            for (TerrainId terrain : chunk.terrain) {
-                if (terrain.value && !content.TryGetTerrain(terrain)) { return false; }
-                observed = observed || terrain.value != 0;
-            }
-            if (!observed) { return false; }
-            int previousIndex = -1;
-            for (const RememberedObject& object : chunk.objects) {
-                if (object.tileIndex <= previousIndex || !chunk.terrain[object.tileIndex].value
-                    || object.appearance.kind == ObjectKind::None
-                    || !ValidObjectAppearance(object.appearance)) { return false; }
-                previousIndex = object.tileIndex;
-            }
         }
     }
     return true;
 }
-
-struct ColumnDemand {
-    ColumnCoord position;
-    bool active;
-};
-
-struct PlayerLocation {
-    PersistentId id;
-    TileCoord position;
-};
 
 }
 
@@ -297,6 +288,7 @@ ItemLocation ItemLocation::Stored(ObjectHandle object) {
 }
 
 class World::Impl {
+    friend class World;
     struct ColumnHash {
         std::uint64_t operator()(ColumnCoord position) const {
             const auto key = (static_cast<std::uint64_t>(static_cast<std::uint32_t>(position.x)) << 32)
@@ -309,6 +301,7 @@ class World::Impl {
     };
     ankerl::unordered_dense::segmented_map<ColumnCoord, ChunkColumn, ColumnHash> columns_;
 public:
+    using DemandMap = ankerl::unordered_dense::map<ColumnCoord, bool, ColumnHash>;
     struct ChunkHash {
         std::uint64_t operator()(ChunkCoord position) const {
             const auto horizontal = ColumnHash{}({position.x, position.z});
@@ -331,26 +324,25 @@ public:
     dod::slot_map64<InteractiveObject> objects;
     dod::slot_map64<Request> requests;
     ArchiveMap archives; // Authoritative, unloaded, unsaved values; never bounded.
-    Vector<ChunkCoord> archiveOrder; // Unload order, preserved through arbitrary erases.
     // Clean, disposable FIFO values; pending archives are never subject to eviction.
     ArchiveMap warmArchives;
     Vector<ChunkCoord> warmOrder; // FIFO, independent of dense-map relocation on erase.
     static constexpr std::size_t maxWarmEntries = 256;
     static constexpr std::size_t maxWarmBytes = 8 * 1024 * 1024;
     std::size_t warmBytes = 0;
-    Vector<ChunkCoord> dirtyChunks; // Sorted, includes pending unloaded archives.
-    Vector<PlayerLocation> playerPositions; // Sorted by ID; survives unload and archive eviction.
+    ankerl::unordered_dense::set<ChunkCoord, ChunkHash> dirtyChunks; // Includes pending unloaded archives.
+    ankerl::unordered_dense::map<PersistentId, TileCoord> playerPositions; // Survives unload and archive eviction.
     ItemSystem itemSystem;
     eastl::unique_ptr<SaveDatabase> database;
     Vector<TileCoord> gravityColumns; // X/Z tile columns, normalized Y.
     unsigned gravityDepth = 0;
     bool settlingGravity = false;
     std::uint8_t skyLight = defaultSkyLight;
-    Vector<PlayerMemory> memories;
+    using MemoryMap = ankerl::unordered_dense::segmented_map<ChunkCoord, MemoryChunk, ChunkHash>;
+    ankerl::unordered_dense::map<PersistentId, MemoryMap> memories;
     mutable LightingField lighting;
     mutable bool lightingDirty = true;
-    struct LightingInput { ChunkCoord position; std::uint64_t revision; };
-    Vector<LightingInput> lightingInputs;
+    ankerl::unordered_dense::map<ChunkCoord, std::uint64_t, ChunkHash> lightingInputs;
     std::uint64_t nextLightingInputRevision = 0;
     std::uint64_t revision = 1;
     std::uint64_t mapRevision = 1;
@@ -358,12 +350,11 @@ public:
     std::uint64_t appearanceRevision = 1;
     mutable std::uint64_t lightingRevision = 1;
     bool demandDirty = true;
-    Vector<ColumnDemand> reconciledDemand; // Canonical committed X/Z traversal.
     VisionProfile vision;
     mutable PerceptionStats perceptionStats;
     mutable OpticalField optics;
     mutable std::uint64_t opticsRevision = 0;
-    mutable Vector<ChunkCoord> opticalChanges;
+    mutable ankerl::unordered_dense::set<ChunkCoord, ChunkHash> opticalChanges;
     struct LightSamples {
         ChunkCoord position{};
         std::uint64_t revision = 0;
@@ -371,8 +362,7 @@ public:
         std::uint8_t minimum = 255;
     };
     mutable Vector<LightSamples> lightSamples;
-    struct AppearanceChange { ChunkCoord position; std::uint64_t revision; };
-    Vector<AppearanceChange> appearanceChanges;
+    ankerl::unordered_dense::map<ChunkCoord, std::uint64_t, ChunkHash> appearanceChanges;
     struct FootprintChunk {
         ChunkCoord position;
         eastl::array<std::uint64_t, 4> bits{};
@@ -382,7 +372,7 @@ public:
         VisibilityMask geometry;
         VisibilityMask visible;
         Vector<FootprintChunk> footprint;
-        Vector<FootprintChunk> learnedFootprint;
+        ankerl::unordered_dense::map<ChunkCoord, eastl::array<std::uint64_t, 4>, ChunkHash> learnedFootprint;
         VisibilityWorkspace workspace;
         std::uint64_t geometryRevision = 0;
         std::uint64_t lightingRevision = 0;
@@ -403,8 +393,7 @@ public:
 
     void MarkGeometryDirty(ChunkCoord position) {
         ++geometryRevision;
-        const auto where = eastl::lower_bound(opticalChanges.begin(), opticalChanges.end(), position, ChunkLess);
-        if (where == opticalChanges.end() || *where != position) { opticalChanges.insert(where, position); }
+        opticalChanges.insert(position);
         for (auto& observer : observers) {
             if (TouchesPerception(position, observer.geometry)) { observer.geometryRevision = 0; }
         }
@@ -412,13 +401,9 @@ public:
 
     void MarkLightingDirty(ChunkCoord position) {
         lightingDirty = true;
-        const auto where = eastl::lower_bound(lightingInputs.begin(), lightingInputs.end(), position,
-            [](const LightingInput& entry, ChunkCoord key) { return ChunkLess(entry.position, key); });
         const auto inputRevision = ++nextLightingInputRevision;
         Require(inputRevision != 0);
-        if (where == lightingInputs.end() || where->position != position) {
-            lightingInputs.insert(where, {position, inputRevision});
-        } else { where->revision = inputRevision; }
+        lightingInputs.insert_or_assign(position, inputRevision);
     }
 
     void EnsureLighting(const World& world, ChunkCoord position) const {
@@ -446,7 +431,7 @@ public:
         if (geometryChanged) {
             if (opticsRevision != geometryRevision) {
                 if (opticsRevision == 0) { optics.Rebuild(world); }
-                else { optics.Refresh(world, {opticalChanges.data(), opticalChanges.size()}); }
+                else { optics.Refresh(world, {opticalChanges.values().data(), opticalChanges.size()}); }
                 opticalChanges.clear();
                 ++perceptionStats.opticalRebuilds;
                 opticsRevision = geometryRevision;
@@ -468,72 +453,75 @@ public:
                 const int range = VisionRange(vision, static_cast<LightBand>(i), observerLight);
                 squaredRanges[i] = range * range;
             }
-            for (std::size_t chunkIndex = 0; chunkIndex < ChunkCount(); ++chunkIndex) {
-                const Chunk& chunk = ChunkAt(chunkIndex);
-                const auto coord = chunk.position;
-                if (coord.y < cache.geometry.minimumY || coord.y > cache.geometry.maximumY
-                    || coord.x * chunk_size > actor.position.x + vision.range
-                    || (coord.x + 1) * chunk_size <= actor.position.x - vision.range
-                    || coord.z * chunk_size > actor.position.z + vision.range
-                    || (coord.z + 1) * chunk_size <= actor.position.z - vision.range) { continue; }
-                if (!cache.geometry.visibleLayers[coord.y - cache.geometry.minimumY]) { continue; }
-                // Prepare publishes invalidation tokens before output materializes.
-                EnsureLighting(world, coord);
-                auto& samples = lightSamples[chunkIndex];
-                const auto chunkRevision = lighting.GetChunkRevision(coord);
-                if (samples.position != coord || samples.revision != chunkRevision) {
-                    const auto levels = lighting.GetChunkLevels(coord);
-                    Require(levels.size() == chunk_size * chunk_size);
-                    samples.position = coord;
-                    samples.revision = chunkRevision;
-                    samples.minimum = 255;
-                    for (int i = 0; i < chunk_size * chunk_size; ++i) {
-                        samples.levels[i] = levels[i];
-                        samples.minimum = eastl::min(samples.minimum, levels[i]);
+            std::size_t sampleIndex = 0;
+            for (const auto& column : columns_) {
+                for (const Chunk& chunk : column.second.layers) {
+                    const auto chunkIndex = sampleIndex++;
+                    const auto coord = chunk.position;
+                    if (coord.y < cache.geometry.minimumY || coord.y > cache.geometry.maximumY
+                        || coord.x * chunk_size > actor.position.x + vision.range
+                        || (coord.x + 1) * chunk_size <= actor.position.x - vision.range
+                        || coord.z * chunk_size > actor.position.z + vision.range
+                        || (coord.z + 1) * chunk_size <= actor.position.z - vision.range) { continue; }
+                    if (!cache.geometry.visibleLayers[coord.y - cache.geometry.minimumY]) { continue; }
+                    // Prepare publishes invalidation tokens before output materializes.
+                    EnsureLighting(world, coord);
+                    auto& samples = lightSamples[chunkIndex];
+                    const auto chunkRevision = lighting.GetChunkRevision(coord);
+                    if (samples.position != coord || samples.revision != chunkRevision) {
+                        const auto levels = lighting.GetChunkLevels(coord);
+                        Require(levels.size() == chunk_size * chunk_size);
+                        samples.position = coord;
+                        samples.revision = chunkRevision;
+                        samples.minimum = 255;
+                        for (int i = 0; i < chunk_size * chunk_size; ++i) {
+                            samples.levels[i] = levels[i];
+                            samples.minimum = eastl::min(samples.minimum, levels[i]);
+                        }
                     }
-                }
-                FootprintChunk footprint{coord, {}};
-                if (cache.geometry.clearLayers[coord.y - cache.geometry.minimumY] && samples.minimum >= 64) {
-                    const int chunkX = coord.x * chunk_size;
-                    const int chunkZ = coord.z * chunk_size;
-                    for (int z = chunkZ; z < chunkZ + chunk_size; ++z) {
-                        const auto row = cache.geometry.ClearRow(z, coord.y);
-                        const int first = eastl::max(chunkX, row.first);
-                        const int last = eastl::min(chunkX + chunk_size - 1, row.second);
-                        if (first > last) { continue; }
-                        const int low = (z - chunkZ) * chunk_size + first - chunkX;
-                        const int high = (z - chunkZ) * chunk_size + last - chunkX;
-                        for (int word = low / 64; word <= high / 64; ++word) {
-                            const int a = word == low / 64 ? low % 64 : 0;
-                            const int b = word == high / 64 ? high % 64 + 1 : 64;
-                            footprint.bits[word] |= (b == 64 ? ~std::uint64_t{0} : (std::uint64_t{1} << b) - 1)
-                                & (~std::uint64_t{0} << a);
+                    FootprintChunk footprint{coord, {}};
+                    if (cache.geometry.clearLayers[coord.y - cache.geometry.minimumY] && samples.minimum >= 64) {
+                        const int chunkX = coord.x * chunk_size;
+                        const int chunkZ = coord.z * chunk_size;
+                        for (int z = chunkZ; z < chunkZ + chunk_size; ++z) {
+                            const auto row = cache.geometry.ClearRow(z, coord.y);
+                            const int first = eastl::max(chunkX, row.first);
+                            const int last = eastl::min(chunkX + chunk_size - 1, row.second);
+                            if (first > last) { continue; }
+                            const int low = (z - chunkZ) * chunk_size + first - chunkX;
+                            const int high = (z - chunkZ) * chunk_size + last - chunkX;
+                            for (int word = low / 64; word <= high / 64; ++word) {
+                                const int a = word == low / 64 ? low % 64 : 0;
+                                const int b = word == high / 64 ? high % 64 + 1 : 64;
+                                footprint.bits[word] |= (b == 64 ? ~std::uint64_t{0} : (std::uint64_t{1} << b) - 1)
+                                    & (~std::uint64_t{0} << a);
+                            }
+                        }
+                        if (footprint.bits[0] || footprint.bits[1] || footprint.bits[2] || footprint.bits[3]) {
+                            cache.footprint.push_back(footprint);
+                        }
+                        continue;
+                    }
+                    for (int index = 0; index < chunk_size * chunk_size; ++index) {
+                        const TileCoord p{coord.x * chunk_size + index % chunk_size,
+                            coord.z * chunk_size + index / chunk_size, coord.y};
+                        const auto geometry = cache.geometry.Get(p);
+                        if (!(geometry & 1)) { continue; }
+                        ++perceptionStats.filterTilesSampled;
+                        const auto light = (geometry & 2)
+                            ? TerrainLightLevel(world, actor.position, p) : samples.levels[index];
+                        const int dx = p.x - actor.position.x;
+                        const int dz = p.z - actor.position.z;
+                        if (dx*dx + dz*dz > squaredRanges[static_cast<int>(ClassifyLight(light))]) {
+                            cache.visible.MaterializeLayer(coord.y);
+                            cache.visible.cells[cache.visible.Index(p)] = 0;
+                        } else {
+                            footprint.bits[index / 64] |= std::uint64_t{1} << (index % 64);
                         }
                     }
                     if (footprint.bits[0] || footprint.bits[1] || footprint.bits[2] || footprint.bits[3]) {
                         cache.footprint.push_back(footprint);
                     }
-                    continue;
-                }
-                for (int index = 0; index < chunk_size * chunk_size; ++index) {
-                    const TileCoord p{coord.x * chunk_size + index % chunk_size,
-                        coord.z * chunk_size + index / chunk_size, coord.y};
-                    const auto geometry = cache.geometry.Get(p);
-                    if (!(geometry & 1)) { continue; }
-                    ++perceptionStats.filterTilesSampled;
-                    const auto light = (geometry & 2)
-                        ? TerrainLightLevel(world, actor.position, p) : samples.levels[index];
-                    const int dx = p.x - actor.position.x;
-                    const int dz = p.z - actor.position.z;
-                    if (dx*dx + dz*dz > squaredRanges[static_cast<int>(ClassifyLight(light))]) {
-                        cache.visible.MaterializeLayer(coord.y);
-                        cache.visible.cells[cache.visible.Index(p)] = 0;
-                    } else {
-                        footprint.bits[index / 64] |= std::uint64_t{1} << (index % 64);
-                    }
-                }
-                if (footprint.bits[0] || footprint.bits[1] || footprint.bits[2] || footprint.bits[3]) {
-                    cache.footprint.push_back(footprint);
                 }
             }
             cache.lightingRevision = lightingRevision;
@@ -572,32 +560,36 @@ public:
     }
 
     eastl::optional<TileCoord> PlayerPosition(PersistentId id) const {
-        const auto found = eastl::lower_bound(playerPositions.begin(), playerPositions.end(), id,
-            [](const PlayerLocation& value, PersistentId key) { return value.id < key; });
-        if (found == playerPositions.end() || found->id != id) { return eastl::nullopt; }
-        return found->position;
+        const auto found = playerPositions.find(id);
+        if (found == playerPositions.end()) { return eastl::nullopt; }
+        return found->second;
     }
 
     void TrackPlayer(PersistentId id, TileCoord position) {
-        const auto found = eastl::lower_bound(playerPositions.begin(), playerPositions.end(), id,
-            [](const PlayerLocation& value, PersistentId key) { return value.id < key; });
-        if (found != playerPositions.end() && found->id == id) {
-            found->position = position;
-        } else {
-            playerPositions.insert(found, {id, position});
-        }
+        playerPositions.insert_or_assign(id, position);
     }
 
     void ForgetPlayer(PersistentId id) {
-        const auto found = eastl::lower_bound(playerPositions.begin(), playerPositions.end(), id,
-            [](const PlayerLocation& value, PersistentId key) { return value.id < key; });
-        Require(found != playerPositions.end() && found->id == id);
-        playerPositions.erase(found);
-        const auto memory = eastl::lower_bound(memories.begin(), memories.end(), id,
-            [](const PlayerMemory& value, PersistentId key) { return value.player < key; });
-        if (memory != memories.end() && memory->player == id) { memories.erase(memory); }
+        Require(playerPositions.erase(id) == 1);
+        memories.erase(id);
         observers.erase(eastl::remove_if(observers.begin(), observers.end(),
             [id](const ObserverCache& cache) { return cache.player == id; }), observers.end());
+    }
+
+    Vector<PlayerMemory> CaptureMemories() const {
+        Vector<PlayerMemory> snapshot;
+        snapshot.reserve(memories.size());
+        for (const auto& player : memories) {
+            PlayerMemory memory{player.first, {}};
+            memory.chunks.reserve(player.second.size());
+            for (const auto& chunk : player.second) { memory.chunks.push_back(chunk.second); }
+            eastl::sort(memory.chunks.begin(), memory.chunks.end(),
+                [](const MemoryChunk& a, const MemoryChunk& b) { return ChunkLess(a.position, b.position); });
+            snapshot.push_back(eastl::move(memory));
+        }
+        eastl::sort(snapshot.begin(), snapshot.end(),
+            [](const PlayerMemory& a, const PlayerMemory& b) { return a.player < b.player; });
+        return snapshot;
     }
 
     void MarkDirty(ChunkCoord position, bool map = true, bool appearance = false) {
@@ -605,16 +597,9 @@ public:
         if (map) { ++mapRevision; }
         if (appearance) {
             ++appearanceRevision;
-            auto changed = eastl::lower_bound(appearanceChanges.begin(), appearanceChanges.end(), position,
-                [](const AppearanceChange& entry, ChunkCoord key) { return ChunkLess(entry.position, key); });
-            if (changed == appearanceChanges.end() || changed->position != position) {
-                appearanceChanges.insert(changed, {position, appearanceRevision});
-            } else { changed->revision = appearanceRevision; }
+            appearanceChanges.insert_or_assign(position, appearanceRevision);
         }
-        const auto found = eastl::lower_bound(dirtyChunks.begin(), dirtyChunks.end(), position, ChunkLess);
-        if (found == dirtyChunks.end() || *found != position) {
-            dirtyChunks.insert(found, position);
-        }
+        dirtyChunks.insert(position);
     }
 
     ChunkCoord RootChunk(ItemLocation location) const {
@@ -755,33 +740,17 @@ public:
         return found == columns_.end() ? nullptr : &found->second.layers[position.y - world_min_y];
     }
 
-    const eastl::array<Chunk, world_layer_count>& ColumnLayers(ColumnCoord position) const {
-        const auto found = columns_.find(position);
-        Require(found != columns_.end());
-        return found->second.layers;
-    }
-
     std::size_t ChunkCount() const { return columns_.size() * world_layer_count; }
 
-    const Chunk& ChunkAt(std::size_t index) const {
-        const auto position = reconciledDemand[index / world_layer_count].position;
-        return ColumnLayers(position)[index % world_layer_count];
-    }
-
-    void InstallColumn(ColumnDemand entry) {
-        const auto [where, inserted] = columns_.try_emplace(entry.position);
+    void InstallColumn(ColumnCoord position, bool active) {
+        const auto [where, inserted] = columns_.try_emplace(position);
         Require(inserted);
         ++perceptionStats.columnsLoaded;
         for (int y = world_min_y; y <= world_max_y; ++y) {
             Chunk& chunk = where->second.layers[y - world_min_y];
-            chunk.position = {entry.position.x, entry.position.z, y};
-            chunk.active = entry.active;
+            chunk.position = {position.x, position.z, y};
+            chunk.active = active;
         }
-    }
-
-    void RemoveColumn(ColumnCoord position) {
-        Require(columns_.erase(position) == 1);
-        ++perceptionStats.columnsUnloaded;
     }
 
     static std::size_t WarmCost(const Archive& archive) {
@@ -1037,7 +1006,6 @@ public:
         }
         ForgetWarm(value.position);
         Require(archives.try_emplace(value.position, eastl::move(saved)).second);
-        archiveOrder.push_back(value.position);
         MarkDirty(value.position);
     }
 
@@ -1156,8 +1124,8 @@ public:
         // Disk-only roster actors were checked above; all other known players
         // must also be represented when the session has an authoritative host.
         if (session.player != 0 || !session.players.empty()) {
-            for (const PlayerLocation& player : playerPositions) {
-                if (eastl::find(playerIds.begin(), playerIds.end(), player.id) == playerIds.end()) {
+            for (const auto& player : playerPositions) {
+                if (eastl::find(playerIds.begin(), playerIds.end(), player.first) == playerIds.end()) {
                     return SaveFailure(SaveError::InvalidData, "Player missing from roster", diagnostics);
                 }
             }
@@ -1182,8 +1150,8 @@ public:
         if (auto result = target.Begin(diagnostics); !result) {
             return result;
         }
-        for (ChunkCoord position : archiveOrder) {
-            const Archive& archive = archives.at(position);
+        for (const auto& entry : archives) {
+            const Archive& archive = entry.second;
             if (auto result = target.WriteChunk(archive, diagnostics); !result) {
                 target.Rollback();
                 return result;
@@ -1195,7 +1163,8 @@ public:
                 return result;
             }
         }
-        if (auto result = target.WriteSnapshot({seed, generationVersion, next_id, session, skyLight, memories}, diagnostics); !result) {
+        const SaveSnapshot saveSnapshot{seed, generationVersion, next_id, session, skyLight, CaptureMemories()};
+        if (auto result = target.WriteSnapshot(saveSnapshot, diagnostics); !result) {
             target.Rollback();
             return result;
         }
@@ -1205,10 +1174,10 @@ public:
         }
         dirtyChunks.clear();
         for (const Archive& snapshot : snapshots) { ForgetWarm(snapshot.position); }
-        for (ChunkCoord position : archiveOrder) { RetainWarm(eastl::move(archives.at(position))); }
+        // Admission order is unspecified; warmOrder records actual FIFO admission.
+        for (auto& entry : archives) { RetainWarm(eastl::move(entry.second)); }
         // clear() alone retains the potentially large outer archive allocation.
         ArchiveMap().swap(archives);
-        Vector<ChunkCoord>().swap(archiveOrder);
         return {};
     }
 };
@@ -1280,7 +1249,7 @@ WorldResult<void> World::ReleaseRequest(LoadRequest handle) {
 
 SaveResult<void> World::ReconcileChunks(Diagnostics* diagnostics) {
     if (!impl_->demandDirty) { return {}; }
-    Vector<ColumnDemand> demand;
+    Impl::DemandMap demand;
     for (const Request& request : impl_->requests) {
         if (request.circle) {
             const auto circle = *request.circle;
@@ -1293,7 +1262,8 @@ SaveResult<void> World::ReconcileChunks(Diagnostics* diagnostics) {
                     const int dx = nearestX - circle.center.x;
                     const int dz = nearestZ - circle.center.z;
                     if (dx * dx + dz * dz <= circle.radiusTiles * circle.radiusTiles) {
-                        demand.push_back({{x, z}, request.mode == LoadMode::active});
+                        bool& active = demand[{x, z}];
+                        active = active || request.mode == LoadMode::active;
                     }
                 }
             }
@@ -1302,52 +1272,43 @@ SaveResult<void> World::ReconcileChunks(Diagnostics* diagnostics) {
         const ChunkRegion region = request.region;
         for (int x = region.center.x - region.radius; x <= region.center.x + region.radius; ++x) {
             for (int z = region.center.z - region.radius; z <= region.center.z + region.radius; ++z) {
-                demand.push_back({{x, z}, request.mode == LoadMode::active});
+                bool& active = demand[{x, z}];
+                active = active || request.mode == LoadMode::active;
             }
         }
     }
-    eastl::sort(demand.begin(), demand.end(), [](const ColumnDemand& a, const ColumnDemand& b) {
-        return ColumnLess(a.position, b.position);
-    });
-    std::size_t count = 0;
-    for (const ColumnDemand entry : demand) {
-        if (count != 0 && demand[count - 1].position == entry.position) {
-            demand[count - 1].active = demand[count - 1].active || entry.active;
-        } else {
-            demand[count++] = entry;
-        }
+    bool sameColumns = demand.size() == impl_->columns_.size();
+    bool sameActivity = sameColumns;
+    for (const auto& entry : demand) {
+        const auto current = impl_->columns_.find(entry.first);
+        if (current == impl_->columns_.end()) { sameColumns = false; sameActivity = false; }
+        else if (current->second.layers.front().active != entry.second) { sameActivity = false; }
     }
-    demand.resize(count);
-    if (demand.size() == impl_->reconciledDemand.size()
-        && eastl::equal(demand.begin(), demand.end(), impl_->reconciledDemand.begin(),
-            [](const ColumnDemand& a, const ColumnDemand& b) { return a.position == b.position && a.active == b.active; })) {
+    if (sameActivity) {
         impl_->demandDirty = false;
         return {};
     }
     ++impl_->perceptionStats.demandReconciliations;
-    if (demand.size() == impl_->reconciledDemand.size()
-        && eastl::equal(demand.begin(), demand.end(), impl_->reconciledDemand.begin(),
-            [](const ColumnDemand& a, const ColumnDemand& b) { return a.position == b.position; })) {
+    if (sameColumns) {
         // Skip archive work, but retain the structural path's gravity boundary:
         // newly active disk-restored entities may still be suspended in air.
         Impl::GravityBatch batch(*this);
-        for (const ColumnDemand entry : demand) {
-            for (int y = world_min_y; y <= world_max_y; ++y) {
-                Chunk* chunk = impl_->GetChunk({entry.position.x, entry.position.z, y});
-                if (chunk->active != entry.active) { ++impl_->mapRevision; ++impl_->revision; }
-                chunk->active = entry.active;
+        for (auto& column : impl_->columns_) {
+            const bool active = demand.at(column.first);
+            for (Chunk& chunk : column.second.layers) {
+                if (chunk.active != active) { ++impl_->mapRevision; ++impl_->revision; }
+                chunk.active = active;
             }
         }
-        impl_->reconciledDemand = eastl::move(demand);
         SettleGravity();
         impl_->demandDirty = false;
         return {};
     }
     Impl::ArchiveMap staged;
     if (impl_->database) {
-        for (const ColumnDemand entry : demand) {
+        for (const auto& entry : demand) {
             for (int y = world_min_y; y <= world_max_y; ++y) {
-                const ChunkCoord position{entry.position.x, entry.position.z, y};
+                const ChunkCoord position{entry.first.x, entry.first.z, y};
                 if (impl_->GetChunk(position)
                     || impl_->archives.contains(position) || impl_->warmArchives.contains(position)) {
                     continue;
@@ -1385,29 +1346,27 @@ SaveResult<void> World::ReconcileChunks(Diagnostics* diagnostics) {
     }
     // No live state, activity flags, archives, or keys change before this point.
     Impl::GravityBatch batch(*this);
-    for (const ColumnDemand current : impl_->reconciledDemand) {
-        const auto wanted = eastl::lower_bound(demand.begin(), demand.end(), current.position,
-            [](const ColumnDemand& value, ColumnCoord key) { return ColumnLess(value.position, key); });
-        const bool remove = wanted == demand.end() || wanted->position != current.position;
-        for (int y = world_min_y; y <= world_max_y; ++y) {
-            const ChunkCoord position{current.position.x, current.position.z, y};
-            Chunk* chunk = impl_->GetChunk(position);
-            Require(chunk != nullptr);
+    for (auto current = impl_->columns_.begin(); current != impl_->columns_.end();) {
+        const auto wanted = demand.find(current->first);
+        const bool remove = wanted == demand.end();
+        for (Chunk& chunk : current->second.layers) {
+            const auto position = chunk.position;
             if (remove) {
                 impl_->lightingDirty = true;
                 impl_->MarkGeometryDirty(position);
-                const auto input = eastl::lower_bound(impl_->lightingInputs.begin(), impl_->lightingInputs.end(), position,
-                    [](const Impl::LightingInput& value, ChunkCoord key) { return ChunkLess(value.position, key); });
-                if (input != impl_->lightingInputs.end() && input->position == position) { impl_->lightingInputs.erase(input); }
-                chunk->active = false;
-                impl_->Unload(*chunk);
+                impl_->lightingInputs.erase(position);
+                chunk.active = false;
+                impl_->Unload(chunk);
             } else {
-                if (chunk->active != wanted->active) { ++impl_->mapRevision; ++impl_->revision; }
-                chunk->active = wanted->active;
+                if (chunk.active != wanted->second) { ++impl_->mapRevision; ++impl_->revision; }
+                chunk.active = wanted->second;
             }
         }
-        // Erase by key: segmented_map erase can move its last value into this slot.
-        if (remove) { impl_->RemoveColumn(current.position); }
+        // Erasure relocates the last dense value; revisit the returned iterator.
+        if (remove) {
+            current = impl_->columns_.erase(current);
+            ++impl_->perceptionStats.columnsUnloaded;
+        } else { ++current; }
     }
     const auto incomingArchive = [&](ChunkCoord position) -> const Archive* {
         const auto pending = impl_->archives.find(position);
@@ -1419,11 +1378,11 @@ SaveResult<void> World::ReconcileChunks(Diagnostics* diagnostics) {
         return nullptr;
     };
     Vector<ChunkCoord> incoming;
-    for (const ColumnDemand entry : demand) {
-        if (impl_->GetChunk({entry.position.x, entry.position.z, world_min_y})) { continue; }
-        impl_->InstallColumn(entry);
+    for (const auto& entry : demand) {
+        if (impl_->columns_.contains(entry.first)) { continue; }
+        impl_->InstallColumn(entry.first, entry.second);
         for (int y = world_min_y; y <= world_max_y; ++y) {
-            const ChunkCoord position{entry.position.x, entry.position.z, y};
+            const ChunkCoord position{entry.first.x, entry.first.z, y};
             incoming.push_back(position);
             impl_->MarkLightingDirty(position);
             impl_->MarkGeometryDirty(position);
@@ -1435,7 +1394,6 @@ SaveResult<void> World::ReconcileChunks(Diagnostics* diagnostics) {
         }
     }
     // Publish complete terrain/residency before restoration or mutation callbacks.
-    impl_->reconciledDemand = eastl::move(demand);
     Vector<ItemHandle> restoredItems;
     for (ChunkCoord position : incoming) {
         if (const Archive* saved = incomingArchive(position)) {
@@ -1444,7 +1402,7 @@ SaveResult<void> World::ReconcileChunks(Diagnostics* diagnostics) {
         }
     }
     for (ChunkCoord position : incoming) {
-        if (impl_->archives.erase(position)) { EraseOne(impl_->archiveOrder, position); }
+        impl_->archives.erase(position);
         impl_->ForgetWarm(position);
     }
     for (ItemHandle handle : restoredItems) { impl_->itemSystem.Attach(handle); }
@@ -1513,7 +1471,13 @@ SaveResult<SessionState> World::LoadSave(const char* path, Diagnostics* diagnost
     impl_->generationPlan.reset();
     impl_->next_id = snapshot->nextId;
     impl_->skyLight = snapshot->skyLight;
-    impl_->memories = eastl::move(snapshot->memories);
+    for (PlayerMemory& player : snapshot->memories) {
+        auto& chunks = impl_->memories.try_emplace(player.player).first->second;
+        for (MemoryChunk& chunk : player.chunks) {
+            const auto position = chunk.position;
+            chunks.try_emplace(position, eastl::move(chunk));
+        }
+    }
     impl_->lightingDirty = true;
     ++impl_->revision;
     ++impl_->mapRevision;
@@ -1585,10 +1549,8 @@ bool World::IsActive(TileCoord position) const {
 Vector<ChunkCoord> World::LoadedChunks() const {
     Vector<ChunkCoord> result;
     result.reserve(impl_->ChunkCount());
-    for (const ColumnDemand entry : impl_->reconciledDemand) {
-        for (int y = world_min_y; y <= world_max_y; ++y) {
-            result.push_back({entry.position.x, entry.position.z, y});
-        }
+    for (const auto& column : impl_->columns_) {
+        for (const Chunk& chunk : column.second.layers) { result.push_back(chunk.position); }
     }
     return result;
 }
@@ -1630,9 +1592,6 @@ Vector<ItemHandle> World::ItemsAt(TileCoord position) const {
             }
         }
     }
-    eastl::sort(result.begin(), result.end(), [this](ItemHandle a, ItemHandle b) {
-        return GetItem(a)->id < GetItem(b)->id;
-    });
     return result;
 }
 
@@ -1651,9 +1610,9 @@ ObjectHandle World::ObjectAt(TileCoord position) const {
 }
 
 void World::SettleGravity() {
-    for (const ColumnDemand entry : impl_->reconciledDemand) {
-        if (!entry.active) { continue; }
-        for (const Chunk& chunk : impl_->ColumnLayers(entry.position)) {
+    for (const auto& column : impl_->columns_) {
+        if (!column.second.layers.front().active) { continue; }
+        for (const Chunk& chunk : column.second.layers) {
             for (ActorHandle handle : chunk.actors) {
                 const Actor* actor = GetActor(handle);
                 if (!actor->parked) { impl_->QueueGravity(actor->position); }
@@ -2135,9 +2094,8 @@ void World::SetSkyLight(std::uint8_t level) {
 }
 std::uint8_t World::GetSkyLight() const { return impl_->skyLight; }
 std::uint64_t World::GetLightingInputRevision(ChunkCoord position) const {
-    const auto found = eastl::lower_bound(impl_->lightingInputs.begin(), impl_->lightingInputs.end(), position,
-        [](const Impl::LightingInput& entry, ChunkCoord key) { return ChunkLess(entry.position, key); });
-    return found != impl_->lightingInputs.end() && found->position == position ? found->revision : 0;
+    const auto found = impl_->lightingInputs.find(position);
+    return found != impl_->lightingInputs.end() ? found->second : 0;
 }
 std::uint8_t World::GetLightLevel(TileCoord position) const {
     if (!ValidPosition(position)) { return 0; }
@@ -2176,22 +2134,20 @@ std::uint8_t World::GetIncidentLightLevel(TileCoord position, int face) const {
     return impl_->lighting.GetIncident(position, face);
 }
 
-const Vector<PlayerMemory>& World::GetPlayerMemories() const { return impl_->memories; }
+Vector<PlayerMemory> World::GetPlayerMemories() const { return impl_->CaptureMemories(); }
 
 RememberedTile World::GetRememberedTile(PersistentId player, TileCoord position) const {
     if (!ValidPosition(position)) { return {}; }
-    const auto memory = eastl::lower_bound(impl_->memories.begin(), impl_->memories.end(), player,
-        [](const PlayerMemory& value, PersistentId key) { return value.player < key; });
-    if (memory == impl_->memories.end() || memory->player != player) { return {}; }
+    const auto memory = impl_->memories.find(player);
+    if (memory == impl_->memories.end()) { return {}; }
     const auto coord = ChunkOf(position);
-    const auto chunk = eastl::lower_bound(memory->chunks.begin(), memory->chunks.end(), coord,
-        [](const MemoryChunk& value, ChunkCoord key) { return ChunkLess(value.position, key); });
-    if (chunk == memory->chunks.end() || chunk->position != coord) { return {}; }
+    const auto chunk = memory->second.find(coord);
+    if (chunk == memory->second.end()) { return {}; }
     const int index = TileIndex(position);
-    RememberedTile result{chunk->terrain[index], {}};
-    const auto object = eastl::lower_bound(chunk->objects.begin(), chunk->objects.end(), index,
+    RememberedTile result{chunk->second.terrain[index], {}};
+    const auto object = eastl::lower_bound(chunk->second.objects.begin(), chunk->second.objects.end(), index,
         [](const RememberedObject& value, int key) { return value.tileIndex < key; });
-    if (object != chunk->objects.end() && object->tileIndex == index) { result.object = object->appearance; }
+    if (object != chunk->second.objects.end() && object->tileIndex == index) { result.object = object->appearance; }
     return result;
 }
 
@@ -2203,40 +2159,29 @@ void World::UpdatePlayerObservations() {
         if (cache.observedFilterRevision == cache.filterRevision
             && cache.observedAppearanceRevision == impl_->appearanceRevision) { continue; }
         ++impl_->perceptionStats.observationScans;
-        auto memory = eastl::lower_bound(impl_->memories.begin(), impl_->memories.end(), actor.id,
-            [](const PlayerMemory& value, PersistentId key) { return value.player < key; });
-        if (memory == impl_->memories.end() || memory->player != actor.id) {
-            memory = impl_->memories.insert(memory, {actor.id, {}});
-        }
+        // No further player-map insertion while borrowing this player's chunk map.
+        auto& memory = impl_->memories.try_emplace(actor.id).first->second;
         const bool visibilityChanged = cache.observedFilterRevision != cache.filterRevision;
-        std::size_t oldIndex = 0;
         for (const auto& footprint : cache.footprint) {
             const auto coord = footprint.position;
             bool appearanceChanged = false;
             if (cache.observedAppearanceRevision != impl_->appearanceRevision) {
-                const auto changed = eastl::lower_bound(impl_->appearanceChanges.begin(), impl_->appearanceChanges.end(), coord,
-                    [](const Impl::AppearanceChange& entry, ChunkCoord key) { return ChunkLess(entry.position, key); });
-                appearanceChanged = changed != impl_->appearanceChanges.end() && changed->position == coord
-                    && changed->revision > cache.observedAppearanceRevision;
+                const auto changed = impl_->appearanceChanges.find(coord);
+                appearanceChanged = changed != impl_->appearanceChanges.end()
+                    && changed->second > cache.observedAppearanceRevision;
             }
             if (!visibilityChanged && !appearanceChanged) { continue; }
-            while (oldIndex < cache.learnedFootprint.size()
-                && ChunkLess(cache.learnedFootprint[oldIndex].position, coord)) { ++oldIndex; }
-            const auto* old = oldIndex < cache.learnedFootprint.size()
-                && cache.learnedFootprint[oldIndex].position == coord ? &cache.learnedFootprint[oldIndex] : nullptr;
-            auto chunk = memory->chunks.end();
+            const auto previous = cache.learnedFootprint.find(coord);
+            const auto* old = previous != cache.learnedFootprint.end() ? &previous->second : nullptr;
+            MemoryChunk* chunk = nullptr;
             const Chunk* liveChunk = nullptr;
             const auto observe = [&](int index) {
                 ++impl_->perceptionStats.memoryTilesExamined;
                 if (!liveChunk) { liveChunk = impl_->GetChunk(coord); Require(liveChunk != nullptr); }
                 const TileCoord p{coord.x * chunk_size + index % chunk_size,
                     coord.z * chunk_size + index / chunk_size, coord.y};
-                if (chunk == memory->chunks.end()) {
-                    chunk = eastl::lower_bound(memory->chunks.begin(), memory->chunks.end(), coord,
-                        [](const MemoryChunk& value, ChunkCoord key) { return ChunkLess(value.position, key); });
-                    if (chunk == memory->chunks.end() || chunk->position != coord) {
-                        chunk = memory->chunks.insert(chunk, {coord, {}, {}});
-                    }
+                if (!chunk) {
+                    chunk = &memory.try_emplace(coord, MemoryChunk{coord, {}, {}}).first->second;
                 }
                 bool tileChanged = chunk->terrain[index] != liveChunk->tiles[index].terrain;
                 if (tileChanged) { chunk->terrain[index] = liveChunk->tiles[index].terrain; }
@@ -2264,7 +2209,7 @@ void World::UpdatePlayerObservations() {
             };
             for (int word = 0; word < 4; ++word) {
                 auto changed = footprint.bits[word];
-                if (!appearanceChanged && old) { changed &= ~old->bits[word]; }
+                if (!appearanceChanged && old) { changed &= ~(*old)[word]; }
                 while (changed) {
                     const int bit = std::countr_zero(changed);
                     observe(word * 64 + bit);
@@ -2272,7 +2217,11 @@ void World::UpdatePlayerObservations() {
                 }
             }
         }
-        cache.learnedFootprint = cache.footprint;
+        cache.learnedFootprint.clear();
+        for (const auto& footprint : cache.footprint) {
+            cache.learnedFootprint.try_emplace(footprint.position, footprint.bits);
+        }
+        if (memory.empty()) { impl_->memories.erase(actor.id); }
         cache.observedFilterRevision = cache.filterRevision;
         cache.observedAppearanceRevision = impl_->appearanceRevision;
     }
@@ -2316,9 +2265,9 @@ void World::ElapseTicks(Tick elapsed) {
     Impl::GravityBatch batch(*this);
     if (elapsed == 0) { return; }
     impl_->itemSystem.Elapse(elapsed);
-    for (const ColumnDemand entry : impl_->reconciledDemand) {
-        if (!entry.active) { continue; }
-        for (const Chunk& chunk : impl_->ColumnLayers(entry.position)) {
+    for (const auto& column : impl_->columns_) {
+        if (!column.second.layers.front().active) { continue; }
+        for (const Chunk& chunk : column.second.layers) {
             bool modified = false;
             for (ActorHandle handle : chunk.actors) {
                 Actor* actor = Live(impl_->actors, handle);
@@ -2343,9 +2292,9 @@ void World::ElapseTicks(Tick elapsed) {
 
 Vector<ActorHandle> World::ActiveActors() const {
     Vector<ActorHandle> result;
-    for (const ColumnDemand entry : impl_->reconciledDemand) {
-        if (!entry.active) { continue; }
-        for (const Chunk& value : impl_->ColumnLayers(entry.position)) {
+    for (const auto& column : impl_->columns_) {
+        if (!column.second.layers.front().active) { continue; }
+        for (const Chunk& value : column.second.layers) {
             for (ActorHandle handle : value.actors) {
                 if (!GetActor(handle)->parked) { result.push_back(handle); }
             }
@@ -2359,9 +2308,9 @@ Vector<ActorHandle> World::ActiveActors() const {
 
 Vector<ObjectHandle> World::ActiveObjects() const {
     Vector<ObjectHandle> result;
-    for (const ColumnDemand entry : impl_->reconciledDemand) {
-        if (!entry.active) { continue; }
-        for (const Chunk& value : impl_->ColumnLayers(entry.position)) {
+    for (const auto& column : impl_->columns_) {
+        if (!column.second.layers.front().active) { continue; }
+        for (const Chunk& value : column.second.layers) {
             for (ObjectHandle handle : value.objects) {
                 result.push_back(handle);
             }
@@ -2406,7 +2355,12 @@ WorldResult<void> World::RecordObjectUpdate(ObjectHandle handle) {
 
 bool World::CheckInvariants() const {
     const Impl& state = *impl_;
-    if (!ValidMemories(state.content, state.memories, state.next_id)) { return false; }
+    for (const auto& player : state.memories) {
+        if (player.first == 0 || player.first >= state.next_id || player.second.empty()) { return false; }
+        for (const auto& chunk : player.second) {
+            if (chunk.first != chunk.second.position || !ValidMemoryChunk(state.content, chunk.second)) { return false; }
+        }
+    }
     Vector<PersistentId> ids;
     Vector<ActorHandle> indexed_actors;
     Vector<ObjectHandle> indexed_objects;
@@ -2418,55 +2372,47 @@ bool World::CheckInvariants() const {
         ids.push_back(id);
         return true;
     };
-    if (state.ChunkCount() != state.reconciledDemand.size() * world_layer_count) { return false; }
-    for (std::size_t index = 0; index < state.reconciledDemand.size(); ++index) {
-        const auto entry = state.reconciledDemand[index];
-        if ((index && !ColumnLess(state.reconciledDemand[index - 1].position, entry.position))
-            || !state.GetChunk({entry.position.x, entry.position.z, world_min_y})) { return false; }
+    for (const auto& column : state.columns_) {
         for (int y = world_min_y; y <= world_max_y; ++y) {
-            const Chunk* chunk = state.GetChunk({entry.position.x, entry.position.z, y});
-            if (!chunk || chunk->position != ChunkCoord{entry.position.x, entry.position.z, y}
-                || chunk->active != entry.active) { return false; }
-        }
-    }
-    for (std::size_t index = 0; index < state.ChunkCount(); ++index) {
-        const Chunk& value = state.ChunkAt(index);
-        if (!ValidRegion({value.position, 0}) || !ValidChunk(value.position)
-            || (index != 0 && !ChunkLess(state.ChunkAt(index - 1).position, value.position))) {
-            return false;
-        }
-        for (const Tile& tile : value.tiles) {
-            if (!state.content.TryGetTerrain(tile.terrain)) { return false; }
-        }
-        Vector<TileCoord> actor_positions;
-        Vector<TileCoord> object_positions;
-        for (ActorHandle handle : value.actors) {
-            const Actor* actor = this->GetActor(handle);
-            if (!actor || !ValidPosition(actor->position) || ChunkOf(actor->position) != value.position
-                || (actor->parked && !actor->player)
-                || (!actor->parked && Occurrences(actor_positions, actor->position) != 0)) {
+            const Chunk& value = column.second.layers[y - world_min_y];
+            if (value.position != ChunkCoord{column.first.x, column.first.z, y}
+                || value.active != column.second.layers.front().active
+                || !ValidRegion({value.position, 0}) || !ValidChunk(value.position)) {
                 return false;
             }
-            if (!actor->parked) { actor_positions.push_back(actor->position); }
-            indexed_actors.push_back(handle);
-        }
-        for (ObjectHandle handle : value.objects) {
-            const InteractiveObject* object = this->GetObject(handle);
-            if (!object || !ValidPosition(object->position) || ChunkOf(object->position) != value.position
-                || Occurrences(object_positions, object->position) != 0) {
-                return false;
+            for (const Tile& tile : value.tiles) {
+                if (!state.content.TryGetTerrain(tile.terrain)) { return false; }
             }
-            object_positions.push_back(object->position);
-            indexed_objects.push_back(handle);
-        }
-        for (ItemHandle handle : value.ground_items) {
-            const Item* item = this->GetItem(handle);
-            if (!item || item->location.kind != LocationKind::ground
-                || !ValidPosition(item->location.position)
-                || ChunkOf(item->location.position) != value.position) {
-                return false;
+            Vector<TileCoord> actor_positions;
+            Vector<TileCoord> object_positions;
+            for (ActorHandle handle : value.actors) {
+                const Actor* actor = this->GetActor(handle);
+                if (!actor || !ValidPosition(actor->position) || ChunkOf(actor->position) != value.position
+                    || (actor->parked && !actor->player)
+                    || (!actor->parked && Occurrences(actor_positions, actor->position) != 0)) {
+                    return false;
+                }
+                if (!actor->parked) { actor_positions.push_back(actor->position); }
+                indexed_actors.push_back(handle);
             }
-            owned_items.push_back(handle);
+            for (ObjectHandle handle : value.objects) {
+                const InteractiveObject* object = this->GetObject(handle);
+                if (!object || !ValidPosition(object->position) || ChunkOf(object->position) != value.position
+                    || Occurrences(object_positions, object->position) != 0) {
+                    return false;
+                }
+                object_positions.push_back(object->position);
+                indexed_objects.push_back(handle);
+            }
+            for (ItemHandle handle : value.ground_items) {
+                const Item* item = this->GetItem(handle);
+                if (!item || item->location.kind != LocationKind::ground
+                    || !ValidPosition(item->location.position)
+                    || ChunkOf(item->location.position) != value.position) {
+                    return false;
+                }
+                owned_items.push_back(handle);
+            }
         }
     }
     for (const auto& entry : state.actors.items()) {
@@ -2543,10 +2489,9 @@ bool World::CheckInvariants() const {
         }
     }
     Vector<ChunkCoord> archived_positions;
-    if (state.archiveOrder.size() != state.archives.size()) { return false; }
     for (const auto& entry : state.archives) {
         const Archive& saved = entry.second;
-        if (entry.first != saved.position || Occurrences(state.archiveOrder, entry.first) != 1) { return false; }
+        if (entry.first != saved.position) { return false; }
         if (!ValidRegion({saved.position, 0}) || !ValidChunk(saved.position) || state.GetChunk(saved.position)
             || Occurrences(archived_positions, saved.position) != 0) {
             return false;
@@ -2614,13 +2559,13 @@ bool World::CheckInvariants() const {
             }
         }
     }
-    for (std::size_t index = 0; index < state.playerPositions.size(); ++index) {
-        if (index && state.playerPositions[index - 1].id >= state.playerPositions[index].id) {
+    for (const auto& player : state.playerPositions) {
+        if (player.first == 0 || player.first >= state.next_id || !ValidPosition(player.second)) {
             return false;
         }
     }
-    for (const ColumnDemand entry : state.reconciledDemand) {
-        for (const Chunk& chunk : state.ColumnLayers(entry.position)) {
+    for (const auto& column : state.columns_) {
+        for (const Chunk& chunk : column.second.layers) {
             Vector<PersistentId> checkedIds;
             if (!ValidateArchive(state.content, state.Capture(chunk), state.next_id, checkedIds)) { return false; }
         }

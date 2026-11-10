@@ -3,6 +3,7 @@
 #include "core/perception_types.h"
 #include <EASTL/utility.h>
 #include <EASTL/span.h>
+#include <EASTL/unique_ptr.h>
 
 namespace cataclysmx {
 
@@ -16,13 +17,22 @@ struct OpticalChunk {
 };
 // Mutation-generation snapshot. Values remain valid when World storage moves.
 struct OpticalField {
-    Vector<OpticalChunk> chunks;
+    OpticalField();
+    ~OpticalField();
+    OpticalField(OpticalField&&) noexcept;
+    OpticalField& operator=(OpticalField&&) noexcept;
+    OpticalField(const OpticalField&) = delete;
+    OpticalField& operator=(const OpticalField&) = delete;
     std::uint64_t revision = 0;
     void Rebuild(const World& world);
     // Exact changed/residency coordinates; absent World chunks are removed.
     // Advances revision only when copied optical flags or residency differ.
     void Refresh(const World& world, eastl::span<const ChunkCoord> positions);
+    // Borrow expires on any Rebuild, Refresh, move, or destruction of this field.
     const OpticalChunk* Find(ChunkCoord position) const;
+private:
+    struct Storage;
+    eastl::unique_ptr<Storage> storage_;
 };
 
 // Chunk-aligned observer plane; never borrows World/chunk storage.

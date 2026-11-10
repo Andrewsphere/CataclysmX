@@ -83,9 +83,10 @@ void SameState(const Server& first, const Server& second) {
     CHECK(first.GetResidentRadius() == second.GetResidentRadius());
     const World& left = first.GetWorld();
     const World& right = second.GetWorld();
-    REQUIRE(left.LoadedChunks() == right.LoadedChunks());
+    REQUIRE(left.LoadedChunks().size() == right.LoadedChunks().size());
     for (ChunkCoord position : left.LoadedChunks()) {
         const Chunk* chunk = left.GetChunk(position);
+        REQUIRE(right.GetChunk(position));
         REQUIRE(chunk->tiles == right.GetChunk(position)->tiles);
         CHECK(chunk->active == right.GetChunk(position)->active);
         REQUIRE(chunk->actors.size() == right.GetChunk(position)->actors.size());
@@ -249,6 +250,8 @@ TEST_CASE("Small circles preflight active square storage and restore policy on r
     SaveFile file;
     Server server(TestContent());
     World& world = server.GetWorld();
+    // Item-bearing archives bypass the warm cache, ensuring a disk read below.
+    REQUIRE(world.CreateItem(TestItem("rock"), ItemLocation::Ground({32, 0})));
     REQUIRE(world.MoveActor(server.GetPlayer(), {15, 0}));
     REQUIRE(world.SetTile({16, 0}, {TestTerrain("floor"), 0}));
     REQUIRE(server.SetCircleResidency(1, {0}));
@@ -279,13 +282,15 @@ TEST_CASE("Small circles preflight active square storage and restore policy on r
 TEST_CASE("Within chunk circle expansion rejects corrupt resident columns before moving", "[server][save][streaming][circle]") {
     SaveFile file;
     Server server(TestContent());
+    World& world = server.GetWorld();
+    // Cache admission order must not determine whether the corrupted row is read.
+    REQUIRE(world.CreateItem(TestItem("rock"), ItemLocation::Ground({16, 0})));
     REQUIRE(server.SetCircleResidency(0, {15}));
     REQUIRE(server.CreateSave(file.path.c_str()));
     {
         RawDatabase raw(file.path.c_str());
         raw.Exec("UPDATE chunks SET payload='{}' WHERE x=1 AND z=0 AND y=0");
     }
-    World& world = server.GetWorld();
     const auto before = world.LoadedChunks();
     const auto player = server.GetPlayer();
     const auto view = server.View();
@@ -517,8 +522,9 @@ TEST_CASE("Streaming movement preflights the full future bubble before moving or
     "[server][save][streaming]") {
     SaveFile file;
     Server server(TestContent());
-    REQUIRE(server.SetBubbleRadii(0, 1));
     World& world = server.GetWorld();
+    REQUIRE(world.CreateItem(TestItem("rock"), ItemLocation::Ground({32, 0})));
+    REQUIRE(server.SetBubbleRadii(0, 1));
     REQUIRE(world.MoveActor(server.GetPlayer(), {15, 0}));
     REQUIRE(world.SetTile({16, 0}, {TestTerrain("floor"), 0}));
     REQUIRE(server.CreateSave(file.path.c_str()));
@@ -604,8 +610,9 @@ TEST_CASE("Buffered movement reports storage failures at execution and clears th
     "[server][save][buffering]") {
     SaveFile file;
     Server server(TestContent());
-    REQUIRE(server.SetBubbleRadii(0, 1));
     World& world = server.GetWorld();
+    REQUIRE(world.CreateItem(TestItem("rock"), ItemLocation::Ground({32, 0})));
+    REQUIRE(server.SetBubbleRadii(0, 1));
     REQUIRE(world.MoveActor(server.GetPlayer(), {15, 0}));
     REQUIRE(world.SetTile({16, 0}, {TestTerrain("floor"), 0}));
     REQUIRE(server.SetPacing({100, true, true}));
@@ -967,6 +974,7 @@ TEST_CASE("Reconnect staging failure leaves parked guest joining without relocat
     }
     REQUIRE(world.MoveActor(guest, {15, 1}));
     REQUIRE(server.DisconnectPlayer(joined->player));
+    REQUIRE(world.CreateItem(TestItem("rock"), ItemLocation::Ground({16, 0})));
     REQUIRE(server.SetBubbleRadii(0, 0));
     REQUIRE(world.CreateActor({15, 1}));
     REQUIRE(server.CreateSave(file.path.c_str()));

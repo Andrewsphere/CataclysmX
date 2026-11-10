@@ -66,8 +66,10 @@ Out-of-buffer cells are treated as missing blockers.
 
 ## Owned optics and planar workspace
 
-`OpticalField::Rebuild` owns one copied flag byte per resident tile, sorted by
-chunk `(x,z,y)`, and advances its revision. Bits 2/3 are open-space/stairs for
+`OpticalField::Rebuild` owns one copied flag byte per resident tile, keyed by
+chunk `(x,z,y)` in unordered storage, and advances its revision. Coordinate lookup
+avoids maintaining a sorted runtime sequence; no iteration order is promised.
+Bits 2/3 are open-space/stairs for
 projection and existing optical compatibility. No World/chunk pointers survive
 structural mutation. `Refresh(const World&, eastl::span<const ChunkCoord>)` accepts
 exact edited/loaded/unloaded chunk coordinates, updates only those snapshots,
@@ -75,6 +77,12 @@ removes absent chunks, and advances revision only if optical bytes or residency
 changed. Input order and duplicate coordinates are allowed. World retains changed
 optical chunk coordinates and refreshes only those snapshots after initialization.
 Appearance-only changes need no optical rebuild.
+
+`Find` returns a read-only chunk snapshot or null. Its pointer is borrowed only
+until the next `Rebuild`, `Refresh`, move, or destruction of the field: insertion
+and removal can relocate even unrelated chunks. The field has unique ownership
+and is movable but not copyable. Discard reusable workspaces referring to a field
+before moving it or assigning another field to it.
 
 `VisibilityWorkspace::Prepare(field, first, last)` now requires `first.y ==
 last.y`: its `optics` is exactly `width*depth` bytes for one chunk-aligned plane.
@@ -119,6 +127,12 @@ Lighting output changes invalidate intersecting observers independently, includi
 a one-cell surface-sampling margin. Chunk light samples are copied lazily by
 output revision only for chunks participating in a filter. An emitter movement
 does not copy every resident light level or rescan unchanged terrain for emitters.
+
+Filtering traverses World's owned columns without spatial sorting. Observation
+updates look up each chunk's previously learned visibility bits by coordinate,
+so column insertion or dense-map erasure cannot disrupt footprint matching.
+Unchanged visible cells are skipped unless the chunk's appearance revision changed;
+light sample cache slots also check their coordinate and output revision before reuse.
 
 ### Bulk projection borrows
 

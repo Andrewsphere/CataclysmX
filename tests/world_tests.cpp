@@ -100,8 +100,11 @@ TEST_CASE("Chunk requests combine demand and reject invalid updates atomically",
     CHECK(world.LoadedChunks().empty());
     world.ReconcileChunks();
     REQUIRE(world.LoadedChunks().size() == 9 * world_layer_count);
-    CHECK(world.LoadedChunks().front() == ChunkCoord{-1, -1, world_min_y});
-    CHECK(world.LoadedChunks().back() == ChunkCoord{1, 1, world_max_y});
+    for (int x = -1; x <= 1; ++x) {
+        for (int z = -1; z <= 1; ++z) {
+            for (int y = world_min_y; y <= world_max_y; ++y) { CHECK(world.GetChunk({x, z, y})); }
+        }
+    }
     CHECK(world.IsActive({0, 0}));
     CHECK(world.IsActive({16, 0}));
     CHECK_FALSE(world.IsActive({-1, -1}));
@@ -124,7 +127,7 @@ TEST_CASE("Chunk requests combine demand and reject invalid updates atomically",
     REQUIRE(world.UpdateRequest(overlap, {{-2, 0}, 0}, LoadMode::resident));
     world.ReconcileChunks();
     CHECK(world.LoadedChunks().size() == 10 * world_layer_count);
-    CHECK(world.LoadedChunks().front() == ChunkCoord{-2, 0, world_min_y});
+    CHECK(world.GetChunk({-2, 0, world_min_y}));
     CHECK_FALSE(world.IsActive({16, 0}));
     REQUIRE(world.ReleaseRequest(resident));
     world.ReconcileChunks();
@@ -323,19 +326,33 @@ TEST_CASE("Circle footprints change inside a chunk and combine with square activ
     CHECK(world.CheckInvariants());
 }
 
-TEST_CASE("Column erasure preserves canonical traversal and retained entity keys", "[world][streaming][determinism]") {
+TEST_CASE("Column erasure preserves grouped traversal and retained entity keys", "[world][streaming][determinism]") {
     World world(TestContent());
     Vector<LoadRequest> requests;
     for (const int x : {3, -2, 1, 0, -1, 2}) {
         requests.push_back(take(world.RequestChunks({{x, 0}, 0}, LoadMode::active)));
     }
     REQUIRE(world.ReconcileChunks());
+    const auto checkGroups = [&]() {
+        const auto chunks = world.LoadedChunks();
+        REQUIRE(chunks.size() % world_layer_count == 0);
+        for (std::size_t i = 0; i < chunks.size(); i += world_layer_count) {
+            for (int y = world_min_y; y <= world_max_y; ++y) {
+                CHECK(chunks[i + y - world_min_y] == ChunkCoord{chunks[i].x, chunks[i].z, y});
+            }
+            for (std::size_t j = 0; j < i; j += world_layer_count) {
+                CHECK((chunks[i].x != chunks[j].x || chunks[i].z != chunks[j].z));
+            }
+        }
+    };
+    checkGroups();
     const auto actor = take(world.CreateActor({1, 1}));
     const auto id = world.GetActor(actor)->id;
     // Erases exercise relocation of the map's final value, rather than iterator stability.
     for (const int index : {2, 0, 1, 4, 5}) {
         REQUIRE(world.ReleaseRequest(requests[index]));
         REQUIRE(world.ReconcileChunks());
+        checkGroups();
         CHECK(world.FindActor(id) == actor);
         CHECK(world.CheckInvariants());
     }
@@ -343,6 +360,31 @@ TEST_CASE("Column erasure preserves canonical traversal and retained entity keys
     for (int y = world_min_y; y <= world_max_y; ++y) {
         CHECK(world.LoadedChunks()[y - world_min_y] == ChunkCoord{0, 0, y});
     }
+}
+
+TEST_CASE("Request insertion and recycled slots produce the same demand", "[world][streaming][determinism]") {
+    World first(TestContent(), 91);
+    World second(TestContent(), 91);
+    const auto temporary = take(second.RequestChunks({{20, 20}, 0}, LoadMode::resident));
+    REQUIRE(second.ReleaseRequest(temporary));
+    for (const int x : {-2, 0, 3}) {
+        take(first.RequestChunks({{x, 0}, 0}, x == 0 ? LoadMode::active : LoadMode::resident));
+    }
+    for (const int x : {3, 0, -2}) {
+        take(second.RequestChunks({{x, 0}, 0}, x == 0 ? LoadMode::active : LoadMode::resident));
+    }
+    REQUIRE(first.ReconcileChunks());
+    REQUIRE(second.ReconcileChunks());
+    REQUIRE(first.LoadedChunks().size() == 3 * world_layer_count);
+    REQUIRE(second.LoadedChunks().size() == first.LoadedChunks().size());
+    for (const auto coord : first.LoadedChunks()) {
+        const auto* other = second.GetChunk(coord);
+        REQUIRE(other);
+        CHECK(first.GetChunk(coord)->tiles == other->tiles);
+        CHECK(first.GetChunk(coord)->active == other->active);
+    }
+    CHECK(first.CheckInvariants());
+    CHECK(second.CheckInvariants());
 }
 
 TEST_CASE("Lighting refreshes source inputs after an unqueried same-coordinate reload", "[world][lighting][streaming]") {
@@ -677,7 +719,9 @@ TEST_CASE("Actor and object destruction drop trees while item destruction remove
     const auto id = world.GetItem(grandchild)->id;
     REQUIRE(world.DestroyActor(actor));
     CHECK(world.ActorAt({1, 1}) == ActorHandle{});
-    CHECK(world.ItemsAt({1, 1}) == Vector<ItemHandle>{bag, loose});
+    const auto dropped = world.ItemsAt({1, 1});
+    REQUIRE(dropped.size() == 2);
+    CHECK(((dropped[0] == bag && dropped[1] == loose) || (dropped[0] == loose && dropped[1] == bag)));
     CHECK(world.GetItem(bag)->location == ItemLocation::Ground({1, 1}));
     CHECK(world.GetItem(child)->location == ItemLocation::Inside(bag));
     CHECK(world.GetItem(grandchild)->location == ItemLocation::Inside(child));

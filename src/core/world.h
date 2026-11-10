@@ -187,6 +187,7 @@ public:
     const Chunk* GetChunk(ChunkCoord position) const;
     const Tile* GetTile(TileCoord position) const;
     bool IsActive(TileCoord position) const;
+    // Unspecified column order; each full-height column is contiguous, ascending Y.
     Vector<ChunkCoord> LoadedChunks() const;
     std::size_t ArchivedChunkCount() const;
 
@@ -199,6 +200,7 @@ public:
     ItemHandle FindItem(PersistentId id) const;
     ObjectHandle FindObject(PersistentId id) const;
     ActorHandle ActorAt(TileCoord position) const;
+    // Snapshot in unspecified order.
     Vector<ItemHandle> ItemsAt(TileCoord position) const;
     ObjectHandle ObjectAt(TileCoord position) const;
 
@@ -253,7 +255,8 @@ public:
     // Direct incident endpoint light; faces +X,-X,+Z,-Z,+Y,-Y (0..5).
     std::uint8_t GetIncidentLightLevel(TileCoord position, int face) const;
     RememberedTile GetRememberedTile(PersistentId player, TileCoord position) const;
-    const Vector<PlayerMemory>& GetPlayerMemories() const;
+    // Owned canonical save snapshot: players by ID, chunks by (X,Z,Y).
+    Vector<PlayerMemory> GetPlayerMemories() const;
     // Explicit post-action/event boundary. Parked/inactive players do not learn.
     void UpdatePlayerObservations();
     WorldResult<void> SetObjectUpdateInterval(ObjectHandle object, std::uint32_t interval);

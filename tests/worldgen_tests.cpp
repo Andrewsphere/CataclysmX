@@ -714,8 +714,9 @@ TEST_CASE("Default World generation matches public plans regardless of streaming
     Vector<LoadRequest> requests;
     for (const auto chunk : chunks) { requests.push_back(Request(forward, chunk)); }
     for (std::size_t i = chunks.size(); i > 0; --i) { Request(reverse, chunks[i - 1]); }
-    CHECK(forward.LoadedChunks() == reverse.LoadedChunks());
     REQUIRE(forward.LoadedChunks().size() == loadedSlices);
+    REQUIRE(reverse.LoadedChunks().size() == loadedSlices);
+    for (const auto chunk : forward.LoadedChunks()) { CHECK(reverse.GetChunk(chunk)); }
     CHECK(forward.ArchivedChunkCount() == 0);
     for (const auto chunk : chunks) {
         const auto* first = forward.GetChunk(chunk);

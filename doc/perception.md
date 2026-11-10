@@ -83,8 +83,11 @@ owned memory; saves likewise serialize memory as-is. Offline and Joining actors
 do not see live map changes. Administrative edit batches must explicitly call
 `UpdatePlayerObservations()` if intended to teach resident active players.
 
-World owns sparse memories sorted by persistent player ID, with chunks sorted
-`(x,z,y)`. Each allocated chunk has 256 terrain IDs (zero means unknown) and
+World privately owns sparse memories keyed by player ID and chunk coordinate.
+`GetPlayerMemories()` returns a by-value owned snapshot sorted by player ID and
+then chunk `(x,z,y)`; saving captures the same canonical order. Ordering at this
+boundary avoids maintaining sorted player and chunk collections during observation.
+Each allocated chunk has 256 terrain IDs (zero means unknown) and
 sparse objects sorted by tile index. Object snapshots contain only kind, facing,
 active, and broken flags. No actors, items, live handles, or behavior state are
 remembered. Observing an empty location removes stale furniture. Parking,

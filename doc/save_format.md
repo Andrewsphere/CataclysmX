@@ -218,6 +218,11 @@ strictly increasing; each owner's chunks must be strictly lexicographic `(x,z,y)
 Duplicate owners/chunks/objects and unordered chunks/objects are errors. A player
 with no allocated observation chunks needs no rows and is omitted on reload;
 its owner is nevertheless validated when supplied to a checkpoint.
+World's runtime memories are private maps keyed by player and chunk; capturing
+`GetPlayerMemories()` by value or saving produces the canonical sorted snapshot.
+Remembered objects remain small vectors sorted by tile index. Sorting at the
+snapshot boundary preserves the existing format and validation without maintaining
+player and chunk ordering on every observation.
 
 `SaveDatabase::WriteSnapshot` rewrites all memory rows in V1, inside the same
 transaction as changed live chunks and world/session state. This costs O(total
@@ -242,14 +247,13 @@ Unloaded pending snapshots are owned by a segmented hash map keyed by the full
 `ChunkCoord` (X, Z and Y). They remain authoritative and may grow without bound
 until a successful checkpoint; cache pressure never discards unsaved values.
 Segmented storage avoids relocating a growing contiguous array of inline tile
-payloads, and erasing a key moves at most one other payload. Separate ordered key
-metadata preserves unload order through arbitrary removals: reloading consumes
-that key, and a later unload appends its new capture at the end.
+payloads, and erasing a key moves at most one other payload. There is no separate
+pending unload-order index; pending writes and admission use unspecified map order.
 
-After commit, pending values are promoted in that explicit unload order into a
+After commit, eligible pending values are admitted in map traversal order into a
 separate clean warm map. Warm values are disposable, item-free snapshots with a
 256-entry and 8 MiB limit. FIFO age is stored in ordered keys, independently of
-hash iteration and dense-value relocation. Consuming a middle value leaves the
+subsequent hash iteration and dense-value relocation. Consuming a middle value leaves the
 relative age of every survivor intact; replacing a value appends a fresh age.
 Oldest values are evicted first. The byte budget includes allocated map value
 capacity (including keys and unused slots), index storage, a conservative bound
@@ -274,8 +278,8 @@ identity invariant makes this global preflight unnecessary.
 All disk reads and cross-chunk identity checks finish before reconciliation
 consumes any RAM snapshot, retires live keys, or changes activity/residency.
 Failures retain all sources for retry. When the demanded column set is unchanged,
-reconciliation skips archive work and publishes activity, per-layer world/map
-revisions and committed demand before retaining the usual deferred gravity
+reconciliation skips archive work and updates activity and per-layer world/map
+revisions before retaining the usual deferred gravity
 boundary. Resident disk-restored actors and ground items may still be suspended:
 activation must settle them using the newly committed activity set. As on the
 structural path, gravity is queued before clearing demand-dirty bookkeeping and
@@ -284,7 +288,8 @@ including spatial indexes, player tracking, item notifications and lighting
 invalidation where needed. Handles and relative timers remain intact; settling
 does not advance time. Activity changes themselves do not invalidate geometry or
 lighting. These choices keep storage validation at its boundary while preserving
-deterministic retention, callbacks and failure atomicity.
+deterministic gameplay, callbacks and failure atomicity. Cache retention itself
+depends on admission order and affects performance only.
 
 `ReconcileChunks` returns `SaveResult<void>` because storage-backed loads can
 fail. It stages chunk changes and leaves live world state unchanged on failure.

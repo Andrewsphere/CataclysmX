@@ -121,4 +121,49 @@ TEST_CASE("Memory observes lit targets at the full sight radius independent of o
     CHECK(world.GetRememberedTile(id, {14,5,0}).object.kind == ObjectKind::Lamp);
     CHECK(world.GetRememberedTile(id, {15,5,0}).terrain.value == 0);
 }
+
+TEST_CASE("Memory snapshots own canonical values across player and chunk insertion histories", "[memory][streaming]") {
+    World world(TestContent());
+    REQUIRE(world.SetVisionProfile({1, 1, 1, 240, 1}));
+    world.SetSkyLight(0);
+    for (int x : {1, -1, 0}) {
+        REQUIRE(world.RequestChunks({{x, 0}, 0}, LoadMode::active));
+    }
+    REQUIRE(world.ReconcileChunks());
+    auto first = world.CreateActor({24, 8}, true);
+    auto second = world.CreateActor({24, 10}, true);
+    REQUIRE(first);
+    REQUIRE(second);
+    const auto firstId = world.GetActor(*first)->id;
+    const auto secondId = world.GetActor(*second)->id;
+    // Learn the higher-ID player first, then explore chunks out of spatial order.
+    REQUIRE(world.SetActorParked(*first, true));
+    world.UpdatePlayerObservations();
+    REQUIRE(world.SetActorParked(*first, false));
+    world.UpdatePlayerObservations();
+    for (int x : {-8, 8}) {
+        REQUIRE(world.MoveActor(*first, {x, 8}));
+        world.UpdatePlayerObservations();
+    }
+    const auto snapshot = world.GetPlayerMemories();
+    REQUIRE(snapshot.size() == 2);
+    CHECK(snapshot[0].player == firstId);
+    CHECK(snapshot[1].player == secondId);
+    REQUIRE(snapshot[0].chunks.size() == 3);
+    for (int x = -1; x <= 1; ++x) {
+        CHECK(snapshot[0].chunks[x + 1].position == ChunkCoord{x, 0, 0});
+    }
+    REQUIRE(snapshot[1].chunks.size() == 1);
+    CHECK(snapshot[1].chunks[0].position == ChunkCoord{1, 0, 0});
+    REQUIRE(world.SetTile({8, 8}, {TestTerrain("grass"), 0}));
+    world.UpdatePlayerObservations();
+    CHECK(world.GetRememberedTile(firstId, {8, 8}).terrain == TestTerrain("grass"));
+    CHECK(snapshot[0].chunks[1].terrain[TileIndex({8, 8})] == TestTerrain("floor"));
+    REQUIRE(world.DestroyActor(*first));
+    CHECK(world.GetRememberedTile(firstId, {8, 8}) == RememberedTile{});
+    const auto remaining = world.GetPlayerMemories();
+    REQUIRE(remaining.size() == 1);
+    CHECK(remaining[0] == snapshot[1]);
+    CHECK(world.CheckInvariants());
+}
 }

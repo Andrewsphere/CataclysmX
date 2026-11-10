@@ -620,8 +620,7 @@ TEST_CASE("Checkpoint warm values survive failed preflight and FIFO eviction fal
     SaveDirectory files;
     World world(TestContent());
     Vector<LoadRequest> requests;
-    // 273 layers exceed the 256-entry FIFO cache. X=0's surface is evicted;
-    // X=12's surface is retained. Pending archives must retain all 273 first.
+    // Separate promotions establish age regardless of order within each batch.
     for (int x = 0; x < 13; ++x) {
         requests.push_back(Take(world.RequestChunks({{x, 0}, 0}, LoadMode::active)));
     }
@@ -636,15 +635,23 @@ TEST_CASE("Checkpoint warm values survive failed preflight and FIFO eviction fal
     CHECK(world.GetLightLevel({193, 1}) == 192);
     REQUIRE(world.SetObjectEnabled(lamp, false));
     REQUIRE(world.CreateSave(files.database.c_str(), {}));
-    for (LoadRequest request : requests) { REQUIRE(world.ReleaseRequest(request)); }
+    REQUIRE(world.ReleaseRequest(requests[0]));
     REQUIRE(world.ReconcileChunks());
-    CHECK(world.ArchivedChunkCount() == 13 * world_layer_count);
+    CHECK(world.ArchivedChunkCount() == world_layer_count);
+    REQUIRE(world.Save({}));
+    for (int x = 1; x <= 11; ++x) { REQUIRE(world.ReleaseRequest(requests[x])); }
+    REQUIRE(world.ReconcileChunks());
+    CHECK(world.ArchivedChunkCount() == 11 * world_layer_count);
+    REQUIRE(world.Save({}));
+    REQUIRE(world.ReleaseRequest(requests[12]));
+    REQUIRE(world.ReconcileChunks());
+    CHECK(world.ArchivedChunkCount() == world_layer_count);
     CHECK_FALSE(world.GetActor(actor));
     REQUIRE(world.Save({}));
     CHECK(world.ArchivedChunkCount() == 0);
     REQUIRE(world.CheckInvariants());
-    // Both disk rows are invalid, but only the evicted one must be read.
-    Corrupt(files.database.c_str(), "UPDATE chunks SET payload='invalid' WHERE (x=0 OR x=12) AND z=0 AND y=0");
+    // At least one old layer is evicted; the newest surface remains warm.
+    Corrupt(files.database.c_str(), "UPDATE chunks SET payload='invalid' WHERE z=0 AND (x=0 OR (x=12 AND y=0))");
     const auto cold = Take(world.RequestCircle({{0, 0}, 0}, LoadMode::active));
     const auto warm = Take(world.RequestCircle({{192, 0}, 0}, LoadMode::resident));
     CHECK(world.ReconcileChunks() == eastl::unexpected(SaveError::InvalidData));
@@ -663,7 +670,7 @@ TEST_CASE("Checkpoint warm values survive failed preflight and FIFO eviction fal
     CHECK(world.ActiveActors().empty());
     CHECK(*world.GetTile({192, 1}) == Tile{TestTerrain("floor"), 37});
     CHECK(world.GetLightLevel({193, 1}) == 0); // Same coordinates, new source token.
-    Corrupt(files.database.c_str(), "DELETE FROM chunks WHERE x=0 AND z=0 AND y=0");
+    Corrupt(files.database.c_str(), "DELETE FROM chunks WHERE x=0 AND z=0");
     REQUIRE(world.SetTile({192, 1}, {TestTerrain("floor"), 91}));
     REQUIRE(world.ReleaseRequest(warm));
     REQUIRE(world.ReconcileChunks());
@@ -677,51 +684,59 @@ TEST_CASE("Checkpoint warm values survive failed preflight and FIFO eviction fal
     CHECK(world.CheckInvariants());
 }
 
-TEST_CASE("Archive removals preserve pending promotion and warm FIFO order", "[world][save][streaming][warm]") {
+TEST_CASE("Archive removals preserve pending values and FIFO between promotions", "[world][save][streaming][warm]") {
     SaveDirectory files;
     World world(TestContent());
     Vector<LoadRequest> requests;
-    for (int x = 0; x < 13; ++x) {
+    for (int x = 0; x < 12; ++x) {
         requests.push_back(Take(world.RequestChunks({{x, 0}, 0}, LoadMode::resident)));
     }
     REQUIRE(world.ReconcileChunks());
     REQUIRE(world.SetTile({0, 0}, {TestTerrain("floor"), 61}));
+    REQUIRE(world.SetTile({16, 0}, {TestTerrain("floor"), 62}));
     REQUIRE(world.CreateSave(files.database.c_str(), {}));
     for (const auto request : requests) { REQUIRE(world.ReleaseRequest(request)); }
     REQUIRE(world.ReconcileChunks());
-    // Remove early keys from the dense map, then append a fresh capture.
-    // Promotion must follow original unload order, with column 0 now last.
+    // Removing and reappending a column exercises pending-map relocation while
+    // the entire first batch fits in warm storage.
     auto middle = Load(world, {0, 0});
     CHECK(*world.GetTile({0, 0}) == Tile{TestTerrain("floor"), 61});
+    const auto relocated = Load(world, {1, 0});
+    CHECK(*world.GetTile({16, 0}) == Tile{TestTerrain("floor"), 62});
+    REQUIRE(world.ReleaseRequest(relocated));
     REQUIRE(world.ReleaseRequest(middle));
     REQUIRE(world.ReconcileChunks());
-    CHECK(world.ArchivedChunkCount() == 13 * world_layer_count);
+    CHECK(world.ArchivedChunkCount() == 12 * world_layer_count);
     REQUIRE(world.Save({}));
     REQUIRE(world.CheckInvariants());
-    // Consume arbitrary warm entries and append them again; this must not
-    // change the age of surviving entries moved by dense-map erase.
+    // Re-promote column 2 separately, making it younger than column 0.
     middle = Load(world, {2, 0});
     REQUIRE(world.ReleaseRequest(middle));
     REQUIRE(world.ReconcileChunks());
     REQUIRE(world.Save({}));
-    const auto extra = Load(world, {13, 0});
-    REQUIRE(world.ReleaseRequest(extra));
-    REQUIRE(world.ReconcileChunks());
-    REQUIRE(world.Save({}));
-    // Initial promotion loses column 1 through Y=6. Consuming/reappending
-    // column 2 makes it youngest; adding column 13 then loses column 1's
-    // tail and column 3 through Y=6. Columns 0, 2 and 4..13 survive fully.
-    Corrupt(files.database.c_str(), "UPDATE chunks SET payload='invalid'");
-    for (int x = 0; x <= 13; ++x) {
-        if (x == 1 || x == 3) { continue; }
-        Take(world.RequestChunks({{x, 0}, 0}, LoadMode::resident));
+    // More than a cache's worth of later admissions evicts every old entry.
+    Vector<LoadRequest> later;
+    for (int x = 12; x < 25; ++x) {
+        later.push_back(Take(world.RequestChunks({{x, 0}, 0}, LoadMode::resident)));
     }
     REQUIRE(world.ReconcileChunks());
+    for (const auto request : later) { REQUIRE(world.ReleaseRequest(request)); }
+    REQUIRE(world.ReconcileChunks());
+    CHECK(world.ArchivedChunkCount() == 13 * world_layer_count);
+    REQUIRE(world.Save({}));
+    // Column 0 must now come from disk, including its relocated pending value.
+    middle = Load(world, {0, 0});
+    CHECK(*world.GetTile({0, 0}) == Tile{TestTerrain("floor"), 61});
+    REQUIRE(world.ReleaseRequest(middle));
+    REQUIRE(world.ReconcileChunks());
+    REQUIRE(world.Save({})); // Column 0 is the newest separate promotion.
+    Corrupt(files.database.c_str(), "UPDATE chunks SET payload='invalid' WHERE (x=0 OR x=2) AND z=0 AND y=0");
+    middle = Load(world, {0, 0});
     CHECK(*world.GetTile({0, 0}) == Tile{TestTerrain("floor"), 61});
     CHECK(world.ArchivedChunkCount() == 0);
-    const auto cold = Take(world.RequestChunks({{3, 0}, 0}, LoadMode::active));
+    const auto cold = Take(world.RequestChunks({{2, 0}, 0}, LoadMode::active));
     CHECK(world.ReconcileChunks() == eastl::unexpected(SaveError::InvalidData));
-    CHECK(world.LoadedChunks().size() == 12 * world_layer_count);
+    CHECK(world.LoadedChunks().size() == world_layer_count);
     REQUIRE(world.ReleaseRequest(cold));
     REQUIRE(world.ReconcileChunks());
     CHECK(world.CheckInvariants());

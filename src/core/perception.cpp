@@ -4,7 +4,7 @@
 #include "core/lighting.h"
 
 #include <EASTL/algorithm.h>
-#include <EASTL/sort.h>
+#include <ankerl/unordered_dense.h>
 #include <cstdlib>
 
 namespace cataclysmx {
@@ -110,10 +110,6 @@ bool CanSeeTile(const World& world, TileCoord observer, TileCoord target,
 }
 
 namespace {
-bool OpticalLess(ChunkCoord a, ChunkCoord b) {
-    return a.x < b.x || (a.x == b.x && (a.z < b.z || (a.z == b.z && a.y < b.y)));
-}
-
 OpticalChunk SnapshotChunk(const World& world, ChunkCoord coord, const Chunk& chunk) {
     OpticalChunk snapshot;
     snapshot.position = coord;
@@ -144,37 +140,53 @@ std::uint8_t SampleField(const OpticalField& field, TileCoord position) {
 }
 }
 
+struct OpticalField::Storage {
+    struct ChunkHash {
+        std::uint64_t operator()(ChunkCoord position) const {
+            const auto key = (static_cast<std::uint64_t>(static_cast<std::uint32_t>(position.x)) << 32)
+                | static_cast<std::uint32_t>(position.z);
+            const auto horizontal = ankerl::unordered_dense::hash<std::uint64_t>{}(key);
+            return ankerl::unordered_dense::hash<std::uint64_t>{}(horizontal
+                ^ (static_cast<std::uint64_t>(static_cast<std::uint32_t>(position.y)) * 0x9e3779b97f4a7c15ULL));
+        }
+    };
+    ankerl::unordered_dense::map<ChunkCoord, OpticalChunk, ChunkHash> chunks;
+};
+
+OpticalField::OpticalField() = default;
+OpticalField::~OpticalField() = default;
+OpticalField::OpticalField(OpticalField&&) noexcept = default;
+OpticalField& OpticalField::operator=(OpticalField&&) noexcept = default;
+
 const OpticalChunk* OpticalField::Find(ChunkCoord position) const {
-    const auto found = eastl::lower_bound(chunks.begin(), chunks.end(), position,
-        [](const OpticalChunk& chunk, ChunkCoord key) { return OpticalLess(chunk.position, key); });
-    return found != chunks.end() && found->position == position ? &*found : nullptr;
+    if (!storage_) { return nullptr; }
+    const auto found = storage_->chunks.find(position);
+    return found != storage_->chunks.end() ? &found->second : nullptr;
 }
 
 void OpticalField::Rebuild(const World& world) {
     ++revision;
-    chunks.clear();
+    if (!storage_) { storage_.reset(new Storage{}); }
+    storage_->chunks.clear();
     for (ChunkCoord coord : world.LoadedChunks()) {
-        chunks.push_back(SnapshotChunk(world, coord, *world.GetChunk(coord)));
+        storage_->chunks.emplace(coord, SnapshotChunk(world, coord, *world.GetChunk(coord)));
     }
-    eastl::sort(chunks.begin(), chunks.end(), [](const OpticalChunk& a, const OpticalChunk& b) {
-        return OpticalLess(a.position, b.position);
-    });
 }
 
 void OpticalField::Refresh(const World& world, eastl::span<const ChunkCoord> positions) {
     bool changed = false;
+    if (!storage_) { storage_.reset(new Storage{}); }
     for (ChunkCoord coord : positions) {
-        auto found = eastl::lower_bound(chunks.begin(), chunks.end(), coord,
-            [](const OpticalChunk& chunk, ChunkCoord key) { return OpticalLess(chunk.position, key); });
-        const bool present = found != chunks.end() && found->position == coord;
+        auto found = storage_->chunks.find(coord);
+        const bool present = found != storage_->chunks.end();
         const Chunk* chunk = world.GetChunk(coord);
         if (!chunk) {
-            if (present) { chunks.erase(found); changed = true; }
+            if (present) { storage_->chunks.erase(found); changed = true; }
             continue;
         }
         auto snapshot = SnapshotChunk(world, coord, *chunk);
-        if (!present) { chunks.insert(found, snapshot); changed = true; }
-        else if (found->cells != snapshot.cells) { *found = snapshot; changed = true; }
+        if (!present) { storage_->chunks.emplace(coord, eastl::move(snapshot)); changed = true; }
+        else if (found->second.cells != snapshot.cells) { found->second = eastl::move(snapshot); changed = true; }
     }
     if (changed) { ++revision; }
 }

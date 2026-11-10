@@ -99,7 +99,9 @@ TEST_CASE("Integer planar FOV is reciprocal and rotation invariant for floor cel
 TEST_CASE("Bulk projects only visible open columns down to the first surface",
     "[perception][bulk][projection]") {
     World world(TestContent());
-    Load(world);
+    auto request = world.RequestChunks({{0, 0}, 1}, LoadMode::active);
+    REQUIRE(request);
+    REQUIRE(world.ReconcileChunks());
     Fill(world, 9, world_min_y, 2, TestTerrain("air"));
     REQUIRE(world.SetTile({2, 0, -4}, {TestTerrain("floor"), 0}));
     REQUIRE(world.SetTile({-2, 0, 0}, {TestTerrain("floor"), 0}));
@@ -121,12 +123,11 @@ TEST_CASE("Bulk projects only visible open columns down to the first surface",
 
     OpticalField field;
     field.Rebuild(world);
-    auto missing = eastl::find_if(field.chunks.begin(), field.chunks.end(), [](const OpticalChunk& chunk) {
-        return chunk.position == ChunkCoord{0, 0, -2};
-    });
-    REQUIRE(missing != field.chunks.end());
-    field.chunks.erase(missing);
-    ++field.revision;
+    const ChunkCoord missing[] = {{0, 0, -2}};
+    REQUIRE(field.Find(missing[0]) != nullptr);
+    REQUIRE(world.ReleaseRequest(*request));
+    REQUIRE(world.ReconcileChunks());
+    field.Refresh(world, {missing, 1});
     BuildVisibilityMask(world, {0, 0, 0}, 4, mask, stats, &field);
     CHECK(mask.Contains({2, 0, -1}));
     CHECK_FALSE(mask.Contains({2, 0, -2}));
@@ -552,6 +553,54 @@ TEST_CASE("Clear slab caches use implicit masks and learn only the new footprint
     CHECK(world.GetPerceptionStats().geometryRebuilds == 1);
 }
 
+TEST_CASE("Observation footprints match by coordinate after unordered column removal",
+    "[perception][bulk][cache][memory][streaming]") {
+    World world(TestContent());
+    REQUIRE(world.SetVisionProfile({8, 6, 1, 240, 3}));
+    auto extra = world.RequestChunks({{5, 0}, 0}, LoadMode::resident);
+    REQUIRE(extra);
+    for (int x : {1, 0, -1}) {
+        REQUIRE(world.RequestChunks({{x, 0}, 0}, LoadMode::active));
+    }
+    REQUIRE(world.ReconcileChunks());
+    for (int x = 0; x < 32; ++x) {
+        for (int z = 0; z < 16; ++z) {
+            REQUIRE(world.SetTile({x, z, 0}, {TestTerrain("floor"), 0}));
+            for (int y = 1; y <= world_max_y; ++y) {
+                REQUIRE(world.SetTile({x, z, y}, {TestTerrain("air"), 0}));
+            }
+        }
+    }
+    auto player = world.CreateActor({15, 8}, true);
+    REQUIRE(player);
+    const auto id = world.GetActor(*player)->id;
+    world.UpdatePlayerObservations();
+    const auto before = world.GetPlayerMemories();
+    REQUIRE(world.ReleaseRequest(*extra));
+    REQUIRE(world.ReconcileChunks());
+    // Refilter the same visible cells after dense-map erasure. Enumeration and
+    // cache-slot changes must not make already learned cells look newly visible.
+    world.SetSkyLight(200);
+    world.ResetPerceptionStats();
+    world.UpdatePlayerObservations();
+    CHECK(world.GetPerceptionStats().filterRebuilds == 1);
+    CHECK(world.GetPerceptionStats().memoryTilesExamined == 0);
+    CHECK(world.GetPlayerMemories() == before);
+    REQUIRE(world.MoveActor(*player, {16, 8}));
+    world.ResetPerceptionStats();
+    world.UpdatePlayerObservations();
+    const auto moved = world.GetPerceptionStats();
+    CHECK(moved.memoryTilesExamined > 0);
+    CHECK(moved.memoryTilesExamined == moved.memoryTilesChanged);
+    REQUIRE(world.SetTile({15, 8}, {TestTerrain("grass"), 0}));
+    world.ResetPerceptionStats();
+    world.UpdatePlayerObservations();
+    CHECK(world.GetPerceptionStats().filterRebuilds == 0);
+    CHECK(world.GetPerceptionStats().memoryTilesChanged == 1);
+    CHECK(world.GetRememberedTile(id, {15, 8}).terrain == TestTerrain("grass"));
+    CHECK(world.CheckInvariants());
+}
+
 TEST_CASE("Bulk geometry benchmark", "[.][bulk-benchmark]") {
     World world(TestContent());
     Load(world, 4);
@@ -705,6 +754,62 @@ TEST_CASE("Optical snapshot refresh inserts and removes exact residency coordina
     field.Refresh(world, {changed, 2});
     CHECK(field.Find(changed[0]) == nullptr);
     CHECK(field.revision == revision + 1);
+}
+
+TEST_CASE("Optical keyed refresh is independent of insertion order and erasure",
+    "[perception][bulk][cache][streaming][optical]") {
+    World world(TestContent());
+    auto left = world.RequestChunks({{-1, 0}, 0}, LoadMode::resident);
+    auto center = world.RequestChunks({{0, 0}, 0}, LoadMode::resident);
+    auto right = world.RequestChunks({{1, 0}, 0}, LoadMode::resident);
+    REQUIRE(left);
+    REQUIRE(center);
+    REQUIRE(right);
+    REQUIRE(world.ReconcileChunks());
+    REQUIRE(world.SetTile({-1, 0, 0}, {TestTerrain("wall"), 0}));
+    REQUIRE(world.SetTile({0, 0, 0}, {TestTerrain("air"), 0}));
+    REQUIRE(world.SetTile({16, 0, 0}, {TestTerrain("floor"), 0}));
+    const ChunkCoord forward[] = {{1, 0, 0}, {-1, 0, 0}, {0, 0, 0}, {-1, 0, 0}};
+    const ChunkCoord reverse[] = {{0, 0, 0}, {-1, 0, 0}, {1, 0, 0}};
+    OpticalField first;
+    OpticalField second;
+    first.Refresh(world, {forward, 4});
+    second.Refresh(world, {reverse, 3});
+    CHECK(first.revision == 1);
+    first.Refresh(world, {forward, 4});
+    CHECK(first.revision == 1);
+    for (auto coord : reverse) {
+        const auto* a = first.Find(coord);
+        const auto* b = second.Find(coord);
+        REQUIRE(a);
+        REQUIRE(b);
+        CHECK(a->position == coord);
+        CHECK(a->cells == b->cells);
+        CHECK(a->opaqueRows == b->opaqueRows);
+        CHECK(a->transparent == b->transparent);
+    }
+    VisibilityMask a;
+    VisibilityMask b;
+    PerceptionStats stats;
+    BuildVisibilityMask(world, {0, 0, 0}, 8, a, stats, &first);
+    BuildVisibilityMask(world, {0, 0, 0}, 8, b, stats, &second);
+    for (int z = -8; z <= 8; ++z) {
+        for (int x = -8; x <= 8; ++x) {
+            CHECK(a.Get({x, z, 0}) == b.Get({x, z, 0}));
+        }
+    }
+    REQUIRE(world.ReleaseRequest(*left));
+    REQUIRE(world.ReconcileChunks());
+    first.Refresh(world, {forward, 4});
+    CHECK(first.revision == 2);
+    CHECK(first.Find({-1, 0, 0}) == nullptr);
+    for (ChunkCoord coord : {ChunkCoord{0, 0, 0}, ChunkCoord{1, 0, 0}}) {
+        REQUIRE(first.Find(coord));
+        REQUIRE(second.Find(coord));
+        CHECK(first.Find(coord)->cells == second.Find(coord)->cells);
+    }
+    first.Refresh(world, {forward, 4});
+    CHECK(first.revision == 2);
 }
 
 TEST_CASE("Warm server movement and view benchmark", "[.][bulk-server-benchmark]") {

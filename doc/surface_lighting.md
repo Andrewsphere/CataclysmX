@@ -122,7 +122,8 @@ terrain emission edits and emitting actor/object movement, toggles, parking,
 creation, or removal. Only changed chunks have their tiles and source lists
 rescanned. Cached source descriptors avoid global terrain/source rediscovery
 when one lamp moves. No World chunk or entity pointers survive synchronization.
-The sorted `World::LoadedChunks()` contract remains X, then Z, then Y.
+`World::LoadedChunks()` enumerates columns in unspecified order, each as a
+contiguous sequence of all layers in ascending Y.
 
 Optical edits invalidate only source patches whose horizontal range-plus-spill
 bounds and source-Y +/- two layers intersect an edited optical chunk. Sky

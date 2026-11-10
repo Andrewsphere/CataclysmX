@@ -40,6 +40,7 @@ struct MemoryChunk {
     bool operator==(const MemoryChunk&) const = default;
 };
 
+// Owned snapshot; World keeps runtime memories keyed and canonicalizes on capture.
 struct PlayerMemory {
     PersistentId player = 0;
     Vector<MemoryChunk> chunks; // Lexicographic (x,z,y) order.

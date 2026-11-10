@@ -107,7 +107,7 @@ parking, unload, archive eviction and reload; destroyed players return empty.
 when the roster is empty), so server roster players are immediately queryable
 before chunk materialization. Generic saves with neither host nor roster may
 contain additional players; these become known when their chunks are loaded.
-This small ID-sorted index is kept separately because a connection's cached
+This private keyed map is kept separately because a connection's cached
 position can become stale after administrative movement of a parked actor.
 
 ## Lighting and player observations
@@ -138,7 +138,10 @@ and `ResetPerceptionStats` expose diagnostic counters without flushing caches.
 See [bulk perception](bulk_perception.md) for the API, exact 3D algorithm, and
 invalidation rules.
 
-`GetPlayerMemories()` returns owned sparse `PlayerMemory` values. Call
+`GetPlayerMemories()` returns a by-value, owned canonical snapshot: players are
+sorted by persistent ID and each player's chunks by `(x,z,y)`. Runtime memories
+are private maps keyed by player and chunk; ordering is applied when capturing a
+snapshot or saving, rather than maintained during observation. Call
 `UpdatePlayerObservations()` explicitly at observation boundaries: construction
 and player activation establish initial observation; successful player actions,
 same-tick completed effects, and each NPC action refresh it. Queries and arbitrary
@@ -174,15 +177,15 @@ Reconciliation takes the union of all requests:
 Active demand includes residency and wins overlaps. Releasing one request
 cannot cancel another request's demand. Residency does not prohibit explicit
 administrative mutations. Reconciliation itself never advances turns.
-`LoadedChunks()` includes both modes in lexicographic `(x, z, y)` order.
-All request shapes first enumerate horizontal columns, then sort and merge them
-with active demand winning. Every selected column owns all 21 layers with uniform
-activity. A sorted committed `(ColumnCoord, active)` index drives deterministic
-traversal; keyed column ownership avoids shifting large terrain arrays when demand
-slides. Chunk queries use an explicit private column hash and a Y-array index.
-Map iterator order never determines simulation or serialization order, and erase
-does not assume map iterator/reference stability. Actor and object snapshots retain
-persistent-ID order.
+`LoadedChunks()` includes both modes in unspecified column order, with each
+complete column contiguous and its 21 layers in ascending Y. Request shapes merge
+into keyed column demand with active demand winning. Every selected column has
+uniform activity. Reconciliation traverses the column maps directly, without a
+separate committed demand index; keyed ownership avoids shifting large terrain
+arrays when demand slides. Chunk queries use a private column hash and a Y-array
+index. Dirty and optical-change chunks are keyed sets; per-chunk revisions and
+player positions use keyed maps. Ordering is imposed at behavioral and persistence
+boundaries rather than on these internal traversals.
 
 `GetPerceptionStats()` also counts `columnsLoaded`/`columnsUnloaded` and actual lazy
 lighting work: `lightingOutputChunks`, `lightingSkyDirectChunks`,
@@ -192,9 +195,9 @@ counters reset through `ResetPerceptionStats()` without invalidating caches;
 
 Storage reads and incoming archive validation (including cross-source ID aliases)
 complete before live ownership, activity, archives, or runtime keys change. A failed
-reconciliation leaves the committed index and live world intact for retry. All new
-columns and their terrain are installed before restoration; the committed index is
-published and complete item ownership restored before item callbacks are attached.
+reconciliation leaves the live world intact for retry. All new columns and their
+terrain are installed before restoration; complete residency and item ownership
+are established before item callbacks are attached.
 Gravity settles at the completed boundary.
 
 `SessionState::circleResidency` is an appended optional `CircleResidency` policy.
@@ -281,7 +284,7 @@ mutation contexts. See [items API](items_api.md) for actions and activities, and
 
 Terrain with `open_space` provides no floor support; all other terrain supports
 a floor. `SettleGravity()` settles unsupported actors and complete ground-item
-trees deterministically, bottom-up, without RNG, damage, or elapsed time. It
+trees deterministically, bottom-up by Y and persistent ID, without RNG, damage, or elapsed time. It
 stops above a supporting tile, actor, or the world bottom. Parked actors remain
 frozen. Spatial terrain edits also settle affected resident columns. See
 [Y layers](y_layers.md) for terrain flag constraints, stairs, and sight rules.
@@ -347,7 +350,7 @@ Pending archives exist only for currently unloaded chunks in this `World`, and
 disappear with it. `ArchivedChunkCount()` counts these authoritative pending values
 only. They are never evicted before a successful checkpoint, and failed checkpoints
 retain them. After commit, a bounded subset transfers to a separate clean FIFO warm
-cache before the pending vector's outer allocation is released; the pending count
+cache before pending storage is released; the pending count
 is then zero. Load precedence is live, pending, warm, disk, then generation.
 Warm hits consume their cached value only after successful preflight, restore fresh
 handles, and retain no runtime light fields. New authoritative captures/checkpoint
@@ -358,7 +361,8 @@ storage budget (including its outer capacity and actor/object vector capacities)
 Currently only item-free archives with zero item-vector capacity are eligible:
 `DataObject` does not expose recursive allocation capacities, so item-bearing
 archives use disk after checkpoint instead of an inaccurate heap-size estimate.
-Oversized eligible values are skipped. FIFO insertion follows deterministic unload
+Oversized eligible values are skipped. Pending write and warm-cache admission order
+follow unspecified pending-map traversal; FIFO eviction follows actual admission
 order, with no wall-clock policy. Eviction changes performance only; the committed
 database remains authoritative. See the [save format](save_format.md) for disk
 checkpointing; validation scans all durable chunks and is not constant-cost streaming.
@@ -366,6 +370,8 @@ checkpointing; validation scans all durable chunks and is not constant-cost stre
 Internally, central slot maps own live entities, while chunks hold spatial
 indexes. Keeping these separate preserves live handles across chunk movement.
 `ActiveActors()` and `ActiveObjects()` return snapshots sorted by persistent
-ID; `ItemsAt()` also uses persistent-ID order. Storage/load order is not a turn
+ID; `ItemsAt()` returns handles in unspecified order. Default item selection chooses
+the minimum persistent ID, and presentation orders items at its boundary. Gravity
+and scheduled event ordering remain explicit; storage/load order is not a turn
 order. `CheckInvariants()` checks ownership and spatial consistency for
 administrative/headless scenarios; it does not advance or repair the world.
