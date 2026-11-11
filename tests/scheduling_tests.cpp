@@ -43,8 +43,11 @@ void SameScheduledState(const Server& first, const Server& second) {
     CHECK(first.View().commandQueued == second.View().commandQueued);
     const World& a = first.GetWorld();
     const World& b = second.GetWorld();
-    REQUIRE(a.ActiveActors().size() == b.ActiveActors().size());
-    for (ActorHandle handle : a.ActiveActors()) {
+    Vector<ActorHandle> actorsA, actorsB;
+    a.CollectActiveActors(actorsA);
+    b.CollectActiveActors(actorsB);
+    REQUIRE(actorsA.size() == actorsB.size());
+    for (ActorHandle handle : actorsA) {
         const Actor* actor = a.GetActor(handle);
         const Actor* other = b.GetActor(b.FindActor(actor->id));
         REQUIRE(other);
@@ -53,8 +56,11 @@ void SameScheduledState(const Server& first, const Server& second) {
         CHECK(actor->speed == other->speed);
         CHECK(actor->remainingTicks == other->remainingTicks);
     }
-    REQUIRE(a.ActiveObjects().size() == b.ActiveObjects().size());
-    for (ObjectHandle handle : a.ActiveObjects()) {
+    Vector<ObjectHandle> objectsA, objectsB;
+    a.CollectActiveObjects(objectsA);
+    b.CollectActiveObjects(objectsB);
+    REQUIRE(objectsA.size() == objectsB.size());
+    for (ObjectHandle handle : objectsA) {
         const auto* object = a.GetObject(handle);
         const auto* other = b.GetObject(b.FindObject(object->id));
         REQUIRE(other);
@@ -499,7 +505,8 @@ TEST_CASE("Buffered actions use current speed and ownership at execution", "[sch
         CHECK(server.View().remainingTicks == 105);
     }
     SECTION("A stale pickup target fails at execution") {
-        const auto bag = server.GetWorld().ItemsAt({0, 0}).front();
+        REQUIRE_FALSE(server.GetWorld().ItemsAt({0, 0}).Empty());
+        const auto bag = *server.GetWorld().ItemsAt({0, 0}).begin();
         const auto bagId = server.GetWorld().GetItem(bag)->id;
         CHECK(server.Send({CommandKind::pick_up, 0, 0, bagId}).outcome == Outcome::queued);
         REQUIRE(server.GetWorld().DestroyItem(bag));

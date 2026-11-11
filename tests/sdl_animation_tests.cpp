@@ -131,8 +131,12 @@ TEST_CASE("SDL item visual capture follows visibility overlay depth and persiste
     const TileCoord positions[] = {{1, 1}, {2, 1}, {1, 2}};
     for (unsigned i = 0; i < 3; ++i) {
         const auto items = world.ItemsAt(positions[i]);
-        REQUIRE_FALSE(items.empty());
-        CHECK(world.GetItem(items[0])->type == TestItem(names[i]));
+        REQUIRE_FALSE(items.Empty());
+        bool found = false;
+        for (ItemHandle handle : items) {
+            if (world.GetItem(handle)->type == TestItem(names[i])) { found = true; }
+        }
+        CHECK(found);
     }
 }
 

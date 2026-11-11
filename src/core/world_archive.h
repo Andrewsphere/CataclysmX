@@ -3,6 +3,7 @@
 // Persistence boundary values, never runtime handles. Kept separate from the
 // simulation-facing World interface; item parents precede their descendants.
 #include "core/world.h"
+#include "content/object_definition.h"
 
 namespace cataclysmx {
 
@@ -16,6 +17,8 @@ struct SavedActor {
     bool parked = false;
     std::uint64_t carryCapacityGrams = 100000;
     LightEmission light{};
+    // Empty object is a source-construction sentinel, normalized at persistence.
+    DataObject controller;
 };
 
 struct SavedObject {
@@ -29,6 +32,8 @@ struct SavedObject {
     ObjectFacing facing = ObjectFacing::North;
     bool broken = false;
     LightEmission light{};
+    ObjectTypeId type{};
+    DataObject state;
 };
 
 struct SavedItem {

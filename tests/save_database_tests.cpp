@@ -1,5 +1,7 @@
 #include "core/save_database.h"
 #include "content_fixture.h"
+#include "actors/ai_controller.h"
+#include "objects/object_behavior.h"
 
 #include <catch2/catch_message.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -105,6 +107,12 @@ void Replace(std::string& text, const char* before, const char* after) {
     text.replace(position, std::char_traits<char>::length(before), after);
 }
 
+void StripV9ChunkFields(RawDatabase& raw) {
+    raw.Exec("UPDATE chunks SET payload=json_set(payload,"
+        "'$.actors',json((SELECT json_group_array(json_remove(value,'$.controller')) FROM json_each(chunks.payload,'$.actors'))),"
+        "'$.objects',json((SELECT json_group_array(json_remove(value,'$.type','$.state')) FROM json_each(chunks.payload,'$.objects'))))");
+}
+
 void PopulateV7(const char* path) {
     {
         SaveDatabase database(TestContent());
@@ -124,6 +132,7 @@ void PopulateV7(const char* path) {
     Replace(payload, "\"active_radius\":1", "\"active_radius\":0");
     Replace(payload, "\"resident_radius\":5", "\"resident_radius\":2");
     raw.SetText("UPDATE world_state SET payload=?1", payload);
+    StripV9ChunkFields(raw);
     raw.Exec("UPDATE metadata SET format_version=7");
 }
 
@@ -173,7 +182,7 @@ TEST_CASE("Save terrain names survive catalog renumbering and missing content fa
     }
     {
         RawDatabase raw(file.path.c_str());
-        CHECK(raw.Text("SELECT format_version FROM metadata") == "8");
+        CHECK(raw.Text("SELECT format_version FROM metadata") == "9");
         const auto payload = raw.Text("SELECT payload FROM chunks");
         CHECK(payload.find("\"terrain\":\"moss\"") != std::string::npos);
         CHECK(payload.find("\"terrain\":\"floor\"") != std::string::npos);
@@ -522,7 +531,7 @@ TEST_CASE("Save database rejects unknown versions and incomplete or extended sch
     Populate(file.path.c_str());
     {
         RawDatabase raw(file.path.c_str());
-        SECTION("future version") { raw.Exec("UPDATE metadata SET format_version=9"); }
+        SECTION("future version") { raw.Exec("UPDATE metadata SET format_version=10"); }
         SECTION("previous v6 format") { raw.Exec("UPDATE metadata SET format_version=6"); }
         SECTION("previous v5 format") { raw.Exec("UPDATE metadata SET format_version=5"); }
         SECTION("previous v4 format") { raw.Exec("UPDATE metadata SET format_version=4"); }
@@ -683,7 +692,7 @@ TEST_CASE("Save database validates session, counters and generator version", "[s
     CHECK(database.Open(file.path.c_str()) == eastl::unexpected(expected));
 }
 
-TEST_CASE("Save format eight round trips square and tile circle residency", "[save][database][residency]") {
+TEST_CASE("Save format nine round trips square and tile circle residency", "[save][database][residency]") {
     SaveFile file;
     auto snapshot = SampleSnapshot();
     SECTION("square") {}
@@ -702,7 +711,7 @@ TEST_CASE("Save format eight round trips square and tile circle residency", "[sa
     }
     {
         RawDatabase raw(file.path.c_str());
-        CHECK(raw.Text("SELECT format_version FROM metadata") == "8");
+        CHECK(raw.Text("SELECT format_version FROM metadata") == "9");
         const auto payload = raw.Text("SELECT payload FROM world_state");
         CHECK(payload.find("\"circle_residency\":") != std::string::npos);
         if (!snapshot.session.circleResidency) {
@@ -792,6 +801,144 @@ TEST_CASE("Save database rejects invalid residency before encoding", "[save][dat
     CHECK(database.Commit() == eastl::unexpected(SaveError::InvalidState));
 }
 
+TEST_CASE("V9 requires strict controller envelopes and generic object state", "[save][database][actors][objects]") {
+    SaveFile file;
+    Populate(file.path.c_str());
+    SaveError expected = SaveError::InvalidData;
+    {
+        RawDatabase raw(file.path.c_str());
+        auto payload = raw.Text("SELECT payload FROM chunks");
+        SECTION("missing controller") { Replace(payload, "\"controller\":{\"type\":\"none\",\"state\":{}},", ""); }
+        SECTION("empty controller sentinel forbidden on disk") { Replace(payload, "\"controller\":{\"type\":\"none\",\"state\":{}}", "\"controller\":{}"); }
+        SECTION("unknown controller") { Replace(payload, "\"type\":\"none\"", "\"type\":\"unknown\""); }
+        SECTION("duplicate envelope field") { Replace(payload, "\"type\":\"none\"", "\"type\":\"none\",\"type\":\"none\""); }
+        SECTION("missing controller state") { Replace(payload, "\"type\":\"none\",\"state\":{}", "\"type\":\"none\""); }
+        SECTION("none with state") { Replace(payload, "\"type\":\"none\",\"state\":{}", "\"type\":\"none\",\"state\":{\"version\":1}"); }
+        SECTION("player cannot wander") { Replace(payload, "\"type\":\"none\",\"state\":{}", "\"type\":\"wander\",\"state\":{\"version\":1}"); }
+        SECTION("wander missing state version") { Replace(payload, "\"type\":\"none\"", "\"type\":\"wander\""); }
+        SECTION("future controller state") {
+            Replace(payload, "\"type\":\"none\",\"state\":{}", "\"type\":\"wander\",\"state\":{\"version\":2}");
+            expected = SaveError::UnsupportedVersion;
+        }
+        SECTION("missing object type") { Replace(payload, "\"type\":\"\",", ""); }
+        SECTION("numeric object type") { Replace(payload, "\"type\":\"\"", "\"type\":0"); }
+        SECTION("unknown object type") { Replace(payload, "\"type\":\"\"", "\"type\":\"absent\""); }
+        SECTION("missing object state") { Replace(payload, "\"type\":\"\",\"state\":{}", "\"type\":\"\""); }
+        SECTION("generic nonempty state") { Replace(payload, "\"type\":\"\",\"state\":{}", "\"type\":\"\",\"state\":{\"version\":1}"); }
+        SECTION("generic list state") { Replace(payload, "\"type\":\"\",\"state\":{}", "\"type\":\"\",\"state\":[]"); }
+        raw.SetText("UPDATE chunks SET payload=?1", payload);
+    }
+    SaveDatabase database(TestContent());
+    CHECK(database.Open(file.path.c_str()) == eastl::unexpected(expected));
+}
+
+TEST_CASE("V9 normalizes source controller defaults and enforces player policy before writing", "[save][database][actors]") {
+    SaveFile file;
+    SaveDatabase database(TestContent());
+    REQUIRE(database.Create(file.path.c_str()));
+    auto chunk = SampleChunk();
+    chunk.actors.push_back({8, {1, 0}, false, 0});
+    auto snapshot = SampleSnapshot();
+    snapshot.nextId = 9;
+    bool npcWanders = true;
+    SECTION("omitted envelopes become player None and NPC Wander") {}
+    SECTION("NPC can explicitly have no controller") {
+        chunk.actors[1].controller = CaptureAiController(nullptr);
+        npcWanders = false;
+    }
+    SECTION("player controller is rejected") {
+        auto controller = MakeAiController(AiControllerKind::Wander);
+        REQUIRE(controller);
+        chunk.actors[0].controller = CaptureAiController(controller->get());
+        REQUIRE(database.Begin());
+        CHECK(database.WriteChunk(chunk) == eastl::unexpected(SaveError::InvalidData));
+        CHECK(database.Commit() == eastl::unexpected(SaveError::InvalidState));
+        return;
+    }
+    REQUIRE(database.Begin());
+    REQUIRE(database.WriteChunk(chunk));
+    REQUIRE(database.WriteSnapshot(snapshot));
+    REQUIRE(database.Commit());
+    auto loaded = database.ReadChunk({}, snapshot.nextId);
+    REQUIRE(loaded);
+    REQUIRE(*loaded);
+    CHECK((**loaded).actors[0].controller == CaptureAiController(nullptr));
+    auto npc = ReadAiController((**loaded).actors[1].controller);
+    REQUIRE(npc);
+    CHECK(static_cast<bool>(*npc) == npcWanders);
+}
+
+TEST_CASE("V9 typed object state resolves stable names across catalog renumbering", "[save][database][objects]") {
+    const ContentSource sources[] = {
+        {"base", R"({format_version:1,definitions:[
+            {type:'terrain',id:'floor',name:'Floor',movement:{passable:true},blocks_sight:false,appearance:{symbol:'.',foreground:'white'}},
+            {type:'item',id:'scrap',name:'Scrap',mass_g:1,volume_ml:1},
+            {type:'item',id:'pipe',name:'Pipe',mass_g:1,volume_ml:1}]})"},
+        {"objects", R"({format_version:1,objects:[{id:'press',name:'Press',behavior:'crafting_machine',machine:{
+            input:'scrap',input_count:2,output:'pipe',output_count:1,duration_ticks:100,energy_capacity:300,energy_per_tick:2}}]})"},
+        {"extra", R"({format_version:1,objects:[{id:'decoration',name:'Decoration',behavior:'none'}]})"}
+    };
+    const auto original = SaveTestCatalog({sources, 2});
+    const auto expanded = SaveTestCatalog({sources, 3});
+    REQUIRE(original.FindObject("press") != expanded.FindObject("press"));
+    SaveFile file;
+    ChunkArchive chunk{};
+    chunk.tiles.fill({original.FindTerrain("floor"), 0});
+    SavedObject object{1, {}, true, 19};
+    object.type = original.FindObject("press");
+    auto behavior = MakeObjectBehavior(*original.TryGetObject(object.type));
+    REQUIRE(behavior);
+    REQUIRE(*behavior);
+    REQUIRE((*behavior)->SetEnergy(137));
+    object.state = (*behavior)->SaveState();
+    chunk.objects.push_back(object);
+    {
+        SaveDatabase database(original);
+        REQUIRE(database.Create(file.path.c_str()));
+        REQUIRE(database.Begin());
+        REQUIRE(database.WriteChunk(chunk));
+        SaveSnapshot snapshot;
+        snapshot.nextId = 2;
+        REQUIRE(database.WriteSnapshot(snapshot));
+        REQUIRE(database.Commit());
+    }
+    SECTION("round trip") {
+        RawDatabase raw(file.path.c_str());
+        CHECK(raw.Text("SELECT payload FROM chunks").find("\"type\":\"press\"") != std::string::npos);
+        SaveDatabase database(expanded);
+        REQUIRE(database.Open(file.path.c_str()));
+        auto loaded = database.ReadChunk({}, 2);
+        REQUIRE(loaded);
+        REQUIRE(*loaded);
+        CHECK((**loaded).objects[0].type == expanded.FindObject("press"));
+        CHECK((**loaded).objects[0].state == object.state);
+    }
+    SECTION("factory rejects missing required state rather than defaulting") {
+        RawDatabase raw(file.path.c_str());
+        raw.Exec("UPDATE chunks SET payload=json_set(payload,'$.objects[0].state',json('{}'))");
+        SaveDatabase database(expanded);
+        CHECK(database.Open(file.path.c_str()) == eastl::unexpected(SaveError::InvalidData));
+    }
+    SECTION("factory preserves unsupported state version") {
+        RawDatabase raw(file.path.c_str());
+        raw.Exec("UPDATE chunks SET payload=json_set(payload,'$.objects[0].state.version',2)");
+        SaveDatabase database(expanded);
+        CHECK(database.Open(file.path.c_str()) == eastl::unexpected(SaveError::UnsupportedVersion));
+    }
+    SECTION("missing object definition fails") {
+        const auto missing = SaveTestCatalog({sources, 1});
+        SaveDatabase database(missing);
+        CHECK(database.Open(file.path.c_str()) == eastl::unexpected(SaveError::InvalidData));
+    }
+    SECTION("write validation uses factory too") {
+        SaveDatabase database(original);
+        REQUIRE(database.Open(file.path.c_str()));
+        chunk.objects[0].state = DataObject{};
+        REQUIRE(database.Begin());
+        CHECK(database.WriteChunk(chunk) == eastl::unexpected(SaveError::InvalidData));
+    }
+}
+
 TEST_CASE("Opening genuine v7 preserves square residency until the first committed checkpoint", "[save][database][migration]") {
     SaveFile file;
     PopulateV7(file.path.c_str());
@@ -825,9 +972,10 @@ TEST_CASE("Opening genuine v7 preserves square residency until the first committ
     REQUIRE(database.Commit());
     {
         RawDatabase raw(file.path.c_str());
-        CHECK(raw.Text("SELECT format_version FROM metadata") == "8");
+        CHECK(raw.Text("SELECT format_version FROM metadata") == "9");
         CHECK(raw.Text("SELECT payload FROM world_state").find("\"circle_residency\":") != std::string::npos);
-        CHECK(raw.Text("SELECT payload FROM chunks") == originalChunk);
+        CHECK(raw.Text("SELECT payload FROM chunks") != originalChunk);
+        CHECK(raw.Text("SELECT payload FROM chunks").find("\"controller\":") != std::string::npos);
         CHECK(raw.Text("SELECT payload FROM player_memories") == originalMemory);
     }
     SaveDatabase observer(TestContent());
@@ -883,9 +1031,18 @@ TEST_CASE("Failed v7 migration keeps durable version and permits retry on the sa
             raw.Exec("CREATE TRIGGER fail_migration BEFORE UPDATE ON world_state "
                 "BEGIN SELECT RAISE(ABORT,'injected migration failure'); END");
         }
-        REQUIRE(database.Begin());
-        REQUIRE(database.WriteChunk(chunk));
-        CHECK(database.Commit() == eastl::unexpected(SaveError::InvalidData));
+        CHECK(database.Begin() == eastl::unexpected(SaveError::InvalidData));
+        RawDatabase raw(file.path.c_str());
+        raw.Exec("DROP TRIGGER fail_migration");
+    }
+    SECTION("migration chunk SQL failure") {
+        database.Rollback();
+        {
+            RawDatabase raw(file.path.c_str());
+            raw.Exec("CREATE TRIGGER fail_migration BEFORE UPDATE ON chunks "
+                "BEGIN SELECT RAISE(ABORT,'injected chunk migration failure'); END");
+        }
+        CHECK(database.Begin() == eastl::unexpected(SaveError::InvalidData));
         RawDatabase raw(file.path.c_str());
         raw.Exec("DROP TRIGGER fail_migration");
     }
@@ -896,11 +1053,7 @@ TEST_CASE("Failed v7 migration keeps durable version and permits retry on the sa
             raw.Exec("CREATE TRIGGER fail_migration BEFORE UPDATE ON metadata "
                 "BEGIN SELECT RAISE(ABORT,'injected migration failure'); END");
         }
-        REQUIRE(database.Begin());
-        REQUIRE(database.WriteChunk(chunk));
-        loaded->session.circleResidency = CircleResidency{78};
-        REQUIRE(database.WriteSnapshot(*loaded));
-        CHECK(database.Commit() == eastl::unexpected(SaveError::InvalidData));
+        CHECK(database.Begin() == eastl::unexpected(SaveError::InvalidData));
         RawDatabase raw(file.path.c_str());
         raw.Exec("DROP TRIGGER fail_migration");
     }
@@ -932,7 +1085,103 @@ TEST_CASE("Failed v7 migration keeps durable version and permits retry on the sa
     REQUIRE(upgraded);
     CHECK_FALSE(upgraded->session.circleResidency);
     RawDatabase raw(file.path.c_str());
-    CHECK(raw.Text("SELECT format_version FROM metadata") == "8");
+    CHECK(raw.Text("SELECT format_version FROM metadata") == "9");
+}
+
+TEST_CASE("Legacy checkpoints rewrite every chunk before accepting new v9 writes and roll back atomically", "[save][database][migration]") {
+    int version = 7;
+    SECTION("version seven") { version = 7; }
+    SECTION("version eight") { version = 8; }
+    SaveFile file;
+    {
+        SaveDatabase database(TestContent());
+        REQUIRE(database.Create(file.path.c_str()));
+        REQUIRE(database.Begin());
+        REQUIRE(database.WriteChunk(SampleChunk()));
+        ChunkArchive remote{};
+        remote.position = {3, -2, 1};
+        remote.tiles.fill({TestTerrain("floor"), 0});
+        remote.actors.push_back({8, {48, -32, 1}, false, 17});
+        remote.objects.push_back({9, {48, -32, 1}, false, 23});
+        REQUIRE(database.WriteChunk(remote));
+        auto snapshot = SampleSnapshot();
+        snapshot.nextId = 10;
+        snapshot.generationVersion = 2;
+        if (version == 8) { snapshot.session.circleResidency = CircleResidency{78}; }
+        REQUIRE(database.WriteSnapshot(snapshot));
+        REQUIRE(database.Commit());
+    }
+    std::string originalChunks;
+    std::string originalSnapshot;
+    {
+        RawDatabase raw(file.path.c_str());
+        StripV9ChunkFields(raw);
+        if (version == 7) {
+            raw.Exec("UPDATE world_state SET payload=json_remove(payload,'$.session.circle_residency');"
+                "UPDATE metadata SET format_version=7");
+        } else { raw.Exec("UPDATE metadata SET format_version=8"); }
+        originalChunks = raw.Text("SELECT group_concat(payload,'|') FROM (SELECT payload FROM chunks ORDER BY x,z,y)");
+        originalSnapshot = raw.Text("SELECT payload FROM world_state");
+    }
+    SaveDatabase database(TestContent());
+    auto snapshot = database.Open(file.path.c_str());
+    REQUIRE(snapshot);
+    CHECK(snapshot->generationVersion == 2);
+    auto remote = database.ReadChunk({3, -2, 1}, 10);
+    REQUIRE(remote);
+    REQUIRE(*remote);
+    auto npc = ReadAiController((**remote).actors[0].controller);
+    REQUIRE(npc);
+    REQUIRE(*npc);
+    CHECK((*npc)->Kind() == AiControllerKind::Wander);
+    CHECK((**remote).objects[0].type == ObjectTypeId{});
+    CHECK((**remote).objects[0].state == DataObject{});
+
+    // A failed checkpoint must undo migration of untouched remote rows too.
+    REQUIRE(database.Begin());
+    auto local = database.ReadChunk({}, 10);
+    REQUIRE(local);
+    REQUIRE(*local);
+    CHECK((**local).actors[0].controller == CaptureAiController(nullptr));
+    REQUIRE(database.WriteChunk(SampleChunk()));
+    auto bad = *snapshot;
+    bad.nextId = 9; // Remote ID 9 remains present.
+    REQUIRE(database.WriteSnapshot(bad));
+    CHECK(database.Commit() == eastl::unexpected(SaveError::InvalidData));
+    {
+        RawDatabase raw(file.path.c_str());
+        CHECK(raw.Text("SELECT format_version FROM metadata") == std::to_string(version));
+        CHECK(raw.Text("SELECT group_concat(payload,'|') FROM (SELECT payload FROM chunks ORDER BY x,z,y)") == originalChunks);
+        CHECK(raw.Text("SELECT payload FROM world_state") == originalSnapshot);
+    }
+    // Explicit rollback also resets the effective decoder, permitting old reads.
+    REQUIRE(database.Begin());
+    database.Rollback();
+    remote = database.ReadChunk({3, -2, 1}, 10);
+    REQUIRE(remote);
+    REQUIRE(*remote);
+
+    REQUIRE(database.Begin());
+    auto replacement = SampleChunk();
+    replacement.tiles[0].damage = 67;
+    REQUIRE(database.WriteChunk(replacement)); // New v9 row must not use legacy decoder at commit.
+    REQUIRE(database.Commit());
+    {
+        RawDatabase raw(file.path.c_str());
+        CHECK(raw.Text("SELECT format_version FROM metadata") == "9");
+        CHECK(raw.Text("SELECT count(*) FROM chunks WHERE json_type(payload,'$.actors[0].controller')='object'") == "2");
+        CHECK(raw.Text("SELECT count(*) FROM chunks WHERE json_type(payload,'$.objects[0].type')='text' AND json_type(payload,'$.objects[0].state')='object'") == "2");
+    }
+    SaveDatabase observer(TestContent());
+    auto upgraded = observer.Open(file.path.c_str());
+    REQUIRE(upgraded);
+    CHECK(upgraded->generationVersion == 2);
+    CHECK(upgraded->session.circleResidency == snapshot->session.circleResidency);
+    remote = observer.ReadChunk({3, -2, 1}, 10);
+    REQUIRE(remote);
+    REQUIRE(*remote);
+    CHECK((**remote).actors[0].turns == 17);
+    CHECK((**remote).objects[0].updates == 23);
 }
 
 TEST_CASE("Version seven rejects new session fields and retains strict session validation", "[save][database][migration]") {
@@ -962,9 +1211,7 @@ TEST_CASE("Checkpoint rejects metadata version changes after Open", "[save][data
         RawDatabase raw(file.path.c_str());
         raw.Exec("UPDATE metadata SET format_version=8");
     }
-    REQUIRE(database.Begin());
-    REQUIRE(database.WriteSnapshot(SampleSnapshot()));
-    CHECK(database.Commit() == eastl::unexpected(SaveError::InvalidData));
+    CHECK(database.Begin() == eastl::unexpected(SaveError::InvalidData));
     CHECK(database.Commit() == eastl::unexpected(SaveError::InvalidState));
 }
 

@@ -165,7 +165,8 @@ private:
     }
     void RequestVictim(ItemMutationContext& context) {
         const auto& world = context.Read().GetWorld();
-        const auto victims = world.ItemsAt({1, 1});
+        Vector<ItemHandle> victims;
+        world.CollectItemsAt({1, 1}, victims);
         for (const auto handle : victims) {
             const auto* item = world.GetItem(handle);
             if (item && world.GetContent().GetItem(item->type).id == "victim") {
@@ -357,7 +358,9 @@ void Advance(World& world, Tick elapsed) {
     world.ProcessItemEvents();
 }
 void RemoveNpcs(World& world) {
-    for (const auto handle : world.ActiveActors()) {
+    Vector<ActorHandle> actors;
+    world.CollectActiveActors(actors);
+    for (const auto handle : actors) {
         if (!world.GetActor(handle)->player) { REQUIRE(world.DestroyActor(handle)); }
     }
 }

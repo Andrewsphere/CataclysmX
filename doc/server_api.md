@@ -335,18 +335,26 @@ uses an absolute limit at or after `tick`, returning `SimulationResult`:
 - `LimitReached`: elapsed time reached the limit; `nextEventIn` is the positive
   relative delay to the next event. Events due exactly at the limit are
   processed, including a player barrier if applicable.
-- `NoEvents`: no active actor or enabled object can produce a future event;
+- `NoEvents`: no eligible actor, enabled object, or active item can produce a future event;
   time stays at the last processed tick. `nextEventIn` is zero.
 
-At each event tick, due enabled objects update first in persistent-ID order and
-immediately schedule their next interval (default `100`), independent of player
-speed. Due item effects follow in persistent-ID/capability order, before the
+At each event tick, `World::ProcessObjectEvents()` runs the due enabled object
+batch first in persistent-ID order. Generic objects immediately schedule their
+next interval (default `100`); typed behaviors complete jobs or clear their own
+deadline, independent of player speed. Zero-work machine completion remains due
+without power or running intent; disabled objects explicitly freeze it. Due item effects follow in persistent-ID/capability order, before the
 player barrier. Item deadlines participate in the nearest-event calculation;
 charging advances only sparse registered activities. After the player barrier
-clears, due NPCs act in persistent-ID order,
-commit positive-cost normal actions, and consume one explicit RNG draw each,
-even when blocked. They attempt a cardinal step into an active, passable,
-unoccupied tile. The simulator then elapses to the nearest event or the limit.
+clears, `World::ProcessNpcActions(rng)` runs due controllers in persistent-ID order.
+Wander controllers commit positive-cost normal actions and consume one explicit
+RNG draw each, even when blocked. They attempt a horizontal cardinal step through
+`TryActorStep(..., activeOnly=true)` into an active, passable, unoccupied tile.
+NPCs with controller `None` are idle and contribute no deadline. Players have no
+AI. The simulator then elapses to the minimum of World's actor/object/item event
+queries or the limit. These minimum queries scan directly without sorting;
+`CollectReadyPlayers` orders only the input barrier. Reusable due-record buffers
+belong to World, and each handle is revalidated before dispatch. Newly created
+entities wait for the subsequent batch; scheduler callbacks cannot reenter it.
 Resuming at the same tick repeats neither committed NPC actions nor object
 effects. Actor `remainingTicks` and object timers are relative delays;
 resident-only and archived entities freeze without catch-up on reactivation.
@@ -470,14 +478,16 @@ can legitimately drop the active host, so authoritative roster positions and the
 host bubble center are refreshed from the settled world before returning. No
 simulation time elapses during restoration.
 
-Save format **version 7** persists Y coordinates, lighting/appearance, player
+Save format **version 9** persists Y coordinates, lighting/appearance, player
 observations, player roster and reconnect tokens, actor speed, carrying mass limit
 and remaining cooldown, object interval and remaining timer, simulation tick/RNG,
-and session pacing settings.
+and session pacing settings. It also stores actor controller envelopes and typed
+object behavior state, including machine energy and pending jobs.
 A checkpoint can therefore resume mid-action or partway through an object
 interval. Item definition/capability names, installations, charge fractions and
-remaining door delays are persisted as well. Versions 1–6 are rejected explicitly;
-migrations are not implemented. Memory checkpointing rewrites all memory rows and
+remaining door delays are persisted as well. Versions 7/8 are read with legacy
+defaults and upgraded atomically on checkpoint; versions 1–6 are rejected.
+Memory checkpointing rewrites all memory rows and
 scales with total remembered terrain and objects. Saving never refreshes observations.
 Pending input intents, tick credit, fractional credit, readiness snapshots, and partially
 spent input deadlines are transient: load resets them and gives ready players

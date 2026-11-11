@@ -751,8 +751,12 @@ TEST_CASE("Default World generation matches public plans regardless of streaming
     for (std::size_t i = 1; i < chunks.size(); ++i) {
         CHECK(forward.GetChunk(chunks[i])->tiles == reverse.GetChunk(chunks[i])->tiles);
     }
-    CHECK(forward.ActiveActors().empty());
-    CHECK(forward.ActiveObjects().empty());
+    Vector<ActorHandle> actors;
+    Vector<ObjectHandle> objects;
+    forward.CollectActiveActors(actors);
+    forward.CollectActiveObjects(objects);
+    CHECK(actors.empty());
+    CHECK(objects.empty());
     const auto actor = forward.CreateActor({0, 0});
     REQUIRE(actor.has_value());
     CHECK(forward.GetActor(*actor)->id == 1);

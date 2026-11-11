@@ -27,12 +27,15 @@ Build a small, deterministic C++23 roguelike inspired by Cataclysm: Bright Night
 - Use a trailing underscore (camelCase_) for private and protected data members.
 - Do not use trailing underscores for public fields, including fields of simple value types and component structs.
 - Consider ankerl hashmaps/sets when designing memory layout if ordering is not required.
+- Be careful we allocations, do not design APIs that return disposable vectors.
 
 ## Architecture
 
 - This is game, not a simulator. We employ determinism while it's beneficial for simplicity/design/testing/development in general. If stricked determinism requires too much machinery, rule relaxation is acceptable.
 - Keep subsystem boundaries clear. Content is parsed/validated into typed data; runtime entities are owned by the world. Preserve headless execution and replayability.
 - Do not silently change gameplay timing, public contracts, persistence formats, or dependency versions.
+
+World generation must be reproducible for the same seed, coordinates, generation version, and content. Simulation should reproduce results from the same logical state, RNG state, and authoritative inputs within a game/content version, independently of runtime handle allocation. Keep storage traversal unordered where order is irrelevant; impose stable ordering at order-sensitive execution boundaries. Prefer reusable due-work batches over repeatedly sorting all entities. Async preparation is compatible with this policy, but simulation activation timing must be defined or treated as an explicit input. Preserve practical replayability without introducing elaborate machinery solely for stronger determinism guarantees.
 
 ## Workflow
 

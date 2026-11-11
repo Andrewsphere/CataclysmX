@@ -64,7 +64,7 @@ TEST_CASE("Server revalidates item access and capacity before spending an action
     const auto capacity = server.Send({CommandKind::pick_up});
     CHECK(capacity.outcome == Outcome::capacity_exceeded);
     CHECK_FALSE(capacity.advanced);
-    CHECK(world.ItemsAt({0, 0}).size() == 1);
+    CHECK(world.CountItemsAt({0, 0}) == 1);
     CHECK(server.GetTick() == 0);
 
     const auto other = world.CreateActor({0, 2}); REQUIRE(other);
@@ -83,7 +83,8 @@ TEST_CASE("Server revalidates item access and capacity before spending an action
 TEST_CASE("Server storage commands preserve identities and report volume refusals", "[server][items]") {
     Server server(TestContent());
     World& world = server.GetWorld();
-    const auto bag = world.ItemsAt({0, 0})[0];
+    REQUIRE_FALSE(world.ItemsAt({0, 0}).Empty());
+    const auto bag = *world.ItemsAt({0, 0}).begin();
     const auto bandage = world.GetItem(bag)->contents[0];
     const auto id = world.GetItem(bandage)->id;
     Command move;

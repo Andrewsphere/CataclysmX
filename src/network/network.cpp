@@ -4,6 +4,10 @@
 
 #include <enet/enet.h>
 
+#ifdef GetObject
+#undef GetObject
+#endif
+
 #include <EASTL/utility.h>
 #include <EASTL/sort.h>
 
@@ -145,6 +149,30 @@ std::uint64_t ContentFingerprint(const ContentCatalog& content) {
             }
             HashNumber(hash, schema.hasActivity); HashNumber(hash, schema.countdown);
             HashNumber(hash, schema.maximumDelay); HashNumber(hash, schema.implementationVersion);
+        }
+    }
+    // Keep fingerprints of catalogs without objects compatible with earlier content.
+    if (content.ObjectCount() != 0) {
+        HashNumber(hash, content.ObjectCount());
+        for (std::size_t i = 0; i < content.ObjectCount(); ++i) {
+            const auto& object = content.GetObject({static_cast<std::uint32_t>(i + 1)});
+            HashString(hash, object.id); HashString(hash, object.name);
+            HashNumber(hash, static_cast<std::uint64_t>(object.behavior));
+            switch (object.behavior) {
+            case ObjectBehaviorKind::None:
+                HashNumber(hash, 0); // No behavior implementation.
+                break;
+            case ObjectBehaviorKind::CraftingMachine:
+                HashNumber(hash, 1); // Crafting machine implementation/state version.
+                HashString(hash, content.GetItem(object.machine.input).id);
+                HashNumber(hash, object.machine.inputCount);
+                HashString(hash, content.GetItem(object.machine.output).id);
+                HashNumber(hash, object.machine.outputCount);
+                HashNumber(hash, object.machine.duration);
+                HashNumber(hash, object.machine.energyCapacity);
+                HashNumber(hash, object.machine.energyPerTick);
+                break;
+            }
         }
     }
     return hash;

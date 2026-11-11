@@ -240,7 +240,8 @@ TEST_CASE("World save round trips every tile and nested inventory values", "[wor
     CHECK(restored.GetItem(items[5])->contents == Vector<ItemHandle>{items[6]});
     CHECK(restored.GetItem(items[5])->location == ItemLocation::Stored(object));
     CHECK(restored.GetItem(items[6])->location == ItemLocation::Inside(items[5]));
-    CHECK(restored.ItemsAt({3, 3}) == Vector<ItemHandle>{items[7]});
+    REQUIRE(restored.CountItemsAt({3, 3}) == 1);
+    CHECK(*restored.ItemsAt({3, 3}).begin() == items[7]);
     CHECK(restored.GetItem(items[7])->contents == Vector<ItemHandle>{items[8]});
     CHECK(restored.GetItem(items[8])->location == ItemLocation::Inside(items[7]));
     CHECK(restored.CheckInvariants());
@@ -626,7 +627,10 @@ TEST_CASE("Checkpoint warm values survive failed preflight and FIFO eviction fal
     }
     REQUIRE(world.ReconcileChunks());
     REQUIRE(world.SetTile({192, 1}, {TestTerrain("floor"), 37}));
-    const auto actor = Take(world.CreateActor({192, 1}));
+    // Runtime controller snapshots bypass the bounded warm cache. Keep the
+    // actor on a separate, intact disk layer while exercising a warm surface.
+    REQUIRE(world.SetTile({192, 1, 1}, {TestTerrain("floor"), 0}));
+    const auto actor = Take(world.CreateActor({192, 1, 1}));
     const auto actorId = world.GetActor(actor)->id;
     const auto lamp = Take(world.CreateObject({193, 1}, true));
     const auto lampId = world.GetObject(lamp)->id;
@@ -667,7 +671,9 @@ TEST_CASE("Checkpoint warm values survive failed preflight and FIFO eviction fal
     CHECK(freshActor != actor);
     CHECK(freshLamp != lamp);
     CHECK_FALSE(world.GetObject(freshLamp)->enabled);
-    CHECK(world.ActiveActors().empty());
+    Vector<ActorHandle> active;
+    world.CollectActiveActors(active);
+    CHECK(active.empty());
     CHECK(*world.GetTile({192, 1}) == Tile{TestTerrain("floor"), 37});
     CHECK(world.GetLightLevel({193, 1}) == 0); // Same coordinates, new source token.
     Corrupt(files.database.c_str(), "DELETE FROM chunks WHERE x=0 AND z=0");
@@ -780,6 +786,15 @@ ChunkArchive ActorChunk(ChunkCoord position, PersistentId id) {
     return chunk;
 }
 
+// Generic objects have no dynamic behavior state and remain warm-cache eligible.
+ChunkArchive WarmObjectChunk(ChunkCoord position, PersistentId id) {
+    ChunkArchive chunk{};
+    chunk.tiles.fill(Tile{TestTerrain("floor"), 0});
+    chunk.position = position;
+    chunk.objects.push_back({id, {position.x * chunk_size, position.z * chunk_size, position.y}, false, 0});
+    return chunk;
+}
+
 TEST_CASE("Activating resident disk snapshots settles suspended entities without advancing timers",
           "[world][save][streaming][activity][gravity]") {
     SaveDirectory files;
@@ -826,8 +841,9 @@ TEST_CASE("Activating resident disk snapshots settles suspended entities without
     CHECK(world.FindPlayerPosition(1) == TileCoord{0, 0, 0});
     CHECK(world.ActorAt({0, 0, 0}) == actor);
     CHECK(world.ActorAt({0, 0, 2}) == ActorHandle{});
-    CHECK(world.ItemsAt({1, 0, 0}) == Vector<ItemHandle>{item});
-    CHECK(world.ItemsAt({1, 0, 2}).empty());
+    REQUIRE(world.CountItemsAt({1, 0, 0}) == 1);
+    CHECK(*world.ItemsAt({1, 0, 0}).begin() == item);
+    CHECK(world.ItemsAt({1, 0, 2}).Empty());
     CHECK(world.GetActor(actor)->remainingTicks == 37);
     CHECK(world.LoadedChunks() == loaded);
     CHECK(world.ArchivedChunkCount() == 0);
@@ -844,11 +860,11 @@ TEST_CASE("Activating resident disk snapshots settles suspended entities without
 
 TEST_CASE("Incoming circle disk IDs cannot alias clean warm values", "[world][save][streaming][warm][circle]") {
     SaveDirectory files;
-    WriteFixture(files.database.c_str(), {ActorChunk({0, 0}, 1), ActorChunk({1, 0, world_max_y}, 2)});
+    WriteFixture(files.database.c_str(), {WarmObjectChunk({0, 0}, 1), ActorChunk({1, 0, world_max_y}, 2)});
     World world(TestContent());
     Take(world.LoadSave(files.database.c_str()));
     const auto origin = Load(world);
-    const auto oldActor = world.FindActor(1);
+    const auto oldObject = world.FindObject(1);
     REQUIRE(world.ReleaseRequest(origin));
     REQUIRE(world.ReconcileChunks());
     REQUIRE(world.Save({}));
@@ -862,9 +878,11 @@ TEST_CASE("Incoming circle disk IDs cannot alias clean warm values", "[world][sa
     CHECK(world.CheckInvariants());
     REQUIRE(world.UpdateCircleRequest(request, {{0, 0}, 0}, LoadMode::resident));
     REQUIRE(world.ReconcileChunks()); // Incoming warm IDs are counted once, not twice.
-    REQUIRE(world.GetActor(world.FindActor(1)));
-    CHECK(world.FindActor(1) != oldActor);
-    CHECK(world.ActiveActors().empty());
+    REQUIRE(world.GetObject(world.FindObject(1)));
+    CHECK(world.FindObject(1) != oldObject);
+    Vector<ActorHandle> active;
+    world.CollectActiveActors(active);
+    CHECK(active.empty());
     CHECK(world.LoadedChunks().size() == world_layer_count);
     CHECK(world.CheckInvariants());
 }
@@ -943,7 +961,7 @@ TEST_CASE("Incoming disk chunks cannot alias IDs in pending RAM archives", "[wor
 
 TEST_CASE("Mixed warm pending and disk preflight failure retains every source", "[world][save][streaming][warm]") {
     SaveDirectory files;
-    WriteFixture(files.database.c_str(), {ActorChunk({0, 0}, 1), ActorChunk({1, 0}, 2),
+    WriteFixture(files.database.c_str(), {WarmObjectChunk({0, 0}, 1), ActorChunk({1, 0}, 2),
         ActorChunk({2, 0}, 3), ActorChunk({3, 0}, 4)});
     World world(TestContent());
     Take(world.LoadSave(files.database.c_str()));
@@ -984,7 +1002,7 @@ TEST_CASE("Mixed warm pending and disk preflight failure retains every source", 
     CHECK(world.ArchivedChunkCount() == 0);
     CHECK(world.FindActor(3) == liveActor);
     CHECK_FALSE(world.IsActive({32, 0}));
-    REQUIRE(world.GetActor(world.FindActor(1)));
+    REQUIRE(world.GetObject(world.FindObject(1)));
     REQUIRE(world.GetActor(world.FindActor(2)));
     CHECK(*world.GetTile({16, 1}) == Tile{TestTerrain("floor"), 84});
     CHECK(world.CheckInvariants());

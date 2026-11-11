@@ -648,7 +648,8 @@ TEST_CASE("Controls label unbound actions and show keyboard limitations only whe
 TEST_CASE("Inventory modal drops selected local items preserves contents and accepts queued drops", "[terminal][gameplay][inventory]") {
     Fixture f;
     auto& world = f.server.GetWorld();
-    const auto bag = world.ItemsAt({0, 0})[0];
+    REQUIRE_FALSE(world.ItemsAt({0, 0}).Empty());
+    const auto bag = *world.ItemsAt({0, 0}).begin();
     const auto bandage = world.GetItem(bag)->contents[0];
     const auto bagId = world.GetItem(bag)->id;
     REQUIRE(world.TransferItem(bag, ItemLocation::Carried(f.server.GetPlayer())));

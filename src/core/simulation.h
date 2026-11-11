@@ -11,8 +11,8 @@ struct SimulationResult {
     Tick nextEventIn = 0;
 };
 
-// Processes due objects, then pauses for ready players before the actor phase.
-// NPC actions run in persistent-ID order. Time advances directly to the next
+// Processes due objects and items, then pauses for ready players before NPCs.
+// World owns reusable, persistent-ID-ordered due batches. Time advances to the next
 // event, at most through limitTick. No wall clock or input timeout is consulted.
 SimulationResult AdvanceUntilInput(World& world, Tick& tick,
     std::uint32_t& rngState, Tick limitTick);

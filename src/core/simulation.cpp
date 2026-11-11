@@ -16,27 +16,6 @@ void Require(bool condition) {
     }
 }
 
-void ActNpc(World& world, ActorHandle handle, std::uint32_t& rngState) {
-    const Actor* actor = world.GetActor(handle);
-    Require(actor != nullptr);
-    const TileCoord position = actor->position;
-    Require(world.ScheduleActorAction(handle).has_value());
-    // Unsigned overflow is the specified, portable modulo-2^32 LCG. Even a
-    // blocked action consumes its one draw and its full scheduling cost.
-    rngState = rngState * 1'664'525U + 1'013'904'223U;
-    // NPCs wander horizontally on their current layer. Keep this four-way
-    // mapping and its single draw stable; stairs are a player command only.
-    constexpr TileCoord directions[] = {{1, 0}, {0, 1}, {-1, 0}, {0, -1}};
-    const TileCoord direction = directions[rngState >> 30];
-    const TileCoord destination{position.x + direction.x, position.z + direction.z, position.y};
-    const Tile* tile = world.GetTile(destination);
-    if (!world.IsActive(destination) || !tile || !Passable(world.GetContent(), tile->terrain)
-        || world.ActorAt(destination).value != 0) {
-        return;
-    }
-    Require(world.MoveActor(handle, destination).has_value());
-}
-
 }
 
 SimulationResult AdvanceUntilInput(World& world, Tick& tick,
@@ -45,14 +24,7 @@ SimulationResult AdvanceUntilInput(World& world, Tick& tick,
     for (;;) {
         // Completed timed effects precede the input barrier. Their next delay
         // is committed immediately, so resuming this same tick cannot repeat it.
-        bool effectsCompleted = false;
-        for (ObjectHandle handle : world.ActiveObjects()) {
-            const InteractiveObject* object = world.GetObject(handle);
-            if (object && object->enabled && object->remainingTicks == 0) {
-                Require(world.RecordObjectUpdate(handle).has_value());
-                effectsCompleted = true;
-            }
-        }
+        bool effectsCompleted = world.ProcessObjectEvents();
 
         const auto dueItemEvent = world.NextItemEventIn();
         effectsCompleted |= dueItemEvent && *dueItemEvent == 0;
@@ -62,40 +34,24 @@ SimulationResult AdvanceUntilInput(World& world, Tick& tick,
         if (effectsCompleted) { world.UpdatePlayerObservations(); }
 
         SimulationResult result;
-        const Vector<ActorHandle> actors = world.ActiveActors();
-        for (ActorHandle handle : actors) {
-            const Actor* actor = world.GetActor(handle);
-            if (actor && actor->player && actor->remainingTicks == 0) {
-                result.readyPlayers.push_back(handle);
-            }
-        }
+        world.CollectReadyPlayers(result.readyPlayers);
         if (!result.readyPlayers.empty()) {
             result.stop = SimulationStop::InputRequired;
             return result;
         }
 
-        for (ActorHandle handle : actors) {
-            const Actor* actor = world.GetActor(handle);
-            if (actor && !actor->player && actor->remainingTicks == 0) {
-                ActNpc(world, handle, rngState);
-                world.UpdatePlayerObservations();
-            }
-        }
+        world.ProcessNpcActions(rngState);
 
         Tick next = std::numeric_limits<Tick>::max();
         bool hasEvents = false;
-        for (ActorHandle handle : world.ActiveActors()) {
-            const Actor* actor = world.GetActor(handle);
-            if (!actor) { continue; }
-            Require(actor->remainingTicks != 0);
-            if (actor->remainingTicks < next) { next = actor->remainingTicks; }
+        if (const auto actorEvent = world.NextActorEventIn()) {
+            Require(*actorEvent != 0);
+            if (*actorEvent < next) { next = *actorEvent; }
             hasEvents = true;
         }
-        for (ObjectHandle handle : world.ActiveObjects()) {
-            const InteractiveObject* object = world.GetObject(handle);
-            if (!object || !object->enabled) { continue; }
-            Require(object->remainingTicks != 0);
-            if (object->remainingTicks < next) { next = object->remainingTicks; }
+        if (const auto objectEvent = world.NextObjectEventIn()) {
+            Require(*objectEvent != 0);
+            if (*objectEvent < next) { next = *objectEvent; }
             hasEvents = true;
         }
         if (const auto itemEvent = world.NextItemEventIn()) {

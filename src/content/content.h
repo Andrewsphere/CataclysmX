@@ -4,6 +4,7 @@
 #include "core/diagnostics.h"
 #include "core/light_types.h"
 #include "content/item_definition.h"
+#include "content/object_definition.h"
 #include "content/content_result.h"
 
 #include <EASTL/expected.h>
@@ -88,11 +89,16 @@ public:
     const ItemDefinition* TryGetItem(ItemTypeId id) const;
     const ItemDefinition& GetItem(ItemTypeId id) const;
     std::size_t ItemCount() const;
+    ObjectTypeId FindObject(eastl::string_view id) const;
+    const ObjectDefinition* TryGetObject(ObjectTypeId id) const;
+    const ObjectDefinition& GetObject(ObjectTypeId id) const;
+    std::size_t ObjectCount() const;
 
 private:
     Vector<TerrainDefinition> definitions_;
     Vector<BuildingPattern> patterns_;
     Vector<ItemDefinition> items_;
+    Vector<ObjectDefinition> objects_;
     friend ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource>, Diagnostics*);
     friend ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource>, const ItemBehaviorRegistry&, Diagnostics*);
 };

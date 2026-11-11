@@ -1,10 +1,10 @@
 # Save format
 
-CataclysmX saves are SQLite database files. The strict v8 format is governed by
-one authoritative `metadata.format_version = 8` for both SQL and JSON. The
+CataclysmX saves are SQLite database files. The strict v9 format is governed by
+one authoritative `metadata.format_version = 9` for both SQL and JSON. The
 `metadata` columns are `singleton INTEGER PRIMARY KEY CHECK(singleton=1)`,
 `format_version INTEGER NOT NULL`, and `game_version TEXT NOT NULL`; its single
-row is `(1, 8, "0.1.0")`. The other tables are
+row is `(1, 9, "0.1.0")`. The other tables are
 `world_state(singleton INTEGER PRIMARY KEY CHECK(singleton=1), payload TEXT NOT
 NULL)` and `chunks(x INTEGER NOT NULL, z INTEGER NOT NULL, y INTEGER NOT NULL,
 payload TEXT NOT NULL, PRIMARY KEY(x,z,y))`, and
@@ -20,7 +20,7 @@ required integer in 0–255: the fixed environment illumination (new-world defau
 192), independent of wall-clock time. The session object has exactly
 `tick`, `rng_state`, `player`, `position` (`x`, `z`, `y`), `active_radius`,
 `resident_radius`, `autosave_interval`, `pacing`, `players`, and `circle_residency`.
-`circle_residency` is required in v8 and is either JSON `null` (legacy square
+`circle_residency` is required in v8/v9 and is either JSON `null` (legacy square
 residency) or an exact object `{ "radius_tiles": integer }` with radius in
 0–128 inclusive. Zero is a valid circle radius; the default `CircleResidency`
 value is 78 tiles. Missing, duplicate, unknown, noninteger or out-of-range fields
@@ -70,13 +70,26 @@ The root object has exactly `tiles`, `actors`, `objects`, and `ground_items`:
 - `actors`: `{ "id": decimal-string, "position": {"x": int, "z": int, "y": int},
   "player": boolean, "parked": boolean, "turns": decimal-string, "inventory": [...],
   "speed": positive-uint32, "remaining_ticks": decimal-string,
-  "carry_capacity_g": decimal-string, "light": {"intensity": integer, "range": integer} }`.
+  "carry_capacity_g": decimal-string, "light": {"intensity": integer, "range": integer},
+  "controller": {"type": string, "state": structured-value} }`.
   Carry capacity preserves the full uint64 range.
+  Controller envelopes have exactly `type` and `state`. Stable controller names
+  are `none` (empty object state) and `wander` (exact `{ "version": 1 }` state,
+  with an unsigned version). Players, including parked players, require `none`;
+  NPCs may use either controller. Missing/empty envelopes, unknown controller
+  names, malformed state, duplicate keys and unsupported state versions fail.
+  Controller read/factory helpers own the state schema and its validation.
 - `objects`: `{ "id": decimal-string, "position": {"x": int, "z": int, "y": int},
   "enabled": boolean, "updates": decimal-string, "contents": [...],
   "update_interval": positive-uint32, "remaining_ticks": decimal-string,
   "kind": integer, "facing": integer, "broken": boolean,
-  "light": {"intensity": integer, "range": integer} }`.
+  "light": {"intensity": integer, "range": integer}, "type": string,
+  "state": structured-value }`.
+  `type` is the stable `ObjectDefinition::id`, never the runtime `ObjectTypeId`
+  ordinal. The empty string identifies a generic object and requires `{}` state.
+  Typed objects require an existing catalog definition and saved state accepted
+  by `ValidateObjectBehaviorState`; an empty or missing state never requests
+  factory defaults. Semantic appearance remains independent of behavior type.
   Semantic kinds are Generic=1, Chair=2, Table=3, Lamp=4; None=0 is invalid for
   a stored object. Facing is North=0, East=1, South=2, West=3. These closed semantic
   enum values are part of v7, not content ordinals or renderer sprite indices.
@@ -118,7 +131,7 @@ tree directly. The controller target is a world position and includes its Y
 coordinate in the v6 state representation. `ValidateItemSnapshot` is the shared item-state and ownership-tree
 validator for both archive paths, dispatching behavior-owned local and relational
 validation. Installation names resolve against the parent definition and its
-`AcceptsInstallation` policy. Metadata is version 8. Energy and charger state
+`AcceptsInstallation` policy. Metadata is version 9. Energy and charger state
 remain version 1; door state version 2 adds required signed Y. These schemas use
 unsigned JSON numbers and signed `$i64` target
 coordinates. No capacity clamping or implicit state migration is introduced.
@@ -135,7 +148,7 @@ ownership, chunks and session player identity/position are validated. Generic
 `generation_version` accepts 1 and 2 (legacy) and 3 (current); other values fail with
 `SaveError::UnsupportedVersion`. New worlds use generation version 3. Versions 1
 and 2 retain their prior surface generation; nonsurface slices use the layered
-terrain rules. The SQL/JSON save schema is version 8; strict v7 saves are also
+terrain rules. The SQL/JSON save schema is version 9; strict v7/v8 saves are also
 accepted as described below. Save formats v1 through v6 and all other schema
 versions are rejected. In particular, v2 command-count ticks are not silently reinterpreted as
 simulation ticks. Content's own format version is independent of both versions.
@@ -143,28 +156,45 @@ Version 7 explicitly adds illumination sources, object semantic identity,
 fixed skylight and independent per-player observations. Individual state migrations are a separate,
 explicit capability-version policy; no generic auto-clamp or fallback applies.
 
-### Version 7 compatibility and checkpoint upgrade
+### Version 7/8 compatibility and checkpoint upgrade
 
-Version 7 has the same tables, chunk payloads, memory payloads and world-state
-fields as v8, except its exact session field set excludes `circle_residency`.
-Opening v7 decodes that omission as an absent optional (square residency) and
-preserves the saved chunk radii. It validates without upgrading or rewriting
-the snapshot or metadata. A v7 payload containing the new field is invalid,
-even if null; a v8 payload omitting it is likewise invalid. Metadata selects
-the decoder, so relabeling one payload as the other version is not accepted.
+Versions 7 and 8 have the same SQL tables and memory encoding as v9. Their actor
+records lack `controller`; object records lack `type` and `state`. Decoding
+synthesizes default player `none` / NPC `wander` envelopes and generic objects
+with empty state. These legacy exact field sets reject the v9 additions.
+Version 7 additionally excludes `circle_residency` from the exact session fields;
+opening v7 preserves its chunk radii and selects square residency. Versions 8/9
+require the field, preserving any saved circle. Opening is read-only validation:
+it does not rewrite payloads or metadata. Metadata selects the strict decoder;
+relabeling modern chunks as legacy is invalid.
 
-The first successful checkpoint upgrades metadata and the session snapshot to
-v8 inside the same transaction as chunk and memory changes. This includes
-checkpoints that write only chunks or make no explicit writes: the unchanged
-legacy session is encoded with `circle_residency: null`. Migration itself does
-not rewrite chunk or memory payloads and creates no backup file. An explicitly
-supplied session may instead select a circle on that checkpoint.
+`SaveDatabase::Begin` starts the first checkpoint with `BEGIN IMMEDIATE`, checks
+that metadata still matches the opened durable version, and validates the old
+database. Before returning to the caller it rewrites **every** legacy chunk and
+the snapshot, then sets metadata to 9, all inside that transaction. A coordinate
+list allows decoding/writing one chunk at a time without modifying an active
+chunk scan. Each old row is decoded exactly once during the rewrite; newly
+written v9 rows are never decoded as legacy. Memory rows are unchanged by the
+migration itself. Generation versions 1, 2 and 3 are preserved.
 
-Validation, SQL, busy-commit failures and explicit rollback leave the durable
-v7 checkpoint intact. The connection advances its committed format version only
-after SQLite commits successfully; transaction-local snapshot codec state is
-cleared on rollback, allowing retry on the same connection. The public
-`SaveDatabase` transaction methods and dirty-state contracts are unchanged.
+A separate transaction-local effective version switches to 9 only after the
+full rewrite. Reads and commit validation use this effective version, including
+new caller `WriteChunk` rows; the durable version advances only after SQLite
+commits. Snapshot-only, chunk-only and empty checkpoints all migrate the full
+database. An explicitly supplied snapshot may select a new residency policy.
+Validation, SQL, busy-commit failures and explicit rollback restore the original
+metadata, snapshot and every chunk. Rollback resets the effective decoder to the
+durable version, permitting legacy reads and retry on the same connection.
+
+RAM archive fields are appended for source aggregate compatibility:
+`SavedActor::controller` is an owned `DataObject` envelope;
+`SavedObject::type` and `state` are an `ObjectTypeId` and owned `DataObject`.
+An empty object controller in a source-constructed archive is a compatibility
+sentinel: validation/encoding normalizes it to the player/NPC default via the
+controller factory. This convenience applies only to RAM construction; real v9
+JSON must contain a complete envelope. Object state has no default sentinel for
+typed objects. Shared helper/factory validation keeps persistence independent of
+behavior-specific state internals.
 
 `session.tick` counts global simulation ticks (100 per standard turn), while
 `pacing.ticks_per_second` only maps simulation ticks to real time.
@@ -259,8 +289,9 @@ Oldest values are evicted first. The byte budget includes allocated map value
 capacity (including keys and unused slots), index storage, a conservative bound
 for segment pointers, ordered-key capacity and actor/object allocation capacities.
 Item allocations, including reserved-but-empty item storage, are excluded by
-rejecting those snapshots from the warm cache. This keeps recursive `DataObject`
-storage out of the bounded-cache accounting. Eviction falls back to validated
+rejecting those snapshots from the warm cache. Actor controller and object state
+now also own `DataObject` storage; cache budgeting must account for their dynamic
+allocations or exclude snapshots carrying them. Eviction falls back to validated
 disk loading and does not change persistent identity or saved values.
 
 `Capture` produces trusted immutable RAM values from invariant-preserving world

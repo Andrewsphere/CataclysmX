@@ -28,7 +28,9 @@ TEST_CASE("Parked players retain inventory and timing without occupying active t
     const auto live = world.CreateActor({0, 0}, true);
     REQUIRE(live);
     CHECK(world.ActorAt({0, 0}) == *live);
-    CHECK(world.ActiveActors() == Vector<ActorHandle>{*live});
+    Vector<ActorHandle> active;
+    world.CollectActiveActors(active);
+    CHECK(active == Vector<ActorHandle>{*live});
     CHECK(world.SetActorParked(guest, false) == eastl::unexpected(WorldError::occupied));
     CHECK(world.ScheduleActorAction(guest) == eastl::unexpected(WorldError::chunk_unavailable));
     CHECK(world.RecordActorTurn(guest) == eastl::unexpected(WorldError::chunk_unavailable));

@@ -129,6 +129,13 @@ TEST_CASE("Explicit V7 item payload loads without rewriting its state", "[save][
     }
     payload += R"(],"actors":[{"id":"1","position":{"x":0,"z":0,"y":0},"player":true,"parked":false,"turns":"0","speed":100,"remaining_ticks":"0","carry_capacity_g":"18446744073709551615","light":{"intensity":0,"range":0},"inventory":[{"id":"2","type":"bag","state":{},"installation":"","contents":[]}]}],"objects":[],"ground_items":[{"id":"3","type":"device","state":{"charger":{"version":1,"enabled":true,"remainder":87},"power":{"version":1,"energy":800},"timer":{"version":2,"armed":true,"remaining_ticks":123,"target":{"x":{"$i64":"1"},"z":{"$i64":"0"},"y":{"$i64":"0"}}}},"installation":"","contents":[{"id":"4","type":"battery","state":{"cell":{"version":1,"energy":17}},"installation":"charger","contents":[]}],"position":{"x":0,"z":0,"y":0}}]})";
     WritePayload(file.path.c_str(), payload);
+    {
+        sqlite3* db = nullptr;
+        REQUIRE(sqlite3_open_v2(file.path.c_str(), &db, SQLITE_OPEN_READWRITE, nullptr) == SQLITE_OK);
+        REQUIRE(sqlite3_exec(db, "UPDATE world_state SET payload=json_remove(payload,'$.session.circle_residency');"
+            "UPDATE metadata SET format_version=7", nullptr, nullptr, nullptr) == SQLITE_OK);
+        REQUIRE(sqlite3_close(db) == SQLITE_OK);
+    }
     SaveDatabase database(expanded);
     auto opened = database.Open(file.path.c_str()); REQUIRE(opened);
     auto loaded = database.ReadChunk({}, opened->nextId); REQUIRE(loaded); REQUIRE(*loaded);
@@ -149,6 +156,16 @@ TEST_CASE("Explicit V7 item payload loads without rewriting its state", "[save][
         }
     }
     CHECK((**loaded).actors[0].carryCapacityGrams == UINT64_MAX);
+    REQUIRE(database.Begin());
+    REQUIRE(database.Commit()); // Full legacy chunk rewrite preserves item state.
+    auto migrated = database.ReadChunk({}, opened->nextId);
+    REQUIRE(migrated);
+    REQUIRE(*migrated);
+    REQUIRE((**migrated).items.size() == expected.items.size());
+    for (std::size_t i = 0; i < expected.items.size(); ++i) {
+        CHECK((**migrated).items[i].state == expected.items[i].state);
+        CHECK((**migrated).items[i].installation == expected.items[i].installation);
+    }
 }
 
 TEST_CASE("Item saves retain charge fractions timers capacity and stable catalog identities", "[save][item-save]") {
@@ -184,7 +201,7 @@ TEST_CASE("Malformed saved item state type and installation produce contextual e
     const auto content = Catalog(); ItemSaveFile file; Populate(content, file.path.c_str());
     SaveError expected = SaveError::InvalidData;
     SECTION("unknown type") { Mutate(file.path.c_str(), "\"type\":\"battery\"", "\"type\":\"missing\""); }
-    SECTION("missing state") { Mutate(file.path.c_str(), "\"state\":{}", "\"state\":null"); }
+    SECTION("missing state") { Mutate(file.path.c_str(), "\"type\":\"bag\",\"state\":{}", "\"type\":\"bag\",\"state\":null"); }
     SECTION("missing capability") { Mutate(file.path.c_str(), "\"cell\":{\"version\":1,\"energy\":17}", "\"other\":{\"version\":1,\"energy\":17}"); }
     SECTION("absent saved state does not initialize") { Mutate(file.path.c_str(), "\"cell\":{\"version\":1,\"energy\":17}", ""); }
     SECTION("wrong energy type") { Mutate(file.path.c_str(), "\"energy\":17", "\"energy\":\"17\""); }
@@ -197,7 +214,7 @@ TEST_CASE("Malformed saved item state type and installation produce contextual e
     SECTION("target Y out of bounds") { Mutate(file.path.c_str(), "\"y\":{\"$i64\":\"0\"}", "\"y\":{\"$i64\":\"-11\"}"); }
     SECTION("target Y wrong layer") { Mutate(file.path.c_str(), "\"y\":{\"$i64\":\"0\"}", "\"y\":{\"$i64\":\"1\"}"); }
     SECTION("duplicate target Y") { Mutate(file.path.c_str(), "\"y\":{\"$i64\":\"0\"}", "\"y\":{\"$i64\":\"0\"},\"y\":{\"$i64\":\"0\"}"); }
-    SECTION("extra state entry") { Mutate(file.path.c_str(), "\"state\":{}", "\"state\":{\"storage\":{\"version\":1}}"); }
+    SECTION("extra state entry") { Mutate(file.path.c_str(), "\"type\":\"bag\",\"state\":{}", "\"type\":\"bag\",\"state\":{\"storage\":{\"version\":1}}"); }
     SECTION("duplicate nested field") { Mutate(file.path.c_str(), "\"energy\":17", "\"energy\":17,\"energy\":18"); }
     SECTION("fraction out of range") { Mutate(file.path.c_str(), "\"remainder\":87", "\"remainder\":100"); }
     SECTION("disabled fraction nonzero") { Mutate(file.path.c_str(), "\"enabled\":true", "\"enabled\":false"); }

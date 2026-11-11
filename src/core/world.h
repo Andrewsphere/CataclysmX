@@ -9,6 +9,10 @@
 #include "core/world_result.h"
 #include "core/perception_types.h"
 #include "core/light_types.h"
+#include "actors/actor.h"
+#include "actors/ai_controller.h"
+#include "objects/interactive_object.h"
+#include "objects/object_behavior.h"
 
 #include <EASTL/array.h>
 #include <EASTL/expected.h>
@@ -75,18 +79,6 @@ struct ItemLocation {
     bool operator==(const ItemLocation&) const = default;
 };
 
-struct Actor {
-    PersistentId id = 0;
-    TileCoord position{};
-    bool player = false;
-    std::uint64_t turns = 0;
-    Vector<ItemHandle> inventory;
-    std::uint32_t speed = 100;
-    Tick remainingTicks = 0;
-    bool parked = false;
-    std::uint64_t carryCapacityGrams = 100000;
-    LightEmission light{};
-};
 struct Item {
     Item();
     Item(PersistentId id, ItemTypeId type, ItemLocation location);
@@ -103,20 +95,6 @@ private:
     friend class ItemSystem;
     ItemRuntime runtime_;
 };
-struct InteractiveObject {
-    PersistentId id = 0;
-    TileCoord position{};
-    bool enabled = false;
-    std::uint64_t updates = 0;
-    Vector<ItemHandle> contents;
-    std::uint32_t updateInterval = 100;
-    Tick remainingTicks = 100;
-    ObjectKind kind = ObjectKind::Generic;
-    ObjectFacing facing = ObjectFacing::North;
-    bool broken = false;
-    LightEmission light{}; // Emits only while enabled.
-};
-ObjectAppearance DescribeObject(const InteractiveObject& object);
 struct Chunk {
     ChunkCoord position{};
     bool active = false;
@@ -124,6 +102,42 @@ struct Chunk {
     Vector<ActorHandle> actors;
     Vector<ItemHandle> ground_items;
     Vector<ObjectHandle> objects;
+};
+
+class World;
+
+// Allocation-free ground-item filter. The range and its iterators borrow World
+// storage and expire at any World mutation. Traversal order is unspecified.
+class ItemRange {
+public:
+    class Iterator {
+    public:
+        ItemHandle operator*() const;
+        Iterator& operator++();
+        Iterator operator++(int);
+        bool operator==(const Iterator&) const = default;
+
+    private:
+        friend class ItemRange;
+        Iterator(const World* world, const Vector<ItemHandle>* items,
+            TileCoord position, std::size_t index);
+        void SkipNonmatching();
+        const World* world_;
+        const Vector<ItemHandle>* items_;
+        TileCoord position_;
+        std::size_t index_;
+    };
+
+    Iterator begin() const;
+    Iterator end() const;
+    bool Empty() const;
+
+private:
+    friend class World;
+    ItemRange(const World& world, const Chunk* chunk, TileCoord position);
+    const World* world_;
+    const Vector<ItemHandle>* items_;
+    TileCoord position_;
 };
 
 enum class LoadMode { resident, active };
@@ -200,8 +214,11 @@ public:
     ItemHandle FindItem(PersistentId id) const;
     ObjectHandle FindObject(PersistentId id) const;
     ActorHandle ActorAt(TileCoord position) const;
-    // Snapshot in unspecified order.
-    Vector<ItemHandle> ItemsAt(TileCoord position) const;
+    // Borrowed filter; invalid/unloaded positions are empty. Expires on mutation.
+    ItemRange ItemsAt(TileCoord position) const;
+    std::size_t CountItemsAt(TileCoord position) const;
+    // Explicit snapshot in unspecified order; clears output, retaining capacity.
+    void CollectItemsAt(TileCoord position, Vector<ItemHandle>& output) const;
     ObjectHandle ObjectAt(TileCoord position) const;
 
     WorldResult<void> SetTile(TileCoord position, Tile tile);
@@ -210,6 +227,9 @@ public:
     void SettleGravity();
     WorldResult<ActorHandle> CreateActor(TileCoord position, bool player = false);
     WorldResult<void> MoveActor(ActorHandle actor, TileCoord destination);
+    WorldResult<void> TryActorStep(ActorHandle actor, TileCoord direction, bool activeOnly = false);
+    DataObject CaptureActorController(ActorHandle actor) const;
+    WorldResult<void> SetActorController(ActorHandle actor, AiControllerKind kind);
     // Parked players remain owned but do not occupy tiles or advance time.
     // Unparking requires an unoccupied passable tile.
     WorldResult<void> SetActorParked(ActorHandle actor, bool parked);
@@ -236,6 +256,11 @@ public:
     void ProcessItemEvents();
     std::size_t ActiveItemCount() const;
     WorldResult<ObjectHandle> CreateObject(TileCoord position, bool enabled = false);
+    WorldResult<ObjectHandle> CreateObject(ObjectTypeId type, TileCoord position, bool enabled = true);
+    eastl::optional<ObjectStateView> DescribeObjectState(ObjectHandle object) const;
+    ObjectUseResult UseObject(ActorHandle actor, ObjectHandle object, ObjectAction action);
+    WorldResult<void> SetObjectEnergy(ObjectHandle object, std::uint64_t energy);
+    DataObject CaptureObjectState(ObjectHandle object) const;
     // Object destruction drops its contents on the ground.
     WorldResult<void> DestroyObject(ObjectHandle object);
     WorldResult<void> SetObjectEnabled(ObjectHandle object, bool enabled);
@@ -264,9 +289,14 @@ public:
     WorldResult<void> ScheduleActorAction(ActorHandle actor, std::uint32_t baseCost = 100);
     void ElapseTicks(Tick elapsed);
 
-    // Snapshot lists ordered by persistent ID, independent of storage/load order.
-    Vector<ActorHandle> ActiveActors() const;
-    Vector<ObjectHandle> ActiveObjects() const;
+    // Unordered snapshots; clear output while retaining its capacity.
+    void CollectActiveActors(Vector<ActorHandle>& output) const;
+    void CollectActiveObjects(Vector<ObjectHandle>& output) const;
+    void CollectReadyPlayers(Vector<ActorHandle>& output) const;
+    void ProcessNpcActions(std::uint32_t& rng);
+    bool ProcessObjectEvents();
+    eastl::optional<Tick> NextActorEventIn() const;
+    eastl::optional<Tick> NextObjectEventIn() const;
     WorldResult<void> RecordActorTurn(ActorHandle actor);
     WorldResult<void> RecordObjectUpdate(ObjectHandle object);
 
@@ -279,6 +309,11 @@ private:
     friend class ItemSystem;
     friend class ItemReadContext;
     friend class ItemMutationContext;
+    friend class ObjectMutationContext;
+    bool CanUseObject(ActorHandle actor, ObjectHandle object) const;
+    WorldResult<void> ConsumeObjectInputs(ActorHandle actor, ItemTypeId type, std::uint32_t count);
+    WorldResult<void> ProduceObjectOutputs(ObjectHandle object, ItemTypeId type, std::uint32_t count);
+    WorldResult<void> CollectObjectContents(ActorHandle actor, ObjectHandle object);
     Item* MutableItem(ItemHandle item);
     void MarkItemDirty(ItemHandle item);
     bool ItemEligible(ItemHandle item) const;

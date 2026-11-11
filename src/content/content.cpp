@@ -331,6 +331,49 @@ struct PendingItem {
     Context context;
 };
 
+struct PendingObject {
+    ObjectDefinition definition;
+    String input;
+    String output;
+    std::size_t inputOrder = 0;
+    Context context;
+};
+
+bool ParseObject(yyjson_val* object, PendingObject& pending) {
+    const auto& context = pending.context;
+    auto& definition = pending.definition;
+    if (!CheckObject(object, {"id", "name", "behavior", "machine"}, context)
+        || !ReadId(yyjson_obj_get(object, "id"), definition.id, context.Child("id"))
+        || !ReadString(yyjson_obj_get(object, "name"), definition.name, context.Child("name"))) { return false; }
+    auto* behavior = yyjson_obj_get(object, "behavior");
+    if (!yyjson_is_str(behavior)) { return context.Child("behavior").Fail("expected a behavior kind string"); }
+    if (JsonString(behavior) == "none") {
+        if (yyjson_obj_get(object, "machine")) { return context.Child("machine").Fail("none behavior has no machine config"); }
+        return true;
+    }
+    if (JsonString(behavior) != "crafting_machine") { return context.Child("behavior").Fail("unknown object behavior kind"); }
+    definition.behavior = ObjectBehaviorKind::CraftingMachine;
+    auto* machine = yyjson_obj_get(object, "machine");
+    const auto machineContext = context.Child("machine");
+    auto& config = definition.machine;
+    std::uint32_t duration = 0;
+    if (!CheckObject(machine, {"input", "input_count", "output", "output_count", "duration_ticks", "energy_capacity", "energy_per_tick"}, machineContext)
+        || !ReadId(yyjson_obj_get(machine, "input"), pending.input, machineContext.Child("input"))
+        || !ReadId(yyjson_obj_get(machine, "output"), pending.output, machineContext.Child("output"))
+        || !ReadBoundedInteger(yyjson_obj_get(machine, "input_count"), 1, 1024, config.inputCount, machineContext.Child("input_count"))
+        || !ReadBoundedInteger(yyjson_obj_get(machine, "output_count"), 1, 1024, config.outputCount, machineContext.Child("output_count"))
+        || !ReadBoundedInteger(yyjson_obj_get(machine, "duration_ticks"), 1, std::numeric_limits<std::uint32_t>::max(), duration, machineContext.Child("duration_ticks"))
+        || !ReadBoundedInteger(yyjson_obj_get(machine, "energy_per_tick"), 1, std::numeric_limits<std::uint32_t>::max(), config.energyPerTick, machineContext.Child("energy_per_tick"))) { return false; }
+    config.duration = duration;
+    auto* capacity = yyjson_obj_get(machine, "energy_capacity");
+    if (!yyjson_is_uint(capacity) || yyjson_get_uint(capacity) < config.energyPerTick
+        || yyjson_get_uint(capacity) > std::numeric_limits<std::uint64_t>::max() / 2) {
+        return machineContext.Child("energy_capacity").Fail("expected energy_per_tick <= capacity <= UINT64_MAX / 2");
+    }
+    config.energyCapacity = yyjson_get_uint(capacity);
+    return true;
+}
+
 void AddItemContext(const Context& context, eastl::string_view id) {
     if (!context.diagnostics) { return; }
     String message = "while loading item '";
@@ -662,6 +705,7 @@ struct Document {
 
 ContentResult<bool> ParseSource(const ContentSource& source, Vector<PendingTerrain>& pending,
                                 Vector<PendingPattern>& patterns, Vector<PendingItem>& items,
+                                Vector<PendingObject>& objects,
                                 const ItemBehaviorRegistry& registry, Diagnostics* diagnostics) {
     Context context{diagnostics, source.name, {}};
     yyjson_alc allocator{JsonMalloc, JsonRealloc, JsonFree, nullptr};
@@ -685,7 +729,7 @@ ContentResult<bool> ParseSource(const ContentSource& source, Vector<PendingTerra
         return eastl::unexpected(ContentError::InvalidData);
     }
     auto* root = yyjson_doc_get_root(document.value);
-    if (!CheckObject(root, {"format_version", "definitions"}, context)) {
+    if (!CheckObject(root, {"format_version", "definitions", "objects"}, context)) {
         return eastl::unexpected(ContentError::InvalidData);
     }
     auto* version = yyjson_obj_get(root, "format_version");
@@ -697,7 +741,27 @@ ContentResult<bool> ParseSource(const ContentSource& source, Vector<PendingTerra
         context.Child("format_version").Fail("unsupported content format version");
         return eastl::unexpected(ContentError::UnsupportedVersion);
     }
+    auto* objectArray = yyjson_obj_get(root, "objects");
+    if (objectArray) {
+        if (!yyjson_is_arr(objectArray)) {
+            context.Child("objects").Fail("expected an array");
+            return eastl::unexpected(ContentError::InvalidData);
+        }
+        std::size_t objectIndex, objectCount;
+        yyjson_val* value;
+        yyjson_arr_foreach(objectArray, objectIndex, objectCount, value) {
+            PendingObject object;
+            object.context = ArrayElement(context.Child("objects"), objectIndex);
+            object.inputOrder = pending.size() + patterns.size() + items.size() + objects.size();
+            if (!ParseObject(value, object)) {
+                object.context.Fail("while loading object definition");
+                return eastl::unexpected(ContentError::InvalidData);
+            }
+            objects.push_back(eastl::move(object));
+        }
+    }
     auto* definitions = yyjson_obj_get(root, "definitions");
+    if (!definitions && objectArray) { return true; }
     if (!yyjson_is_arr(definitions)) {
         context.Child("definitions").Fail("expected an array");
         return eastl::unexpected(ContentError::InvalidData);
@@ -713,7 +777,7 @@ ContentResult<bool> ParseSource(const ContentSource& source, Vector<PendingTerra
         }
         PendingTerrain terrain;
         terrain.context = definitionContext;
-        terrain.inputOrder = pending.size() + patterns.size() + items.size();
+        terrain.inputOrder = pending.size() + patterns.size() + items.size() + objects.size();
         bool parsed = false;
         // Dispatch definition kinds at the document boundary; individual parsers own their schemas.
         if (!yyjson_is_obj(value)) {
@@ -885,12 +949,13 @@ struct DefinitionIdentity {
     std::size_t inputOrder = 0;
     bool pattern = false;
     bool item = false;
+    bool object = false;
 };
 
 bool CheckDefinitionIds(const Vector<PendingTerrain>& terrains, const Vector<PendingPattern>& patterns,
-                         const Vector<PendingItem>& items, Diagnostics* diagnostics) {
+                         const Vector<PendingItem>& items, const Vector<PendingObject>& objects, Diagnostics* diagnostics) {
     Vector<DefinitionIdentity> identities;
-    identities.reserve(terrains.size() + patterns.size() + items.size());
+    identities.reserve(terrains.size() + patterns.size() + items.size() + objects.size());
     for (const auto& terrain : terrains) {
         identities.push_back({View(terrain.definition.id), &terrain.context, terrain.inputOrder, false});
     }
@@ -899,6 +964,9 @@ bool CheckDefinitionIds(const Vector<PendingTerrain>& terrains, const Vector<Pen
     }
     for (const auto& item : items) {
         identities.push_back({View(item.definition.id), &item.context, item.inputOrder, false, true});
+    }
+    for (const auto& object : objects) {
+        identities.push_back({View(object.definition.id), &object.context, object.inputOrder, false, false, true});
     }
     eastl::sort(identities.begin(), identities.end(), [](const DefinitionIdentity& left, const DefinitionIdentity& right) {
         if (left.id == right.id) { return left.inputOrder < right.inputOrder; }
@@ -909,13 +977,14 @@ bool CheckDefinitionIds(const Vector<PendingTerrain>& terrains, const Vector<Pen
         const auto& previous = identities[i - 1];
         if (previous.id != current.id) { continue; }
         if (diagnostics) {
-            String message = current.item ? "duplicate item definition '" :
+            String message = current.object ? "duplicate object definition '" : current.item ? "duplicate item definition '" :
                 (current.pattern ? "duplicate building pattern definition '" : "duplicate terrain definition '");
             message.append(current.id.data(), current.id.size());
             message += '\'';
             current.context->Child("id").Fail(View(message));
             previous.context->Child("id").Fail("previous definition is here");
-            if (current.item) { AddItemContext(*current.context, current.id); }
+            if (current.object) { current.context->Fail("while loading object definition"); }
+            else if (current.item) { AddItemContext(*current.context, current.id); }
             else if (current.pattern) { AddPatternContext(*current.context, current.id); }
             else { AddTerrainContext(*current.context, current.id); }
             Context{diagnostics, {}, {}}.Fail("could not load content catalog");
@@ -1015,6 +1084,30 @@ const ItemDefinition& ContentCatalog::GetItem(ItemTypeId id) const {
 
 std::size_t ContentCatalog::ItemCount() const { return items_.size(); }
 
+ObjectTypeId ContentCatalog::FindObject(eastl::string_view id) const {
+    std::size_t begin = 0, end = objects_.size();
+    while (begin < end) {
+        const std::size_t middle = begin + (end - begin) / 2;
+        if (View(objects_[middle].id) < id) { begin = middle + 1; }
+        else { end = middle; }
+    }
+    if (begin == objects_.size() || View(objects_[begin].id) != id) { return {}; }
+    return {static_cast<std::uint32_t>(begin + 1)};
+}
+
+const ObjectDefinition* ContentCatalog::TryGetObject(ObjectTypeId id) const {
+    if (id.value == 0 || id.value > objects_.size()) { return nullptr; }
+    return &objects_[id.value - 1];
+}
+
+const ObjectDefinition& ContentCatalog::GetObject(ObjectTypeId id) const {
+    const auto* definition = TryGetObject(id);
+    if (!definition) { std::abort(); }
+    return *definition;
+}
+
+std::size_t ContentCatalog::ObjectCount() const { return objects_.size(); }
+
 ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sources, Diagnostics* diagnostics) {
     ItemBehaviorRegistry registry;
     RegisterBuiltinItemBehaviors(registry);
@@ -1026,8 +1119,9 @@ ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sourc
     Vector<PendingTerrain> pending;
     Vector<PendingPattern> patterns;
     Vector<PendingItem> items;
+    Vector<PendingObject> objects;
     for (const auto& source : sources) {
-        auto result = ParseSource(source, pending, patterns, items, registry, diagnostics);
+        auto result = ParseSource(source, pending, patterns, items, objects, registry, diagnostics);
         if (!result) {
             Context{diagnostics, source.name, {}}.Fail("could not load content source");
             return eastl::unexpected(result.error());
@@ -1035,7 +1129,8 @@ ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sourc
     }
     if (pending.size() > std::numeric_limits<std::uint32_t>::max()
         || patterns.size() > std::numeric_limits<std::uint32_t>::max()
-        || items.size() > std::numeric_limits<std::uint32_t>::max()) {
+        || items.size() > std::numeric_limits<std::uint32_t>::max()
+        || objects.size() > std::numeric_limits<std::uint32_t>::max()) {
         Context{diagnostics, {}, {}}.Fail("too many content definitions");
         Context{diagnostics, {}, {}}.Fail("could not load content catalog");
         return eastl::unexpected(ContentError::InvalidData);
@@ -1045,7 +1140,7 @@ ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sourc
         if (left.definition.id == right.definition.id) { return left.inputOrder < right.inputOrder; }
         return left.definition.id < right.definition.id;
     });
-    if (!CheckDefinitionIds(pending, patterns, items, diagnostics)) { return eastl::unexpected(ContentError::InvalidData); }
+    if (!CheckDefinitionIds(pending, patterns, items, objects, diagnostics)) { return eastl::unexpected(ContentError::InvalidData); }
     if (!Resolve(pending)) {
         Context{diagnostics, {}, {}}.Fail("could not load content catalog");
         return eastl::unexpected(ContentError::InvalidData);
@@ -1056,6 +1151,29 @@ ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sourc
     });
     catalog.items_.reserve(items.size());
     for (auto& item : items) { catalog.items_.push_back(eastl::move(item.definition)); }
+    eastl::sort(objects.begin(), objects.end(), [](const PendingObject& left, const PendingObject& right) {
+        return left.definition.id < right.definition.id;
+    });
+    catalog.objects_.reserve(objects.size());
+    for (auto& object : objects) {
+        if (object.definition.behavior == ObjectBehaviorKind::CraftingMachine) {
+            object.definition.machine.input = catalog.FindItem(View(object.input));
+            object.definition.machine.output = catalog.FindItem(View(object.output));
+            if (object.definition.machine.input == ItemTypeId{}) {
+                object.context.Child("machine").Child("input").Fail("unknown input item reference");
+                return eastl::unexpected(ContentError::InvalidData);
+            }
+            if (object.definition.machine.output == ItemTypeId{}) {
+                object.context.Child("machine").Child("output").Fail("unknown output item reference");
+                return eastl::unexpected(ContentError::InvalidData);
+            }
+        }
+        if (!ValidObjectDefinition(object.definition)) {
+            object.context.Fail("invalid object definition");
+            return eastl::unexpected(ContentError::InvalidData);
+        }
+        catalog.objects_.push_back(eastl::move(object.definition));
+    }
     catalog.definitions_.reserve(pending.size());
     for (auto& terrain : pending) { catalog.definitions_.push_back(eastl::move(terrain.definition)); }
     eastl::sort(patterns.begin(), patterns.end(), [](const PendingPattern& left, const PendingPattern& right) {

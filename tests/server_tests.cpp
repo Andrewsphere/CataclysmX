@@ -89,12 +89,12 @@ TEST_CASE("Server creates the deterministic demo and advances only successful co
     CHECK(world.IsActive({-16, -16}));
     CHECK_FALSE(world.IsActive({-32, -32}));
     const auto backpack = world.ItemsAt({0, 0});
-    REQUIRE(backpack.size() == 1);
-    CHECK(world.GetItem(backpack[0])->type == TestItem("backpack"));
-    REQUIRE(world.GetItem(backpack[0])->contents.size() == 1);
-    CHECK(world.GetItem(world.GetItem(backpack[0])->contents[0])->type == TestItem("bandage"));
-    REQUIRE(world.ItemsAt({1, 0}).size() == 1);
-    CHECK(world.GetItem(world.ItemsAt({1, 0})[0])->type == TestItem("rock"));
+    REQUIRE(world.CountItemsAt({0, 0}) == 1);
+    CHECK(world.GetItem(*backpack.begin())->type == TestItem("backpack"));
+    REQUIRE(world.GetItem(*backpack.begin())->contents.size() == 1);
+    CHECK(world.GetItem(world.GetItem(*backpack.begin())->contents[0])->type == TestItem("bandage"));
+    REQUIRE(world.CountItemsAt({1, 0}) == 1);
+    CHECK(world.GetItem(*world.ItemsAt({1, 0}).begin())->type == TestItem("rock"));
     const ObjectHandle object = world.ObjectAt({2, 0});
     REQUIRE(world.GetObject(object) != nullptr);
     CHECK_FALSE(world.GetObject(object)->enabled);
@@ -107,9 +107,9 @@ TEST_CASE("Server creates the deterministic demo and advances only successful co
     REQUIRE(table != nullptr);
     CHECK(table->kind == ObjectKind::Table);
     const auto bulbs = world.ItemsAt({1, 1});
-    REQUIRE(bulbs.size() == 1);
-    CHECK(world.GetItem(bulbs[0])->type == TestItem("blinking_lightbulb"));
-    CHECK(world.GetItem(bulbs[0])->id > table->id);
+    REQUIRE(world.CountItemsAt({1, 1}) == 1);
+    CHECK(world.GetItem(*bulbs.begin())->type == TestItem("blinking_lightbulb"));
+    CHECK(world.GetItem(*bulbs.begin())->id > table->id);
     CHECK(world.GetRememberedTile(server.GetHostPlayerId(), {1, 1}).terrain == TestTerrain("floor"));
     // Keep command outcome checks independent of the NPC's chosen route.
     for (TileCoord position : {TileCoord{4, 5}, TileCoord{6, 5}, TileCoord{5, 4}, TileCoord{5, 6}}) {
@@ -180,11 +180,13 @@ TEST_CASE("Failures do not consume RNG and occupied open doors cannot close", "[
 TEST_CASE("Pickup and drop use direct ownership and persistent IDs while preserving nested items", "[server][inventory]") {
     Server server(TestContent());
     World& world = server.GetWorld();
-    const ItemHandle bag = world.ItemsAt({0, 0})[0];
+    REQUIRE_FALSE(world.ItemsAt({0, 0}).Empty());
+    const ItemHandle bag = *world.ItemsAt({0, 0}).begin();
     const ItemHandle bandage = world.GetItem(bag)->contents[0];
     const PersistentId bag_id = world.GetItem(bag)->id;
     const PersistentId bandage_id = world.GetItem(bandage)->id;
-    const ItemHandle rock = world.ItemsAt({1, 0})[0];
+    REQUIRE_FALSE(world.ItemsAt({1, 0}).Empty());
+    const ItemHandle rock = *world.ItemsAt({1, 0}).begin();
     const PersistentId rock_id = world.GetItem(rock)->id;
     const ItemHandle loose = take(world.CreateItem(TestItem("rock"), ItemLocation::Ground({0, 0})));
     const PersistentId loose_id = world.GetItem(loose)->id;
@@ -652,8 +654,11 @@ TEST_CASE("Simulation replay is independent of arbitrary chunk reload order", "[
         cataclysmx::Advance(second, second.FindActor(player_id), second_rng);
         CHECK(first_rng == second_rng);
         CHECK(actors(first) == actors(second));
-        const auto first_objects = first.ActiveObjects();
-        const auto second_objects = second.ActiveObjects();
+        Vector<ObjectHandle> first_objects, second_objects;
+        first.CollectActiveObjects(first_objects);
+        second.CollectActiveObjects(second_objects);
+        eastl::sort(first_objects.begin(), first_objects.end(), [&first](auto a, auto b) { return first.GetObject(a)->id < first.GetObject(b)->id; });
+        eastl::sort(second_objects.begin(), second_objects.end(), [&second](auto a, auto b) { return second.GetObject(a)->id < second.GetObject(b)->id; });
         REQUIRE(first_objects.size() == second_objects.size());
         for (std::size_t index = 0; index < first_objects.size(); ++index) {
             const auto* a = first.GetObject(first_objects[index]);
@@ -754,7 +759,7 @@ TEST_CASE("Downward projection follows open columns and isolates lower items", "
     CHECK(below.terrainDepth == 1);
     CHECK(below.overlayDepth == 1);
     CHECK(below.ground_items == 1); // Original rock fell into the other hole, at x=1.
-    CHECK(world.ItemsAt({2, 0, -1}).size() == below.ground_items);
+    CHECK(world.CountItemsAt({2, 0, -1}) == below.ground_items);
     expect(server, {CommandKind::pick_up, 0, 0, id}, Outcome::nothing_here, false);
     CHECK_FALSE(world.CanAccessItem(server.GetPlayer(), rock));
     CHECK(server.View().groundItems[0].id != id);

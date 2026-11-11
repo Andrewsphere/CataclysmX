@@ -77,7 +77,7 @@ not themselves block actors.
 identity, last position, inventory, turns, or remaining delay. Invalid handles
 return `invalid_handle`; non-players return `invalid_request`. Repeating the
 same state succeeds. `GetActor` and `FindActor` still work, while `ActorAt`,
-`ActiveActors`, `ElapseTicks`, `ScheduleActorAction`, and `RecordActorTurn` exclude
+`CollectActiveActors`, `ElapseTicks`, `ScheduleActorAction`, and `RecordActorTurn` exclude
 parked actors even in active chunks. Live actors may share their position.
 Explicit inventory operations remain available. `MoveActor` can relocate a
 parked actor to a loaded passable occupied tile without occupying it. Unparking
@@ -310,6 +310,8 @@ These are world-owned values exposed only through read-only borrows.
   enabled objects, marking changed chunks dirty. It does not record turns,
   trigger updates, or modify session time. Resident, archived, and disabled
   object timers remain frozen, including across unload/reload.
+  Controllerless NPCs are idle and excluded from clock advancement. Typed object
+  behaviors advance their own work/energy; typed `None` objects have no timer.
 - `SetObjectUpdateInterval(handle, interval)` rejects zero and explicitly
   restarts the timer at that interval, even when disabled or resident.
   `SetObjectEnabled` preserves the current delay. `RecordObjectUpdate` requires
@@ -320,6 +322,65 @@ These are world-owned values exposed only through read-only borrows.
 Invalid entity handles return `invalid_handle`. Relative delays avoid absolute
 deadline rebasing and inactive-chunk catch-up, and actor delays may exceed uint32.
 All these mutations preserve the existing borrow rules.
+
+`CollectReadyPlayers(Vector<ActorHandle>&)` clears the caller's buffer and appends
+all active, unparked, ready players sorted by persistent ID. `ProcessNpcActions(uint32_t& rng)`
+captures due NPC `{id, handle}` records in a reusable World-owned buffer, sorts by
+ID, and revalidates each record before invoking its controller. A positive action
+deadline is committed before attempting movement. Wander retains the legacy one-draw
+horizontal policy, including blocked attempts, and each NPC action is followed by
+`UpdatePlayerObservations()`. `NextActorEventIn()` directly scans eligible central
+slots for the minimum relative deadline, returning empty when none can act.
+
+`ProcessObjectEvents()` returns whether any due object event was processed. It
+captures and orders one due batch by persistent ID, revalidates handles, and
+dispatches behaviors or generic timer updates. New entities wait for a subsequent
+batch; callback reentry is forbidden. A processed behavior must clear its zero
+deadline. `NextObjectEventIn()` is a direct minimum scan, without snapshots or
+sorting. Disabled objects freeze even pending completion; enabled machine jobs
+at zero work remain due regardless of running intent or remaining power.
+
+Actors now live in `actors/actor.h`; controllers are privately owned by World.
+`CaptureActorController(handle)` captures the stable `{type,state}` envelope;
+invalid handles return an empty object. `SetActorController(handle, kind)` accepts
+`None` (idle) or `Wander` for NPCs. Players must use `None`; assigning player AI
+returns `invalid_request`. Archive validation and restoration use the same strict
+envelope helpers, preserving idle NPCs rather than installing a default policy.
+
+`TryActorStep(actor, TileCoord direction, bool activeOnly = false)` shares cardinal
+movement validation and execution between command and controller callers. The
+source must be active and unparked; the target must be loaded, passable, and
+unoccupied. Vertical steps require stairs at both endpoints. `activeOnly` also
+requires an active target (NPC wandering). This operation spends no time; callers
+schedule their action separately. `MoveActor` remains administrative relocation.
+
+### Typed objects and callback transactions
+
+`CreateObject(ObjectTypeId, position, enabled = true)` creates a content-defined
+object; the existing `CreateObject(position, enabled = false)` creates a generic
+timer. `DescribeObjectState(handle)` returns an optional value view (empty for
+invalid/generic objects); `CaptureObjectState(handle)` captures behavior state,
+or an empty object when absent. `SetObjectEnergy(handle, uint64_t)` validates
+capacity and dirties the owning chunk on success. Adding energy does not restart
+paused work: use `Start` explicitly. Enabled state is an independent clock gate,
+so disabling/re-enabling never discards progress or running intent.
+
+`UseObject(actor, object, ObjectAction::{Start,Stop,Collect})` rechecks access for
+every action: active unparked actor, active object, Manhattan distance at most
+one. Vertical neighbors require an open shared face (upper terrain is open space,
+or both endpoints are stairs). Success reports a positive base cost without
+scheduling the actor; refusals report zero cost and preserve state.
+
+World implements callback-scoped `ObjectMutationContext` transactions. Starting
+a job preflights sufficient direct-inventory leaf inputs, then consumes the
+lowest persistent IDs. Nested items and nonempty containers are ineligible.
+Output creation targets `Stored(self)`. Collection preflights every transfer and
+the entire aggregate carried mass before moving any contents. Item notifications
+remain deferred through the object callback and gravity settles at the enclosing
+boundary, preventing intermediate notification side effects. Self-destruction is
+requested and applied only after the callback returns. Contexts and entity borrows
+must never escape callbacks. This narrow explicit machinery keeps policy in the
+behavior and ownership/access/atomicity in World.
 
 `SessionState::tick` is global simulation ticks. Its appended `pacing` settings
 (`ticksPerSecond = 100`, `rateLimited = false`, `pauseWhenIdle = true`) control
@@ -358,9 +419,11 @@ replacements invalidate stale same-coordinate cache values.
 
 The warm cache holds at most 256 layer archives with an 8 MiB conservative owned
 storage budget (including its outer capacity and actor/object vector capacities).
-Currently only item-free archives with zero item-vector capacity are eligible:
-`DataObject` does not expose recursive allocation capacities, so item-bearing
-archives use disk after checkpoint instead of an inaccurate heap-size estimate.
+Only archives with zero item-vector capacity, no actors, and no typed objects
+are eligible. `DataObject` does not expose recursive allocation capacities, so
+controller envelopes and typed behavior state use disk after checkpoint instead
+of an inaccurate heap-size estimate. Actor-free generic-object caching remains
+available; authoritative pending archives are never excluded.
 Oversized eligible values are skipped. Pending write and warm-cache admission order
 follow unspecified pending-map traversal; FIFO eviction follows actual admission
 order, with no wall-clock policy. Eviction changes performance only; the committed
@@ -369,8 +432,24 @@ checkpointing; validation scans all durable chunks and is not constant-cost stre
 
 Internally, central slot maps own live entities, while chunks hold spatial
 indexes. Keeping these separate preserves live handles across chunk movement.
-`ActiveActors()` and `ActiveObjects()` return snapshots sorted by persistent
-ID; `ItemsAt()` returns handles in unspecified order. Default item selection chooses
+`CollectActiveActors(Vector<ActorHandle>&)` and `CollectActiveObjects(Vector<ObjectHandle>&)`
+clear caller-owned buffers while retaining capacity, then scan central slots to
+append unordered snapshots. Parked actors are excluded; objects are included
+regardless of enabled state. Ordering belongs at the behavior/presentation boundary,
+not in generic collection. `ItemsAt(position)` returns an allocation-free `ItemRange` filtering the
+containing chunk's ground-item index, yielding `ItemHandle` values in unspecified
+order. Invalid or unloaded positions yield an empty range. Use range-for traversal,
+`begin()`/`end()`, or `Empty()` for inspection; the range has no size or random-access
+interface. The range and its iterators borrow World storage and are invalidated by
+any World mutation (and by World destruction); reacquire them after mutation.
+`CountItemsAt(position)` counts directly without building a snapshot.
+`CollectItemsAt(position, output)` clears a caller-owned `Vector<ItemHandle>` while
+retaining its capacity, then appends an explicit snapshot in unspecified order.
+Use this snapshot when traversal must cross a mutation. Its handle values survive
+changes to the query/index, but deletion or unloading can make them stale; use
+`GetItem()` to check liveness. These separate APIs keep routine inspection free of
+disposable allocations and make snapshot ownership explicit.
+Default item selection chooses
 the minimum persistent ID, and presentation orders items at its boundary. Gravity
 and scheduled event ordering remain explicit; storage/load order is not a turn
 order. `CheckInvariants()` checks ownership and spatial consistency for

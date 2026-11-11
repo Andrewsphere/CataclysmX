@@ -5,6 +5,7 @@
 #include "core/simulation.h"
 #include "core/perception.h"
 #include "core/lighting.h"
+#include "objects/object_behavior.h"
 #include "worldgen/worldgen.h"
 
 #include <EASTL/algorithm.h>
@@ -120,7 +121,8 @@ SaveResult<void> StageBubble(World& world, TileCoord position, int active, int r
     return result;
 }
 
-ItemHandle SelectItem(const World& world, const Vector<ItemHandle>& items, PersistentId id) {
+template<class Items>
+ItemHandle SelectItem(const World& world, const Items& items, PersistentId id) {
     ItemHandle selected{};
     PersistentId smallest = eastl::numeric_limits<PersistentId>::max();
     for (ItemHandle handle : items) {
@@ -148,32 +150,35 @@ Outcome TransferFailure(WorldError error) {
     }
 }
 
-Vector<InventoryEntry> DescribeItems(const World& world, ActorHandle actor,
-    Vector<ItemHandle> pending) {
-    Vector<InventoryEntry> result;
-    for (std::size_t i = 0; i < pending.size(); ++i) {
-        const ItemHandle handle = pending[i];
-        const Item* item = world.GetItem(handle);
-        Require(item != nullptr);
-        const ItemDefinition& definition = world.GetContent().GetItem(item->type);
-        InventoryEntry entry{item->id, item->type, static_cast<unsigned int>(item->contents.size())};
-        if (item->location.kind == LocationKind::item) {
-            entry.parent = world.GetItem(item->location.item)->id;
-            entry.installation = item->location.installation;
-        }
-        entry.massGrams = world.GetItemMass(handle);
-        entry.volumeMl = definition.volumeMl;
-        if (const auto* container = ItemContainer(definition)) {
-            entry.capacityVolumeMl = container->capacityVolumeMl;
-            entry.usedVolumeMl = world.GetContainerUsedVolume(handle);
-        }
-        auto presentation = world.DescribeItem(actor, handle);
-        entry.energy = eastl::move(presentation.energy);
-        entry.activities = eastl::move(presentation.activities);
-        entry.actions = eastl::move(presentation.actions);
-        result.push_back(eastl::move(entry));
-        pending.insert(pending.end(), item->contents.begin(), item->contents.end());
+void AppendItemTreeDescription(const World& world, ActorHandle actor, ItemHandle handle,
+    Vector<InventoryEntry>& result) {
+    const Item* item = world.GetItem(handle);
+    Require(item != nullptr);
+    const ItemDefinition& definition = world.GetContent().GetItem(item->type);
+    InventoryEntry entry{item->id, item->type, static_cast<unsigned int>(item->contents.size())};
+    if (item->location.kind == LocationKind::item) {
+        entry.parent = world.GetItem(item->location.item)->id;
+        entry.installation = item->location.installation;
     }
+    entry.massGrams = world.GetItemMass(handle);
+    entry.volumeMl = definition.volumeMl;
+    if (const auto* container = ItemContainer(definition)) {
+        entry.capacityVolumeMl = container->capacityVolumeMl;
+        entry.usedVolumeMl = world.GetContainerUsedVolume(handle);
+    }
+    auto presentation = world.DescribeItem(actor, handle);
+    entry.energy = eastl::move(presentation.energy);
+    entry.activities = eastl::move(presentation.activities);
+    entry.actions = eastl::move(presentation.actions);
+    result.push_back(eastl::move(entry));
+    // World bounds containment depth; traverse borrows without a handle work list.
+    for (ItemHandle child : item->contents) { AppendItemTreeDescription(world, actor, child, result); }
+}
+
+template<class Items>
+Vector<InventoryEntry> DescribeItems(const World& world, ActorHandle actor, const Items& items) {
+    Vector<InventoryEntry> result;
+    for (ItemHandle handle : items) { AppendItemTreeDescription(world, actor, handle, result); }
     eastl::sort(result.begin(), result.end(),
         [](const InventoryEntry& a, const InventoryEntry& b) { return a.id < b.id; });
     return result;
@@ -415,19 +420,7 @@ CommandResult Server::Execute(ActorHandle handle, PlayerSlot& slot, Command comm
             Require(world_.ReconcileChunks().has_value());
             return {Outcome::unavailable, false, tick_, loaded.error()};
         }
-        if (command.dy != 0) {
-            const Tile* source = world_.GetTile(position);
-            const Tile* target = world_.GetTile(destination);
-            if (!source || !target || !world_.GetContent().GetTerrain(source->terrain).stairs
-                || !world_.GetContent().GetTerrain(target->terrain).stairs) {
-                if (!staging.empty()) {
-                    ReleaseStaging(world_, staging);
-                    Require(world_.ReconcileChunks().has_value());
-                }
-                return failed(Outcome::blocked);
-            }
-        }
-        const auto moved = world_.MoveActor(handle, destination);
+        const auto moved = world_.TryActorStep(handle, {command.dx, command.dz, command.dy});
         if (!moved) {
             if (!staging.empty()) {
                 ReleaseStaging(world_, staging);
@@ -521,8 +514,23 @@ CommandResult Server::Execute(ActorHandle handle, PlayerSlot& slot, Command comm
             if (object.value == 0) {
                 return failed(Outcome::nothing_here);
             }
-            const bool enabled = world_.GetObject(object)->enabled;
-            Require(world_.SetObjectEnabled(object, !enabled).has_value());
+            if (const auto state = world_.DescribeObjectState(object)) {
+                ObjectAction action = ObjectAction::Start;
+                if (state->running) {
+                    action = ObjectAction::Stop;
+                } else if (!state->hasJob && !world_.GetObject(object)->contents.empty()) {
+                    action = ObjectAction::Collect;
+                }
+                const ObjectUseResult used = world_.UseObject(handle, object, action);
+                if (used.outcome != ObjectUseOutcome::Succeeded) {
+                    return failed(used.reason == ObjectUseReason::NoContents
+                        || used.reason == ObjectUseReason::NoJob ? Outcome::nothing_here : Outcome::blocked);
+                }
+                baseCost = used.baseCost;
+            } else {
+                const bool enabled = world_.GetObject(object)->enabled;
+                Require(world_.SetObjectEnabled(object, !enabled).has_value());
+            }
             outcome = Outcome::toggled;
         }
         break;
@@ -1012,7 +1020,7 @@ WorldView Server::ViewForPlayer(PersistentId id, int radius) const {
                             && dx*dx + dz*dz <= overlayRanges[static_cast<int>(spaceLight)]) {
                             const Actor* occupant = chunk->actors.empty() ? nullptr : world_.GetActor(world_.ActorAt(position));
                             const auto items = chunk->ground_items.empty() ? 0U
-                                : static_cast<unsigned int>(world_.ItemsAt(position).size());
+                                : static_cast<unsigned int>(world_.CountItemsAt(position));
                             const InteractiveObject* object = chunk->objects.empty() ? nullptr : world_.GetObject(world_.ObjectAt(position));
                             if (occupant || items != 0 || object) {
                                 // Memories are a fallback, never an occluder for an

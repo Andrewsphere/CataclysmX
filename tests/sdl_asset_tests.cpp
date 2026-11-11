@@ -484,7 +484,8 @@ TEST_CASE("SDL visual activation leaves replay snapshots saved RNG and content f
     definition.animations.push_back({"blink", {{1, 10}, {0, 30}}, 30});
     const TilesetMapping loop{TilesetMappingKind::Sprite, 0, SpriteActivationBinding{0, SpriteActivation::ToggleLoop}};
     const TilesetMapping once{TilesetMappingKind::Sprite, 0, SpriteActivationBinding{0, SpriteActivation::PlayOnce}};
-    const auto item = animated.GetWorld().GetItem(animated.GetWorld().ItemsAt({2, 1})[0])->id;
+    REQUIRE_FALSE(animated.GetWorld().ItemsAt({2, 1}).Empty());
+    const auto item = animated.GetWorld().GetItem(*animated.GetWorld().ItemsAt({2, 1}).begin())->id;
     SpritePlaybackController playback;
     playback.SetGeneration(1, 1);
     for (std::uint64_t step = 0; step < 6; ++step) {

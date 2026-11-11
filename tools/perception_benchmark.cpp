@@ -125,10 +125,14 @@ void Prepare(Server& server, const ContentCatalog& content, int resident, bool f
         extra = *request;
         Require(world.ReconcileChunks().has_value());
     }
-    for (const auto handle : world.ActiveActors()) {
+    Vector<ActorHandle> actors;
+    world.CollectActiveActors(actors);
+    for (const auto handle : actors) {
         if (handle != server.GetPlayer()) { Require(world.DestroyActor(handle).has_value()); }
     }
-    for (const auto handle : world.ActiveObjects()) { Require(world.DestroyObject(handle).has_value()); }
+    Vector<ObjectHandle> objects;
+    world.CollectActiveObjects(objects);
+    for (const auto handle : objects) { Require(world.DestroyObject(handle).has_value()); }
     const int minCoord = flat ? -resident * chunk_size : -12;
     const int maxZ = flat ? (resident + 1) * chunk_size - 1 : 12;
     const int maxX = flat ? (resident + 2) * chunk_size - 1 : 28;
@@ -221,8 +225,12 @@ int main(int argc, char** argv) {
         MeasureScenario(name, n, server, frontend.ui, operation);
     };
     for (int i = 0; i < 8; ++i) { Move(server, i % 2 == 0 ? 1 : -1); frontend.Frame(server); }
+    Vector<ActorHandle> actors;
+    Vector<ObjectHandle> objects;
+    world.CollectActiveActors(actors);
+    world.CollectActiveObjects(objects);
     std::printf("resident_chunks=%zu active_actors=%zu active_objects=%zu\n",
-        world.LoadedChunks().size(), world.ActiveActors().size(), world.ActiveObjects().size());
+        world.LoadedChunks().size(), actors.size(), objects.size());
 
     const int r = sight / 2;
     const TileCoord targets[] = {{r, 0, 0}, {-r, 0, 0}, {0, r, 0}, {0, -r, 0},

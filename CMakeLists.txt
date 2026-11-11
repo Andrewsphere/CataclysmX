@@ -89,6 +89,11 @@ endfunction()
 add_library(cataclysmx_engine STATIC
     src/content/content.cpp src/content/content.h
     src/content/item_definition.cpp src/content/item_definition.h
+    src/content/object_definition.cpp src/content/object_definition.h
+    src/actors/actor.cpp src/actors/actor.h
+    src/actors/ai_controller.cpp src/actors/ai_controller.h
+    src/objects/interactive_object.cpp src/objects/interactive_object.h
+    src/objects/object_behavior.cpp src/objects/object_behavior.h
     src/core/data_object.cpp src/core/data_object.h src/core/item_state.cpp src/core/item_state.h
     src/core/world_types.h
     src/core/world_result.h src/content/content_result.h
@@ -236,6 +241,9 @@ if(CATACLYSMX_BUILD_TESTS)
         tests/item_content_tests.cpp tests/item_state_tests.cpp tests/item_world_tests.cpp
         tests/item_save_tests.cpp tests/item_network_tests.cpp tests/item_server_tests.cpp
         tests/item_behavior_tests.cpp
+        tests/actor_controller_tests.cpp tests/entity_world_tests.cpp
+        tests/object_content_tests.cpp tests/object_behavior_tests.cpp
+        tests/object_server_tests.cpp tests/object_network_tests.cpp
         tests/settings_tests.cpp tests/localization_tests.cpp)
     target_sources(cataclysmx_tests PRIVATE tests/lighting_tests.cpp tests/surface_lighting_tests.cpp tests/memory_tests.cpp
         tests/lighting_content_tests.cpp tests/perception_save_tests.cpp

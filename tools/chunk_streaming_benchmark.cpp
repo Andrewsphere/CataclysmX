@@ -60,10 +60,14 @@ void AddStats(PerceptionStats& a, const PerceptionStats& b) {
 }
 
 void ClearActors(World& world, ActorHandle player) {
-    for (auto actor : world.ActiveActors()) {
+    Vector<ActorHandle> actors;
+    world.CollectActiveActors(actors);
+    for (auto actor : actors) {
         if (actor != player) { Require(world.DestroyActor(actor).has_value()); }
     }
-    for (auto object : world.ActiveObjects()) { Require(world.DestroyObject(object).has_value()); }
+    Vector<ObjectHandle> objects;
+    world.CollectActiveObjects(objects);
+    for (auto object : objects) { Require(world.DestroyObject(object).has_value()); }
 }
 
 // Position A/B straddle the requested seam. Ground and headroom are edited

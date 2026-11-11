@@ -815,7 +815,9 @@ TEST_CASE("Optical keyed refresh is independent of insertion order and erasure",
 TEST_CASE("Warm server movement and view benchmark", "[.][bulk-server-benchmark]") {
     Server server(TestContent());
     auto& world = server.GetWorld();
-    for (ActorHandle actor : world.ActiveActors()) {
+    Vector<ActorHandle> actors;
+    world.CollectActiveActors(actors);
+    for (ActorHandle actor : actors) {
         if (actor != server.GetPlayer()) { REQUIRE(world.DestroyActor(actor)); }
     }
     Fill(world, 76, 0, 0, TestTerrain("floor"));

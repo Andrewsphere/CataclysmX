@@ -92,7 +92,8 @@ TEST_CASE("Falling roots preserve nested handles and notify deployed devices", "
     CHECK(world.FindItem(id) == rock);
     REQUIRE(world.DestroyActor(actor));
     CHECK(world.GetItem(pack)->location == ItemLocation::Ground({1, 1, -3}));
-    CHECK(world.ItemsAt({1, 1, -3}) == Vector<ItemHandle>{pack});
+    REQUIRE(world.CountItemsAt({1, 1, -3}) == 1);
+    CHECK(*world.ItemsAt({1, 1, -3}).begin() == pack);
     REQUIRE(world.TransferItem(pack, ItemLocation::Ground({1, 1, 2})));
     CHECK(world.GetItem(pack)->location == ItemLocation::Ground({1, 1, -3}));
 

@@ -135,6 +135,8 @@ bool ValidateArchive(const ContentCatalog& content, const Archive& saved,
     };
     Vector<TileCoord> positions;
     for (const SavedActor& actor : saved.actors) {
+        const auto controller = ReadAiController(actor.controller);
+        if (!controller || (actor.player && *controller)) { return false; }
         if (!ValidLightEmission(actor.light) || actor.speed == 0 || (actor.parked && !actor.player) || !addId(actor.id)
             || !ValidPosition(actor.position) || ChunkOf(actor.position) != saved.position
             || (!actor.parked && Occurrences(positions, actor.position))) {
@@ -144,6 +146,10 @@ bool ValidateArchive(const ContentCatalog& content, const Archive& saved,
     }
     positions.clear();
     for (const SavedObject& object : saved.objects) {
+        if (object.type.value) {
+            const auto* definition = content.TryGetObject(object.type);
+            if (!definition || !ValidateObjectBehaviorState(*definition, object.state)) { return false; }
+        } else if (object.state.Type() != DataType::Object || object.state.Size() != 0) { return false; }
         if (!ValidLightEmission(object.light) || object.kind == ObjectKind::None
             || !ValidObjectAppearance({object.kind, object.facing, object.enabled, object.broken})
             || object.updateInterval == 0 || object.remainingTicks > object.updateInterval
@@ -323,6 +329,15 @@ public:
     dod::slot_map64<Item> items;
     dod::slot_map64<InteractiveObject> objects;
     dod::slot_map64<Request> requests;
+    struct DueActor { PersistentId id; ActorHandle handle; };
+    struct DueObject { PersistentId id; ObjectHandle handle; };
+    Vector<DueActor> dueActors;
+    Vector<DueObject> dueObjects;
+    bool processingNpcs = false;
+    bool processingObjects = false;
+    bool objectCallback = false;
+    ObjectHandle callbackObject{};
+    bool destroyCallbackObject = false;
     ArchiveMap archives; // Authoritative, unloaded, unsaved values; never bounded.
     // Clean, disposable FIFO values; pending archives are never subject to eviction.
     ArchiveMap warmArchives;
@@ -754,8 +769,8 @@ public:
     }
 
     static std::size_t WarmCost(const Archive& archive) {
-        // DataObject hides recursive allocation capacities. Only cache item-free
-        // values, whose entire heap ownership can be measured conservatively.
+        // Eligible snapshots have no allocated DataObject trees. Account for
+        // retained entity-vector capacity even when a vector is empty.
         return archive.actors.capacity() * sizeof(SavedActor)
             + archive.objects.capacity() * sizeof(SavedObject);
     }
@@ -783,7 +798,11 @@ public:
 
     void RetainWarm(Archive&& archive) {
         ForgetWarm(archive.position);
-        if (archive.items.capacity() != 0) { return; }
+        // Recursive DataObject allocations are opaque. Keep only snapshots
+        // without controller envelopes or typed behavior payloads.
+        if (archive.items.capacity() != 0 || !archive.actors.empty()
+            || eastl::any_of(archive.objects.begin(), archive.objects.end(),
+                [](const SavedObject& object) { return object.type.value != 0; })) { return; }
         // Fix outer allocations before budgeting; erasure retains this storage.
         warmArchives.reserve(maxWarmEntries);
         warmOrder.reserve(maxWarmEntries);
@@ -951,7 +970,8 @@ public:
             const Actor* actor = Live(actors, handle);
             Require(actor != nullptr);
             saved.actors.push_back({actor->id, actor->position, actor->player, actor->turns,
-                actor->speed, actor->remainingTicks, actor->parked, actor->carryCapacityGrams, actor->light});
+                actor->speed, actor->remainingTicks, actor->parked, actor->carryCapacityGrams, actor->light,
+                CaptureAiController(actor->controller_.get())});
             for (ItemHandle item : actor->inventory) {
                 pending.push_back(item);
             }
@@ -961,7 +981,8 @@ public:
             Require(object != nullptr);
             saved.objects.push_back({object->id, object->position, object->enabled, object->updates,
                 object->updateInterval, object->remainingTicks, object->kind, object->facing,
-                object->broken, object->light});
+                object->broken, object->light, object->type,
+                object->behavior_ ? object->behavior_->SaveState() : DataObject{}});
             for (ItemHandle item : object->contents) {
                 pending.push_back(item);
             }
@@ -1012,16 +1033,36 @@ public:
     void Restore(Chunk& value, const Archive& saved) {
         value.tiles = saved.tiles;
         for (const SavedActor& actor : saved.actors) {
-            const auto key = actors.emplace(Actor{actor.id, actor.position, actor.player, actor.turns,
-                {}, actor.speed, actor.remainingTicks, actor.parked, actor.carryCapacityGrams, actor.light});
+            Actor restored(actor.id, actor.position, actor.player);
+            restored.turns = actor.turns;
+            restored.speed = actor.speed;
+            restored.remainingTicks = actor.remainingTicks;
+            restored.parked = actor.parked;
+            restored.carryCapacityGrams = actor.carryCapacityGrams;
+            restored.light = actor.light;
+            auto controller = ReadAiController(actor.controller);
+            Require(controller.has_value());
+            restored.controller_ = eastl::move(*controller);
+            const auto key = actors.emplace(eastl::move(restored));
             value.actors.push_back({key.raw});
             if (actor.player) { TrackPlayer(actor.id, actor.position); }
         }
         for (const SavedObject& object : saved.objects) {
-            const auto key = objects.emplace(InteractiveObject{
-                object.id, object.position, object.enabled, object.updates, {},
-                object.updateInterval, object.remainingTicks, object.kind, object.facing,
-                object.broken, object.light});
+            InteractiveObject restored(object.id, object.position, object.enabled);
+            restored.updates = object.updates;
+            restored.updateInterval = object.updateInterval;
+            restored.remainingTicks = object.remainingTicks;
+            restored.kind = object.kind;
+            restored.facing = object.facing;
+            restored.broken = object.broken;
+            restored.light = object.light;
+            restored.type = object.type;
+            if (object.type.value) {
+                auto behavior = MakeObjectBehavior(content.GetObject(object.type), &object.state);
+                Require(behavior.has_value());
+                restored.behavior_ = eastl::move(*behavior);
+            }
+            const auto key = objects.emplace(eastl::move(restored));
             value.objects.push_back({key.raw});
         }
         // Parents precede descendants, so every persistent owner is already live.
@@ -1580,19 +1621,62 @@ ActorHandle World::ActorAt(TileCoord position) const {
     return {};
 }
 
-Vector<ItemHandle> World::ItemsAt(TileCoord position) const {
-    Vector<ItemHandle> result;
-    const Chunk* value = ValidPosition(position) ? GetChunk(ChunkOf(position)) : nullptr;
-    if (value) {
-        for (ItemHandle handle : value->ground_items) {
-            const Item* candidate = GetItem(handle);
-            Require(candidate != nullptr);
-            if (candidate->location.position == position) {
-                result.push_back(handle);
-            }
-        }
+ItemRange::ItemRange(const World& world, const Chunk* chunk, TileCoord position)
+    : world_(&world), items_(chunk ? &chunk->ground_items : nullptr), position_(position) {}
+
+ItemRange::Iterator::Iterator(const World* world, const Vector<ItemHandle>* items,
+    TileCoord position, std::size_t index)
+    : world_(world), items_(items), position_(position), index_(index) {
+    SkipNonmatching();
+}
+
+void ItemRange::Iterator::SkipNonmatching() {
+    while (items_ && index_ < items_->size()) {
+        const Item* item = world_->GetItem((*items_)[index_]);
+        Require(item != nullptr);
+        if (item->location.position == position_) { break; }
+        ++index_;
     }
+}
+
+ItemHandle ItemRange::Iterator::operator*() const {
+    Require(items_ && index_ < items_->size());
+    return (*items_)[index_];
+}
+
+ItemRange::Iterator& ItemRange::Iterator::operator++() {
+    Require(items_ && index_ < items_->size());
+    ++index_;
+    SkipNonmatching();
+    return *this;
+}
+
+ItemRange::Iterator ItemRange::Iterator::operator++(int) {
+    Iterator previous = *this;
+    ++*this;
+    return previous;
+}
+
+ItemRange::Iterator ItemRange::begin() const { return {world_, items_, position_, 0}; }
+ItemRange::Iterator ItemRange::end() const {
+    return {world_, items_, position_, items_ ? items_->size() : 0};
+}
+bool ItemRange::Empty() const { return begin() == end(); }
+
+ItemRange World::ItemsAt(TileCoord position) const {
+    const Chunk* value = ValidPosition(position) ? GetChunk(ChunkOf(position)) : nullptr;
+    return ItemRange(*this, value, position);
+}
+
+std::size_t World::CountItemsAt(TileCoord position) const {
+    std::size_t result = 0;
+    for ([[maybe_unused]] ItemHandle handle : ItemsAt(position)) { ++result; }
     return result;
+}
+
+void World::CollectItemsAt(TileCoord position, Vector<ItemHandle>& output) const {
+    output.clear();
+    for (ItemHandle handle : ItemsAt(position)) { output.push_back(handle); }
 }
 
 ObjectHandle World::ObjectAt(TileCoord position) const {
@@ -1728,13 +1812,49 @@ WorldResult<ActorHandle> World::CreateActor(TileCoord position, bool player) {
     if (ActorAt(position).value != 0) {
         return eastl::unexpected(WorldError::occupied);
     }
-    const auto key = impl_->actors.emplace(Actor{impl_->IssueId(), position, player, 0, {}});
+    const auto key = impl_->actors.emplace(Actor(impl_->IssueId(), position, player));
     const ActorHandle handle{key.raw};
     impl_->GetChunk(ChunkOf(position))->actors.push_back(handle);
     if (player) { impl_->TrackPlayer(GetActor(handle)->id, position); }
     impl_->MarkDirty(ChunkOf(position));
     impl_->QueueGravity(position);
     return handle;
+}
+
+DataObject World::CaptureActorController(ActorHandle handle) const {
+    const Actor* actor = GetActor(handle);
+    return actor ? CaptureAiController(actor->controller_.get()) : DataObject{};
+}
+
+WorldResult<void> World::SetActorController(ActorHandle handle, AiControllerKind kind) {
+    Actor* actor = Live(impl_->actors, handle);
+    if (!actor) { return eastl::unexpected(WorldError::invalid_handle); }
+    if (actor->player && kind != AiControllerKind::None) { return eastl::unexpected(WorldError::invalid_request); }
+    auto controller = MakeAiController(kind);
+    if (!controller) { return eastl::unexpected(WorldError::invalid_request); }
+    actor->controller_ = eastl::move(*controller);
+    impl_->MarkDirty(ChunkOf(actor->position), false);
+    return {};
+}
+
+WorldResult<void> World::TryActorStep(ActorHandle handle, TileCoord direction, bool activeOnly) {
+    const Actor* actor = GetActor(handle);
+    if (!actor) { return eastl::unexpected(WorldError::invalid_handle); }
+    if (actor->parked || !IsActive(actor->position)) { return eastl::unexpected(WorldError::chunk_unavailable); }
+    // Explicit comparisons also avoid overflow for fabricated direction values.
+    const bool cardinal = (direction == TileCoord{1, 0, 0}) || (direction == TileCoord{-1, 0, 0})
+        || (direction == TileCoord{0, 1, 0}) || (direction == TileCoord{0, -1, 0})
+        || (direction == TileCoord{0, 0, 1}) || (direction == TileCoord{0, 0, -1});
+    if (!cardinal) { return eastl::unexpected(WorldError::invalid_request); }
+    const TileCoord source = actor->position;
+    const TileCoord target{source.x + direction.x, source.z + direction.z, source.y + direction.y};
+    if (const auto available = impl_->Available(target); !available) { return available; }
+    if (activeOnly && !IsActive(target)) { return eastl::unexpected(WorldError::chunk_unavailable); }
+    if (direction.y != 0 && (!impl_->content.GetTerrain(GetTile(source)->terrain).stairs
+        || !impl_->content.GetTerrain(GetTile(target)->terrain).stairs)) {
+        return eastl::unexpected(WorldError::blocked);
+    }
+    return MoveActor(handle, target);
 }
 
 WorldResult<void> World::MoveActor(ActorHandle handle, TileCoord destination) {
@@ -2005,14 +2125,149 @@ WorldResult<ObjectHandle> World::CreateObject(TileCoord position, bool enabled) 
     if (ObjectAt(position).value != 0) {
         return eastl::unexpected(WorldError::occupied);
     }
-    const auto key = impl_->objects.emplace(InteractiveObject{impl_->IssueId(), position, enabled, 0, {}});
+    const auto key = impl_->objects.emplace(InteractiveObject(impl_->IssueId(), position, enabled));
     const ObjectHandle handle{key.raw};
     impl_->GetChunk(ChunkOf(position))->objects.push_back(handle);
     impl_->MarkDirty(ChunkOf(position), true, true);
     return handle;
 }
 
+WorldResult<ObjectHandle> World::CreateObject(ObjectTypeId type, TileCoord position, bool enabled) {
+    const auto* definition = impl_->content.TryGetObject(type);
+    if (!definition) { return eastl::unexpected(WorldError::invalid_request); }
+    auto behavior = MakeObjectBehavior(*definition);
+    if (!behavior) { return eastl::unexpected(WorldError::invalid_request); }
+    const auto created = CreateObject(position, enabled);
+    if (!created) { return created; }
+    auto* object = Live(impl_->objects, *created);
+    object->type = type;
+    object->behavior_ = eastl::move(*behavior);
+    return created;
+}
+
+eastl::optional<ObjectStateView> World::DescribeObjectState(ObjectHandle handle) const {
+    const auto* object = GetObject(handle);
+    if (!object || !object->type.value) { return eastl::nullopt; }
+    return object->behavior_ ? object->behavior_->Describe() : ObjectStateView{};
+}
+
+DataObject World::CaptureObjectState(ObjectHandle handle) const {
+    const auto* object = GetObject(handle);
+    return object && object->behavior_ ? object->behavior_->SaveState() : DataObject{};
+}
+
+WorldResult<void> World::SetObjectEnergy(ObjectHandle handle, std::uint64_t energy) {
+    auto* object = Live(impl_->objects, handle);
+    if (!object) { return eastl::unexpected(WorldError::invalid_handle); }
+    if (!object->behavior_) { return eastl::unexpected(WorldError::invalid_request); }
+    const auto result = object->behavior_->SetEnergy(energy);
+    if (result) { impl_->MarkDirty(ChunkOf(object->position), false); }
+    return result;
+}
+
+bool World::CanUseObject(ActorHandle actorHandle, ObjectHandle objectHandle) const {
+    const auto* actor = GetActor(actorHandle);
+    const auto* object = GetObject(objectHandle);
+    if (!actor || actor->parked || !IsActive(actor->position) || !object || !IsActive(object->position)) { return false; }
+    const TileCoord a = actor->position;
+    const TileCoord b = object->position;
+    if (std::abs(a.x - b.x) + std::abs(a.z - b.z) + std::abs(a.y - b.y) > 1) { return false; }
+    if (a.y != b.y) {
+        const auto& source = impl_->content.GetTerrain(GetTile(a)->terrain);
+        const auto& target = impl_->content.GetTerrain(GetTile(b)->terrain);
+        const auto& upper = a.y > b.y ? source : target;
+        if (!upper.openSpace && !(source.stairs && target.stairs)) { return false; }
+    }
+    return true;
+}
+
+ObjectUseResult World::UseObject(ActorHandle actor, ObjectHandle handle, ObjectAction action) {
+    Require(!impl_->objectCallback && !impl_->processingObjects);
+    if (!CanUseObject(actor, handle)) {
+        return {ObjectUseOutcome::Inaccessible, 0,
+            GetActor(actor) ? ObjectUseReason::OutOfReach : ObjectUseReason::InvalidActor};
+    }
+    auto* object = Live(impl_->objects, handle);
+    if (!object->behavior_) { return {}; }
+    Impl::GravityBatch batch(*this);
+    impl_->objectCallback = true;
+    impl_->callbackObject = handle;
+    impl_->destroyCallbackObject = false;
+    impl_->itemSystem.BeginCallback();
+    ObjectMutationContext context(*this, handle);
+    const auto result = object->behavior_->Use(context, actor, action);
+    Require(result.outcome == ObjectUseOutcome::Succeeded ? result.baseCost > 0 : result.baseCost == 0);
+    impl_->objectCallback = false;
+    impl_->itemSystem.EndCallback();
+    if (impl_->destroyCallbackObject) { Require(DestroyObject(handle).has_value()); }
+    else if (result.outcome == ObjectUseOutcome::Succeeded) {
+        Require(result.baseCost > 0);
+        impl_->MarkDirty(ChunkOf(GetObject(handle)->position), false);
+    }
+    return result;
+}
+
+WorldResult<void> World::ConsumeObjectInputs(ActorHandle actorHandle, ItemTypeId type, std::uint32_t count) {
+    Require(impl_->objectCallback);
+    if (!CanUseObject(actorHandle, impl_->callbackObject)) { return eastl::unexpected(WorldError::blocked); }
+    Vector<ItemHandle> inputs;
+    for (ItemHandle handle : GetActor(actorHandle)->inventory) {
+        const auto* item = GetItem(handle);
+        if (item->type == type && item->contents.empty()) { inputs.push_back(handle); }
+    }
+    if (inputs.size() < count) { return eastl::unexpected(WorldError::invalid_request); }
+    eastl::sort(inputs.begin(), inputs.end(), [this](ItemHandle a, ItemHandle b) { return GetItem(a)->id < GetItem(b)->id; });
+    // All inputs are direct leaves. Destroying one cannot retire another; item
+    // notifications remain deferred until the whole object callback returns.
+    for (std::uint32_t i = 0; i < count; ++i) { Require(DestroyItem(inputs[i]).has_value()); }
+    return {};
+}
+
+WorldResult<void> World::ProduceObjectOutputs(ObjectHandle handle, ItemTypeId type, std::uint32_t count) {
+    Require(impl_->objectCallback && impl_->callbackObject == handle);
+    if (!GetObject(handle)) { return eastl::unexpected(WorldError::invalid_handle); }
+    if (!impl_->content.TryGetItem(type)) { return eastl::unexpected(WorldError::invalid_request); }
+    for (std::uint32_t i = 0; i < count; ++i) { Require(CreateItem(type, ItemLocation::Stored(handle)).has_value()); }
+    return {};
+}
+
+WorldResult<void> World::CollectObjectContents(ActorHandle actorHandle, ObjectHandle handle) {
+    Require(impl_->objectCallback && impl_->callbackObject == handle);
+    if (!CanUseObject(actorHandle, handle)) { return eastl::unexpected(WorldError::blocked); }
+    const auto* actor = GetActor(actorHandle);
+    const Vector<ItemHandle> contents = GetObject(handle)->contents;
+    if (contents.empty()) { return eastl::unexpected(WorldError::invalid_request); }
+    std::uint64_t available = actor->carryCapacityGrams - GetCarriedMass(actorHandle);
+    for (ItemHandle item : contents) {
+        const auto mass = GetItemMass(item);
+        if (mass > available) { return eastl::unexpected(WorldError::capacity_exceeded); }
+        available -= mass;
+        if (const auto valid = CheckItemTransfer(item, ItemLocation::Carried(actorHandle)); !valid) { return valid; }
+    }
+    for (ItemHandle item : contents) { Require(TransferItem(item, ItemLocation::Carried(actorHandle)).has_value()); }
+    return {};
+}
+
+ObjectMutationContext::ObjectMutationContext(World& world, ObjectHandle self) : world_(world), self_(self) {}
+const World& ObjectMutationContext::GetWorld() const { return world_; }
+ObjectHandle ObjectMutationContext::Self() const { return self_; }
+WorldResult<void> ObjectMutationContext::ConsumeInputs(ActorHandle actor, ItemTypeId type, std::uint32_t count) {
+    return world_.ConsumeObjectInputs(actor, type, count);
+}
+WorldResult<void> ObjectMutationContext::Produce(ItemTypeId type, std::uint32_t count) {
+    return world_.ProduceObjectOutputs(self_, type, count);
+}
+WorldResult<void> ObjectMutationContext::CollectContents(ActorHandle actor) { return world_.CollectObjectContents(actor, self_); }
+void ObjectMutationContext::RequestDestroy() {
+    Require(world_.impl_->objectCallback && world_.impl_->callbackObject == self_);
+    world_.impl_->destroyCallbackObject = true;
+}
+
 WorldResult<void> World::DestroyObject(ObjectHandle handle) {
+    if (impl_->objectCallback && impl_->callbackObject == handle) {
+        impl_->destroyCallbackObject = true;
+        return {};
+    }
     Impl::GravityBatch batch(*this);
     InteractiveObject* value = Live(impl_->objects, handle);
     if (!value) {
@@ -2152,9 +2407,8 @@ RememberedTile World::GetRememberedTile(PersistentId player, TileCoord position)
 }
 
 void World::UpdatePlayerObservations() {
-    for (ActorHandle handle : ActiveActors()) {
-        const Actor& actor = *GetActor(handle);
-        if (!actor.player || actor.parked) { continue; }
+    for (const Actor& actor : impl_->actors) {
+        if (!actor.player || actor.parked || !IsActive(actor.position)) { continue; }
         auto& cache = impl_->PerceptionFor(*this, actor);
         if (cache.observedFilterRevision == cache.filterRevision
             && cache.observedAppearanceRevision == impl_->appearanceRevision) { continue; }
@@ -2265,61 +2519,150 @@ void World::ElapseTicks(Tick elapsed) {
     Impl::GravityBatch batch(*this);
     if (elapsed == 0) { return; }
     impl_->itemSystem.Elapse(elapsed);
-    for (const auto& column : impl_->columns_) {
-        if (!column.second.layers.front().active) { continue; }
-        for (const Chunk& chunk : column.second.layers) {
-            bool modified = false;
-            for (ActorHandle handle : chunk.actors) {
-                Actor* actor = Live(impl_->actors, handle);
-                Require(actor != nullptr);
-                if (!actor->parked && actor->remainingTicks != 0) {
-                    actor->remainingTicks -= eastl::min(actor->remainingTicks, elapsed);
-                    modified = true;
-                }
-            }
-            for (ObjectHandle handle : chunk.objects) {
-                InteractiveObject* object = Live(impl_->objects, handle);
-                Require(object != nullptr);
-                if (object->enabled && object->remainingTicks != 0) {
-                    object->remainingTicks -= eastl::min(object->remainingTicks, elapsed);
-                    modified = true;
-                }
-            }
-            if (modified) { impl_->MarkDirty(chunk.position, false); }
+    for (Actor& actor : impl_->actors) {
+        if (actor.parked || !IsActive(actor.position) || (!actor.player && !actor.controller_)
+            || actor.remainingTicks == 0) { continue; }
+        actor.remainingTicks -= eastl::min(actor.remainingTicks, elapsed);
+        impl_->MarkDirty(ChunkOf(actor.position), false);
+    }
+    for (InteractiveObject& object : impl_->objects) {
+        if (!object.enabled || !IsActive(object.position)) { continue; }
+        if (object.behavior_) {
+            const auto delay = object.behavior_->NextEventIn();
+            if (!delay || *delay == 0) { continue; }
+            object.behavior_->Elapse(elapsed);
+        } else {
+            if (object.type.value || object.remainingTicks == 0) { continue; }
+            object.remainingTicks -= eastl::min(object.remainingTicks, elapsed);
         }
+        impl_->MarkDirty(ChunkOf(object.position), false);
     }
 }
 
-Vector<ActorHandle> World::ActiveActors() const {
-    Vector<ActorHandle> result;
-    for (const auto& column : impl_->columns_) {
-        if (!column.second.layers.front().active) { continue; }
-        for (const Chunk& value : column.second.layers) {
-            for (ActorHandle handle : value.actors) {
-                if (!GetActor(handle)->parked) { result.push_back(handle); }
-            }
+void World::CollectActiveActors(Vector<ActorHandle>& output) const {
+    output.clear();
+    for (const auto& entry : impl_->actors.items()) {
+        const Actor& actor = entry.second.get();
+        if (!actor.parked && IsActive(actor.position)) { output.push_back({entry.first.raw}); }
+    }
+}
+
+void World::CollectActiveObjects(Vector<ObjectHandle>& output) const {
+    output.clear();
+    for (const auto& entry : impl_->objects.items()) {
+        if (IsActive(entry.second.get().position)) { output.push_back({entry.first.raw}); }
+    }
+}
+
+void World::CollectReadyPlayers(Vector<ActorHandle>& output) const {
+    output.clear();
+    for (const auto& entry : impl_->actors.items()) {
+        const Actor& actor = entry.second.get();
+        if (actor.player && !actor.parked && IsActive(actor.position) && actor.remainingTicks == 0) {
+            output.push_back({entry.first.raw});
         }
     }
-    eastl::sort(result.begin(), result.end(), [this](ActorHandle a, ActorHandle b) {
+    eastl::sort(output.begin(), output.end(), [this](ActorHandle a, ActorHandle b) {
         return GetActor(a)->id < GetActor(b)->id;
     });
-    return result;
 }
 
-Vector<ObjectHandle> World::ActiveObjects() const {
-    Vector<ObjectHandle> result;
-    for (const auto& column : impl_->columns_) {
-        if (!column.second.layers.front().active) { continue; }
-        for (const Chunk& value : column.second.layers) {
-            for (ObjectHandle handle : value.objects) {
-                result.push_back(handle);
-            }
-        }
+void World::ProcessNpcActions(std::uint32_t& rng) {
+    Require(!impl_->processingNpcs && !impl_->objectCallback);
+    impl_->processingNpcs = true;
+    auto& due = impl_->dueActors;
+    due.clear();
+    for (const auto& entry : impl_->actors.items()) {
+        const Actor& actor = entry.second.get();
+        if (!actor.player && !actor.parked && actor.controller_ && IsActive(actor.position)
+            && actor.remainingTicks == 0) { due.push_back({actor.id, {entry.first.raw}}); }
     }
-    eastl::sort(result.begin(), result.end(), [this](ObjectHandle a, ObjectHandle b) {
-        return GetObject(a)->id < GetObject(b)->id;
-    });
-    return result;
+    eastl::sort(due.begin(), due.end(), [](const auto& a, const auto& b) { return a.id < b.id; });
+    for (const auto record : due) {
+        Actor* actor = Live(impl_->actors, record.handle);
+        if (!actor || actor->id != record.id || actor->player || actor->parked || !actor->controller_
+            || !IsActive(actor->position) || actor->remainingTicks != 0) { continue; }
+        const ActorIntent intent = actor->controller_->ChooseAction(ActorReadContext(*this, record.handle), rng);
+        Require(intent.baseCost > 0);
+        Require(intent.kind == ActorIntentKind::Wait || intent.kind == ActorIntentKind::Move);
+        Require(ScheduleActorAction(record.handle, intent.baseCost).has_value());
+        // Commit the deadline before execution: blocked movement still costs time.
+        if (intent.kind == ActorIntentKind::Move) {
+            const auto moved = TryActorStep(record.handle, intent.direction, true);
+            Require(moved || moved.error() != WorldError::invalid_request);
+        }
+        UpdatePlayerObservations();
+    }
+    impl_->processingNpcs = false;
+}
+
+eastl::optional<Tick> World::NextActorEventIn() const {
+    eastl::optional<Tick> next;
+    for (const Actor& actor : impl_->actors) {
+        if (actor.parked || !IsActive(actor.position) || (!actor.player && !actor.controller_)) { continue; }
+        if (!next || actor.remainingTicks < *next) { next = actor.remainingTicks; }
+    }
+    return next;
+}
+
+eastl::optional<Tick> World::NextObjectEventIn() const {
+    eastl::optional<Tick> next;
+    for (const InteractiveObject& object : impl_->objects) {
+        if (!object.enabled || !IsActive(object.position)) { continue; }
+        const auto delay = object.behavior_ ? object.behavior_->NextEventIn()
+            : object.type.value ? eastl::optional<Tick>{} : eastl::optional<Tick>{object.remainingTicks};
+        if (delay && (!next || *delay < *next)) { next = *delay; }
+    }
+    return next;
+}
+
+bool World::ProcessObjectEvents() {
+    Require(!impl_->processingObjects && !impl_->objectCallback);
+    impl_->processingObjects = true;
+    auto& due = impl_->dueObjects;
+    due.clear();
+    for (const auto& entry : impl_->objects.items()) {
+        const auto& object = entry.second.get();
+        if (!object.enabled || !IsActive(object.position)) { continue; }
+        const auto delay = object.behavior_ ? object.behavior_->NextEventIn()
+            : object.type.value ? eastl::optional<Tick>{} : eastl::optional<Tick>{object.remainingTicks};
+        if (delay && *delay == 0) { due.push_back({object.id, {entry.first.raw}}); }
+    }
+    eastl::sort(due.begin(), due.end(), [](const auto& a, const auto& b) { return a.id < b.id; });
+    bool processed = false;
+    for (const auto record : due) {
+        auto* object = Live(impl_->objects, record.handle);
+        if (!object || object->id != record.id || !object->enabled || !IsActive(object->position)) { continue; }
+        if (object->behavior_) {
+            const auto delay = object->behavior_->NextEventIn();
+            if (!delay || *delay != 0) { continue; }
+            Impl::GravityBatch batch(*this);
+            impl_->objectCallback = true;
+            impl_->callbackObject = record.handle;
+            impl_->destroyCallbackObject = false;
+            impl_->itemSystem.BeginCallback();
+            ObjectMutationContext context(*this, record.handle);
+            object->behavior_->ProcessEvent(context);
+            impl_->objectCallback = false;
+            impl_->itemSystem.EndCallback();
+            if (impl_->destroyCallbackObject) { Require(DestroyObject(record.handle).has_value()); }
+            else {
+                object = Live(impl_->objects, record.handle);
+                Require(object != nullptr);
+                const auto next = object->behavior_->NextEventIn();
+                Require(!next || *next != 0);
+                Require(object->updates != eastl::numeric_limits<std::uint64_t>::max());
+                ++object->updates;
+                impl_->MarkDirty(ChunkOf(object->position), false);
+            }
+        } else {
+            if (object->type.value || object->remainingTicks != 0) { continue; }
+            Require(RecordObjectUpdate(record.handle).has_value());
+        }
+        processed = true;
+    }
+    impl_->processingObjects = false;
+    return processed;
 }
 
 WorldResult<void> World::RecordActorTurn(ActorHandle handle) {
@@ -2418,6 +2761,8 @@ bool World::CheckInvariants() const {
     for (const auto& entry : state.actors.items()) {
         const Actor& value = entry.second.get();
         const ActorHandle handle{entry.first.raw};
+        const auto controller = ReadAiController(CaptureAiController(value.controller_.get()));
+        if (!controller || (value.player && value.controller_)) { return false; }
         if (!ValidLightEmission(value.light) || value.speed == 0 || !add_id(value.id) || Occurrences(indexed_actors, handle) != 1
             || (value.player && state.PlayerPosition(value.id) != value.position)) {
             return false;
@@ -2433,6 +2778,11 @@ bool World::CheckInvariants() const {
     for (const auto& entry : state.objects.items()) {
         const InteractiveObject& value = entry.second.get();
         const ObjectHandle handle{entry.first.raw};
+        if (value.type.value) {
+            const auto* definition = state.content.TryGetObject(value.type);
+            if (!definition || (definition->behavior == ObjectBehaviorKind::None) != !value.behavior_
+                || !ValidateObjectBehaviorState(*definition, CaptureObjectState(handle))) { return false; }
+        } else if (value.behavior_) { return false; }
         if (!ValidLightEmission(value.light) || value.kind == ObjectKind::None
             || !ValidObjectAppearance(DescribeObject(value))
             || value.updateInterval == 0 || value.remainingTicks > value.updateInterval
@@ -2581,7 +2931,10 @@ bool World::CheckInvariants() const {
     for (const auto& entry : state.warmArchives) {
         const Archive& archive = entry.second;
         if (entry.first != archive.position || Occurrences(state.warmOrder, entry.first) != 1) { return false; }
-        if (archive.items.capacity() != 0 || state.GetChunk(archive.position)
+        if (archive.items.capacity() != 0 || !archive.actors.empty()
+            || eastl::any_of(archive.objects.begin(), archive.objects.end(),
+                [](const SavedObject& object) { return object.type.value != 0; })
+            || state.GetChunk(archive.position)
             || Occurrences(archived_positions, archive.position) != 0
             || !ValidateArchive(state.content, archive, state.next_id, ids)) { return false; }
         archived_positions.push_back(archive.position);

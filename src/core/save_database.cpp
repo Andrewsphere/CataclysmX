@@ -3,6 +3,8 @@
 #include "items/item_behavior.h"
 #include "items/item_snapshot.h"
 #include "content/content.h"
+#include "actors/ai_controller.h"
+#include "objects/object_behavior.h"
 
 #include <EASTL/algorithm.h>
 #include <EASTL/sort.h>
@@ -325,6 +327,48 @@ bool ValidChunk(ChunkCoord position) {
 }
 
 bool Unique(Vector<PersistentId>& ids);
+
+DataObject DefaultController(bool player) {
+    auto controller = MakeAiController(player ? AiControllerKind::None : AiControllerKind::Wander);
+    if (!controller) { std::abort(); }
+    return CaptureAiController(controller->get());
+}
+
+bool EmptyController(const DataObject& controller) {
+    return controller.Type() == DataType::Object && controller.Size() == 0;
+}
+
+SaveResult<void> ValidateEntityState(const ContentCatalog& content, const ChunkArchive& chunk,
+    Diagnostics* diagnostics) {
+    for (const auto& actor : chunk.actors) {
+        auto controller = EmptyController(actor.controller)
+            ? MakeAiController(actor.player ? AiControllerKind::None : AiControllerKind::Wander, nullptr, diagnostics)
+            : ReadAiController(actor.controller, diagnostics);
+        if (!controller) {
+            return eastl::unexpected(controller.error() == StateError::UnsupportedVersion
+                ? SaveError::UnsupportedVersion : SaveError::InvalidData);
+        }
+        if (actor.player && *controller) {
+            return Failure(SaveError::InvalidData, "Player actor must have no AI controller", diagnostics);
+        }
+    }
+    for (const auto& object : chunk.objects) {
+        if (object.type == ObjectTypeId{}) {
+            if (object.state.Type() != DataType::Object || object.state.Size() != 0) {
+                return Failure(SaveError::InvalidData, "Generic object requires empty state", diagnostics);
+            }
+            continue;
+        }
+        const auto* definition = content.TryGetObject(object.type);
+        if (!definition) { return Failure(SaveError::InvalidData, "Unknown object type", diagnostics); }
+        const auto valid = ValidateObjectBehaviorState(*definition, object.state, diagnostics);
+        if (!valid) {
+            return eastl::unexpected(valid.error() == StateError::UnsupportedVersion
+                ? SaveError::UnsupportedVersion : SaveError::InvalidData);
+        }
+    }
+    return {};
+}
 
 bool ValidSnapshot(const SaveSnapshot& snapshot) {
     const auto& session = snapshot.session;
@@ -708,7 +752,7 @@ SaveResult<SaveSnapshot> DecodeSnapshot(const char* text, std::size_t length,
         || !Counter(Get(session, "autosave_interval"), state.autosaveInterval)) {
         return Failure(SaveError::InvalidData, "Invalid session or next_id", diagnostics);
     }
-    if (formatVersion == 8) {
+    if (formatVersion >= 8) {
         auto* circle = Get(session, "circle_residency");
         if (!yyjson_is_null(circle)) {
             CircleResidency residency;
@@ -770,6 +814,9 @@ String EncodeChunk(const ContentCatalog& content, const ChunkArchive& chunk) {
         writer.Counter(value, "remaining_ticks", actor.remainingTicks);
         writer.Counter(value, "carry_capacity_g", actor.carryCapacityGrams);
         EncodeLight(writer, value, actor.light);
+        if (EmptyController(actor.controller)) {
+            writer.Add(value, "controller", EncodeValue(writer, DefaultController(actor.player)));
+        } else { writer.Add(value, "controller", EncodeValue(writer, actor.controller)); }
         auto* inventory = writer.Array();
         inventories.push_back(inventory);
         writer.Add(value, "inventory", inventory);
@@ -787,6 +834,8 @@ String EncodeChunk(const ContentCatalog& content, const ChunkArchive& chunk) {
         writer.Integer(value, "facing", static_cast<int>(object.facing));
         writer.Boolean(value, "broken", object.broken);
         EncodeLight(writer, value, object.light);
+        writer.Text(value, "type", object.type == ObjectTypeId{} ? "" : content.TryGetObject(object.type)->id.c_str());
+        writer.Add(value, "state", EncodeValue(writer, object.state));
         writer.Counter(value, "updates", object.updates);
         writer.Integer(value, "update_interval", object.updateInterval);
         writer.Counter(value, "remaining_ticks", object.remainingTicks);
@@ -906,7 +955,7 @@ SaveResult<void> DecodeItems(const ContentCatalog& content, yyjson_val* array, L
 }
 
 SaveResult<ChunkArchive> DecodeChunk(const ContentCatalog& content, const char* text, std::size_t length,
-    ChunkCoord position, PersistentId nextId, Diagnostics* diagnostics) {
+    ChunkCoord position, PersistentId nextId, int formatVersion, Diagnostics* diagnostics) {
     Document document;
     if (!document.Parse(text, length)) {
         return Failure(SaveError::InvalidData, "Invalid chunk JSON", diagnostics);
@@ -951,7 +1000,10 @@ SaveResult<ChunkArchive> DecodeChunk(const ContentCatalog& content, const char* 
     yyjson_arr_iter actorIterator = yyjson_arr_iter_with(actors);
     while (auto* value = yyjson_arr_iter_next(&actorIterator)) {
         SavedActor actor{};
-        if (!Fields(value, {"id", "position", "player", "parked", "turns", "inventory", "speed", "remaining_ticks", "carry_capacity_g", "light"})
+        const bool fields = formatVersion < 9
+            ? Fields(value, {"id", "position", "player", "parked", "turns", "inventory", "speed", "remaining_ticks", "carry_capacity_g", "light"})
+            : Fields(value, {"id", "position", "player", "parked", "turns", "inventory", "speed", "remaining_ticks", "carry_capacity_g", "light", "controller"});
+        if (!fields
             || !Light(Get(value, "light"), actor.light)
             || !Counter(Get(value, "carry_capacity_g"), actor.carryCapacityGrams)
             || !Unsigned32(Get(value, "speed"), actor.speed)
@@ -963,6 +1015,14 @@ SaveResult<ChunkArchive> DecodeChunk(const ContentCatalog& content, const char* 
         }
         actor.player = yyjson_get_bool(Get(value, "player"));
         actor.parked = yyjson_get_bool(Get(value, "parked"));
+        if (formatVersion < 9) { actor.controller = DefaultController(actor.player); }
+        else {
+            auto controller = DecodeValue(Get(value, "controller"));
+            if (!controller || EmptyController(*controller)) {
+                return Failure(SaveError::InvalidData, "Actor requires a controller envelope", diagnostics);
+            }
+            actor.controller = eastl::move(*controller);
+        }
         chunk.actors.push_back(actor);
         auto decoded = DecodeItems(content, Get(value, "inventory"), LocationKind::actor, actor.id, 1, chunk, diagnostics);
         if (!decoded) { return eastl::unexpected(decoded.error()); }
@@ -971,7 +1031,10 @@ SaveResult<ChunkArchive> DecodeChunk(const ContentCatalog& content, const char* 
     while (auto* value = yyjson_arr_iter_next(&objectIterator)) {
         SavedObject object{};
         ObjectAppearance appearance;
-        if (!Fields(value, {"id", "position", "enabled", "updates", "contents", "update_interval", "remaining_ticks", "kind", "facing", "broken", "light"})
+        const bool fields = formatVersion < 9
+            ? Fields(value, {"id", "position", "enabled", "updates", "contents", "update_interval", "remaining_ticks", "kind", "facing", "broken", "light"})
+            : Fields(value, {"id", "position", "enabled", "updates", "contents", "update_interval", "remaining_ticks", "kind", "facing", "broken", "light", "type", "state"});
+        if (!fields
             || !Appearance(value, appearance) || !Light(Get(value, "light"), object.light)
             || !yyjson_is_bool(Get(value, "broken"))
             || !Unsigned32(Get(value, "update_interval"), object.updateInterval)
@@ -984,11 +1047,25 @@ SaveResult<ChunkArchive> DecodeChunk(const ContentCatalog& content, const char* 
         object.kind = appearance.kind;
         object.facing = appearance.facing;
         object.broken = yyjson_get_bool(Get(value, "broken"));
+        if (formatVersion >= 9) {
+            auto* type = Get(value, "type");
+            if (!yyjson_is_str(type)) { return Failure(SaveError::InvalidData, "Object type must be a stable string", diagnostics); }
+            const eastl::string_view name(yyjson_get_str(type), yyjson_get_len(type));
+            if (!name.empty()) {
+                object.type = content.FindObject(name);
+                if (object.type == ObjectTypeId{}) { return Failure(SaveError::InvalidData, "Unknown stable object type", diagnostics); }
+            }
+            auto state = DecodeValue(Get(value, "state"));
+            if (!state) { return Failure(SaveError::InvalidData, "Invalid object state", diagnostics); }
+            object.state = eastl::move(*state);
+        }
         chunk.objects.push_back(object);
         auto decoded = DecodeItems(content, Get(value, "contents"), LocationKind::object, object.id, 1, chunk, diagnostics);
         if (!decoded) { return eastl::unexpected(decoded.error()); }
     }
     Vector<PersistentId> ids;
+    auto entitiesValid = ValidateEntityState(content, chunk, diagnostics);
+    if (!entitiesValid) { return eastl::unexpected(entitiesValid.error()); }
     auto decoded = DecodeItems(content, Get(root, "ground_items"), LocationKind::ground, 0, 1, chunk, diagnostics);
     if (!decoded) { return eastl::unexpected(decoded.error()); }
     const auto validated = ValidateItemSnapshot(content, chunk, diagnostics);
@@ -1166,7 +1243,7 @@ SaveResult<int> ReadFormatVersion(sqlite3* db, Diagnostics* diagnostics) {
         return Failure(SaveError::InvalidData, "Invalid save metadata", diagnostics);
     }
     const auto version = sqlite3_column_int64(metadata.value, 1);
-    if (version != 7 && version != save_format_version) {
+    if (version != 7 && version != 8 && version != save_format_version) {
         return Failure(SaveError::UnsupportedVersion, "Unsupported save format version", diagnostics);
     }
     code = sqlite3_step(metadata.value);
@@ -1287,7 +1364,7 @@ SaveResult<SaveSnapshot> ReadSnapshot(const ContentCatalog& content, sqlite3* db
 }
 
 SaveResult<void> ValidateDatabase(const ContentCatalog& content, sqlite3* db,
-    const SaveSnapshot& snapshot, Diagnostics* diagnostics) {
+    const SaveSnapshot& snapshot, int formatVersion, Diagnostics* diagnostics) {
     Statement statement;
     int code = statement.Prepare(db, "SELECT x,z,y,payload FROM chunks ORDER BY x,z,y");
     if (code != SQLITE_OK) { return Failure(SqlError(code), sqlite3_errmsg(db), diagnostics); }
@@ -1323,7 +1400,7 @@ SaveResult<void> ValidateDatabase(const ContentCatalog& content, sqlite3* db,
         if (!TextColumn(statement.value, 3, text, length)) {
             return Failure(SaveError::InvalidData, "Chunk payload must be text", diagnostics);
         }
-        auto chunk = DecodeChunk(content, text, length, position, snapshot.nextId, diagnostics);
+        auto chunk = DecodeChunk(content, text, length, position, snapshot.nextId, formatVersion, diagnostics);
         if (!chunk) {
             ChunkContext(diagnostics, position, "Validating saved chunk");
             return eastl::unexpected(chunk.error());
@@ -1392,11 +1469,11 @@ public:
     Connection connection;
     bool transaction = false;
     int formatVersion = save_format_version; // Durable version; changed only after commit.
-    bool snapshotWritten = false;
+    int effectiveVersion = save_format_version; // Payload format inside the current transaction.
     Vector<PersistentId> emptyMemoryOwners;
 
     void Rollback() {
-        snapshotWritten = false;
+        effectiveVersion = formatVersion;
         emptyMemoryOwners.clear();
         if (transaction) {
             const int code = sqlite3_exec(connection.value, "ROLLBACK", nullptr, nullptr, nullptr);
@@ -1433,7 +1510,7 @@ SaveResult<void> SaveDatabase::Create(const char* path, Diagnostics* diagnostics
         "BEGIN IMMEDIATE;"
         "CREATE TABLE metadata(singleton INTEGER PRIMARY KEY CHECK(singleton=1),"
         "format_version INTEGER NOT NULL,game_version TEXT NOT NULL);"
-        "INSERT INTO metadata VALUES(1,8,'0.1.0');"
+        "INSERT INTO metadata VALUES(1,9,'0.1.0');"
         "CREATE TABLE world_state(singleton INTEGER PRIMARY KEY CHECK(singleton=1),payload TEXT NOT NULL);"
         "CREATE TABLE chunks(x INTEGER NOT NULL,z INTEGER NOT NULL,y INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(x,z,y));"
         "CREATE TABLE player_memories(player_id TEXT NOT NULL,x INTEGER NOT NULL,z INTEGER NOT NULL,y INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(player_id,x,z,y));"
@@ -1471,7 +1548,7 @@ SaveResult<SaveSnapshot> SaveDatabase::Open(const char* path, Diagnostics* diagn
         if (diagnostics) { diagnostics->Add("Opening save: reading world state"); }
         return snapshot;
     }
-    auto valid = ValidateDatabase(content_, candidate->connection.value, *snapshot, diagnostics);
+    auto valid = ValidateDatabase(content_, candidate->connection.value, *snapshot, *schema, diagnostics);
     if (!valid) {
         if (diagnostics) { diagnostics->Add("Opening save: validating saved world"); }
         return eastl::unexpected(valid.error());
@@ -1483,6 +1560,7 @@ SaveResult<SaveSnapshot> SaveDatabase::Open(const char* path, Diagnostics* diagn
     }
     candidate->transaction = false;
     candidate->formatVersion = *schema;
+    candidate->effectiveVersion = *schema;
     impl_ = eastl::move(candidate);
     return snapshot;
 }
@@ -1508,7 +1586,7 @@ SaveResult<eastl::optional<ChunkArchive>> SaveDatabase::ReadChunk(ChunkCoord pos
     if (!TextColumn(statement.value, 0, text, length)) {
         return Failure(SaveError::InvalidData, "Chunk payload must be text", diagnostics);
     }
-    auto chunk = DecodeChunk(content_, text, length, position, nextId, diagnostics);
+    auto chunk = DecodeChunk(content_, text, length, position, nextId, impl_->effectiveVersion, diagnostics);
     if (!chunk) {
         ChunkContext(diagnostics, position, "Reading saved chunk");
         return eastl::unexpected(chunk.error());
@@ -1525,15 +1603,69 @@ SaveResult<void> SaveDatabase::Begin(Diagnostics* diagnostics) {
     if (!impl_) { return Failure(SaveError::NotOpen, "Database is not open", diagnostics); }
     if (impl_->transaction) { return Failure(SaveError::InvalidState, "Transaction already active", diagnostics); }
     auto result = Execute(impl_->connection.value, "BEGIN IMMEDIATE", diagnostics);
-    if (result) { impl_->transaction = true; }
-    else if (diagnostics) { diagnostics->Add("Beginning save checkpoint"); }
-    return result;
+    if (!result) {
+        if (diagnostics) { diagnostics->Add("Beginning save checkpoint"); }
+        return result;
+    }
+    impl_->transaction = true;
+    auto* db = impl_->connection.value;
+    auto version = ReadFormatVersion(db, diagnostics);
+    if (!version || *version != impl_->formatVersion) {
+        impl_->Rollback();
+        if (!version) { return eastl::unexpected(version.error()); }
+        return Failure(SaveError::InvalidData, "Save format changed while open", diagnostics);
+    }
+    if (impl_->formatVersion == save_format_version) { return {}; }
+
+    auto snapshot = ReadSnapshot(content_, db, impl_->formatVersion, diagnostics);
+    if (!snapshot) { impl_->Rollback(); return eastl::unexpected(snapshot.error()); }
+    auto valid = ValidateDatabase(content_, db, *snapshot, impl_->formatVersion, diagnostics);
+    if (!valid) { impl_->Rollback(); return valid; }
+
+    // Retain coordinates only. Finish the SELECT before rewriting any rows, so
+    // SQLite cannot revisit updated rows or skip untouched legacy payloads.
+    Vector<ChunkCoord> positions;
+    {
+        Statement statement;
+        int code = statement.Prepare(db, "SELECT x,z,y FROM chunks ORDER BY x,z,y");
+        if (code != SQLITE_OK) { return impl_->WriteFailure(code, diagnostics); }
+        while ((code = sqlite3_step(statement.value)) == SQLITE_ROW) {
+            positions.push_back({sqlite3_column_int(statement.value, 0),
+                sqlite3_column_int(statement.value, 1), sqlite3_column_int(statement.value, 2)});
+        }
+        if (code != SQLITE_DONE) { return impl_->WriteFailure(code, diagnostics); }
+    }
+    // ReadChunk still uses the legacy decoder here. Each coordinate is visited
+    // once; WriteChunk only encodes v9 and never reads a newly upgraded row.
+    for (const auto position : positions) {
+        auto chunk = ReadChunk(position, snapshot->nextId, diagnostics);
+        if (!chunk || !*chunk) {
+            impl_->Rollback();
+            return Failure(chunk ? SaveError::InvalidData : chunk.error(), "Reading legacy chunk for upgrade", diagnostics);
+        }
+        auto written = WriteChunk(**chunk, diagnostics);
+        if (!written) { return written; }
+    }
+    {
+        Statement statement;
+        int code = statement.Prepare(db, "UPDATE world_state SET payload=?1 WHERE singleton=1");
+        const String payload = EncodeSnapshot(*snapshot);
+        if (code == SQLITE_OK) { code = BindText(statement.value, 1, payload); }
+        if (code == SQLITE_OK) { code = sqlite3_step(statement.value); }
+        if (code != SQLITE_DONE) { return impl_->WriteFailure(code, diagnostics); }
+    }
+    auto upgraded = Execute(db, "UPDATE metadata SET format_version=9 WHERE singleton=1", diagnostics);
+    if (!upgraded) { impl_->Rollback(); return upgraded; }
+    impl_->effectiveVersion = save_format_version;
+    return {};
 }
 
 SaveResult<void> SaveDatabase::WriteChunk(const ChunkArchive& chunk, Diagnostics* diagnostics) {
     if (!impl_) { return Failure(SaveError::NotOpen, "Database is not open", diagnostics); }
     if (!impl_->transaction) { return Failure(SaveError::InvalidState, "No active transaction", diagnostics); }
     Vector<PersistentId> ids;
+    const auto entitiesValid = ValidateEntityState(content_, chunk, diagnostics);
+    if (!entitiesValid) { impl_->Rollback(); return entitiesValid; }
     const auto itemsValid = ValidateItemSnapshot(content_, chunk, diagnostics);
     if (!itemsValid || !ValidateChunk(content_, chunk, UINT64_MAX, ids, diagnostics)) {
         impl_->Rollback();
@@ -1602,7 +1734,6 @@ SaveResult<void> SaveDatabase::WriteSnapshot(const SaveSnapshot& snapshot, Diagn
     for (const auto& memory : snapshot.memories) {
         if (memory.chunks.empty()) { impl_->emptyMemoryOwners.push_back(memory.player); }
     }
-    impl_->snapshotWritten = true;
     return {};
 }
 
@@ -1610,13 +1741,13 @@ SaveResult<void> SaveDatabase::Commit(Diagnostics* diagnostics) {
     if (!impl_) { return Failure(SaveError::NotOpen, "Database is not open", diagnostics); }
     if (!impl_->transaction) { return Failure(SaveError::InvalidState, "No active transaction", diagnostics); }
     auto version = ReadFormatVersion(impl_->connection.value, diagnostics);
-    if (!version || *version != impl_->formatVersion) {
+    if (!version || *version != impl_->effectiveVersion) {
         impl_->Rollback();
         if (!version) { return eastl::unexpected(version.error()); }
         return Failure(SaveError::InvalidData, "Save format changed while open", diagnostics);
     }
     auto snapshot = ReadSnapshot(content_, impl_->connection.value,
-        impl_->snapshotWritten ? save_format_version : impl_->formatVersion, diagnostics);
+        impl_->effectiveVersion, diagnostics);
     if (!snapshot) {
         impl_->Rollback();
         if (diagnostics) { diagnostics->Add("Committing save: reading world state"); }
@@ -1625,26 +1756,11 @@ SaveResult<void> SaveDatabase::Commit(Diagnostics* diagnostics) {
     for (PersistentId player : impl_->emptyMemoryOwners) {
         snapshot->memories.push_back(PlayerMemory{player, {}});
     }
-    auto valid = ValidateDatabase(content_, impl_->connection.value, *snapshot, diagnostics);
+    auto valid = ValidateDatabase(content_, impl_->connection.value, *snapshot, impl_->effectiveVersion, diagnostics);
     if (!valid) {
         impl_->Rollback();
         if (diagnostics) { diagnostics->Add("Committing save: validating saved world"); }
         return valid;
-    }
-    if (impl_->formatVersion == 7) {
-        // Even a chunk-only checkpoint upgrades the untouched legacy session.
-        // Do not rewrite memory or chunk payloads as part of this migration.
-        if (!impl_->snapshotWritten) {
-            Statement statement;
-            int code = statement.Prepare(impl_->connection.value, "UPDATE world_state SET payload=?1 WHERE singleton=1");
-            const String payload = EncodeSnapshot(*snapshot);
-            if (code == SQLITE_OK) { code = BindText(statement.value, 1, payload); }
-            if (code == SQLITE_OK) { code = sqlite3_step(statement.value); }
-            if (code != SQLITE_DONE) { return impl_->WriteFailure(code, diagnostics); }
-        }
-        auto upgraded = Execute(impl_->connection.value,
-            "UPDATE metadata SET format_version=8 WHERE singleton=1", diagnostics);
-        if (!upgraded) { impl_->Rollback(); return upgraded; }
     }
     auto result = Execute(impl_->connection.value, "COMMIT", diagnostics);
     if (!result) {
@@ -1654,7 +1770,6 @@ SaveResult<void> SaveDatabase::Commit(Diagnostics* diagnostics) {
     }
     impl_->transaction = false;
     impl_->formatVersion = save_format_version;
-    impl_->snapshotWritten = false;
     impl_->emptyMemoryOwners.clear();
     impl_->createdFile.Keep();
     return {};
