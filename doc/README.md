@@ -7,6 +7,7 @@
   startup atlas assembly, anchored sprites, variants, and connected roads.
 
 - [Windows SDL in VS Code](vscode_windows.md): build, run, debug, and prerequisites.
+- [Vulkan builds](vulkan_build.md): shared Windows/Linux rendering, runtime GLSL compilation and dependencies.
 - [Default tileset artwork](tileset_artwork.md): individual Gen1 sprites, references,
   preparation, transparent overlays and lightbulb frames.
 - [SDL sprite client preparation](sdl_client.md): frontend integration points,
@@ -63,6 +64,7 @@
 - [LAN client profile](lan_profile.md): endpoint identities, typed errors and durability.
 - [Project README](../README.md): build instructions and dependencies.
 - [Running tests](testing.md): compact CTest runner and result-log behavior.
+- [Sanitizer follow-ups](sanitizer_followups.md): outstanding SDL leak and TSan reports from the Vulkan validation.
 
 The public interfaces are [`world.h`](../src/core/world.h),
 [`server.h`](../src/core/server.h) and

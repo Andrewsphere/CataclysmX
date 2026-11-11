@@ -1,6 +1,7 @@
 #include "sdl/app.h"
 
 #include "sdl/assets.h"
+#include "sdl/gpu_renderer.h"
 #include "sdl/input.h"
 #include "sdl/renderer.h"
 #include "sdl/session.h"
@@ -84,7 +85,7 @@ int RunApp(const ContentCatalog& content, const Settings& settings,
         | (options.smoke ? SDL_WINDOW_HIDDEN : 0);
     platform.window = SDL_CreateWindow("CataclysmX", 1120, 780, flags);
     if (!platform.window) { return SdlFailure(); }
-    platform.renderer = SDL_CreateGPURenderer(nullptr, platform.window);
+    platform.renderer = CreateVulkanRenderer(platform.window);
     if (!platform.renderer) { return SdlFailure(); }
     SpriteShader shader(platform.renderer);
     if (!shader.Ready()) { return SdlFailure(); }

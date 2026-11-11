@@ -1,4 +1,5 @@
 #include "sdl/sprite_shader.h"
+#include "sdl/gpu_renderer.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <EASTL/unique_ptr.h>
@@ -41,21 +42,14 @@ void CheckPixel(SDL_Surface* surface, int x, int y, float red, float green, floa
     CHECK(a == 255);
 }
 
-void CheckShader(const char* driver) {
+void CheckShader() {
     if (!SDL_Init(SDL_INIT_VIDEO)) { SKIP("SDL video unavailable: " << SDL_GetError()); }
     VideoSession video;
-    eastl::unique_ptr<SDL_GPUDevice, decltype(&SDL_DestroyGPUDevice)> device(nullptr, &SDL_DestroyGPUDevice);
-    if (driver) {
-        device.reset(SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_DXIL | SDL_GPU_SHADERFORMAT_SPIRV, false, driver));
-        if (!device) { SKIP("Requested GPU backend unavailable (" << driver << "): " << SDL_GetError()); }
-    }
     eastl::unique_ptr<SDL_Renderer, decltype(&SDL_DestroyRenderer)> renderer(
-        SDL_CreateGPURenderer(device.get(), nullptr), &SDL_DestroyRenderer);
-    if (!renderer) { SKIP("Offscreen GPU renderer unavailable: " << SDL_GetError()); }
-    if (!sdl::SpriteShader::Supported(renderer.get())) {
-        SKIP("GPU cannot consume DXIL/SPIR-V: " << SDL_GetError());
-    }
-    INFO("GPU driver: " << SDL_GetGPUDeviceDriver(SDL_GetGPURendererDevice(renderer.get())));
+        sdl::CreateVulkanRenderer(nullptr), &SDL_DestroyRenderer);
+    if (!renderer) { SKIP("Offscreen Vulkan renderer unavailable: " << SDL_GetError()); }
+    REQUIRE(sdl::SpriteShader::Supported(renderer.get()));
+    REQUIRE(SDL_strcmp(SDL_GetGPUDeviceDriver(SDL_GetGPURendererDevice(renderer.get())), "vulkan") == 0);
     sdl::SpriteShader shader(renderer.get());
     INFO("Shader initialization: " << SDL_GetError());
     REQUIRE(shader.Ready());
@@ -131,18 +125,26 @@ void CheckShader(const char* driver) {
     REQUIRE(SDL_RenderPresent(renderer.get()));
 }
 
-TEST_CASE("SDL GPU sprite shader preserves perception, queued states, and alpha", "[sdl][gpu][render]") {
-    CheckShader(nullptr);
+TEST_CASE("SDL Vulkan runtime GLSL shader preserves perception, queued states, and alpha", "[sdl][gpu][render]") {
+    CheckShader();
 }
 
-TEST_CASE("SDL Vulkan sprite shader uses runtime SPIR-V", "[sdl][gpu][render]") {
-    CheckShader("vulkan");
-}
+TEST_CASE("SDL sprite shader rejects null and software renderers", "[sdl][render]") {
+    CHECK_FALSE(sdl::SpriteShader::Supported(nullptr));
+    sdl::SpriteShader missing(nullptr);
+    CHECK_FALSE(missing.Ready());
+    CHECK_FALSE(missing.Apply(MakePerceptionTransform(Visibility::Visible, LightBand::Ordinary, 0)));
+    CHECK_FALSE(missing.Clear());
 
-#ifdef _WIN32
-TEST_CASE("SDL Direct3D12 sprite shader uses runtime DXIL", "[sdl][gpu][render]") {
-    CheckShader("direct3d12");
+    eastl::unique_ptr<SDL_Surface, decltype(&SDL_DestroySurface)> surface(
+        SDL_CreateSurface(4, 4, SDL_PIXELFORMAT_RGBA32), &SDL_DestroySurface);
+    REQUIRE(surface);
+    eastl::unique_ptr<SDL_Renderer, decltype(&SDL_DestroyRenderer)> renderer(
+        SDL_CreateSoftwareRenderer(surface.get()), &SDL_DestroyRenderer);
+    REQUIRE(renderer);
+    CHECK_FALSE(sdl::SpriteShader::Supported(renderer.get()));
+    sdl::SpriteShader software(renderer.get());
+    CHECK_FALSE(software.Ready());
 }
-#endif
 
 }

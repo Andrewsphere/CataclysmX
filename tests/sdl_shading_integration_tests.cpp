@@ -1,4 +1,5 @@
 #include "sdl/renderer.h"
+#include "sdl/gpu_renderer.h"
 #include "content_fixture.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -69,8 +70,9 @@ struct Gpu {
     eastl::unique_ptr<SDL_Texture, decltype(&SDL_DestroyTexture)> target{nullptr, &SDL_DestroyTexture};
     Gpu() {
         if (!SDL_Init(SDL_INIT_VIDEO)) { SKIP("SDL video unavailable: " << SDL_GetError()); }
-        renderer.reset(SDL_CreateGPURenderer(nullptr, nullptr));
-        if (!renderer) { SKIP("Offscreen GPU renderer unavailable: " << SDL_GetError()); }
+        renderer.reset(CreateVulkanRenderer(nullptr));
+        if (!renderer) { SKIP("Offscreen Vulkan renderer unavailable: " << SDL_GetError()); }
+        REQUIRE(SDL_strcmp(SDL_GetGPUDeviceDriver(SDL_GetGPURendererDevice(renderer.get())), "vulkan") == 0);
         target.reset(SDL_CreateTexture(renderer.get(), SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_TARGET, 800, 600));
         REQUIRE(target);
         REQUIRE(SDL_SetRenderTarget(renderer.get(), target.get()));

@@ -117,10 +117,12 @@ In VS Code, select `CataclysmX: SDL Linux GCC Debug` or
 its SDL preset first. The default pack is `assets/tiles/gen1_32x32`; use
 `--tileset <directory>` to select another pack.
 
-The optional vcpkg `sdl` feature enables SDL Vulkan and adds `directx-dxc`,
+The optional vcpkg `sdl` feature enables SDL Vulkan and adds `shaderc`,
 `sdl3-image` with PNG and `sdl3-ttf` without HarfBuzz/SVG, retaining the pinned
-baseline and Linux D-Bus constraint. SDL 3.4's GPU renderer is required. Python is
-not a build dependency of these selected features. Use:
+baseline and Linux D-Bus constraint. SDL 3.4's GPU renderer uses Vulkan on both
+Windows and Linux. Shader compiler dependencies need Python 3 for source generation;
+vcpkg can acquire its build tools. A Vulkan driver is required; no separately
+installed Vulkan SDK is needed. See [Vulkan builds](vulkan_build.md). Use:
 
 ```sh
 VCPKG_ROOT="$PWD/.tools/vcpkg" cmake --preset linux-gcc-sdl
@@ -133,7 +135,7 @@ ctest --preset linux-gcc-sdl -R sdl_frontend_smoke
 Focused tests cover metadata errors, exact animation boundaries, visible overlay
 priority, owned worker results, path containment, PNG bounds/failures, partial
 upload cleanup, UTF-8 text, coordinate mapping, and software-rendered animation
-with an unchanged snapshot/map packet. GPU pixel checks cover DXIL/SPIR-V where
+with an unchanged snapshot/map packet. GPU pixel checks cover Vulkan SPIR-V where
 available, alpha, overhang and memory, alongside packet/client checks. The SDL
 smoke test uses an actual hidden GPU window and exercises the bundled default
 through movement, pickup, wait, pause, and resume. It requires a working video/GPU

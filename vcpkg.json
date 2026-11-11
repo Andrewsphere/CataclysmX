@@ -15,7 +15,7 @@
       "description": "SDL3 frontend with PNG tilesets and TrueType text",
       "dependencies": [
         {"name": "sdl3", "features": ["vulkan"]},
-        "directx-dxc",
+        "shaderc",
         {"name": "sdl3-image", "default-features": false, "features": ["png"]},
         {"name": "sdl3-ttf", "default-features": false}
       ]

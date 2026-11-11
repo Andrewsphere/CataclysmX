@@ -276,7 +276,7 @@ Keep a separate source checkout inside the Linux filesystem. Install prerequisit
 
 ```bash
 sudo apt update
-sudo apt install -y build-essential clang cmake ninja-build git curl zip unzip tar pkg-config
+sudo apt install -y build-essential clang cmake ninja-build git curl zip unzip tar pkg-config python3
 ```
 
 Use CMake >= 3.25. From the Linux checkout:
@@ -330,14 +330,19 @@ with exact commit IDs and licenses in [`third_party/README.md`](third_party/READ
 `scripts/vendor.ps1` re-downloads those pinned files; normal builds use the checked-in
 copies. ENet provides LAN transport; SQLite provides host-side saves.
 
-Python is not a build prerequisite. On Linux, the manifest explicitly disables
-D-Bus's default features to exclude optional systemd integration and its
-Meson/Jinja2/Python build tools. The optional `sdl` manifest feature retains
-IBus, X11, Wayland and Vulkan support and adds `directx-dxc`. Build the local SDL prototype with
-`cmake --preset linux-gcc-sdl` and `cmake --build --preset linux-gcc-sdl`, then run
-`out/build/linux-gcc-sdl/cataclysmx_sdl_game`. See
+The SDL build compiles shaderc and its shader compiler dependencies from source
+through vcpkg on both Windows and Linux. Their source generation requires Python 3;
+vcpkg can acquire its build tools. Other project builds do not require Python.
+On Linux, the manifest explicitly disables D-Bus's default features to exclude
+optional systemd integration and its Meson/Jinja2 build tools. The optional `sdl`
+manifest feature retains IBus, X11, Wayland and Vulkan support and adds `shaderc`.
+Both platforms use SDL's GPU renderer with Vulkan and compile GLSL to SPIR-V at
+startup. A working Vulkan driver is required; a separate Vulkan SDK installation
+is unnecessary. Build with `linux-gcc-sdl` or `win-msvc-sdl`, then run the matching
+`cataclysmx_sdl_game` executable. See [Vulkan builds](doc/vulkan_build.md) for
+platform commands, prerequisites and dependency decisions, and
 [SDL rendering](doc/sdl_rendering.md) for controls and scope.
-Keep this constraint when changing dependency features or updating the baseline.
+The first SDL dependency build takes longer; later builds reuse vcpkg's binary cache.
 
 The project triplets enable `SPDLOG_NO_EXCEPTIONS` **while compiling spdlog**, whose
 exported target then propagates the matching definition to consumers. No overlay port

@@ -2,24 +2,29 @@
 
 The SDL client shades PNG artwork according to the same observed light, memory
 and projection depth used for glyphs. SDL 3.4's GPU renderer is required in
-production, including smoke mode. The current supported DXC package targets x64
-Windows and Linux. A compatible GPU/video environment is required.
+production, including smoke mode. Windows and Linux both use Vulkan and require a
+compatible Vulkan driver and video environment.
 
 ## Compilation and color
 
-At startup `SpriteShader` loads the single HLSL source
-[`assets/shaders/sprite.hlsl`](../assets/shaders/sprite.hlsl) and uses
-`directx-dxc` to compile its fragment entry point at runtime: DXIL for Direct3D12
-or SPIR-V for Vulkan, according to device formats. There is no offline shader
-generation. The vcpkg `sdl` feature enables SDL Vulkan and adds DXC without a
-baseline or version change. On Windows CMake explicitly deploys `dxil.dll` next
-to the game and test executables because DXC loads this validator dynamically.
-Failure to create the GPU renderer or shader fails startup with SDL diagnostics.
+At startup `SpriteShader` loads the GLSL 450 source
+[`assets/shaders/sprite.frag`](../assets/shaders/sprite.frag) and uses shaderc's C API
+to compile `main` as a fragment shader targeting Vulkan 1.0 and SPIR-V 1.0. There
+is no offline generation or hot reload; source edits take effect at the next
+startup without rebuilding the game. Source paths and compiler diagnostics appear
+in SDL errors. Failure to create the Vulkan renderer or shader fails startup.
+The vcpkg `sdl` feature adds shaderc at the pinned baseline; the compiler is built
+from source on both platforms. See [Vulkan builds](vulkan_build.md) for prerequisites.
+
+The shader matches SDL's textured vertex outputs: color at location 0 and UV at
+location 1, with fragment color output at location 0. The combined atlas sampler
+uses set 2/binding 0; the `std140` perception block uses set 3/binding 0 and three
+`vec4` rows (48 bytes). These explicit bindings follow SDL GPU's SPIR-V contract.
 
 The transform operates on encoded RGB, intended for SDL's default SDR sRGB
 output. It is not a linear-light or HDR color pipeline. Alpha is preserved by
 the perception transform, then normal vertex modulation and alpha blending apply.
-The three `float4` rows each compute `dot(float4(rgb, 1), row)` on normalized
+The three `vec4` rows each compute `dot(vec4(rgb, 1), row)` on normalized
 RGB, clamped to the output range. This affine representation allows the same
 shader to implement light, sepia and depth without changing source artwork.
 
@@ -56,8 +61,8 @@ PerceptionTransform sprite = MakePerceptionTransform(visibility, light, depth);
 `SpriteShader` is main-thread RAII: it borrows the renderer and GPU device, owns
 its shader and cached render states, and must be destroyed before the borrowed
 renderer/device. `Ready()` reports initialization, `Supported(renderer)` checks
-the GPU device's formats, `Apply(transform)` selects a state and `Clear()`
-restores the default. These operations return `bool` and use SDL errors. States
+that the GPU device uses Vulkan and supports SPIR-V, `Apply(transform)` selects a
+state and `Clear()` restores the default. These operations return `bool` and use SDL errors. States
 are immutable after their uniforms are set and cached by transform: updating a
 shared SDL uniform state during drawing would flush queued draws.
 
@@ -89,20 +94,10 @@ ctest --preset linux-gcc-sdl -R 'sdl_frontend_smoke|map packet|perception'
 ```
 
 On Windows use the `win-msvc-sdl` build/preset and its `cataclysmx_tests.exe`
-with the same Catch2 filter. GPU pixel tests exercise default and Vulkan SPIR-V
-backends, plus Direct3D12 DXIL on Windows, when available; unavailable video or
-backends can be skipped. Full-map checks cover independent styles, alpha,
+with the same Catch2 filter. GPU pixel tests use the same Vulkan creation path
+as production on both platforms and check the selected driver; unavailable video
+or Vulkan can be skipped. Full-map checks cover independent styles, alpha,
 overhang and remembered artwork, with packet/client tests covering preparation
 and CPU behavior. Smoke creates an actual hidden GPU window, loads the default
 pack and exercises movement, pickup, wait, pause and resume; it does not use
 dummy video or a software renderer.
-
-### Windows validation (2026-11-10)
-
-Configured `win-msvc-sdl` and built `cataclysmx_tests` and `cataclysmx_sdl_game`.
-The final focused CTest selections covered 80 cases: **78 passed, 2 skipped**.
-The skips were existing source-pack symlink checks, which require Windows symlink
-privileges. Runtime DXIL/Direct3D12 and SPIR-V/Vulkan pixel checks both ran and
-passed on Windows, as did full-map shading, remembered animations, transparent
-overlays, overhang, shared CPU color rules, terminal rendering and the GPU game
-smoke. A Linux build was not run for this change.
