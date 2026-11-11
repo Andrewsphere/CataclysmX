@@ -35,7 +35,7 @@ TEST_CASE("Parked players retain inventory and timing without occupying active t
     CHECK(world.ScheduleActorAction(guest) == eastl::unexpected(WorldError::chunk_unavailable));
     CHECK(world.RecordActorTurn(guest) == eastl::unexpected(WorldError::chunk_unavailable));
     world.ElapseTicks(25);
-    CHECK(world.GetActor(guest)->remainingTicks == 100);
+    CHECK(world.GetActorRemainingTicks(guest) == 100);
     CHECK(world.CheckInvariants());
     REQUIRE(world.MoveActor(guest, {16, 0}));
     CHECK(world.FindPlayerPosition(id) == TileCoord{16, 0});
@@ -54,7 +54,7 @@ TEST_CASE("Parked players retain inventory and timing without occupying active t
     REQUIRE(world.GetActor(restored));
     CHECK(world.GetActor(restored)->parked);
     CHECK(world.FindPlayerPosition(id) == TileCoord{16, 0});
-    CHECK(world.GetActor(restored)->remainingTicks == 100);
+    CHECK(world.GetActorRemainingTicks(restored) == 100);
     CHECK(world.GetActor(restored)->inventory.size() == 1);
     CHECK(world.GetItem(world.FindItem(itemId))->location == ItemLocation::Carried(restored));
     CHECK(world.CheckInvariants());
@@ -81,7 +81,7 @@ TEST_CASE("Parked players freeze in air and stop blocking falling actors", "[wor
     CHECK(world.ActorAt({2, 2, 2}) == ActorHandle{});
     REQUIRE(world.SetActorParked(*guest, false));
     CHECK(world.GetActor(*guest)->position == TileCoord{2, 2, 0});
-    CHECK(world.GetActor(*guest)->remainingTicks == 71);
+    CHECK(world.GetActorRemainingTicks(*guest) == 71);
     REQUIRE(world.SetActorParked(*falling, true) == eastl::unexpected(WorldError::invalid_request));
     REQUIRE(world.DestroyActor(*falling));
     CHECK(world.GetActor(*guest)->position == TileCoord{2, 2, -1});

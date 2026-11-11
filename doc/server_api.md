@@ -324,8 +324,10 @@ queries let input handling and diagnostics avoid unnecessary projection work. Se
 
 ## Explicit simulation and brief decisions
 
-[`AdvanceUntilInput(World&, Tick& tick, uint32_t& rng, Tick limitTick)`](../src/core/simulation.h)
-uses an absolute limit at or after `tick`, returning `SimulationResult`:
+[`AdvanceUntilInput(World&, uint32_t& rng, Tick limitTick)`](../src/core/simulation.h)
+uses an absolute limit at or after `World::GetTick()`, returning `SimulationResult`.
+World owns simulation time and `Server::GetTick()` delegates to it. The overload
+with `Tick&` retains an output mirror of this clock for existing callers:
 
 - `InputRequired`: `readyPlayers` contains **all** active, ready player handles,
   in persistent-ID order. Due object effects have run; the NPC actor phase at
@@ -356,8 +358,9 @@ queries or the limit. These minimum queries scan directly without sorting;
 belong to World, and each handle is revalidated before dispatch. Newly created
 entities wait for the subsequent batch; scheduler callbacks cannot reenter it.
 Resuming at the same tick repeats neither committed NPC actions nor object
-effects. Actor `remainingTicks` and object timers are relative delays;
-resident-only and archived entities freeze without catch-up on reactivation.
+effects. Actors and periodic objects hold absolute deadlines; relative delays
+are derived for views and persistence. Resident-only and archived entities freeze
+without catch-up on reactivation. See [entity scheduling](entity_scheduling.md).
 
 `Advance(World&, ActorHandle, uint32_t&)` is a single-player convenience: commit
 a normal player wait, then simulate to the next input barrier. The player must

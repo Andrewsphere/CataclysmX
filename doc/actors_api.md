@@ -52,7 +52,8 @@ An explicit payload is strictly validated, never defaulted or repaired. Successf
 None construction contains a null pointer; check the expected result before the
 pointer. `ValidateAiControllerState` validates payloads without allocating a
 controller. Validation does not construct diagnostic strings when diagnostics is
-null. `StateResult`/`StateError` reuse the existing vocabulary in `items/item_types.h`.
+null. `StateResult`/`StateError` are shared vocabulary in `core/state_result.h`;
+`items/item_types.h` continues to include them for existing callers.
 
 `CaptureAiController(const AiController*)` creates an owned envelope;
 `ReadAiController(envelope, diagnostics)` validates and constructs it:
@@ -70,6 +71,14 @@ not an empty list. Envelopes require exactly `type` and `state`, in either order
 `AiControllerKindName` and `ReadAiControllerKind` convert stable names explicitly.
 Runtime controllers must not report None; None is exclusively a null pointer.
 
+The parser uses the borrowed [StateReader](data_object.md#shared-state-reader):
+typed reads retain their first error, followed by one explicit `Result()` check
+before semantic validation or construction. Wander has no optional saved fields:
+its sole `version` field remains required. An empty saved Wander state is not a
+request for new-controller defaults. Diagnostic paths retain the full
+`actors.controller.state.version` (or envelope `actors.controller.type` / `state`)
+qualification. Validation and construction use the same payload parser.
+
 ## World API and scheduling
 
 `world.CreateActor(position, player)` returns a `WorldResult<ActorHandle>`.
@@ -86,11 +95,16 @@ if (changed) {
 ```
 
 An NPC with None is idle: it is excluded from NPC decisions and actor deadlines,
-and its `remainingTicks` freezes until a controller is restored. Players also
+and its remaining delay freezes until a controller is restored. Players also
 have None, but their scheduled time advances normally. `ProcessNpcActions(rng)`
 executes ready active NPCs in persistent-ID order, schedules positive action cost,
 and uses `TryActorStep` for moves; blocked attempts still cost time. World read
 pointers are borrows: reacquire them after any mutation or unloading.
+
+`Actor::actionDeadline` records an absolute due tick while eligible and a frozen
+duration while suspended. Read the current delay with
+`World::GetActorRemainingTicks(actor)`. The [entity scheduling API](entity_scheduling.md)
+describes the authoritative World clock, activation transitions, and persistence.
 
 Save v9 stores controller state and entity references through stable identities.
 See [save format: v7/v8 compatibility and checkpoint upgrade](save_format.md#version-78-compatibility-and-checkpoint-upgrade)

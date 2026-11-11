@@ -17,6 +17,57 @@ and pointers borrow the tree and must not survive structural mutations.
 accessors, invalid indexing, and mutation of the wrong node type are broken
 invariants and abort in all builds. Expected input errors use typed results.
 
+## Shared state reader
+
+`core/state_result.h` defines the small shared `StateError` (`InvalidData`,
+`UnsupportedVersion`) and `StateResult<T>` vocabulary. Existing users including
+`items/item_types.h` retain access through that compatibility include.
+
+`core/state_reader.h` provides an explicit `StateReader` borrowing a `DataObject`
+(reference or nullable pointer), optional `Diagnostics*`, and diagnostic path
+prefix. The tree and prefix must outlive the reader; string views and object
+pointers returned by getters also borrow the tree. Do not mutate the tree while
+reading it. A null root or any non-object root immediately records `InvalidData`.
+
+* `GetUnsignedOrDefault`, `GetBooleanOrDefault`, and `GetStringOrDefault` return
+  plain values and use the supplied fallback only for absent fields in valid
+  input. Wrong types record an error; any returned placeholder must be ignored
+  after a failed `Result()`. False, zero, and empty strings are valid values.
+* `GetUnsignedOrError`, `GetBooleanOrError`, `GetStringOrError`, and
+  `GetObjectOrError` additionally reject missing fields.
+* `Result()` returns the retained first error (or success). Check it explicitly
+  after typed reads, before semantic validation, construction, or committing any
+  state. Getters do not coerce types, validate ranges, or enforce unknown-field
+  policy; those checks remain visible in each parser.
+* `Invalid(field, message, error = InvalidData)` centralizes semantic errors and
+  returns an unexpected result suitable for returning from a parser. It retains
+  an earlier error if present. The free `InvalidState(diagnostics, prefix, field,
+  message, error)` supports errors outside a reader, such as unknown kinds.
+
+The first failure emits one diagnostic with `prefix.field` (no extra dot when
+either is empty). Path/message formatting happens only with non-null diagnostics;
+quiet validation does not allocate diagnostic strings. Version checks explicitly
+use `UnsupportedVersion`, preserving the distinction from missing/wrong types.
+
+```cpp
+StateReader reader(saved, diagnostics, "example.state");
+const auto version = reader.GetUnsignedOrError("version");
+const auto energy = reader.GetUnsignedOrDefault("energy", 0);
+const auto result = reader.Result();
+if (!result) { return eastl::unexpected(result.error()); }
+if (version != 1) {
+    return reader.Invalid("version", "unsupported state version", StateError::UnsupportedVersion);
+}
+// Validate capacity and other semantics, then construct or commit the value.
+```
+
+This narrow helper removes repeated result/diagnostic plumbing while keeping
+schema decisions local. It is not a schema or constraint-callback framework.
+Optionality belongs to the individual format: machine saved-state fields have
+safe defaults, while Wander's version and existing item capability entries remain
+required. New-object initialization via a null factory payload is distinct from a
+reader receiving a missing root, which is an error.
+
 ## JSON boundary
 
 `EncodeDataObject` / `DecodeDataObject` are implemented in `save_database.cpp`,

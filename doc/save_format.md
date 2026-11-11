@@ -90,6 +90,10 @@ The root object has exactly `tiles`, `actors`, `objects`, and `ground_items`:
   Typed objects require an existing catalog definition and saved state accepted
   by `ValidateObjectBehaviorState`; an empty or missing state never requests
   factory defaults. Semantic appearance remains independent of behavior type.
+  Machine state requires its unsigned version. Absent energy/job/running fields
+  default to zero/false/false; remaining work is required when a job exists and
+  otherwise defaults to zero. Explicit malformed values still fail. See the
+  [object state schema](objects_api.md#saved-state-format-and-safe-defaults).
   Semantic kinds are Generic=1, Chair=2, Table=3, Lamp=4; None=0 is invalid for
   a stored object. Facing is North=0, East=1, South=2, West=3. These closed semantic
   enum values are part of v7, not content ordinals or renderer sprite indices.
@@ -141,6 +145,15 @@ without occupying a tile. Parked actors may overlap live actors; two live
 actors may not overlap. Unload, checkpoint and reload preserve parked state.
 Session reconnect logic parks offline guests after loading; the durable roster
 keeps their identities and tokens independently of transient connections.
+
+Runtime actor and periodic-object scheduling uses absolute deadlines against
+`World::GetTick()`. The saved `remaining_ticks` fields remain relative durations;
+capture derives them at checkpoint time, and activation rebases them against the
+current World clock. World checkpoints source `session.tick` from that clock.
+Elapsed active chunks are dirtied even when their runtime deadlines stay fixed,
+so incremental saves cannot retain stale durations. Chunk reconciliation rejects
+saved delays that cannot be represented at the current tick before changing live
+state. See [entity scheduling](entity_scheduling.md) for suspension and arithmetic.
 
 IDs must be unique across all chunks and less than `next_id`; entity positions,
 ownership, chunks and session player identity/position are validated. Generic

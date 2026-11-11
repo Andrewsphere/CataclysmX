@@ -1,9 +1,9 @@
 #pragma once
 
 #include "core/containers.h"
+#include "core/state_result.h"
 #include "core/timing.h"
 #include "core/world_types.h"
-#include <EASTL/expected.h>
 
 namespace cataclysmx {
 
@@ -19,9 +19,6 @@ inline constexpr std::uint16_t maxItemCapabilities = 16;
 inline constexpr std::size_t maxItemActionName = 64;
 inline constexpr std::size_t maxItemText = 192;
 inline constexpr std::size_t maxItemActionsPerItem = 64;
-
-enum class StateError { InvalidData, UnsupportedVersion };
-template<class T> using StateResult = eastl::expected<T, StateError>;
 
 struct ItemText {
     String key;

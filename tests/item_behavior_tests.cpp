@@ -597,7 +597,7 @@ TEST_CASE("Custom behavior clocks freeze for resident chunks and parked owners",
     REQUIRE(rig.world.UpdateRequest(rig.request, {{0, 0}, 0}, LoadMode::resident));
     REQUIRE(rig.world.ReconcileChunks());
     const auto frozen = rig.world.CaptureItemState(rig.device);
-    Advance(rig.world, std::numeric_limits<Tick>::max());
+    Advance(rig.world, std::numeric_limits<Tick>::max() / 8);
     CHECK(rig.world.CaptureItemState(rig.device) == frozen);
     CHECK_FALSE(rig.world.NextItemEventIn());
     REQUIRE(rig.world.UpdateRequest(rig.request, {{0, 0}, 0}, LoadMode::active));

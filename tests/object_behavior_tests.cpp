@@ -132,6 +132,119 @@ TEST_CASE("Machine state validation rejects unknown versions fields and inconsis
     CHECK(ValidateObjectBehaviorState(definition, paused).has_value());
 }
 
+TEST_CASE("Saved machines default safely without restoring a free charge or job", "[object-behavior]") {
+    const auto definition = Definition();
+    DataObject saved;
+    saved.SetUnsigned("version", 1);
+    SECTION("all optional fields omitted") {}
+    SECTION("explicit zero and false") { saved = State(0, false, false, 0); }
+    SECTION("job marker omitted") {
+        saved.SetBoolean("running", false);
+        saved.SetUnsigned("remaining_work", 0);
+    }
+    CHECK(ValidateObjectBehaviorState(definition, saved));
+    auto restored = MakeObjectBehavior(definition, &saved);
+    REQUIRE(restored);
+    REQUIRE(*restored);
+    const auto view = (*restored)->Describe();
+    CHECK(view.energy == 0);
+    CHECK_FALSE(view.hasJob);
+    CHECK_FALSE(view.running);
+    CHECK(view.remainingWork == 0);
+    CHECK_FALSE((*restored)->NextEventIn());
+    CHECK((*restored)->SaveState() == State(0, false, false, 0));
+    auto fresh = MakeObjectBehavior(definition);
+    REQUIRE(fresh);
+    CHECK((*fresh)->Describe().energy == definition.machine.energyCapacity);
+}
+
+TEST_CASE("Saved jobs require explicit remaining work and default to paused unpowered state", "[object-behavior]") {
+    const auto definition = Definition();
+    DataObject saved;
+    saved.SetUnsigned("version", 1);
+    saved.SetBoolean("has_job", true);
+    SECTION("missing work cannot become free completion") {
+        Diagnostics diagnostics;
+        const auto result = ValidateObjectBehaviorState(definition, saved, &diagnostics);
+        REQUIRE_FALSE(result);
+        CHECK(result.error() == StateError::InvalidData);
+        REQUIRE(diagnostics.Frames().size() == 1);
+        REQUIRE(diagnostics.Frames().front().location);
+        CHECK(diagnostics.Frames().front().location->path == "remaining_work");
+        CHECK_FALSE(MakeObjectBehavior(definition, &saved));
+    }
+    SECTION("incomplete work stays paused") {
+        saved.SetUnsigned("remaining_work", 5);
+        REQUIRE(ValidateObjectBehaviorState(definition, saved));
+        auto restored = MakeObjectBehavior(definition, &saved);
+        REQUIRE(restored);
+        CHECK((*restored)->SaveState() == State(0, true, false, 5));
+        CHECK_FALSE((*restored)->NextEventIn());
+    }
+    SECTION("explicit completed work is still due") {
+        saved.SetUnsigned("remaining_work", 0);
+        REQUIRE(ValidateObjectBehaviorState(definition, saved));
+        auto restored = MakeObjectBehavior(definition, &saved);
+        REQUIRE(restored);
+        CHECK((*restored)->NextEventIn() == eastl::optional<Tick>{0});
+    }
+}
+
+TEST_CASE("Optional machine fields reject explicit malformed values consistently", "[object-behavior]") {
+    const auto definition = Definition();
+    DataObject saved;
+    saved.SetUnsigned("version", 1);
+    String field;
+    StateError expected = StateError::InvalidData;
+    SECTION("signed energy") { field = "energy"; saved.SetSigned(field, 0); }
+    SECTION("string energy") { field = "energy"; saved.SetString(field, "0"); }
+    SECTION("unsigned job flag") { field = "has_job"; saved.SetUnsigned(field, 0); }
+    SECTION("string running flag") { field = "running"; saved.SetString(field, "false"); }
+    SECTION("signed idle remaining work") { field = "remaining_work"; saved.SetSigned(field, 0); }
+    SECTION("missing required version") { field = "version"; saved = DataObject{}; }
+    SECTION("wrong version type") { field = "version"; saved.SetBoolean(field, true); }
+    SECTION("unsupported version") {
+        field = "version"; saved.SetUnsigned(field, 2); expected = StateError::UnsupportedVersion;
+    }
+    SECTION("unsupported schema is rejected before interpreting its fields") {
+        field = "version"; saved.SetUnsigned(field, 2); expected = StateError::UnsupportedVersion;
+        saved.SetString("energy", "future representation");
+        saved.SetBoolean("has_job", true);
+    }
+    SECTION("unknown field") { field = "extra"; saved.SetBoolean(field, false); }
+    SECTION("running without a job") { field = "running"; saved.SetBoolean(field, true); }
+    SECTION("work without a job") { field = "running"; saved.SetUnsigned("remaining_work", 1); }
+    const auto original = saved;
+    Diagnostics diagnostics;
+    const auto validated = ValidateObjectBehaviorState(definition, saved, &diagnostics);
+    REQUIRE_FALSE(validated);
+    CHECK(validated.error() == expected);
+    REQUIRE(diagnostics.Frames().size() == 1);
+    REQUIRE(diagnostics.Frames().front().location);
+    CHECK(diagnostics.Frames().front().location->path == field);
+    Diagnostics factoryDiagnostics;
+    const auto created = MakeObjectBehavior(definition, &saved, &factoryDiagnostics);
+    REQUIRE_FALSE(created);
+    CHECK(created.error() == expected);
+    CHECK(FormatDiagnostics(factoryDiagnostics) == FormatDiagnostics(diagnostics));
+    CHECK(saved == original);
+}
+
+TEST_CASE("Failed saved machine construction leaves an existing machine intact", "[object-behavior]") {
+    const auto definition = Definition();
+    auto current = MakeObjectBehavior(definition);
+    REQUIRE(current);
+    const auto before = (*current)->SaveState();
+    DataObject malformed;
+    malformed.SetUnsigned("version", 1);
+    malformed.SetUnsigned("energy", 12);
+    malformed.SetBoolean("has_job", true);
+    auto replacement = MakeObjectBehavior(definition, &malformed);
+    if (replacement) { current = eastl::move(replacement); }
+    CHECK_FALSE(replacement);
+    CHECK((*current)->SaveState() == before);
+}
+
 TEST_CASE("Large elapsed work and energy products stay bounded", "[object-behavior]") {
     auto definition = Definition();
     definition.machine.duration = std::numeric_limits<std::uint32_t>::max();
@@ -159,7 +272,7 @@ TEST_CASE("Generic objects retain move-only timer compatibility without a behavi
     InteractiveObject object(42, {1, 2, 3}, true);
     CHECK(object.type == ObjectTypeId{});
     CHECK(object.updateInterval == 100);
-    CHECK(object.remainingTicks == 100);
+    CHECK(object.updateDeadline.Remaining(0) == 100);
     InteractiveObject moved(eastl::move(object));
     CHECK(moved.id == 42);
     CHECK(moved.position == TileCoord{1, 2, 3});

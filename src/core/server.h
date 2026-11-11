@@ -207,7 +207,6 @@ private:
     int active_radius_ = 1;
     int resident_radius_ = 5;
     eastl::optional<CircleResidency> circleResidency_ = CircleResidency{};
-    std::uint64_t tick_ = 0;
     std::uint32_t rng_state_ = 0;
     ChunkCoord bubbleCenter_{};
     std::uint64_t autosaveInterval_ = 0;

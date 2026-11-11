@@ -208,7 +208,7 @@ TEST_CASE("Nested charging freezes for parked actors and inactive roots", "[worl
     CHECK_FALSE(rig.world.CanAccessItem(rig.actor, rig.charger));
     CHECK_FALSE(rig.world.NextItemEventIn().has_value());
     CHECK(rig.world.ActiveItemCount() == 1);
-    rig.world.ElapseTicks(std::numeric_limits<Tick>::max());
+    rig.world.ElapseTicks(std::numeric_limits<Tick>::max() / 8);
     rig.world.ProcessItemEvents();
     CHECK(rig.world.CaptureItemState(rig.charger) == frozen);
     REQUIRE(rig.world.SetActorParked(rig.actor, false));
@@ -272,7 +272,7 @@ TEST_CASE("Battery disconnect and destruction stop the old charger immediately",
     REQUIRE(rig.world.DestroyItem(spare));
     CHECK(ChargingState(rig.world, rig.charger) == ChargingSnapshot{});
     CHECK_FALSE(rig.world.NextItemEventIn().has_value());
-    rig.world.ElapseTicks(std::numeric_limits<Tick>::max());
+    rig.world.ElapseTicks(std::numeric_limits<Tick>::max() / 8);
     CHECK(Energy(rig.world, rig.charger) == 2000);
     REQUIRE(Use(rig.world, rig.actor, rig.charger, "install", rig.battery).outcome == ItemUseOutcome::Succeeded);
     REQUIRE(Use(rig.world, rig.actor, rig.charger, "start").outcome == ItemUseOutcome::Succeeded);
@@ -284,7 +284,7 @@ TEST_CASE("Battery disconnect and destruction stop the old charger immediately",
 
 TEST_CASE("Terminal charging saturates safely and mounted batteries are passive", "[world][items]") {
     ChargingRig rig;
-    rig.world.ElapseTicks(std::numeric_limits<Tick>::max());
+    rig.world.ElapseTicks(std::numeric_limits<Tick>::max() / 8);
     CHECK(Energy(rig.world, rig.charger) == 1000);
     CHECK(Energy(rig.world, rig.battery) == 1000);
     CHECK(rig.world.ActiveItemCount() == 0);
@@ -375,7 +375,7 @@ TEST_CASE("Door attempts honor exact deadlines input barriers and limits", "[wor
     CHECK(invalidTarget.reason.code == "invalid_target");
     REQUIRE(Use(world, actor, timer, "arm", {}, 1, 0).outcome == ItemUseOutcome::Succeeded);
     CHECK(world.NextItemEventIn() == eastl::optional<Tick>{300});
-    CHECK(world.GetActor(actor)->remainingTicks == 0); // Item actions return costs, but never schedule actors.
+    CHECK(world.GetActorRemainingTicks(actor) == 0); // Item actions return costs, but never schedule actors.
     Tick tick = 0;
     std::uint32_t rng = 123;
     CHECK(AdvanceUntilInput(world, tick, rng, 1000).stop == SimulationStop::InputRequired);
@@ -410,7 +410,7 @@ TEST_CASE("Moving armed devices cancels attempts and failed arm is atomic", "[wo
     CHECK(notDeployed.outcome == ItemUseOutcome::Refused);
     CHECK(notDeployed.reason.code == "not_deployed");
     CHECK(world.CaptureItemState(timer) == state);
-    world.ElapseTicks(std::numeric_limits<Tick>::max());
+    world.ElapseTicks(std::numeric_limits<Tick>::max() / 8);
     world.ProcessItemEvents();
     CHECK(world.GetTile({2, 1})->terrain == TestTerrain("closed_door"));
     REQUIRE(world.TransferItem(timer, ItemLocation::Ground({1, 1})));
@@ -444,14 +444,15 @@ TEST_CASE("Door clocks freeze across unload and complete without actor events", 
     timer = world.FindItem(timerId);
     REQUIRE(world.GetItem(timer) != nullptr);
     CHECK(world.NextItemEventIn() == eastl::optional<Tick>{283});
-    Tick tick = 0;
+    const Tick start = world.GetTick();
+    Tick tick = start;
     std::uint32_t rng = 42;
-    CHECK(AdvanceUntilInput(world, tick, rng, 282).stop == SimulationStop::LimitReached);
+    CHECK(AdvanceUntilInput(world, tick, rng, start + 282).stop == SimulationStop::LimitReached);
     CHECK(world.GetTile({2, 1})->terrain == TestTerrain("closed_door"));
-    CHECK(AdvanceUntilInput(world, tick, rng, 283).stop == SimulationStop::NoEvents);
-    CHECK(tick == 283);
+    CHECK(AdvanceUntilInput(world, tick, rng, start + 283).stop == SimulationStop::NoEvents);
+    CHECK(tick == start + 283);
     CHECK(world.GetTile({2, 1})->terrain == TestTerrain("open_door"));
-    CHECK(AdvanceUntilInput(world, tick, rng, 283).stop == SimulationStop::NoEvents);
+    CHECK(AdvanceUntilInput(world, tick, rng, start + 283).stop == SimulationStop::NoEvents);
     CHECK(rng == 42);
     CHECK(world.CheckInvariants());
 }
@@ -512,7 +513,7 @@ TEST_CASE("Context actions expose typed arguments and revalidate access and ener
     REQUIRE(world.MoveActor(actor, {2, 1}));
     CHECK(Use(world, actor, device, "stop").outcome == ItemUseOutcome::Succeeded);
     CHECK(world.GetActor(actor)->turns == 0);
-    CHECK(world.GetActor(actor)->remainingTicks == 0);
+    CHECK(world.GetActorRemainingTicks(actor) == 0);
     CHECK(world.CheckInvariants());
 }
 

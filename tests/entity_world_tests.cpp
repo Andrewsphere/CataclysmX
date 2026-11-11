@@ -146,7 +146,42 @@ TEST_CASE("World machine inputs are atomic direct leaves selected by persistent 
     CHECK(world.GetItem(high) != nullptr);
     CHECK(world.GetItem(parent) != nullptr);
     CHECK(world.GetItem(nested) != nullptr);
-    CHECK(world.GetActor(rig.player)->remainingTicks == 0);
+    CHECK(world.GetActorRemainingTicks(rig.player) == 0);
+    CHECK(world.CheckInvariants());
+}
+
+TEST_CASE("Object callbacks keep transactions bound to their own object", "[world][entities][objects]") {
+    Rig rig;
+    auto& world = rig.world;
+    const auto otherActor = Take(world.CreateActor({9, 10}, true));
+    const auto otherMachine = Take(world.CreateObject(rig.content.FindObject("press"), {10, 10}));
+    rig.Inputs();
+    rig.Input(ItemLocation::Carried(otherActor));
+    rig.Input(ItemLocation::Carried(otherActor));
+
+    // Invoke in reverse identity order; neither access checks nor item ownership
+    // may depend on the object used by the previous callback.
+    REQUIRE(world.UseObject(otherActor, otherMachine, ObjectAction::Start).outcome == ObjectUseOutcome::Succeeded);
+    rig.Use(ObjectAction::Start);
+    CHECK(world.GetActor(otherActor)->inventory.empty());
+    CHECK(world.GetActor(rig.player)->inventory.empty());
+    CHECK(world.UseObject(otherActor, otherMachine, ObjectAction::Start).reason == ObjectUseReason::Busy);
+    world.ElapseTicks(10);
+    REQUIRE(world.ProcessObjectEvents());
+    CHECK_FALSE(world.ProcessObjectEvents());
+    REQUIRE(world.GetObject(rig.machine)->contents.size() == 2);
+    REQUIRE(world.GetObject(otherMachine)->contents.size() == 2);
+    const ItemHandle firstOutput = world.GetObject(rig.machine)->contents.front();
+    const ItemHandle secondOutput = world.GetObject(otherMachine)->contents.front();
+    CHECK(world.GetItem(firstOutput)->location == ItemLocation::Stored(rig.machine));
+    CHECK(world.GetItem(secondOutput)->location == ItemLocation::Stored(otherMachine));
+    CHECK(world.GetItem(firstOutput)->id < world.GetItem(secondOutput)->id);
+    CHECK(world.UseObject(rig.player, otherMachine, ObjectAction::Collect).outcome == ObjectUseOutcome::Inaccessible);
+    REQUIRE(world.UseObject(otherActor, otherMachine, ObjectAction::Collect).outcome == ObjectUseOutcome::Succeeded);
+    CHECK(world.GetItem(secondOutput)->location == ItemLocation::Carried(otherActor));
+    CHECK(world.GetItem(firstOutput)->location == ItemLocation::Stored(rig.machine));
+    rig.Use(ObjectAction::Collect);
+    CHECK(world.GetItem(firstOutput)->location == ItemLocation::Carried(rig.player));
     CHECK(world.CheckInvariants());
 }
 
@@ -357,8 +392,8 @@ TEST_CASE("World disk checkpoints restore machine progress and controller deadli
     REQUIRE(restored.ReconcileChunks());
     CHECK(restored.CaptureObjectState(machine) == machineState);
     CHECK(restored.CaptureActorController(actor) == controllerState);
-    CHECK(restored.GetActor(player)->remainingTicks == 97);
-    CHECK(restored.GetActor(actor)->remainingTicks == npcDelay);
+    CHECK(restored.GetActorRemainingTicks(player) == 97);
+    CHECK(restored.GetActorRemainingTicks(actor) == npcDelay);
     CHECK(restored.GetActor(actor)->position == TileCoord{6, 6});
     CHECK(restored.GetActor(actor)->turns == 1);
     CHECK(restored.GetObject(machine)->updates == 0);
@@ -390,20 +425,20 @@ TEST_CASE("World disk checkpoints restore machine progress and controller deadli
         outputIds.push_back(restored.GetItem(item)->id);
     }
     CHECK(outputIds[0] != outputIds[1]);
-    CHECK(restored.GetActor(player)->remainingTicks == 90);
-    CHECK(restored.GetActor(actor)->remainingTicks == (kind == AiControllerKind::None ? 100 : 90));
+    CHECK(restored.GetActorRemainingTicks(player) == 90);
+    CHECK(restored.GetActorRemainingTicks(actor) == (kind == AiControllerKind::None ? 100 : 90));
     restored.ElapseTicks(90);
     restored.ProcessNpcActions(rng);
     if (kind == AiControllerKind::None) {
         CHECK(rng == 0);
         CHECK(restored.GetActor(actor)->position == TileCoord{6, 6});
         CHECK(restored.GetActor(actor)->turns == 1);
-        CHECK(restored.GetActor(actor)->remainingTicks == 100);
+        CHECK(restored.GetActorRemainingTicks(actor) == 100);
     } else {
         CHECK(rng == 1'013'904'223U);
         CHECK(restored.GetActor(actor)->position == TileCoord{7, 6});
         CHECK(restored.GetActor(actor)->turns == 2);
-        CHECK(restored.GetActor(actor)->remainingTicks == 100);
+        CHECK(restored.GetActorRemainingTicks(actor) == 100);
     }
     restored.ProcessNpcActions(rng);
     CHECK(restored.GetActor(actor)->turns == (kind == AiControllerKind::None ? 1 : 2));
@@ -528,7 +563,7 @@ TEST_CASE("World gameplay steps validate cardinal movement and ready player coll
     REQUIRE(world.TryActorStep(rig.player, {1, 0}));
     CHECK(world.GetActor(rig.player)->position == TileCoord{3, 2});
     CHECK(world.GetActor(rig.player)->turns == 0);
-    CHECK(world.GetActor(rig.player)->remainingTicks == 0);
+    CHECK(world.GetActorRemainingTicks(rig.player) == 0);
     REQUIRE(world.MoveActor(other, {4, 2}));
     CHECK(world.TryActorStep(rig.player, {1, 0}) == eastl::unexpected(WorldError::occupied));
     REQUIRE(world.SetTile({3, 2}, {rig.content.FindTerrain("stairs"), 0}));
@@ -551,13 +586,14 @@ TEST_CASE("World scheduler timing is partition invariant across reload order and
     setup(first);
     setup(second);
     second.Reload(); // Reverses the two columns' actor slot insertion order.
+    const Tick secondStart = second.world.GetTick();
     Tick a = 0, b = 0;
     std::uint32_t rngA = 17, rngB = 17;
     CHECK(AdvanceUntilInput(first.world, a, rngA, 250).stop == SimulationStop::LimitReached);
     for (Tick limit : {Tick{3}, Tick{10}, Tick{99}, Tick{100}, Tick{201}, Tick{250}}) {
-        CHECK(AdvanceUntilInput(second.world, b, rngB, limit).stop == SimulationStop::LimitReached);
+        CHECK(AdvanceUntilInput(second.world, b, rngB, secondStart + limit).stop == SimulationStop::LimitReached);
     }
-    CHECK(a == b);
+    CHECK(a == b - secondStart);
     CHECK(rngA == rngB);
     CHECK(first.world.CaptureObjectState(first.machine) == second.world.CaptureObjectState(second.machine));
     Vector<ActorHandle> actors;
@@ -573,7 +609,8 @@ TEST_CASE("World scheduler timing is partition invariant across reload order and
         const auto* other = second.world.GetActor(second.world.FindActor(actor->id));
         REQUIRE(other);
         CHECK(actor->position == other->position);
-        CHECK(actor->remainingTicks == other->remainingTicks);
+        CHECK(first.world.GetActorRemainingTicks(handle)
+            == second.world.GetActorRemainingTicks(second.world.FindActor(actor->id)));
         CHECK(actor->turns == other->turns);
     }
     Vector<ObjectHandle> objects{ObjectHandle{}};

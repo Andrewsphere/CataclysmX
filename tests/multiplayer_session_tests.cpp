@@ -123,19 +123,19 @@ TEST_CASE("Parked guests leave occupancy and freeze cooldown until reconnect", "
     REQUIRE(server.Submit(guest, {1, visitor.opportunity, longWait}).outcome == Outcome::queued);
     REQUIRE(server.Submit(host.playerId, {1, host.opportunity, longWait}).outcome == Outcome::queued);
     REQUIRE(server.Update(0).commandResults.size() == 2);
-    const Tick cooldown = server.GetWorld().GetActor(server.GetWorld().FindActor(guest))->remainingTicks;
+    const Tick cooldown = server.GetWorld().GetActorRemainingTicks(server.GetWorld().FindActor(guest));
     CHECK(cooldown == 125);
     REQUIRE(server.DisconnectPlayer(guest));
     CHECK(server.GetWorld().ActorAt(position).value == 0);
     CHECK(server.Update(1'000'000).tick == 100);
     const Actor* parked = server.GetWorld().GetActor(server.GetWorld().FindActor(guest));
     REQUIRE(parked);
-    CHECK(parked->remainingTicks == cooldown);
+    CHECK(server.GetWorld().GetActorRemainingTicks(server.GetWorld().FindActor(guest)) == cooldown);
     CHECK(parked->parked);
     const auto resumed = server.JoinPlayer("Guest", 200, 0);
     REQUIRE(resumed);
     REQUIRE(server.ActivatePlayer(guest));
-    CHECK(server.GetWorld().GetActor(server.GetWorld().FindActor(guest))->remainingTicks == cooldown);
+    CHECK(server.GetWorld().GetActorRemainingTicks(server.GetWorld().FindActor(guest)) == cooldown);
     CHECK_FALSE(server.GetWorld().GetActor(server.GetWorld().FindActor(guest))->parked);
     CHECK(server.GetWorld().CheckInvariants());
 }

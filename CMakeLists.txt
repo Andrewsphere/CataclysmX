@@ -95,6 +95,7 @@ add_library(cataclysmx_engine STATIC
     src/objects/interactive_object.cpp src/objects/interactive_object.h
     src/objects/object_behavior.cpp src/objects/object_behavior.h
     src/core/data_object.cpp src/core/data_object.h src/core/item_state.cpp src/core/item_state.h
+    src/core/state_result.h src/core/state_reader.cpp src/core/state_reader.h
     src/core/world_types.h
     src/core/world_result.h src/content/content_result.h
     src/items/item_types.h src/items/item_types.cpp

@@ -20,6 +20,8 @@ void Require(bool condition) {
 
 SimulationResult AdvanceUntilInput(World& world, Tick& tick,
     std::uint32_t& rngState, Tick limitTick) {
+    // Compatibility output mirror; supplied time never moves the World clock.
+    tick = world.GetTick();
     Require(limitTick >= tick);
     for (;;) {
         // Completed timed effects precede the input barrier. Their next delay
@@ -68,8 +70,13 @@ SimulationResult AdvanceUntilInput(World& world, Tick& tick,
         const Tick room = limitTick - tick;
         const Tick elapsed = next < room ? next : room;
         world.ElapseTicks(elapsed);
-        tick += elapsed;
+        tick = world.GetTick();
     }
+}
+
+SimulationResult AdvanceUntilInput(World& world, std::uint32_t& rngState, Tick limitTick) {
+    Tick tick = world.GetTick();
+    return AdvanceUntilInput(world, tick, rngState, limitTick);
 }
 
 void Advance(World& world, ActorHandle player, std::uint32_t& rng_state) {
@@ -77,8 +84,7 @@ void Advance(World& world, ActorHandle player, std::uint32_t& rng_state) {
     Require(controlled && controlled->player && world.IsActive(controlled->position));
     Require(world.ScheduleActorAction(player).has_value());
     world.UpdatePlayerObservations();
-    Tick tick = 0;
-    const SimulationResult result = cataclysmx::AdvanceUntilInput(world, tick, rng_state,
+    const SimulationResult result = cataclysmx::AdvanceUntilInput(world, rng_state,
         std::numeric_limits<Tick>::max());
     Require(result.stop == SimulationStop::InputRequired);
 }

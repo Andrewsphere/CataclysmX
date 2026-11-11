@@ -1,4 +1,5 @@
 #include "actors/ai_controller.h"
+#include "core/state_reader.h"
 #include <cstdlib>
 
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
@@ -7,19 +8,6 @@
 
 namespace cataclysmx {
 namespace {
-
-eastl::unexpected<StateError> InvalidState(Diagnostics* diagnostics,
-    eastl::string_view path, StateError error = StateError::InvalidData) {
-    if (diagnostics) {
-        DiagnosticFrame frame;
-        frame.message = "Invalid actor controller state";
-        DiagnosticLocation location;
-        location.path.assign(path.data(), path.size());
-        frame.location = eastl::move(location);
-        diagnostics->Add(eastl::move(frame));
-    }
-    return eastl::unexpected(error);
-}
 
 class WanderController final : public AiController {
 public:
@@ -58,29 +46,31 @@ StateResult<AiControllerKind> ReadAiControllerKind(eastl::string_view name,
     Diagnostics* diagnostics) {
     if (name == "none") { return AiControllerKind::None; }
     if (name == "wander") { return AiControllerKind::Wander; }
-    return InvalidState(diagnostics, "actors.controller.type");
+    return cataclysmx::InvalidState(diagnostics, "actors.controller", "type", "unknown controller kind");
 }
 
 StateResult<void> ValidateAiControllerState(AiControllerKind kind, const DataObject& state,
     Diagnostics* diagnostics) {
-    if (state.Type() != DataType::Object) {
-        return InvalidState(diagnostics, "actors.controller.state");
-    }
+    StateReader reader(state, diagnostics, "actors.controller.state");
     switch (kind) {
-    case AiControllerKind::None:
-        if (state.Size() != 0) { return InvalidState(diagnostics, "actors.controller.state"); }
+    case AiControllerKind::None: {
+        const auto result = reader.Result();
+        if (!result) { return result; }
+        if (state.Size() != 0) { return reader.Invalid({}, "none controller state must be empty"); }
         return {};
+    }
     case AiControllerKind::Wander: {
-        const auto version = state.GetUnsigned("version");
-        if (!version) { return InvalidState(diagnostics, "actors.controller.state.version"); }
-        if (*version != 1) {
-            return InvalidState(diagnostics, "actors.controller.state.version", StateError::UnsupportedVersion);
+        const auto version = reader.GetUnsignedOrError("version");
+        const auto result = reader.Result();
+        if (!result) { return result; }
+        if (version != 1) {
+            return reader.Invalid("version", "unsupported controller state version", StateError::UnsupportedVersion);
         }
-        if (state.Size() != 1) { return InvalidState(diagnostics, "actors.controller.state"); }
+        if (state.Size() != 1) { return reader.Invalid({}, "unknown controller state field"); }
         return {};
     }
     }
-    return InvalidState(diagnostics, "actors.controller.type");
+    return cataclysmx::InvalidState(diagnostics, "actors.controller", "type", "unknown controller kind");
 }
 
 StateResult<eastl::unique_ptr<AiController>> MakeAiController(AiControllerKind kind,
@@ -93,7 +83,7 @@ StateResult<eastl::unique_ptr<AiController>> MakeAiController(AiControllerKind k
     case AiControllerKind::None: return eastl::unique_ptr<AiController>{};
     case AiControllerKind::Wander: return eastl::unique_ptr<AiController>(new WanderController());
     }
-    return InvalidState(diagnostics, "actors.controller.type");
+    return cataclysmx::InvalidState(diagnostics, "actors.controller", "type", "unknown controller kind");
 }
 
 DataObject CaptureAiController(const AiController* controller) {
@@ -109,15 +99,14 @@ DataObject CaptureAiController(const AiController* controller) {
 
 StateResult<eastl::unique_ptr<AiController>> ReadAiController(const DataObject& envelope,
     Diagnostics* diagnostics) {
-    if (envelope.Type() != DataType::Object || envelope.Size() != 2) {
-        return InvalidState(diagnostics, "actors.controller");
-    }
-    const auto name = envelope.GetString("type");
-    if (!name) { return InvalidState(diagnostics, "actors.controller.type"); }
-    const auto kind = cataclysmx::ReadAiControllerKind(*name, diagnostics);
+    StateReader reader(envelope, diagnostics, "actors.controller");
+    const auto name = reader.GetStringOrError("type");
+    const auto* state = reader.GetObjectOrError("state");
+    const auto result = reader.Result();
+    if (!result) { return eastl::unexpected(result.error()); }
+    if (envelope.Size() != 2) { return reader.Invalid({}, "unknown controller envelope field"); }
+    const auto kind = cataclysmx::ReadAiControllerKind(name, diagnostics);
     if (!kind) { return eastl::unexpected(kind.error()); }
-    const auto* state = envelope.Find("state");
-    if (!state) { return InvalidState(diagnostics, "actors.controller.state"); }
     return cataclysmx::MakeAiController(*kind, state, diagnostics);
 }
 

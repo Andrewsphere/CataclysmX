@@ -1,4 +1,5 @@
 #include "objects/object_behavior.h"
+#include "core/state_reader.h"
 
 #include <EASTL/algorithm.h>
 #include <EASTL/utility.h>
@@ -7,17 +8,6 @@
 namespace cataclysmx {
 namespace {
 
-StateResult<void> Invalid(Diagnostics* diagnostics, eastl::string_view field, eastl::string_view message,
-    StateError error = StateError::InvalidData) {
-    if (diagnostics) {
-        DiagnosticFrame frame;
-        frame.message.assign(message.data(), message.size());
-        frame.location = DiagnosticLocation{{}, String(field.data(), field.size()), {}, {}};
-        diagnostics->Add(eastl::move(frame));
-    }
-    return eastl::unexpected(error);
-}
-
 struct MachineState {
     std::uint64_t energy = 0;
     bool hasJob = false;
@@ -25,46 +15,49 @@ struct MachineState {
     Tick remainingWork = 0;
 };
 
-StateResult<void> ReadState(const ObjectDefinition& definition, const DataObject& input,
-    MachineState& state, Diagnostics* diagnostics) {
+StateResult<MachineState> ReadState(const ObjectDefinition& definition, const DataObject& input,
+    Diagnostics* diagnostics) {
+    StateReader reader(input, diagnostics);
     if (!ValidObjectDefinition(definition)) {
-        return Invalid(diagnostics, "definition", "invalid object definition");
+        return reader.Invalid("definition", "invalid object definition");
     }
-    if (input.Type() != DataType::Object) { return Invalid(diagnostics, "", "expected an object state"); }
     if (definition.behavior == ObjectBehaviorKind::None) {
-        if (input.Size() != 0) { return Invalid(diagnostics, "", "generic object state must be empty"); }
-        return {};
+        const auto result = reader.Result();
+        if (!result) { return eastl::unexpected(result.error()); }
+        if (input.Size() != 0) { return reader.Invalid({}, "generic object state must be empty"); }
+        return MachineState{};
     }
+    const auto version = reader.GetUnsignedOrError("version");
+    if (const auto result = reader.Result(); !result) { return eastl::unexpected(result.error()); }
+    if (version != 1) {
+        return reader.Invalid("version", "unsupported object state version", StateError::UnsupportedVersion);
+    }
+    MachineState state;
+    state.energy = reader.GetUnsignedOrDefault("energy", 0);
+    state.hasJob = reader.GetBooleanOrDefault("has_job", false);
+    state.running = reader.GetBooleanOrDefault("running", false);
+    state.remainingWork = state.hasJob ? reader.GetUnsignedOrError("remaining_work")
+        : reader.GetUnsignedOrDefault("remaining_work", 0);
+    const auto result = reader.Result();
+    if (!result) { return eastl::unexpected(result.error()); }
     for (std::size_t i = 0; i < input.Size(); ++i) {
         const auto& name = input.Name(i);
         if (name != "version" && name != "energy" && name != "has_job"
             && name != "running" && name != "remaining_work") {
-            return Invalid(diagnostics, {name.data(), name.size()}, "unknown object state field");
+            return reader.Invalid({name.data(), name.size()}, "unknown object state field");
         }
     }
-    const auto version = input.GetUnsigned("version");
-    if (!version) { return Invalid(diagnostics, "version", "expected an unsigned state version"); }
-    if (*version != 1) {
-        return Invalid(diagnostics, "version", "unsupported object state version", StateError::UnsupportedVersion);
+    if (state.energy > definition.machine.energyCapacity) {
+        return reader.Invalid("energy", "energy exceeds capacity");
     }
-    const auto energy = input.GetUnsigned("energy");
-    const auto hasJob = input.GetBoolean("has_job");
-    const auto running = input.GetBoolean("running");
-    const auto remaining = input.GetUnsigned("remaining_work");
-    if (!energy || *energy > definition.machine.energyCapacity) {
-        return Invalid(diagnostics, "energy", "energy is absent, wrongly typed, or exceeds capacity");
+    if (state.remainingWork > definition.machine.duration) {
+        return reader.Invalid("remaining_work", "remaining work exceeds duration");
     }
-    if (!hasJob) { return Invalid(diagnostics, "has_job", "expected a boolean"); }
-    if (!running) { return Invalid(diagnostics, "running", "expected a boolean"); }
-    if (!remaining || *remaining > definition.machine.duration) {
-        return Invalid(diagnostics, "remaining_work", "remaining work is absent, wrongly typed, or exceeds duration");
+    if ((!state.hasJob && (state.running || state.remainingWork != 0))
+        || (state.running && state.remainingWork > 0 && state.energy < definition.machine.energyPerTick)) {
+        return reader.Invalid("running", "inconsistent job, work, or power state");
     }
-    if ((!*hasJob && (*running || *remaining != 0))
-        || (*running && *remaining > 0 && *energy < definition.machine.energyPerTick)) {
-        return Invalid(diagnostics, "running", "inconsistent job, work, or power state");
-    }
-    state = {*energy, *hasJob, *running, *remaining};
-    return {};
+    return state;
 }
 
 ObjectUseResult Refused(ObjectUseReason reason) { return {ObjectUseOutcome::Refused, 0, reason}; }
@@ -170,20 +163,21 @@ ObjectBehavior::~ObjectBehavior() = default;
 
 StateResult<void> ValidateObjectBehaviorState(const ObjectDefinition& definition, const DataObject& state,
     Diagnostics* diagnostics) {
-    MachineState parsed;
-    return ReadState(definition, state, parsed, diagnostics);
+    const auto parsed = ReadState(definition, state, diagnostics);
+    if (!parsed) { return eastl::unexpected(parsed.error()); }
+    return {};
 }
 
 StateResult<eastl::unique_ptr<ObjectBehavior>> MakeObjectBehavior(const ObjectDefinition& definition,
     const DataObject* state, Diagnostics* diagnostics) {
     MachineState parsed;
     if (state) {
-        const auto validated = ReadState(definition, *state, parsed, diagnostics);
-        if (!validated) { return eastl::unexpected(validated.error()); }
+        const auto saved = ReadState(definition, *state, diagnostics);
+        if (!saved) { return eastl::unexpected(saved.error()); }
+        parsed = *saved;
     } else {
         if (!ValidObjectDefinition(definition)) {
-            Invalid(diagnostics, "definition", "invalid object definition");
-            return eastl::unexpected(StateError::InvalidData);
+            return cataclysmx::InvalidState(diagnostics, {}, "definition", "invalid object definition");
         }
         parsed.energy = definition.machine.energyCapacity;
     }

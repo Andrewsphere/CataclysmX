@@ -95,10 +95,11 @@ TEST_CASE("Parked guest roster and inventory survive checkpoint and unload", "[w
     REQUIRE(world.CreateSave(files.database.c_str(), session));
     CHECK(world.FindPlayerPosition(guestId) == TileCoord{1, 0});
     world.ElapseTicks(50);
-    CHECK(world.GetActor(guest)->remainingTicks == 100);
+    CHECK(world.GetActorRemainingTicks(guest) == 100);
     CHECK(world.ActorAt({1, 0}) == live);
     REQUIRE(world.MoveActor(guest, {2, 0}));
     session.players[1].position = {2, 0};
+    session.tick = world.GetTick();
     CHECK(world.FindPlayerPosition(guestId) == TileCoord{2, 0});
     REQUIRE(world.ReleaseRequest(request));
     REQUIRE(world.ReconcileChunks());
@@ -115,7 +116,7 @@ TEST_CASE("Parked guest roster and inventory survive checkpoint and unload", "[w
     REQUIRE(restored.GetActor(parked));
     CHECK(restored.GetActor(parked)->parked);
     CHECK(restored.GetActor(parked)->position == TileCoord{2, 0});
-    CHECK(restored.GetActor(parked)->remainingTicks == 100);
+    CHECK(restored.GetActorRemainingTicks(parked) == 100);
     CHECK(restored.GetItem(restored.FindItem(itemId))->type == TestItem("bandage"));
     CHECK(restored.ActorAt({1, 0}).value != parked.value);
     CHECK(restored.CheckInvariants());
@@ -153,7 +154,6 @@ TEST_CASE("World rejects incomplete rosters and parked hosts before writing", "[
 TEST_CASE("World save round trips every tile and nested inventory values", "[world][save]") {
     SaveDirectory files;
     SessionState session;
-    session.tick = 1234;
     session.rngState = 0xfedcba98U;
     session.autosaveInterval = 97;
     session.pacing = {37, true, false};
@@ -197,6 +197,7 @@ TEST_CASE("World save round trips every tile and nested inventory values", "[wor
         REQUIRE(world.ScheduleActorAction(actor, 123));
         REQUIRE(world.SetObjectUpdateInterval(object, 217));
         world.ElapseTicks(41);
+        session.tick = world.GetTick();
         REQUIRE(world.SetObjectEnabled(object, false));
         REQUIRE(world.CreateSave(files.database.c_str(), session));
         CHECK(world.HasSave());
@@ -215,13 +216,13 @@ TEST_CASE("World save round trips every tile and nested inventory values", "[wor
     CHECK(restored.GetActor(actor)->player);
     CHECK(restored.GetActor(actor)->turns == 3);
     CHECK(restored.GetActor(actor)->speed == 173);
-    CHECK(restored.GetActor(actor)->remainingTicks == ActionTicks(123, 173) - 41);
+    CHECK(restored.GetActorRemainingTicks(actor) == ActionTicks(123, 173) - 41);
     CHECK(restored.GetActor(actor)->position == TileCoord{0, 0});
     CHECK(restored.GetObject(object)->position == TileCoord{2, 2});
     CHECK_FALSE(restored.GetObject(object)->enabled);
     CHECK(restored.GetObject(object)->updates == 1);
     CHECK(restored.GetObject(object)->updateInterval == 217);
-    CHECK(restored.GetObject(object)->remainingTicks == 176);
+    CHECK(restored.GetObjectRemainingTicks(object) == 176);
     Vector<ItemHandle> items;
     for (PersistentId id : itemIds) {
         const auto handle = restored.FindItem(id);
@@ -274,7 +275,7 @@ TEST_CASE("Timing mutations dirty clean chunks and disk timers stay frozen", "[w
         Load(checkpoint);
         CHECK(checkpoint.GetActor(checkpoint.FindActor(actorId))->speed == 151);
         CHECK(checkpoint.GetObject(checkpoint.FindObject(objectId))->updateInterval == 309);
-        CHECK(checkpoint.GetObject(checkpoint.FindObject(objectId))->remainingTicks == 309);
+        CHECK(checkpoint.GetObjectRemainingTicks(checkpoint.FindObject(objectId)) == 309);
     }
     REQUIRE(world.ScheduleActorAction(actor));
     REQUIRE(world.Save(session));
@@ -283,17 +284,25 @@ TEST_CASE("Timing mutations dirty clean chunks and disk timers stay frozen", "[w
         Take(checkpoint.LoadSave(files.database.c_str()));
         Load(checkpoint);
         CHECK(checkpoint.GetActor(checkpoint.FindActor(actorId))->turns == 1);
-        CHECK(checkpoint.GetActor(checkpoint.FindActor(actorId))->remainingTicks == 151);
+        CHECK(checkpoint.GetActorRemainingTicks(checkpoint.FindActor(actorId)) == 151);
     }
+    const Tick actorDeadline = world.GetActor(actor)->actionDeadline.dueTick;
+    const Tick objectDeadline = world.GetObject(object)->updateDeadline.dueTick;
     world.ElapseTicks(47);
-    session.tick += 47;
+    CHECK(world.GetActor(actor)->actionDeadline.dueTick == actorDeadline);
+    CHECK(world.GetObject(object)->updateDeadline.dueTick == objectDeadline);
+    session.tick = 999; // Stale caller metadata cannot replace the World clock.
     REQUIRE(world.Save(session));
     {
         World checkpoint(TestContent());
-        Take(checkpoint.LoadSave(files.database.c_str()));
+        const auto loaded = Take(checkpoint.LoadSave(files.database.c_str()));
+        CHECK(loaded.tick == 47);
+        CHECK(checkpoint.GetTick() == 47);
         Load(checkpoint);
-        CHECK(checkpoint.GetActor(checkpoint.FindActor(actorId))->remainingTicks == 104);
-        CHECK(checkpoint.GetObject(checkpoint.FindObject(objectId))->remainingTicks == 262);
+        CHECK(checkpoint.GetActor(checkpoint.FindActor(actorId))->actionDeadline.dueTick == actorDeadline);
+        CHECK(checkpoint.GetObject(checkpoint.FindObject(objectId))->updateDeadline.dueTick == objectDeadline);
+        CHECK(checkpoint.GetActorRemainingTicks(checkpoint.FindActor(actorId)) == 104);
+        CHECK(checkpoint.GetObjectRemainingTicks(checkpoint.FindObject(objectId)) == 262);
     }
     REQUIRE(world.ReleaseRequest(request));
     REQUIRE(world.ReconcileChunks());
@@ -304,18 +313,18 @@ TEST_CASE("Timing mutations dirty clean chunks and disk timers stay frozen", "[w
     const auto resident = Take(world.RequestChunks({{0, 0}, 0}, LoadMode::resident));
     REQUIRE(world.ReconcileChunks());
     world.ElapseTicks(10000);
-    CHECK(world.GetActor(world.FindActor(actorId))->remainingTicks == 104);
-    CHECK(world.GetObject(world.FindObject(objectId))->remainingTicks == 262);
+    CHECK(world.GetActorRemainingTicks(world.FindActor(actorId)) == 104);
+    CHECK(world.GetObjectRemainingTicks(world.FindObject(objectId)) == 262);
     REQUIRE(world.UpdateRequest(resident, {{0, 0}, 0}, LoadMode::active));
     REQUIRE(world.ReconcileChunks());
-    world.ElapseTicks(UINT64_MAX);
+    world.ElapseTicks(UINT64_MAX / 8);
     REQUIRE(world.Save(session));
     {
         World checkpoint(TestContent());
         Take(checkpoint.LoadSave(files.database.c_str()));
         Load(checkpoint);
-        CHECK(checkpoint.GetActor(checkpoint.FindActor(actorId))->remainingTicks == 0);
-        CHECK(checkpoint.GetObject(checkpoint.FindObject(objectId))->remainingTicks == 0);
+        CHECK(checkpoint.GetActorRemainingTicks(checkpoint.FindActor(actorId)) == 0);
+        CHECK(checkpoint.GetObjectRemainingTicks(checkpoint.FindObject(objectId)) == 0);
     }
     REQUIRE(world.RecordObjectUpdate(world.FindObject(objectId)));
     REQUIRE(world.Save(session));
@@ -323,7 +332,7 @@ TEST_CASE("Timing mutations dirty clean chunks and disk timers stay frozen", "[w
     Take(checkpoint.LoadSave(files.database.c_str()));
     Load(checkpoint);
     CHECK(checkpoint.GetObject(checkpoint.FindObject(objectId))->updates == 1);
-    CHECK(checkpoint.GetObject(checkpoint.FindObject(objectId))->remainingTicks == 309);
+    CHECK(checkpoint.GetObjectRemainingTicks(checkpoint.FindObject(objectId)) == 309);
     session.pacing.ticksPerSecond = 0;
     CHECK(world.Save(session) == eastl::unexpected(SaveError::InvalidData));
 }
@@ -595,7 +604,7 @@ TEST_CASE("Dirty live chunks persist edits and deletion after a clean checkpoint
 
 // Fixtures must pass global checkpoint validation. Corruption is injected only
 // after opening, to exercise streaming's own validation of incoming disk data.
-void WriteFixture(const char* path, const Vector<ChunkArchive>& chunks, PersistentId nextId = 10) {
+void WriteFixture(const char* path, const Vector<ChunkArchive>& chunks, PersistentId nextId = 10, Tick tick = 0) {
     SaveDatabase database(TestContent());
     REQUIRE(database.Create(path));
     REQUIRE(database.Begin());
@@ -604,6 +613,7 @@ void WriteFixture(const char* path, const Vector<ChunkArchive>& chunks, Persiste
     }
     SaveSnapshot snapshot;
     snapshot.nextId = nextId;
+    snapshot.session.tick = tick;
     REQUIRE(database.WriteSnapshot(snapshot));
     REQUIRE(database.Commit());
 }
@@ -795,6 +805,169 @@ ChunkArchive WarmObjectChunk(ChunkCoord position, PersistentId id) {
     return chunk;
 }
 
+TEST_CASE("Unrepresentable saved actor delays reject reconciliation without partial changes",
+          "[world][save][streaming][deadlines]") {
+    SaveDirectory files;
+    auto malformed = ActorChunk({2, 0, world_max_y}, 3);
+    malformed.actors.front().remainingTicks = UINT64_MAX;
+    WriteFixture(files.database.c_str(), {ActorChunk({0, 0}, 1), ActorChunk({1, 0}, 2), malformed}, 10, 100);
+    World world(TestContent());
+    CHECK(Take(world.LoadSave(files.database.c_str())).tick == 100);
+    const auto origin = Load(world);
+    const auto actor = world.FindActor(1);
+    REQUIRE(world.GetActor(actor));
+    REQUIRE(world.UpdateRequest(origin, {{0, 0}, 0}, LoadMode::resident));
+    Take(world.RequestChunks({{1, 0}, 0}, LoadMode::active));
+    LoadMode mode = LoadMode::active;
+    SECTION("Active incoming data") { mode = LoadMode::active; }
+    SECTION("Resident incoming data is validated too") { mode = LoadMode::resident; }
+    const auto bad = Take(world.RequestChunks({{2, 0}, 0}, mode));
+    const auto revision = world.GetRevision();
+    const auto mapRevision = world.GetMapRevision();
+    world.ResetPerceptionStats();
+    Diagnostics diagnostics;
+    CHECK(world.ReconcileChunks(&diagnostics) == eastl::unexpected(SaveError::InvalidData));
+    CHECK_FALSE(diagnostics.Empty());
+    CHECK(world.ReconcileChunks() == eastl::unexpected(SaveError::InvalidData));
+    CHECK(world.GetRevision() == revision);
+    CHECK(world.GetMapRevision() == mapRevision);
+    CHECK(world.GetPerceptionStats().demandReconciliations == 0);
+    CHECK(world.GetTick() == 100);
+    CHECK(world.LoadedChunks().size() == world_layer_count);
+    CHECK(world.IsActive({0, 0}));
+    CHECK(world.FindActor(1) == actor);
+    CHECK(world.FindActor(2) == ActorHandle{});
+    CHECK(world.FindActor(3) == ActorHandle{});
+    CHECK(world.ArchivedChunkCount() == 0);
+    CHECK(world.CheckInvariants());
+    REQUIRE(world.ReleaseRequest(bad));
+    REQUIRE(world.ReconcileChunks()); // Retained demand can be corrected and retried.
+    CHECK_FALSE(world.IsActive({0, 0}));
+    REQUIRE(world.GetActor(world.FindActor(2)));
+    CHECK(world.FindActor(1) == actor);
+}
+
+TEST_CASE("Legacy saved object delays must fit the loaded clock headroom",
+          "[world][save][streaming][deadlines]") {
+    SaveDirectory files;
+    auto saved = WarmObjectChunk({0, 0, world_max_y}, 1);
+    saved.objects.front().enabled = true;
+    WriteFixture(files.database.c_str(), {saved}, 10, UINT64_MAX - 99);
+    World world(TestContent());
+    Take(world.LoadSave(files.database.c_str()));
+    const auto request = Take(world.RequestChunks({{}, 0}, LoadMode::active));
+    const auto revision = world.GetRevision();
+    Diagnostics diagnostics;
+    CHECK(world.ReconcileChunks(&diagnostics) == eastl::unexpected(SaveError::InvalidData));
+    CHECK_FALSE(diagnostics.Empty());
+    CHECK(world.LoadedChunks().empty());
+    CHECK(world.FindObject(1) == ObjectHandle{});
+    CHECK(world.GetRevision() == revision);
+    CHECK(world.ReconcileChunks() == eastl::unexpected(SaveError::InvalidData));
+    // Equality at the representable boundary is valid; retry reads the repaired row.
+    Corrupt(files.database.c_str(),
+        "UPDATE chunks SET payload=replace(payload,'\"remaining_ticks\":\"100\"','\"remaining_ticks\":\"99\"')");
+    REQUIRE(world.ReconcileChunks());
+    const auto object = world.FindObject(1);
+    REQUIRE(world.GetObject(object));
+    CHECK(world.GetObject(object)->updateDeadline.dueTick == UINT64_MAX);
+    CHECK(world.GetObjectRemainingTicks(object) == 99);
+    CHECK(world.IsActive({0, 0}));
+    CHECK(world.CheckInvariants());
+    REQUIRE(world.ReleaseRequest(request));
+}
+
+TEST_CASE("Resident activation preflights suspended timers before changing any activity flags",
+          "[world][save][streaming][deadlines]") {
+    SaveDirectory files;
+    bool actorTimer = false;
+    SECTION("Actor timer") { actorTimer = true; }
+    SECTION("Legacy object timer") { actorTimer = false; }
+    auto target = actorTimer ? ActorChunk({0, 0}, 1) : WarmObjectChunk({0, 0}, 1);
+    if (actorTimer) { target.actors.front().remainingTicks = 100; }
+    else { target.objects.front().enabled = true; }
+    WriteFixture(files.database.c_str(), {target, ActorChunk({1, 0}, 2)}, 10, 100);
+    World world(TestContent());
+    Take(world.LoadSave(files.database.c_str()));
+    const auto resident = Take(world.RequestChunks({{}, 0}, LoadMode::resident));
+    const auto active = Take(world.RequestChunks({{1, 0}, 0}, LoadMode::active));
+    REQUIRE(world.ReconcileChunks());
+    const auto actor = world.FindActor(1);
+    const auto object = world.FindObject(1);
+    const auto other = world.FindActor(2);
+    world.ElapseTicks(UINT64_MAX - world.GetTick() - 50);
+    REQUIRE(world.UpdateRequest(resident, {{}, 0}, LoadMode::active));
+    REQUIRE(world.UpdateRequest(active, {{1, 0}, 0}, LoadMode::resident));
+    const auto revision = world.GetRevision();
+    const auto mapRevision = world.GetMapRevision();
+    world.ResetPerceptionStats();
+    Diagnostics diagnostics;
+    CHECK(world.ReconcileChunks(&diagnostics) == eastl::unexpected(SaveError::InvalidData));
+    CHECK_FALSE(diagnostics.Empty());
+    CHECK(world.ReconcileChunks() == eastl::unexpected(SaveError::InvalidData));
+    CHECK(world.GetRevision() == revision);
+    CHECK(world.GetMapRevision() == mapRevision);
+    CHECK(world.GetPerceptionStats().demandReconciliations == 0);
+    CHECK(world.LoadedChunks().size() == 2 * world_layer_count);
+    CHECK_FALSE(world.IsActive({0, 0}));
+    CHECK(world.IsActive({16, 0}));
+    CHECK(world.FindActor(2) == other);
+    if (actorTimer) {
+        CHECK(world.FindActor(1) == actor);
+        CHECK(world.GetActorRemainingTicks(actor) == 100);
+        CHECK(world.GetActor(actor)->actionDeadline.suspended);
+    } else {
+        CHECK(world.FindObject(1) == object);
+        CHECK(world.GetObjectRemainingTicks(object) == 100);
+        CHECK(world.GetObject(object)->updateDeadline.suspended);
+    }
+    CHECK(world.CheckInvariants());
+    REQUIRE(world.UpdateRequest(resident, {{}, 0}, LoadMode::resident));
+    REQUIRE(world.UpdateRequest(active, {{1, 0}, 0}, LoadMode::active));
+    REQUIRE(world.ReconcileChunks());
+}
+
+TEST_CASE("Incoming pending and warm archives preflight deadline headroom without consuming their source",
+          "[world][save][streaming][warm][deadlines]") {
+    SaveDirectory files;
+    bool warm = false;
+    SECTION("Pending actor archive") { warm = false; }
+    SECTION("Warm object archive") { warm = true; }
+    auto saved = warm ? WarmObjectChunk({0, 0}, 1) : ActorChunk({0, 0}, 1);
+    if (warm) { saved.objects.front().enabled = true; }
+    else { saved.actors.front().remainingTicks = 100; }
+    WriteFixture(files.database.c_str(), {saved});
+    World world(TestContent());
+    Take(world.LoadSave(files.database.c_str()));
+    auto request = Take(world.RequestChunks({{}, 0}, LoadMode::resident));
+    REQUIRE(world.ReconcileChunks());
+    REQUIRE(world.ReleaseRequest(request));
+    REQUIRE(world.ReconcileChunks());
+    if (warm) { REQUIRE(world.Save({})); }
+    const auto archived = world.ArchivedChunkCount();
+    CHECK(archived == (warm ? 0 : world_layer_count));
+    // Neither RAM source should be replaced with this now-invalid disk row.
+    Corrupt(files.database.c_str(), "UPDATE chunks SET payload='invalid'");
+    world.ElapseTicks(UINT64_MAX - 50);
+    request = Take(world.RequestChunks({{}, 0}, LoadMode::active));
+    const auto revision = world.GetRevision();
+    Diagnostics diagnostics;
+    CHECK(world.ReconcileChunks(&diagnostics) == eastl::unexpected(SaveError::InvalidData));
+    CHECK(FormatDiagnostics(diagnostics).find("headroom") != String::npos);
+    diagnostics.Clear();
+    CHECK(world.ReconcileChunks(&diagnostics) == eastl::unexpected(SaveError::InvalidData));
+    CHECK(FormatDiagnostics(diagnostics).find("headroom") != String::npos);
+    CHECK(world.GetRevision() == revision);
+    CHECK(world.LoadedChunks().empty());
+    CHECK(world.ArchivedChunkCount() == archived);
+    CHECK(world.CheckInvariants());
+    REQUIRE(world.UpdateRequest(request, {{}, 0}, LoadMode::resident));
+    CHECK(world.ReconcileChunks() == eastl::unexpected(SaveError::InvalidData));
+    REQUIRE(world.ReleaseRequest(request));
+    REQUIRE(world.ReconcileChunks());
+    CHECK(world.ArchivedChunkCount() == archived);
+}
+
 TEST_CASE("Activating resident disk snapshots settles suspended entities without advancing timers",
           "[world][save][streaming][activity][gravity]") {
     SaveDirectory files;
@@ -825,7 +998,7 @@ TEST_CASE("Activating resident disk snapshots settles suspended entities without
     CHECK(world.GetItem(item)->location == ItemLocation::Ground({1, 0, 2}));
     CHECK(world.FindPlayerPosition(1) == TileCoord{0, 0, 2});
     world.ElapseTicks(1000);
-    CHECK(world.GetActor(actor)->remainingTicks == 37);
+    CHECK(world.GetActorRemainingTicks(actor) == 37);
     REQUIRE(world.CheckInvariants());
 
     const auto loaded = world.LoadedChunks();
@@ -844,18 +1017,18 @@ TEST_CASE("Activating resident disk snapshots settles suspended entities without
     REQUIRE(world.CountItemsAt({1, 0, 0}) == 1);
     CHECK(*world.ItemsAt({1, 0, 0}).begin() == item);
     CHECK(world.ItemsAt({1, 0, 2}).Empty());
-    CHECK(world.GetActor(actor)->remainingTicks == 37);
+    CHECK(world.GetActorRemainingTicks(actor) == 37);
     CHECK(world.LoadedChunks() == loaded);
     CHECK(world.ArchivedChunkCount() == 0);
     CHECK(world.GetPerceptionStats().columnsLoaded == 0);
     CHECK(world.GetPerceptionStats().columnsUnloaded == 0);
     REQUIRE(world.CheckInvariants());
     world.ElapseTicks(7);
-    CHECK(world.GetActor(actor)->remainingTicks == 30);
+    CHECK(world.GetActorRemainingTicks(actor) == 30);
     const auto revision = world.GetRevision();
     REQUIRE(world.ReconcileChunks());
     CHECK(world.GetRevision() == revision);
-    CHECK(world.GetActor(actor)->remainingTicks == 30);
+    CHECK(world.GetActorRemainingTicks(actor) == 30);
 }
 
 TEST_CASE("Incoming circle disk IDs cannot alias clean warm values", "[world][save][streaming][warm][circle]") {

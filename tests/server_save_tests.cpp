@@ -97,7 +97,7 @@ void SameState(const Server& first, const Server& second) {
             CHECK(actor->position == other->position);
             CHECK(actor->turns == other->turns);
             CHECK(actor->speed == other->speed);
-            CHECK(actor->remainingTicks == other->remainingTicks);
+            CHECK(left.GetActorRemainingTicks(handle) == right.GetActorRemainingTicks(right.FindActor(actor->id)));
         }
         REQUIRE(chunk->objects.size() == right.GetChunk(position)->objects.size());
         for (ObjectHandle handle : chunk->objects) {
@@ -107,7 +107,7 @@ void SameState(const Server& first, const Server& second) {
             CHECK(object->enabled == other->enabled);
             CHECK(object->updates == other->updates);
             CHECK(object->updateInterval == other->updateInterval);
-            CHECK(object->remainingTicks == other->remainingTicks);
+            CHECK(left.GetObjectRemainingTicks(handle) == right.GetObjectRemainingTicks(right.FindObject(object->id)));
         }
     }
     CHECK(left.CheckInvariants());
@@ -394,7 +394,7 @@ TEST_CASE("Server saves partial cooldowns object timers and pacing for determini
     CHECK(committed.cost == 175);
     REQUIRE(original.Update(125'000).tick == 25);
     CHECK(original.View().remainingTicks == 150);
-    CHECK(original.GetWorld().GetObject(object)->remainingTicks == 105);
+    CHECK(original.GetWorld().GetObjectRemainingTicks(object) == 105);
     REQUIRE(original.CreateSave(file.path.c_str()));
     const auto session = ReadSession(file);
     CHECK(session.tick == 25);
@@ -405,7 +405,7 @@ TEST_CASE("Server saves partial cooldowns object timers and pacing for determini
     CHECK(restored->Update(0).tick == 25); // Loading adds no elapsed/offline time.
     CHECK(restored->View().remainingTicks == 150);
     REQUIRE(restored->GetWorld().GetObject(restored->GetWorld().FindObject(objectId)));
-    CHECK(restored->GetWorld().GetObject(restored->GetWorld().FindObject(objectId))->remainingTicks == 105);
+    CHECK(restored->GetWorld().GetObjectRemainingTicks(restored->GetWorld().FindObject(objectId)) == 105);
     for (std::uint64_t elapsed : {100'001ULL, 24'999ULL, 625'000ULL, 349'999ULL,
              1ULL, 2'125'000ULL, 11'111ULL, 888'889ULL}) {
         CAPTURE(elapsed);

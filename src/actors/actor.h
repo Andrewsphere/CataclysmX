@@ -27,7 +27,7 @@ public:
     std::uint64_t turns = 0;
     Vector<ItemHandle> inventory;
     std::uint32_t speed = 100;
-    Tick remainingTicks = 0;
+    ActionDeadline actionDeadline{};
     bool parked = false;
     std::uint64_t carryCapacityGrams = 100000;
     LightEmission light{};

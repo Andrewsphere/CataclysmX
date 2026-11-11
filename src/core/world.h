@@ -176,6 +176,7 @@ public:
 
     // Create attaches a new database only after a successful first checkpoint.
     // Load requires a pristine World and leaves chunk materialization to demand.
+    // Checkpoints source session.tick from GetTick(), ignoring the supplied copy.
     SaveResult<void> CreateSave(const char* path, const SessionState& session,
         Diagnostics* diagnostics = nullptr);
     SaveResult<SessionState> LoadSave(const char* path, Diagnostics* diagnostics = nullptr);
@@ -287,6 +288,10 @@ public:
     WorldResult<void> SetObjectUpdateInterval(ObjectHandle object, std::uint32_t interval);
     WorldResult<void> SetActorSpeed(ActorHandle actor, std::uint32_t speed);
     WorldResult<void> ScheduleActorAction(ActorHandle actor, std::uint32_t baseCost = 100);
+    Tick GetTick() const;
+    // Valid handles required. Suspended timers report their frozen duration.
+    Tick GetActorRemainingTicks(ActorHandle actor) const;
+    Tick GetObjectRemainingTicks(ObjectHandle object) const;
     void ElapseTicks(Tick elapsed);
 
     // Unordered snapshots; clear output while retaining its capacity.
@@ -311,7 +316,7 @@ private:
     friend class ItemMutationContext;
     friend class ObjectMutationContext;
     bool CanUseObject(ActorHandle actor, ObjectHandle object) const;
-    WorldResult<void> ConsumeObjectInputs(ActorHandle actor, ItemTypeId type, std::uint32_t count);
+    WorldResult<void> ConsumeObjectInputs(ActorHandle actor, ObjectHandle object, ItemTypeId type, std::uint32_t count);
     WorldResult<void> ProduceObjectOutputs(ObjectHandle object, ItemTypeId type, std::uint32_t count);
     WorldResult<void> CollectObjectContents(ActorHandle actor, ObjectHandle object);
     Item* MutableItem(ItemHandle item);

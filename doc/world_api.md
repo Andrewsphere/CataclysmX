@@ -289,13 +289,14 @@ stops above a supporting tile, actor, or the world bottom. Parked actors remain
 frozen. Spatial terrain edits also settle affected resident columns. See
 [Y layers](y_layers.md) for terrain flag constraints, stairs, and sight rules.
 
-## Relative timing
+## Simulation clock and deadlines
 
 `core/timing.h` defines `Tick` as unsigned 64-bit simulation time, with 100 ticks
-per standard turn. `Actor` appends `speed` (positive uint32, default 100) and
-`remainingTicks` (default zero, ready). `InteractiveObject` appends
-`updateInterval` (positive uint32, default 100) and `remainingTicks` (default 100).
-These are world-owned values exposed only through read-only borrows.
+per standard turn. `World::GetTick()` is the authoritative clock (initially zero).
+Actors own `actionDeadline`; legacy periodic objects own `updateDeadline`.
+Read relative durations with `GetActorRemainingTicks(handle)` and
+`GetObjectRemainingTicks(handle)`; these require valid live handles and return
+frozen durations during suspension. See [entity scheduling](entity_scheduling.md).
 
 - `SetActorSpeed(handle, speed)` rejects zero with `invalid_request`; it does not
   change an already committed delay. Lower speed values mean shorter actions.
@@ -306,10 +307,12 @@ These are world-owned values exposed only through read-only borrows.
   zero cost returns `invalid_request`. Counter overflow is a fatal invariant.
   `RecordActorTurn` remains an explicit administrative counter operation; it
   neither checks readiness nor schedules a delay.
-- `ElapseTicks(elapsed)` saturates delays at zero for active actors and active,
-  enabled objects, marking changed chunks dirty. It does not record turns,
-  trigger updates, or modify session time. Resident, archived, and disabled
-  object timers remain frozen, including across unload/reload.
+- `ElapseTicks(elapsed)` advances the World clock with checked arithmetic;
+  ordinary elapsed time never rewrites actor or legacy object deadlines.
+  Active chunks containing actors/objects are conservatively marked dirty so
+  incremental checkpoints capture changed relative durations. It does not
+  record turns or trigger updates. Inactive, archived, parked, and disabled
+  timers remain frozen, including across unload/reload.
   Controllerless NPCs are idle and excluded from clock advancement. Typed object
   behaviors advance their own work/energy; typed `None` objects have no timer.
 - `SetObjectUpdateInterval(handle, interval)` rejects zero and explicitly
@@ -319,8 +322,12 @@ These are world-owned values exposed only through read-only borrows.
   `updateInterval`, otherwise it changes neither. The scheduler calls it only
   when due; World permits explicit administrative updates before then.
 
-Invalid entity handles return `invalid_handle`. Relative delays avoid absolute
-deadline rebasing and inactive-chunk catch-up, and actor delays may exceed uint32.
+Invalid mutation handles return `invalid_handle`. Suspension captures remaining
+duration once; resumption rebases only after all eligibility conditions hold.
+Actor delays may exceed uint32. Global clock/deadline overflow fails fast.
+Checkpoints persist the World clock as `SessionState::tick`, overriding the
+caller's copy, and retain relative delays in the existing archive format.
+Loading installs the saved clock before any chunk can materialize.
 All these mutations preserve the existing borrow rules.
 
 `CollectReadyPlayers(Vector<ActorHandle>&)` clears the caller's buffer and appends
@@ -379,8 +386,9 @@ the entire aggregate carried mass before moving any contents. Item notifications
 remain deferred through the object callback and gravity settles at the enclosing
 boundary, preventing intermediate notification side effects. Self-destruction is
 requested and applied only after the callback returns. Contexts and entity borrows
-must never escape callbacks. This narrow explicit machinery keeps policy in the
-behavior and ownership/access/atomicity in World.
+must never escape callbacks. Identity and the destruction request live in the
+context; World retains only the callback guard and scoped notification/gravity
+deferral. See [object callbacks](object_callbacks.md) for ordering and lifetime.
 
 `SessionState::tick` is global simulation ticks. Its appended `pacing` settings
 (`ticksPerSecond = 100`, `rateLimited = false`, `pauseWhenIdle = true`) control

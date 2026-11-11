@@ -134,7 +134,7 @@ TEST_CASE("Timed world effects teach observations inside a still-busy action",
     std::uint32_t rng = 42;
     const auto partial = AdvanceUntilInput(world, tick, rng, 350);
     CHECK(partial.stop == SimulationStop::LimitReached);
-    CHECK(world.GetActor(server.GetPlayer())->remainingTicks == 150);
+    CHECK(world.GetActorRemainingTicks(server.GetPlayer()) == 150);
     CHECK(world.GetRememberedTile(server.GetHostPlayerId(), {2, 0}).object.kind == ObjectKind::Table);
     // Close it before the input barrier; no rendering was requested while open.
     REQUIRE(world.SetTile({1, 0}, {TestTerrain("closed_door"), 0}));

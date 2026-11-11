@@ -40,6 +40,8 @@ struct ObjectStateView {
 // and access checks. No reference into entity storage may survive these calls.
 class ObjectMutationContext {
 public:
+    ObjectMutationContext(const ObjectMutationContext&) = delete;
+    ObjectMutationContext& operator=(const ObjectMutationContext&) = delete;
     const World& GetWorld() const;
     ObjectHandle Self() const;
     WorldResult<void> ConsumeInputs(ActorHandle actor, ItemTypeId type, std::uint32_t count);
@@ -51,6 +53,7 @@ private:
     ObjectMutationContext(World& world, ObjectHandle self);
     World& world_;
     ObjectHandle self_;
+    bool destroyRequested_ = false;
 };
 
 class ObjectBehavior {

@@ -352,7 +352,7 @@ Server::Server(const ContentCatalog& content, std::uint32_t seed) : world_(conte
 }
 
 CommandResult Server::Send(Command command) {
-    if (!ValidCommandShape(command)) { return {Outcome::invalid_command, false, tick_}; }
+    if (!ValidCommandShape(command)) { return {Outcome::invalid_command, false, GetTick()}; }
     const Actor* actor = world_.GetActor(player_);
     Require(actor != nullptr);
     const PlayerSlot* host = FindPlayer(GetHostPlayerId());
@@ -365,7 +365,7 @@ CommandResult Server::Send(Command command) {
             otherActive = true;
         }
     }
-    if (actor->remainingTicks != 0 || otherActive) {
+    if (world_.GetActorRemainingTicks(player_) != 0 || otherActive) {
         // Keep the latest intent, not a chain of key-repeat-generated actions.
         // Destination, item ownership and cost are checked when it becomes due.
         return Submit(GetHostPlayerId(), {++legacySequence_, FindPlayer(GetHostPlayerId())->opportunity, command});
@@ -373,7 +373,7 @@ CommandResult Server::Send(Command command) {
     const CommandResult admission = Submit(GetHostPlayerId(),
         {++legacySequence_, FindPlayer(GetHostPlayerId())->opportunity, command});
     if (admission.outcome != Outcome::queued) { return admission; }
-    const auto barrier = cataclysmx::AdvanceUntilInput(world_, tick_, rng_state_, tick_);
+    const auto barrier = cataclysmx::AdvanceUntilInput(world_, rng_state_, GetTick());
     Require(barrier.stop == SimulationStop::InputRequired);
     SessionUpdate resolved;
     Require(ResolveRound(resolved, {}));
@@ -394,8 +394,8 @@ CommandResult Server::Execute(ActorHandle handle, PlayerSlot& slot, Command comm
     const Actor* actor = world_.GetActor(handle);
     Require(actor != nullptr);
     const TileCoord position = actor->position;
-    const auto failed = [this](Outcome outcome) { return CommandResult{outcome, false, tick_}; };
-    if (actor->remainingTicks != 0) { return failed(Outcome::not_ready); }
+    const auto failed = [this](Outcome outcome) { return CommandResult{outcome, false, GetTick()}; };
+    if (world_.GetActorRemainingTicks(handle) != 0) { return failed(Outcome::not_ready); }
     Outcome outcome = Outcome::invalid_command;
     std::uint32_t baseCost = command.kind == CommandKind::wait ? command.waitCost : ticks_per_turn;
     switch (command.kind) {
@@ -418,7 +418,7 @@ CommandResult Server::Execute(ActorHandle handle, PlayerSlot& slot, Command comm
         const auto loaded = StageBubble(world_, destination, active_radius_, resident_radius_, circleResidency_, staging);
         if (!loaded) {
             Require(world_.ReconcileChunks().has_value());
-            return {Outcome::unavailable, false, tick_, loaded.error()};
+            return {Outcome::unavailable, false, GetTick(), loaded.error()};
         }
         const auto moved = world_.TryActorStep(handle, {command.dx, command.dz, command.dy});
         if (!moved) {
@@ -543,7 +543,7 @@ CommandResult Server::Execute(ActorHandle handle, PlayerSlot& slot, Command comm
     // Observe the completed action for every participant, even between two
     // commands at the same tick. Snapshot/viewport cadence never grants memory.
     world_.UpdatePlayerObservations();
-    CommandResult result{outcome, true, tick_};
+    CommandResult result{outcome, true, GetTick()};
     result.cost = cost;
     return result;
 }
@@ -556,7 +556,7 @@ void Server::SynchronizePacing() {
         const Actor* actor = world_.GetActor(handle);
         Require(actor && actor->player && !actor->parked && world_.IsActive(actor->position));
         players.push_back({handle, slot.id, actor->speed,
-            actor->remainingTicks == 0, slot.pending.has_value()});
+            world_.GetActorRemainingTicks(handle) == 0, slot.pending.has_value()});
     }
     pacer_.Synchronize(players);
 }
@@ -590,7 +590,7 @@ Vector<PlayerStatus> Server::GetPlayers() const {
     for (const PlayerSlot& slot : players_) {
         const Actor* actor = world_.GetActor(PlayerActor(slot));
         const bool ready = slot.state == PlayerConnectionState::Active
-            && actor && actor->remainingTicks == 0;
+            && actor && world_.GetActorRemainingTicks(PlayerActor(slot)) == 0;
         result.push_back({slot.id, slot.name, slot.state, ready,
             slot.pending.has_value(), slot.opportunity,
             ready ? pacer_.GraceMicroseconds(PlayerActor(slot)) : 0});
@@ -790,24 +790,24 @@ SessionResult<void> Server::DisconnectPlayer(PersistentId id) {
 CommandResult Server::Submit(PersistentId id, PlayerInput input) {
     PlayerSlot* slot = FindPlayer(id);
     if (!slot || slot->state != PlayerConnectionState::Active) {
-        return {Outcome::unavailable, false, tick_};
+        return {Outcome::unavailable, false, GetTick()};
     }
-    if (!ValidCommandShape(input.command)) { return {Outcome::invalid_command, false, tick_}; }
-    if (input.opportunity != slot->opportunity) { return {Outcome::stale_input, false, tick_}; }
-    if (input.sequence <= slot->lastSequence) { return {Outcome::duplicate_input, false, tick_}; }
+    if (!ValidCommandShape(input.command)) { return {Outcome::invalid_command, false, GetTick()}; }
+    if (input.opportunity != slot->opportunity) { return {Outcome::stale_input, false, GetTick()}; }
+    if (input.sequence <= slot->lastSequence) { return {Outcome::duplicate_input, false, GetTick()}; }
     const ActorHandle actor = PlayerActor(*slot);
     // A shorter grace may expire while a different player still holds the
     // round. Its automatic wait is already decided, even though no action can
     // resolve until the entire cohort is satisfied.
-    if (!slot->pending && world_.GetActor(actor)->remainingTicks == 0
+    if (!slot->pending && world_.GetActorRemainingTicks(actor) == 0
         && !pacer_.IsIdle() && pacer_.GraceMicroseconds(actor) == 0) {
-        return {Outcome::stale_input, false, tick_};
+        return {Outcome::stale_input, false, GetTick()};
     }
     slot->lastSequence = input.sequence;
     slot->pending = input;
     ++revision_;
     SynchronizePacing();
-    return {Outcome::queued, false, tick_};
+    return {Outcome::queued, false, GetTick()};
 }
 
 bool Server::ResolveRound(SessionUpdate& result, const Vector<ActorHandle>& expired) {
@@ -816,7 +816,7 @@ bool Server::ResolveRound(SessionUpdate& result, const Vector<ActorHandle>& expi
         if (slot.state != PlayerConnectionState::Active) { continue; }
         const Actor* actor = world_.GetActor(PlayerActor(slot));
         Require(actor);
-        if (actor->remainingTicks != 0) { continue; }
+        if (world_.GetActorRemainingTicks(PlayerActor(slot)) != 0) { continue; }
         bool timedOut = false;
         for (ActorHandle handle : expired) {
             if (handle == PlayerActor(slot)) { timedOut = true; break; }
@@ -867,7 +867,7 @@ eastl::optional<SaveError> Server::Autosave() {
     constexpr Tick maximum = eastl::numeric_limits<Tick>::max();
     const Tick interval = autosaveInterval_ > maximum / ticks_per_turn
         ? maximum : autosaveInterval_ * ticks_per_turn;
-    if (tick_ - lastSaveTick_ < interval) { return {}; }
+    if (GetTick() - lastSaveTick_ < interval) { return {}; }
     const auto saved = Save();
     if (!saved) { return saved.error(); }
     return {};
@@ -882,11 +882,11 @@ SessionUpdate Server::Update(std::uint64_t elapsedMicroseconds) {
         if (pacer_.IsIdle()) { break; }
 
         const Tick credit = pacer_.AvailableTicks();
-        const Tick limit = credit > maximum - tick_ ? maximum : tick_ + credit;
-        const Tick before = tick_;
-        const SimulationResult simulation = cataclysmx::AdvanceUntilInput(world_, tick_, rng_state_, limit);
-        if (tick_ != before) { ++revision_; }
-        pacer_.ConsumeTicks(tick_ - before);
+        const Tick before = GetTick();
+        const Tick limit = credit > maximum - before ? maximum : before + credit;
+        const SimulationResult simulation = cataclysmx::AdvanceUntilInput(world_, rng_state_, limit);
+        if (GetTick() != before) { ++revision_; }
+        pacer_.ConsumeTicks(GetTick() - before);
         SynchronizePacing();
         if (ResolveRound(result, pacer_.ExpiredPlayers())) { continue; }
         if (pacer_.IsIdle()) { break; }
@@ -894,7 +894,7 @@ SessionUpdate Server::Update(std::uint64_t elapsedMicroseconds) {
 
         std::uint64_t untilEvent = maximum;
         if (simulation.stop == SimulationStop::LimitReached) {
-            Require(tick_ != maximum && simulation.nextEventIn != 0);
+            Require(GetTick() != maximum && simulation.nextEventIn != 0);
             untilEvent = pacer_.MicrosecondsUntilTicks(simulation.nextEventIn);
         }
         if (const auto deadline = pacer_.NextUnexpiredDeadlineMicroseconds()) {
@@ -906,8 +906,8 @@ SessionUpdate Server::Update(std::uint64_t elapsedMicroseconds) {
         ++revision_;
         remaining -= step;
     }
-    result.tick = tick_;
-    result.needsInput = world_.GetActor(player_)->remainingTicks == 0;
+    result.tick = GetTick();
+    result.needsInput = world_.GetActorRemainingTicks(player_) == 0;
     if (const auto error = Autosave()) {
         if (!result.storageError) { result.storageError = error; }
     }
@@ -939,8 +939,8 @@ WorldView Server::ViewForPlayer(PersistentId id, int radius) const {
     result.origin = {actor->position.x - radius, actor->position.z - radius, actor->position.y};
     result.width = 2 * radius + 1;
     result.height = result.width;
-    result.tick = tick_;
-    result.remainingTicks = actor->remainingTicks;
+    result.tick = GetTick();
+    result.remainingTicks = world_.GetActorRemainingTicks(player);
     result.speed = actor->speed;
     result.pacing = pacer_.GetSettings();
     result.commandQueued = slot->pending.has_value();
@@ -1154,7 +1154,7 @@ Server::Server(const ContentCatalog& content, EmptyTag) : world_(content) {}
 SessionState Server::Checkpoint() const {
     const Actor* actor = world_.GetActor(player_);
     Require(actor != nullptr);
-    SessionState session{tick_, rng_state_, actor->id, actor->position,
+    SessionState session{GetTick(), rng_state_, actor->id, actor->position,
         active_radius_, resident_radius_, autosaveInterval_, pacer_.GetSettings()};
     session.circleResidency = circleResidency_;
     for (const PlayerSlot& slot : players_) {
@@ -1168,7 +1168,7 @@ SessionState Server::Checkpoint() const {
 SaveResult<void> Server::CreateSave(const char* path, Diagnostics* diagnostics) {
     const auto result = world_.CreateSave(path, Checkpoint(), diagnostics);
     if (result) {
-        lastSaveTick_ = tick_;
+        lastSaveTick_ = GetTick();
     }
     return result;
 }
@@ -1176,7 +1176,7 @@ SaveResult<void> Server::CreateSave(const char* path, Diagnostics* diagnostics) 
 SaveResult<void> Server::Save(Diagnostics* diagnostics) {
     const auto result = world_.Save(Checkpoint(), diagnostics);
     if (result) {
-        lastSaveTick_ = tick_;
+        lastSaveTick_ = GetTick();
     }
     return result;
 }
@@ -1277,7 +1277,6 @@ SaveResult<eastl::unique_ptr<Server>> Server::LoadSave(const ContentCatalog& con
     server->bubbleCenter_ = BubbleCenter(server->world_.GetActor(server->player_)->position);
     eastl::sort(server->players_.begin(), server->players_.end(),
         [](const PlayerSlot& a, const PlayerSlot& b) { return a.id < b.id; });
-    server->tick_ = session.tick;
     server->rng_state_ = session.rngState;
     server->autosaveInterval_ = session.autosaveInterval;
     server->lastSaveTick_ = session.tick;
@@ -1293,6 +1292,6 @@ std::uint64_t Server::GetAutosaveInterval() const { return autosaveInterval_; }
 World& Server::GetWorld() { return world_; }
 const World& Server::GetWorld() const { return world_; }
 ActorHandle Server::GetPlayer() const { return player_; }
-std::uint64_t Server::GetTick() const { return tick_; }
+std::uint64_t Server::GetTick() const { return world_.GetTick(); }
 
 }

@@ -21,6 +21,12 @@
   overrides, the F2 editor, case-sensitive Ctrl bindings, and text catalogs.
 - [World API](world_api.md): identity, ownership, coordinates, chunk demand and
   in-memory archives. Start here for scenario setup and administrative tools.
+- [Actors and AI controllers](actors_api.md): deterministic intents and controller state.
+- [Objects API](objects_api.md): typed crafting machines, actions, and saved-state defaults.
+- [Object callbacks](object_callbacks.md): explicit identity, atomic transactions,
+  and deferred destruction.
+- [Entity scheduling](entity_scheduling.md): absolute deadlines, suspended time,
+  and the authoritative World clock.
 - [Y layers](y_layers.md): bounded elevation, whole-height chunk columns, stairs,
   gravity, 3D sight, and layered generation/persistence contracts (introduced
   historically with six layers; now 21 bounded Y values).
@@ -52,7 +58,7 @@
   crossings, parcels/buildings, terrain materialization and debug inspection.
 - [Diagnostics](diagnostics.md): structured error causes and contextual frames.
 - [Terrain rendering](terrain_rendering.md): UTF-8 symbols, colors, and frontend behavior.
-- [Save format](save_format.md): SQLite v7, snapshots, player memory, validation and checkpoints.
+- [Save format](save_format.md): SQLite v9, snapshots, player memory, validation and checkpoints.
 - [LAN networking](networking.md): ENet hosting, joining, authoritative messages and discovery.
 - [LAN client profile](lan_profile.md): endpoint identities, typed errors and durability.
 - [Project README](../README.md): build instructions and dependencies.

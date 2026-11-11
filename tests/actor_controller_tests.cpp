@@ -25,7 +25,7 @@ TEST_CASE("Actors preserve inspection defaults and move their owned values", "[a
     CHECK_FALSE(actor.player);
     CHECK(actor.turns == 0);
     CHECK(actor.speed == 100);
-    CHECK(actor.remainingTicks == 0);
+    CHECK(actor.actionDeadline.Remaining(0) == 0);
     CHECK_FALSE(actor.parked);
     CHECK(actor.carryCapacityGrams == 100000);
     CHECK(actor.light == LightEmission{});
@@ -156,6 +156,34 @@ TEST_CASE("None and controller identities have no permissive fallback", "[actors
         CHECK(ReadAiControllerKind(name) == eastl::unexpected(StateError::InvalidData));
     }
     CHECK_FALSE(ReadAiControllerKind(eastl::string_view("wander\0", 7)));
+}
+
+TEST_CASE("Controller required reads retain exact diagnostic paths", "[actors][controller]") {
+    DataObject envelope;
+    envelope.SetString("type", "wander");
+    envelope.Set("state", WanderState());
+    String expectedPath;
+    StateError expected = StateError::InvalidData;
+    SECTION("missing version") { *envelope.Find("state") = DataObject{}; expectedPath = "actors.controller.state.version"; }
+    SECTION("wrong version type") { envelope.Find("state")->SetSigned("version", 1); expectedPath = "actors.controller.state.version"; }
+    SECTION("unsupported version") {
+        envelope.Find("state")->SetUnsigned("version", 2);
+        expectedPath = "actors.controller.state.version";
+        expected = StateError::UnsupportedVersion;
+    }
+    SECTION("missing state") { envelope = DataObject{}; envelope.SetString("type", "wander"); expectedPath = "actors.controller.state"; }
+    SECTION("wrong state root") { envelope.Set("state", DataObject::List()); expectedPath = "actors.controller.state"; }
+    SECTION("wrong type field") { envelope.SetBoolean("type", false); expectedPath = "actors.controller.type"; }
+    SECTION("unknown kind") { envelope.SetString("type", "future"); expectedPath = "actors.controller.type"; }
+    SECTION("empty kind is not missing") { envelope.SetString("type", ""); expectedPath = "actors.controller.type"; }
+    SECTION("wrong envelope root") { envelope = DataObject::List(); expectedPath = "actors.controller"; }
+    Diagnostics diagnostics;
+    const auto restored = ReadAiController(envelope, &diagnostics);
+    REQUIRE_FALSE(restored);
+    CHECK(restored.error() == expected);
+    REQUIRE(diagnostics.Frames().size() == 1);
+    REQUIRE(diagnostics.Frames().front().location);
+    CHECK(diagnostics.Frames().front().location->path == expectedPath);
 }
 
 TEST_CASE("Controller envelopes require exactly type and state", "[actors][controller]") {

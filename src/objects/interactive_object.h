@@ -28,7 +28,7 @@ public:
     std::uint64_t updates = 0;
     Vector<ItemHandle> contents;
     std::uint32_t updateInterval = 100;
-    Tick remainingTicks = 100;
+    ActionDeadline updateDeadline{0, 100, true};
     ObjectKind kind = ObjectKind::Generic;
     ObjectFacing facing = ObjectFacing::North;
     bool broken = false;

@@ -1,5 +1,6 @@
 #include "core/data_object.h"
 #include "core/item_state.h"
+#include "core/state_reader.h"
 #include "content/content.h"
 #include "items/item_registry.h"
 #include <catch2/catch_test_macros.hpp>
@@ -165,6 +166,106 @@ TEST_CASE("State readers reject malformed data rather than initializing defaults
     ItemDefinition generic;
     CHECK(Snapshot(generic, MakeItemState(generic)) == DataObject{});
     CHECK(ReadItemState(generic, DataObject{}).has_value());
+}
+
+TEST_CASE("Shared state reads default only absent fields and preserve false zero and empty", "[state-reader]") {
+    DataObject input;
+    input.SetUnsigned("number", 0);
+    input.SetBoolean("flag", false);
+    input.SetString("text", "");
+    StateReader reader(input);
+    CHECK(reader.GetUnsignedOrDefault("missing_number", 23) == 23);
+    CHECK(reader.GetBooleanOrDefault("missing_flag", true));
+    CHECK(reader.GetStringOrDefault("missing_text", "fallback") == "fallback");
+    CHECK(reader.GetUnsignedOrDefault("number", 23) == 0);
+    CHECK_FALSE(reader.GetBooleanOrDefault("flag", true));
+    CHECK(reader.GetStringOrDefault("text", "fallback").empty());
+    CHECK(reader.GetUnsignedOrError("number") == 0);
+    CHECK_FALSE(reader.GetBooleanOrError("flag"));
+    CHECK(reader.GetStringOrError("text").empty());
+    CHECK(reader.Result());
+}
+
+TEST_CASE("Shared state reads retain the first qualified error before commit", "[state-reader]") {
+    DataObject input;
+    input.SetSigned("number", 0);
+    input.SetUnsigned("flag", 0);
+    input.SetBoolean("text", false);
+    Diagnostics diagnostics;
+    StateReader reader(input, &diagnostics, "device.state.power");
+    std::uint64_t committed = 71;
+    const auto number = reader.GetUnsignedOrDefault("number", 42);
+    reader.GetBooleanOrDefault("flag", false);
+    reader.GetStringOrDefault("text", "fallback");
+    reader.GetUnsignedOrError("missing");
+    const auto result = reader.Result();
+    if (result) { committed = number; }
+    REQUIRE_FALSE(result);
+    CHECK(result.error() == StateError::InvalidData);
+    CHECK(committed == 71);
+    REQUIRE(diagnostics.Frames().size() == 1);
+    REQUIRE(diagnostics.Frames().front().location);
+    CHECK(diagnostics.Frames().front().location->path == "device.state.power.number");
+    CHECK(reader.Invalid("version", "unsupported", StateError::UnsupportedVersion).error()
+        == StateError::InvalidData);
+    CHECK(diagnostics.Frames().size() == 1);
+}
+
+TEST_CASE("Each optional scalar rejects a present wrong type", "[state-reader]") {
+    DataObject input;
+    input.Set("value", DataObject::List());
+    Diagnostics diagnostics;
+    StateReader reader(input, &diagnostics, "saved.state");
+    SECTION("unsigned") { reader.GetUnsignedOrDefault("value", 99); }
+    SECTION("boolean") { reader.GetBooleanOrDefault("value", true); }
+    SECTION("string") { reader.GetStringOrDefault("value", "fallback"); }
+    REQUIRE_FALSE(reader.Result());
+    CHECK(reader.Result().error() == StateError::InvalidData);
+    REQUIRE(diagnostics.Frames().size() == 1);
+    REQUIRE(diagnostics.Frames().front().location);
+    CHECK(diagnostics.Frames().front().location->path == "saved.state.value");
+}
+
+TEST_CASE("Shared state reads require roots and required members", "[state-reader]") {
+    DataObject input;
+    const DataObject* root = &input;
+    String expectedPath = "saved.state.value";
+    SECTION("required unsigned is missing") {}
+    SECTION("required boolean is missing") { expectedPath = "saved.state.flag"; }
+    SECTION("required string is missing") { expectedPath = "saved.state.text"; }
+    SECTION("required object is missing") { expectedPath = "saved.state.child"; }
+    SECTION("required object has wrong type") {
+        input.SetBoolean("child", false);
+        expectedPath = "saved.state.child";
+    }
+    SECTION("root is absent") { root = nullptr; expectedPath = "saved.state"; }
+    SECTION("root is wrong type") { input = DataObject::List(); expectedPath = "saved.state"; }
+    Diagnostics diagnostics;
+    StateReader reader(root, &diagnostics, "saved.state");
+    if (expectedPath == "saved.state.flag") { reader.GetBooleanOrError("flag"); }
+    else if (expectedPath == "saved.state.text") { reader.GetStringOrError("text"); }
+    else if (expectedPath == "saved.state.child") { reader.GetObjectOrError("child"); }
+    else { reader.GetUnsignedOrError("value"); }
+    REQUIRE_FALSE(reader.Result());
+    REQUIRE(diagnostics.Frames().size() == 1);
+    REQUIRE(diagnostics.Frames().front().location);
+    CHECK(diagnostics.Frames().front().location->path == expectedPath);
+    StateReader quiet(root);
+    quiet.GetUnsignedOrError("value");
+    CHECK_FALSE(quiet.Result());
+}
+
+TEST_CASE("Shared semantic diagnostics preserve version status and qualified paths", "[state-reader]") {
+    const DataObject input;
+    Diagnostics diagnostics;
+    StateReader reader(input, &diagnostics, "saved.state");
+    REQUIRE(reader.Result());
+    reader.Invalid("version", "unsupported state version", StateError::UnsupportedVersion);
+    REQUIRE_FALSE(reader.Result());
+    CHECK(reader.Result().error() == StateError::UnsupportedVersion);
+    REQUIRE(diagnostics.Frames().size() == 1);
+    REQUIRE(diagnostics.Frames().front().location);
+    CHECK(diagnostics.Frames().front().location->path == "saved.state.version");
 }
 
 TEST_CASE("Item action IDs are bounded local ASCII identities", "[item-state]") {

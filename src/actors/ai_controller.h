@@ -2,7 +2,7 @@
 
 #include "core/data_object.h"
 #include "core/world_types.h"
-#include "items/item_types.h"
+#include "core/state_result.h"
 #include <EASTL/unique_ptr.h>
 
 namespace cataclysmx {

@@ -757,7 +757,7 @@ TEST_CASE("Reconnected guest input waits for the idle host's full grace", "[netw
     }
     REQUIRE(queued); REQUIRE_FALSE(resolved);
     host.Pump(999999);
-    REQUIRE(server.GetWorld().GetActor(hostActor)->remainingTicks == 0);
+    REQUIRE(server.GetWorld().GetActorRemainingTicks(hostActor) == 0);
     for (const auto& p : server.GetPlayers())
         if (p.id == server.GetHostPlayerId()) REQUIRE(p.graceMicroseconds == 1);
     const auto update = host.Pump(1);

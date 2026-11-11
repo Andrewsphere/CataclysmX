@@ -63,7 +63,7 @@ void Blocked(Server& server, Command command = Interact()) {
     CHECK_FALSE(result.advanced);
     CHECK(result.cost == 0);
     CHECK(server.GetTick() == before);
-    CHECK(server.GetWorld().GetActor(server.GetPlayer())->remainingTicks == 0);
+    CHECK(server.GetWorld().GetActorRemainingTicks(server.GetPlayer()) == 0);
     CHECK(server.GetWorld().GetActor(server.GetPlayer())->turns == turns);
 }
 

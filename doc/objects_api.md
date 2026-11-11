@@ -48,7 +48,7 @@ and output item definitions.
 `objects/interactive_object.h` defines the concrete, move-only
 `InteractiveObject`. Its default constructor and `(PersistentId, TileCoord,
 bool enabled)` constructor initialize the retained public fields, including
-the legacy timer counters, and leave `type` zero and `behavior_` null. Only
+the suspended legacy `updateDeadline`, and leave `type` zero and `behavior_` null. Only
 `World`, a friend, installs or invokes its private owned behavior.
 
 `ObjectDefinition` is a value with a closed `ObjectBehaviorKind` and a typed
@@ -77,6 +77,10 @@ outcomes have base cost zero. `NoInputs`, `NoPower`, `NoJob`, `Busy`,
 failures are `Inaccessible`. Unknown action enum values are `InvalidAction`.
 World validates actor/object handles and interaction access before every Use,
 including Stop and resume, which may need no context transaction.
+
+The [callback context](object_callbacks.md) carries explicit object identity,
+performs atomic item transactions immediately, and defers self-destruction and
+item notifications until the behavior returns.
 
 ## Machine rules
 
@@ -110,15 +114,27 @@ remaining, the machine pauses immediately and has no event left to process.
 At completion, output remains due until ProcessEvent, including when energy
 has simultaneously reached zero.
 
-## Strict state format
+## Saved state format and safe defaults
 
 ```text
 {version: unsigned 1, energy: unsigned uint64,
  has_job: bool, running: bool, remaining_work: unsigned Tick}
 ```
 
-Every field is required, including the version. Signed integers are not
-accepted in place of unsigned values in this typed archive object. Unknown
+`SaveState()` writes all five fields. Saved-state reading intentionally accepts
+omission where there is an unambiguous safe default:
+
+| Field | Saved-state requirement / default |
+| --- | --- |
+| `version` | Required unsigned 1. |
+| `energy` | Optional; defaults to 0, never initial full capacity. |
+| `has_job` | Optional; defaults to false. |
+| `running` | Optional; defaults to false. |
+| `remaining_work` | Required when `has_job` is true; otherwise defaults to 0. |
+
+Defaults apply only to absent members. Explicit wrong types remain errors,
+including signed integers in place of unsigned values, integer flags, or string
+numbers. Valid false and zero are preserved. Unknown
 fields are rejected; unsupported versions return `StateError::UnsupportedVersion`.
 Other malformed states return `StateError::InvalidData`, optionally with a
 field diagnostic. Energy must not exceed capacity; work must not exceed
@@ -126,7 +142,25 @@ duration. No job implies not running and zero work. Running incomplete work
 requires at least one tick of energy. A pending job with zero work is valid,
 whether running or paused and regardless of energy. Paused jobs preserve
 their paused state on reload. `ValidateObjectBehaviorState` and the factory
-share validation; neither mutates World.
+share the same private parser returning a complete `StateResult<MachineState>`;
+neither mutates World or exposes partially parsed state. Typed reads use
+[StateReader](data_object.md#shared-state-reader) validates the version before
+reading its payload, then checks the payload result before applying semantic
+constraints. Diagnostics retain field-relative paths such
+as `remaining_work`; framing belongs to the caller.
+
+For example, `{version: unsigned 1}` restores an idle, empty-energy machine.
+`{version: unsigned 1, has_job: true, remaining_work: unsigned 5}` restores
+unpowered, paused work. `{version: unsigned 1, has_job: true}` is invalid:
+defaulting its work to zero would grant a free completion. An explicit
+`remaining_work: unsigned 0` with a job is still a valid pending completion.
+An omitted job marker does not excuse nonzero work or a true running flag.
+
+New-machine creation is deliberately separate: `MakeObjectBehavior(definition,
+nullptr)` starts fully charged and idle. Passing an explicit saved payload never
+requests that initial charge. These defaults allow concise safe saved states
+without repairing malformed input or inventing energy or completed jobs. The
+version remains required so omission cannot bypass format compatibility checks.
 
 A null behavior (both type-zero compatibility objects and typed `None`
 definitions) saves an empty `DataObject{}` through the owning World. A generic

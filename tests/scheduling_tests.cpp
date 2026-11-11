@@ -54,7 +54,7 @@ void SameScheduledState(const Server& first, const Server& second) {
         CHECK(actor->position == other->position);
         CHECK(actor->turns == other->turns);
         CHECK(actor->speed == other->speed);
-        CHECK(actor->remainingTicks == other->remainingTicks);
+        CHECK(a.GetActorRemainingTicks(handle) == b.GetActorRemainingTicks(b.FindActor(actor->id)));
     }
     Vector<ObjectHandle> objectsA, objectsB;
     a.CollectActiveObjects(objectsA);
@@ -65,11 +65,128 @@ void SameScheduledState(const Server& first, const Server& second) {
         const auto* other = b.GetObject(b.FindObject(object->id));
         REQUIRE(other);
         CHECK(object->updates == other->updates);
-        CHECK(object->remainingTicks == other->remainingTicks);
+        CHECK(a.GetObjectRemainingTicks(handle) == b.GetObjectRemainingTicks(b.FindObject(object->id)));
         CHECK(object->updateInterval == other->updateInterval);
     }
     CHECK(a.CheckInvariants());
     CHECK(b.CheckInvariants());
+}
+
+TEST_CASE("Elapsed time changes the World clock without rewriting deadlines", "[scheduling][deadlines]") {
+    World world(TestContent());
+    LoadFloor(world);
+    world.ElapseTicks(123);
+    const auto player = Take(world.CreateActor({1, 1}, true));
+    const auto object = Take(world.CreateObject({2, 1}, true));
+    REQUIRE(world.ScheduleActorAction(player));
+    CHECK(world.GetActor(player)->actionDeadline.dueTick == 223);
+    CHECK(world.GetObject(object)->updateDeadline.dueTick == 223);
+    for (int step = 0; step < 10; ++step) {
+        world.ElapseTicks(10);
+        CHECK(world.GetActor(player)->actionDeadline.dueTick == 223);
+        CHECK(world.GetObject(object)->updateDeadline.dueTick == 223);
+    }
+    CHECK(world.GetTick() == 223);
+    CHECK(world.NextActorEventIn() == eastl::optional<Tick>{0});
+    CHECK(world.NextObjectEventIn() == eastl::optional<Tick>{0});
+    world.ElapseTicks(7); // Overdue is ready too; no unsigned subtraction wrap.
+    CHECK(world.GetActorRemainingTicks(player) == 0);
+    CHECK(world.GetObjectRemainingTicks(object) == 0);
+    Vector<ActorHandle> ready;
+    world.CollectReadyPlayers(ready);
+    CHECK(ready == Vector<ActorHandle>{player});
+    CHECK(world.ProcessObjectEvents());
+    CHECK_FALSE(world.ProcessObjectEvents());
+    CHECK(world.GetObject(object)->updateDeadline.dueTick == 330);
+    Tick mirror = 999; // Compatibility time is output, never a second clock.
+    std::uint32_t rng = 0;
+    CHECK(AdvanceUntilInput(world, mirror, rng, world.GetTick()).stop == SimulationStop::InputRequired);
+    CHECK(mirror == 230);
+}
+
+TEST_CASE("Large absolute ticks retain exact positive deadlines", "[scheduling][deadlines]") {
+    World world(TestContent());
+    LoadFloor(world);
+    const Tick start = forever - 1000;
+    world.ElapseTicks(start);
+    const auto player = Take(world.CreateActor({1, 1}, true));
+    const auto object = Take(world.CreateObject({2, 1}, true));
+    REQUIRE(world.ScheduleActorAction(player));
+    CHECK(world.GetActor(player)->actionDeadline.dueTick == start + 100);
+    CHECK(world.GetObject(object)->updateDeadline.dueTick == start + 100);
+    world.ElapseTicks(99);
+    CHECK(world.GetActorRemainingTicks(player) == 1);
+    CHECK(world.GetObjectRemainingTicks(object) == 1);
+    world.ElapseTicks(1);
+    CHECK(world.GetActorRemainingTicks(player) == 0);
+    CHECK(world.GetObjectRemainingTicks(object) == 0);
+    CHECK(world.ProcessObjectEvents());
+    CHECK(world.GetObject(object)->updateDeadline.dueTick == start + 200);
+    CHECK(world.CheckInvariants());
+}
+
+TEST_CASE("Overlapping suspension reasons rebase only on final reactivation", "[scheduling][streaming][parking]") {
+    World world(TestContent());
+    const auto request = LoadFloor(world);
+    const auto player = Take(world.CreateActor({1, 1}, true));
+    const auto npc = Take(world.CreateActor({3, 1}));
+    const auto object = Take(world.CreateObject({2, 1}, true));
+    REQUIRE(world.ScheduleActorAction(player));
+    REQUIRE(world.ScheduleActorAction(npc));
+    world.ElapseTicks(30);
+    REQUIRE(world.SetActorParked(player, true));
+    REQUIRE(world.SetActorController(npc, AiControllerKind::None));
+    REQUIRE(world.SetObjectEnabled(object, false));
+    world.ElapseTicks(20);
+    REQUIRE(world.UpdateRequest(request, {{}, 0}, LoadMode::resident));
+    REQUIRE(world.ReconcileChunks());
+    // Clearing entity-level reasons in an inactive chunk must not resume time.
+    REQUIRE(world.SetActorParked(player, false));
+    REQUIRE(world.SetActorController(npc, AiControllerKind::Wander));
+    REQUIRE(world.SetObjectEnabled(object, true));
+    world.ElapseTicks(500);
+    CHECK(world.GetActor(player)->actionDeadline.suspended);
+    CHECK(world.GetActor(npc)->actionDeadline.suspended);
+    CHECK(world.GetObject(object)->updateDeadline.suspended);
+    CHECK(world.GetActorRemainingTicks(player) == 70);
+    CHECK(world.GetActorRemainingTicks(npc) == 70);
+    CHECK(world.GetObjectRemainingTicks(object) == 70);
+    REQUIRE(world.UpdateRequest(request, {{}, 0}, LoadMode::active));
+    REQUIRE(world.ReconcileChunks());
+    CHECK(world.GetActor(player)->actionDeadline.dueTick == 620);
+    CHECK(world.GetActor(npc)->actionDeadline.dueTick == 620);
+    CHECK(world.GetObject(object)->updateDeadline.dueTick == 620);
+    // Inverse overlap: chunk reactivation cannot clear the parked reason.
+    REQUIRE(world.SetActorParked(player, true));
+    REQUIRE(world.UpdateRequest(request, {{}, 0}, LoadMode::resident));
+    REQUIRE(world.ReconcileChunks());
+    world.ElapseTicks(100);
+    REQUIRE(world.UpdateRequest(request, {{}, 0}, LoadMode::active));
+    REQUIRE(world.ReconcileChunks());
+    world.ElapseTicks(10);
+    CHECK(world.GetActorRemainingTicks(player) == 70);
+    REQUIRE(world.SetActorParked(player, false));
+    CHECK(world.GetActor(player)->actionDeadline.dueTick == 730);
+    CHECK(world.CheckInvariants());
+}
+
+TEST_CASE("NPC due batches follow stable IDs after dense storage relocation", "[scheduling][determinism]") {
+    World world(TestContent());
+    LoadFloor(world);
+    const auto retired = Take(world.CreateActor({8, 8}));
+    const auto first = Take(world.CreateActor({10, 10}));
+    const auto second = Take(world.CreateActor({2, 2}));
+    REQUIRE(world.DestroyActor(retired)); // Relocates second before first.
+    const auto third = Take(world.CreateActor({6, 6}));
+    std::uint32_t rng = 0;
+    world.ProcessNpcActions(rng);
+    CHECK(world.GetActor(first)->position == TileCoord{11, 10});
+    CHECK(world.GetActor(second)->position == TileCoord{2, 3});
+    CHECK(world.GetActor(third)->position == TileCoord{6, 5});
+    CHECK(rng == 3'519'870'697U);
+    CHECK(world.GetActor(first)->actionDeadline.dueTick == 100);
+    CHECK(world.GetActor(second)->actionDeadline.dueTick == 100);
+    CHECK(world.GetActor(third)->actionDeadline.dueTick == 100);
 }
 
 TEST_CASE("NPC horizontal wandering preserves elevation and the legacy draw policy", "[scheduling][3d][determinism]") {
@@ -104,7 +221,7 @@ TEST_CASE("Walking into a deep hole settles immediately for only the walking cos
     CHECK(result.tick == 0);
     CHECK(world.GetActor(server.GetPlayer())->position == TileCoord{1, 0, 0});
     CHECK(world.GetActor(server.GetPlayer())->turns == 1);
-    CHECK(world.GetActor(server.GetPlayer())->remainingTicks == 70);
+    CHECK(world.GetActorRemainingTicks(server.GetPlayer()) == 70);
     CHECK(world.LoadedChunks() == chunks);
     CHECK(server.Update(700'000).tick == 70);
     CHECK(server.View().remainingTicks == 0);
@@ -154,7 +271,7 @@ TEST_CASE("Player durations scale waits while object time stays independent", "[
             CHECK(result.readyPlayers == Vector<ActorHandle>{player});
             CHECK(tick - before == static_cast<Tick>(base) * speed / 100);
             CHECK(world.GetObject(object)->updates == tick / 100);
-            CHECK(world.GetObject(object)->remainingTicks == 100 - tick % 100);
+            CHECK(world.GetObjectRemainingTicks(object) == 100 - tick % 100);
             CHECK(rng == 42);
         }
         CHECK(world.GetActor(player)->turns == 3);
@@ -167,7 +284,7 @@ TEST_CASE("Positive action durations round up and invalid scheduling preserves c
     const auto player = Take(world.CreateActor({1, 1}, true));
     REQUIRE(world.SetActorSpeed(player, 70));
     REQUIRE(world.ScheduleActorAction(player, 1));
-    CHECK(world.GetActor(player)->remainingTicks == 1);
+    CHECK(world.GetActorRemainingTicks(player) == 1);
     CHECK(world.ScheduleActorAction(player, 150) == eastl::unexpected(WorldError::invalid_request));
     CHECK(world.GetActor(player)->turns == 1);
     Tick tick = 0;
@@ -175,14 +292,14 @@ TEST_CASE("Positive action durations round up and invalid scheduling preserves c
     REQUIRE(AdvanceUntilInput(world, tick, rng, forever).stop == SimulationStop::InputRequired);
     CHECK(tick == 1);
     REQUIRE(world.ScheduleActorAction(player, 151));
-    CHECK(world.GetActor(player)->remainingTicks == 106);
+    CHECK(world.GetActorRemainingTicks(player) == 106);
     REQUIRE(world.SetActorSpeed(player, 50));
-    CHECK(world.GetActor(player)->remainingTicks == 106); // Committed duration is stable.
+    CHECK(world.GetActorRemainingTicks(player) == 106); // Committed duration is stable.
     REQUIRE(AdvanceUntilInput(world, tick, rng, forever).stop == SimulationStop::InputRequired);
     CHECK(tick == 107);
     CHECK(world.ScheduleActorAction(player, 0) == eastl::unexpected(WorldError::invalid_request));
     CHECK(world.SetActorSpeed(player, 0) == eastl::unexpected(WorldError::invalid_request));
-    CHECK(world.GetActor(player)->remainingTicks == 0);
+    CHECK(world.GetActorRemainingTicks(player) == 0);
     CHECK(world.GetActor(player)->turns == 2);
 }
 
@@ -224,14 +341,14 @@ TEST_CASE("Singleplayer Advance commits a normal wait and stops at the next inpu
     std::uint32_t rng = 42;
     cataclysmx::Advance(world, player, rng);
     CHECK(world.GetActor(player)->turns == 1);
-    CHECK(world.GetActor(player)->remainingTicks == 0);
+    CHECK(world.GetActorRemainingTicks(player) == 0);
     CHECK(world.GetObject(object)->updates == 0);
-    CHECK(world.GetObject(object)->remainingTicks == 50);
+    CHECK(world.GetObjectRemainingTicks(object) == 50);
     cataclysmx::Advance(world, player, rng);
     CHECK(world.GetActor(player)->turns == 2);
-    CHECK(world.GetActor(player)->remainingTicks == 0);
+    CHECK(world.GetActorRemainingTicks(player) == 0);
     CHECK(world.GetObject(object)->updates == 1);
-    CHECK(world.GetObject(object)->remainingTicks == 100);
+    CHECK(world.GetObjectRemainingTicks(object) == 100);
     CHECK(rng == 42);
 }
 
@@ -260,7 +377,7 @@ TEST_CASE("All ready players form a persistent ID barrier before NPCs without re
     result = AdvanceUntilInput(world, tick, rng, forever);
     CHECK(result.readyPlayers == Vector<ActorHandle>{first, second});
     CHECK(tick == 100);
-    CHECK(world.GetActor(busy)->remainingTicks == 150);
+    CHECK(world.GetActorRemainingTicks(busy) == 150);
     CHECK(world.GetActor(npc)->turns == 1); // Tick-100 NPC phase is still behind the barrier.
     CHECK(world.GetObject(object)->updates == 1); // Due objects precede that barrier.
     const auto savedRng = rng;
@@ -286,10 +403,10 @@ TEST_CASE("Blocked NPC actions consume duration and exactly one ordered explicit
     CHECK(result.nextEventIn == 70);
     CHECK(rng == 1'196'435'762U);
     CHECK(world.GetActor(first)->position == TileCoord{10, 10});
-    CHECK(world.GetActor(first)->remainingTicks == 70);
+    CHECK(world.GetActorRemainingTicks(first) == 70);
     CHECK(world.GetActor(first)->turns == 1);
     CHECK(world.GetActor(second)->position == TileCoord{2, 3});
-    CHECK(world.GetActor(second)->remainingTicks == 100);
+    CHECK(world.GetActorRemainingTicks(second) == 100);
     CHECK(AdvanceUntilInput(world, tick, rng, 69).nextEventIn == 1);
     CHECK(world.GetActor(first)->turns == 1);
     CHECK(rng == 1'196'435'762U);
@@ -307,7 +424,8 @@ TEST_CASE("Deleted scheduled entities leave no events and reused slots start fre
     REQUIRE(world.ScheduleActorAction(actor, 250));
     REQUIRE(world.DestroyActor(actor));
     REQUIRE(world.DestroyObject(object));
-    Tick tick = 17;
+    world.ElapseTicks(17);
+    Tick tick = world.GetTick();
     std::uint32_t rng = 9;
     auto result = AdvanceUntilInput(world, tick, rng, 1000);
     CHECK(result.stop == SimulationStop::NoEvents);
@@ -351,14 +469,14 @@ TEST_CASE("Inactive and archived chunks freeze partial actor and object delays",
     const auto restoredObject = world.FindObject(objectId);
     REQUIRE(world.GetActor(restoredActor));
     REQUIRE(world.GetObject(restoredObject));
-    CHECK(world.GetActor(restoredActor)->remainingTicks == 210);
-    CHECK(world.GetObject(restoredObject)->remainingTicks == 60);
+    CHECK(world.GetActorRemainingTicks(restoredActor) == 210);
+    CHECK(world.GetObjectRemainingTicks(restoredObject) == 60);
     CHECK(world.GetObject(restoredObject)->updates == 0);
     REQUIRE(AdvanceUntilInput(world, tick, rng, 559).stop == SimulationStop::LimitReached);
-    CHECK(world.GetObject(restoredObject)->remainingTicks == 1);
+    CHECK(world.GetObjectRemainingTicks(restoredObject) == 1);
     REQUIRE(AdvanceUntilInput(world, tick, rng, 560).stop == SimulationStop::LimitReached);
     CHECK(world.GetObject(restoredObject)->updates == 1);
-    CHECK(world.GetActor(restoredActor)->remainingTicks == 150);
+    CHECK(world.GetActorRemainingTicks(restoredActor) == 150);
     CHECK(world.GetActor(restoredActor)->turns == 1);
     CHECK(rng == 0);
     CHECK(world.CheckInvariants());
@@ -469,7 +587,7 @@ TEST_CASE("Buffered movement validates the destination when ready and consumes f
         CHECK(update.commandResult->cost == 0);
         CHECK(update.commandResult->tick == 100);
         CHECK(update.needsInput);
-        CHECK(world.GetActor(server.GetPlayer())->remainingTicks == 0);
+        CHECK(world.GetActorRemainingTicks(server.GetPlayer()) == 0);
         REQUIRE(world.SetTile({1, 0}, {TestTerrain("floor"), 0}));
         CHECK(server.Update(5'000'000).tick == 100);
         CHECK(world.GetActor(server.GetPlayer())->position == TileCoord{0, 0});
@@ -654,7 +772,7 @@ TEST_CASE("A busy player keeps shared pacing active while a ready player reaches
     pacer.ConsumeTicks(tick);
     CHECK(tick == 50);
     CHECK(result.readyPlayers == Vector<ActorHandle>{ready});
-    CHECK(world.GetActor(busy)->remainingTicks == 200);
+    CHECK(world.GetActorRemainingTicks(busy) == 200);
     CHECK(world.GetActor(ready)->turns == 1);
 }
 

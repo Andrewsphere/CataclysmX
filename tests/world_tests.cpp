@@ -206,8 +206,8 @@ TEST_CASE("Activity-only reconciliation preserves archives handles and relative 
     const auto item = take(world.CreateItem(TestItem("rock"), ItemLocation::Carried(actor)));
     REQUIRE(world.ScheduleActorAction(actor));
     world.ElapseTicks(23);
-    const auto actorDelay = world.GetActor(actor)->remainingTicks;
-    const auto objectDelay = world.GetObject(object)->remainingTicks;
+    const auto actorDelay = world.GetActorRemainingTicks(actor);
+    const auto objectDelay = world.GetObjectRemainingTicks(object);
     const auto loaded = world.LoadedChunks();
     const auto revision = world.GetRevision();
     const auto mapRevision = world.GetMapRevision();
@@ -224,12 +224,12 @@ TEST_CASE("Activity-only reconciliation preserves archives handles and relative 
     REQUIRE(world.GetObject(object));
     REQUIRE(world.GetItem(item));
     world.ElapseTicks(1000);
-    CHECK(world.GetActor(actor)->remainingTicks == actorDelay);
-    CHECK(world.GetObject(object)->remainingTicks == objectDelay);
+    CHECK(world.GetActorRemainingTicks(actor) == actorDelay);
+    CHECK(world.GetObjectRemainingTicks(object) == objectDelay);
     REQUIRE(world.UpdateRequest(request, {{0, 0}, 0}, LoadMode::active));
     REQUIRE(world.ReconcileChunks());
-    CHECK(world.GetActor(actor)->remainingTicks == actorDelay);
-    CHECK(world.GetObject(object)->remainingTicks == objectDelay);
+    CHECK(world.GetActorRemainingTicks(actor) == actorDelay);
+    CHECK(world.GetObjectRemainingTicks(object) == objectDelay);
     CHECK(ActiveActors(world) == Vector<ActorHandle>{actor});
     CHECK(world.GetPerceptionStats().columnsLoaded == 0);
     CHECK(world.GetPerceptionStats().columnsUnloaded == 0);
@@ -453,9 +453,9 @@ TEST_CASE("World schedules committed actor delays and freezes inactive timers", 
     const auto actorId = world.GetActor(actor)->id;
     const auto objectId = world.GetObject(object)->id;
     CHECK(world.GetActor(actor)->speed == 100);
-    CHECK(world.GetActor(actor)->remainingTicks == 0);
+    CHECK(world.GetActorRemainingTicks(actor) == 0);
     CHECK(world.GetObject(object)->updateInterval == 100);
-    CHECK(world.GetObject(object)->remainingTicks == 100);
+    CHECK(world.GetObjectRemainingTicks(object) == 100);
     CHECK(world.SetActorSpeed({}, 100) == eastl::unexpected(WorldError::invalid_handle));
     CHECK(world.ScheduleActorAction({}, 100) == eastl::unexpected(WorldError::invalid_handle));
     CHECK(world.SetObjectUpdateInterval({}, 100) == eastl::unexpected(WorldError::invalid_handle));
@@ -464,54 +464,54 @@ TEST_CASE("World schedules committed actor delays and freezes inactive timers", 
     CHECK(world.ScheduleActorAction(actor, 0) == eastl::unexpected(WorldError::invalid_request));
     REQUIRE(world.SetActorSpeed(actor, 33));
     REQUIRE(world.ScheduleActorAction(actor, 101));
-    CHECK(world.GetActor(actor)->remainingTicks == 34); // Ceiling, not truncation.
+    CHECK(world.GetActorRemainingTicks(actor) == 34); // Ceiling, not truncation.
     CHECK(world.GetActor(actor)->turns == 1);
     CHECK(world.ScheduleActorAction(actor) == eastl::unexpected(WorldError::invalid_request));
     CHECK(world.GetActor(actor)->turns == 1);
     REQUIRE(world.SetActorSpeed(actor, 200));
-    CHECK(world.GetActor(actor)->remainingTicks == 34); // Already committed.
+    CHECK(world.GetActorRemainingTicks(actor) == 34); // Already committed.
     REQUIRE(world.SetObjectUpdateInterval(object, 75));
     world.ElapseTicks(20);
-    CHECK(world.GetActor(actor)->remainingTicks == 14);
-    CHECK(world.GetObject(object)->remainingTicks == 55);
+    CHECK(world.GetActorRemainingTicks(actor) == 14);
+    CHECK(world.GetObjectRemainingTicks(object) == 55);
     REQUIRE(world.SetObjectEnabled(object, false));
     REQUIRE(world.RecordObjectUpdate(object));
     world.ElapseTicks(0);
-    CHECK(world.GetActor(actor)->remainingTicks == 14);
+    CHECK(world.GetActorRemainingTicks(actor) == 14);
     world.ElapseTicks(4);
-    CHECK(world.GetActor(actor)->remainingTicks == 10);
-    CHECK(world.GetObject(object)->remainingTicks == 55);
+    CHECK(world.GetActorRemainingTicks(actor) == 10);
+    CHECK(world.GetObjectRemainingTicks(object) == 55);
     CHECK(world.GetObject(object)->updates == 0);
     REQUIRE(world.UpdateRequest(request, {{0, 0}, 0}, LoadMode::resident));
     REQUIRE(world.ReconcileChunks());
-    world.ElapseTicks(UINT64_MAX);
-    CHECK(world.GetActor(actor)->remainingTicks == 10);
-    CHECK(world.GetObject(object)->remainingTicks == 55);
+    world.ElapseTicks(UINT64_MAX / 8);
+    CHECK(world.GetActorRemainingTicks(actor) == 10);
+    CHECK(world.GetObjectRemainingTicks(object) == 55);
     CHECK(world.ScheduleActorAction(actor) == eastl::unexpected(WorldError::chunk_unavailable));
     REQUIRE(world.ReleaseRequest(request));
     REQUIRE(world.ReconcileChunks());
-    world.ElapseTicks(UINT64_MAX);
+    world.ElapseTicks(UINT64_MAX / 8);
     load(world);
     const auto freshActor = world.FindActor(actorId);
     const auto freshObject = world.FindObject(objectId);
     CHECK(world.GetActor(freshActor)->speed == 200);
-    CHECK(world.GetActor(freshActor)->remainingTicks == 10);
+    CHECK(world.GetActorRemainingTicks(freshActor) == 10);
     CHECK(world.GetObject(freshObject)->updateInterval == 75);
-    CHECK(world.GetObject(freshObject)->remainingTicks == 55);
+    CHECK(world.GetObjectRemainingTicks(freshObject) == 55);
     REQUIRE(world.SetObjectEnabled(freshObject, true));
-    world.ElapseTicks(UINT64_MAX);
-    CHECK(world.GetActor(freshActor)->remainingTicks == 0);
-    CHECK(world.GetObject(freshObject)->remainingTicks == 0);
+    world.ElapseTicks(UINT64_MAX / 8);
+    CHECK(world.GetActorRemainingTicks(freshActor) == 0);
+    CHECK(world.GetObjectRemainingTicks(freshObject) == 0);
     REQUIRE(world.RecordObjectUpdate(freshObject));
     CHECK(world.GetObject(freshObject)->updates == 1);
-    CHECK(world.GetObject(freshObject)->remainingTicks == 75);
+    CHECK(world.GetObjectRemainingTicks(freshObject) == 75);
     world.ElapseTicks(7);
     REQUIRE(world.SetObjectUpdateInterval(freshObject, 19));
-    CHECK(world.GetObject(freshObject)->remainingTicks == 19); // Explicit restart.
+    CHECK(world.GetObjectRemainingTicks(freshObject) == 19); // Explicit restart.
     REQUIRE(world.SetActorSpeed(freshActor, UINT32_MAX));
     REQUIRE(world.ScheduleActorAction(freshActor, UINT32_MAX));
-    CHECK(world.GetActor(freshActor)->remainingTicks == ActionTicks(UINT32_MAX, UINT32_MAX));
-    CHECK(world.GetActor(freshActor)->remainingTicks > UINT32_MAX);
+    CHECK(world.GetActorRemainingTicks(freshActor) == ActionTicks(UINT32_MAX, UINT32_MAX));
+    CHECK(world.GetActorRemainingTicks(freshActor) > UINT32_MAX);
     CHECK(world.GetActor(freshActor)->turns == 2);
     CHECK(world.CheckInvariants());
 }
@@ -993,7 +993,7 @@ TEST_CASE("Gravity settles actors bottom up and retries after blockers move or d
     CHECK(world.GetActor(upper)->position == TileCoord{1, 1, -3});
     CHECK(world.FindPlayerPosition(id) == TileCoord{1, 1, -3});
     CHECK(world.GetActor(upper)->turns == 1);
-    CHECK(world.GetActor(upper)->remainingTicks == 37);
+    CHECK(world.GetActorRemainingTicks(upper) == 37);
     CHECK(world.GetItem(carried)->location == ItemLocation::Carried(upper));
     const auto blocked = take(world.CreateActor({1, 1, 3}));
     CHECK(world.GetActor(blocked)->position == TileCoord{1, 1, -2});
