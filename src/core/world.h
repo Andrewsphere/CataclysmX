@@ -100,7 +100,10 @@ struct Chunk {
     ChunkCoord position{};
     bool active = false;
     eastl::array<Tile, chunk_size * chunk_size> tiles{};
+    // Strictly ascending persistent actor ID; independent of dense storage order.
     Vector<ActorHandle> actors;
+    // TileIndex-indexed nonparked occupants; parked actors never occupy a tile.
+    eastl::array<ActorHandle, chunk_size * chunk_size> actorOccupancy{};
     Vector<ItemHandle> ground_items;
     Vector<ObjectHandle> objects;
 };
@@ -214,6 +217,8 @@ public:
     const Item* GetItem(ItemHandle handle) const;
     const InteractiveObject* GetObject(ObjectHandle handle) const;
     ActorHandle FindActor(PersistentId id) const;
+    // Stable chunk-local cursor: first resident actor with ID > after, or {}.
+    ActorHandle NextActorInChunk(ChunkCoord position, PersistentId after) const;
     // Last known position of a player actor, including unloaded roster players.
     eastl::optional<TileCoord> FindPlayerPosition(PersistentId id) const;
     ItemHandle FindItem(PersistentId id) const;
@@ -234,7 +239,9 @@ public:
     WorldResult<void> MoveActor(ActorHandle actor, TileCoord destination);
     WorldResult<void> TryActorStep(ActorHandle actor, TileCoord direction, bool activeOnly = false);
     DataObject CaptureActorController(ActorHandle actor) const;
+    AiInspection InspectActorAi(ActorHandle actor) const;
     WorldResult<void> SetActorController(ActorHandle actor, AiControllerKind kind);
+    WorldResult<void> SetActorAiProfile(ActorHandle actor, eastl::string_view profile);
     // Parked players remain owned but do not occupy tiles or advance time.
     // Unparking requires an unoccupied passable tile.
     WorldResult<void> SetActorParked(ActorHandle actor, bool parked);

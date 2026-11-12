@@ -19,22 +19,11 @@
 
 ## Status and implementation order
 
-This document records the design direction discussed for entity AI. It is a
-design proposal, not a description of an implemented subsystem or a finalized
-public API. Suggested algorithms and starting policies are identified below;
-unresolved contracts are collected in [Implementation prerequisites and open
-questions](#implementation-prerequisites-and-open-questions).
-
-The intended order of work is:
-
-1. Refactor the world where needed.
-2. Improve the entity API.
-3. Implement a simple combat system.
-4. Implement AI incrementally on those foundations.
-
-The entity refactoring and combat work should establish the contracts AI needs,
-without requiring a complete AI framework in advance. Document implemented APIs
-under `doc/`; keep this file as the design rationale and planning reference.
+The sight-driven baseline is implemented on the world, actor and combat
+foundations. See [sighted entity AI](../doc/entity_ai.md) for current behavior,
+APIs and limits. The rest of this document records broader goals and proposed
+extensions, not promises that they already exist. Open questions apply to the
+corresponding future work.
 
 ## Goals and principal decisions
 
@@ -63,13 +52,10 @@ those modalities; the vision decision does not prohibit environmental fields.
 
 ## Current foundations
 
-These are observations about the checkout at the time of this discussion. Recheck
-them after the world/entity refactoring rather than treating them as constraints
-on the final API.
+The baseline includes Wander, Melee and Sighted controllers, simple combat,
+single-contact memory, local pursuit and bounded discovery. Actions use simulation
+ticks and stable actor ordering; planned routing and other senses remain future work.
 
-- [`src/core/simulation.cpp`](../src/core/simulation.cpp) currently implements
-  fixed random NPC wandering. Actions use simulation ticks and stable actor
-  ordering; there is no enemy decision-making or pathfinding subsystem yet.
 - [`src/core/world.h`](../src/core/world.h) exposes world-owned actors through
   typed handles. Chunks have actor lists useful for spatial candidate discovery.
   Actor borrows do not survive uncontrolled mutation or unloading.
@@ -78,14 +64,13 @@ on the final API.
 - [`src/core/perception.cpp`](../src/core/perception.cpp) implements planar
   shadowcasting plus downward projection. `LineVisible` builds a local planar
   visibility field; despite its name, it is not a cheap ray traversal.
-- Current sight does not project upward. See [Y layers](../doc/y_layers.md) and
-  [bulk perception](../doc/bulk_perception.md). Entity 3D LOS is an intentional
-  change of geometric contract, not merely an optimization of that projection.
+- Player sight does not project upward. Entity 3D LOS is an intentional different
+  geometric contract, not merely an optimization of that projection.
 - Chunk reconciliation is currently a synchronous boundary operation. Its
   explicit-boundary model is useful, but a budgeted AI work scheduler would be
   new functionality.
-- The [content catalog](../doc/content_format.md) already provides strict JSON5
-  loading and typed definitions, but actor/AI/faction definitions are new work.
+- The [content catalog](../doc/content_format.md) includes named AI profiles;
+  richer actor and faction definitions remain future work.
 
 ## Knowledge boundary and ownership
 
@@ -248,20 +233,19 @@ engine are unnecessary. Start with one useful eye-to-body segment if gameplay
 permits. Add further target samples, such as a head sample, only if partial-cover
 behavior needs them.
 
-Resolve floor placement, eye/body heights, vertical distance scaling, corner
-rules, and stairs before implementing this query. A fixed segment should have
-consistent obstruction results when traversed in reverse. That geometric property
-does not imply symmetric detection: facing, signatures, observer sensitivity,
-and differing eye/body sample endpoints can still make detection asymmetric.
+The baseline uses center samples, Euclidean range, conservative supercover ties,
+and the floor/stair rules documented in [sighted entity AI](../doc/entity_ai.md).
+Geometric reversal does not imply symmetric detection: observer sensitivity and
+target illumination can differ.
 
 Unavailable geometry is treated as unknown/occluding; a sensor query should not
 implicitly load distant chunks. Decide how this interacts with boundary sensing
 and active/resident entities as part of the world API contract.
 
-The map's existing 2.5D presentation and entity LOS answer different questions.
-Define how player entity detection and combat use the new geometry so that
-corner, elevation, and cover outcomes are understandable. Firing checks may have
-different physical rules from sight, but those differences must be explicit.
+The player retains 2.5D perception while AI uses 3D rays. This asymmetry is an
+explicitly accepted decision, not a shipping blocker. Upward player projection
+is later work; reconcile the geometries only if gameplay reveals a problem.
+Future firing checks may have distinct physical rules that should be explicit.
 
 ## Other senses
 
@@ -543,7 +527,8 @@ Proposed reusable configuration dimensions are:
 | Social | Faction, recognition/retaliation policy |
 | Communication | Hive/network membership, range, delay, shared evidence |
 
-Exact schema names, inheritance/reuse rules, units, limits, and defaults are open.
+The initial sighted profile schema and defaults are implemented; richer schema
+dimensions, inheritance and reuse rules remain open.
 Validate references and incompatible settings at load time, resolve stable IDs
 to typed runtime definitions, and keep parsing outside simulation logic.
 
@@ -562,9 +547,9 @@ They do not all block the first sight-driven enemy.
 | --- | --- | --- |
 | Entity ownership/API | Stable handles/identities, controlled mutation, position and capability queries, spatial candidate iteration, deletion/unload boundaries | Core AI integration |
 | Basic combat | Intent submission, range/LOS validation, action costs, damage/death outcomes, stale/invalid target handling, sensory consequences of actions | Combat AI |
-| Optical geometry | Floor/ceiling placement, stairs/openings, eye/body samples, vertical scale and range metric, corner ties, whether bodies occlude vision | 3D LOS implementation |
-| Player consistency | Relationship between player entity detection, map projection, AI LOS, and combat/projectile geometry | Shipping 3D detection/combat |
-| Attention semantics | Candidate ordering/continuation under mutation, discovery service while tracking, acceptable delay under load, recognition versus detection | First vision integration |
+| Optical geometry | Additional samples, body occlusion and richer geometry | Future sight extensions |
+| Player consistency | Upward player projection and possible reconciliation if gameplay reveals a problem; asymmetry is accepted | Later player perception work |
+| Attention semantics | Measure discovery delay under load; extend recognition if needed | Scale and richer recognition |
 | Timing | Sensing/planning events relative to actions and input barriers; logical budgets, publication boundaries, RNG ordering | Incremental scheduling |
 | Activity boundaries | Which resident/active entities can observe or be observed; witness eligibility, boundary queries, whether any operation acquires residency | World/AI boundary integration |
 | Memory/persistence | State that survives save/unload, time basis for aging while inactive, identity rebinding, treatment of pending reports/work | AI archival/save support |
@@ -597,14 +582,15 @@ an invitation to build a generic framework during the refactor.
 Do not require full FOV maps per enemy, full individual scent maps, physical heat
 or fluid simulation, global cooperative pathfinding, a generic behavior editor,
 or comprehensive hive tactics for the initial version. Reconsider algorithms
-based on measured bottlenecks and actual gameplay requirements. No fixed
-performance budgets or numeric behavior defaults have been selected yet.
+based on measured bottlenecks and actual gameplay requirements. The baseline has
+per-decision allowances and numeric defaults, but no global hard budget or general
+asynchronous scheduler; large populations still need profiling.
 
 ## Staged implementation and verification
 
-After the world refactor, entity API improvements, and simple combat:
+Implementation proceeds incrementally:
 
-1. **Sight-driven baseline:** 3D optical geometry, bounded raycast discovery,
+1. **Sight-driven baseline (implemented):** 3D optical geometry, bounded raycast discovery,
    tracking, memory, basic states, local pursuit, and faction-aware combat intents.
    Establish deterministic scheduling and inspection counters from the start.
 2. **Hearing and smell:** shared environmental evidence, investigation, competing
@@ -640,8 +626,8 @@ queue age, propagation/search work, and surrounding simulation costs. Current
 per-action player observation updates and actor enumeration may also contribute
 to large-population cost; do not attribute all overhead to new AI.
 
-Provide lightweight AI inspection: current intent/goal, remembered contacts and
+Extend lightweight AI inspection as needed: current intent/goal, remembered contacts and
 their ages, why a target was selected, sensing budget usage, and hive report
 provenance. Being able to inspect what an entity believes is central to debugging
-this design. These are proposed implementation checks and diagnostics, not tests
-or measurements already performed.
+this design. The baseline already exposes contact, behavior and recent work
+counters; the broader checks and measurements above remain future work.

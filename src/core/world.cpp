@@ -118,9 +118,15 @@ SaveResult<void> SaveFailure(SaveError error, const char* message, Diagnostics* 
 // Relative archive timers are untrusted, including resident-only snapshots.
 // Validate without adding: Restore/activation must not reach CheckedTickAdd
 // with a duration that cannot be represented at the current World clock.
-SaveResult<void> ValidateArchiveDeadlines(const Archive& saved, Tick tick, Diagnostics* diagnostics) {
+SaveResult<void> ValidateArchiveDeadlines(const Archive& saved, const ContentCatalog& content,
+    Tick tick, Diagnostics* diagnostics) {
     const Tick room = eastl::numeric_limits<Tick>::max() - tick;
     for (const SavedActor& actor : saved.actors) {
+        const auto controllerContent = ValidateAiControllerContent(actor.controller, content, diagnostics);
+        if (!controllerContent) {
+            return eastl::unexpected(controllerContent.error() == StateError::UnsupportedVersion
+                ? SaveError::UnsupportedVersion : SaveError::InvalidData);
+        }
         const auto combat = ReadCombatState(actor.combat, diagnostics);
         if (!combat) { return eastl::unexpected(SaveError::InvalidData); }
         const Tick recovery = combat->action.recoveryTicks;
@@ -159,6 +165,7 @@ bool ValidateArchive(const ContentCatalog& content, const Archive& saved,
     for (const SavedActor& actor : saved.actors) {
         const auto controller = ReadAiController(actor.controller);
         if (!controller || (actor.player && *controller)) { return false; }
+        if (!ValidateAiControllerContent(actor.controller, content)) { return false; }
         if (!ReadCombatState(actor.combat)) { return false; }
         if (!ValidLightEmission(actor.light) || actor.speed == 0 || (actor.parked && !actor.player) || !addId(actor.id)
             || !ValidPosition(actor.position) || ChunkOf(actor.position) != saved.position
@@ -350,6 +357,7 @@ public:
     PersistentId next_id = 1;
     Tick tick = 0;
     dod::slot_map64<Actor> actors;
+    ankerl::unordered_dense::map<PersistentId, ActorHandle> actorIds;
     dod::slot_map64<Item> items;
     dod::slot_map64<InteractiveObject> objects;
     dod::slot_map64<Request> requests;
@@ -908,12 +916,36 @@ public:
     }
 
     ActorHandle FindActor(PersistentId id) const {
-        for (const auto& entry : actors.items()) {
-            if (entry.second.get().id == id) {
-                return {entry.first.raw};
-            }
-        }
-        return {};
+        const auto found = actorIds.find(id);
+        return found == actorIds.end() ? ActorHandle{} : found->second;
+    }
+
+    void InsertChunkActor(Chunk& chunk, ActorHandle handle) {
+        const Actor* actor = Live(actors, handle);
+        Require(actor != nullptr);
+        const auto found = eastl::lower_bound(chunk.actors.begin(), chunk.actors.end(), actor->id,
+            [this](ActorHandle candidate, PersistentId id) {
+                return Live(actors, candidate)->id < id;
+            });
+        chunk.actors.insert(found, handle);
+    }
+
+    void OccupyActorTile(ActorHandle handle) {
+        const Actor* actor = Live(actors, handle);
+        Require(actor != nullptr);
+        if (actor->parked) { return; }
+        ActorHandle& occupant = GetChunk(ChunkOf(actor->position))->actorOccupancy[TileIndex(actor->position)];
+        Require(occupant == ActorHandle{});
+        occupant = handle;
+    }
+
+    void VacateActorTile(ActorHandle handle) {
+        const Actor* actor = Live(actors, handle);
+        Require(actor != nullptr);
+        if (actor->parked) { return; }
+        ActorHandle& occupant = GetChunk(ChunkOf(actor->position))->actorOccupancy[TileIndex(actor->position)];
+        Require(occupant == handle);
+        occupant = {};
     }
 
     ItemHandle FindItem(PersistentId id) const {
@@ -1097,6 +1129,8 @@ public:
             items.erase(dod::slot_map64<Item>::key{handle.value});
         }
         for (ActorHandle handle : value.actors) {
+            VacateActorTile(handle);
+            Require(actorIds.erase(Live(actors, handle)->id) == 1);
             actors.erase(dod::slot_map64<Actor>::key{handle.value});
         }
         for (ObjectHandle handle : value.objects) {
@@ -1125,7 +1159,10 @@ public:
             restored.controller_ = eastl::move(*controller);
             RefreshSchedule(restored);
             const auto key = actors.emplace(eastl::move(restored));
-            value.actors.push_back({key.raw});
+            const ActorHandle handle{key.raw};
+            Require(actorIds.try_emplace(actor.id, handle).second);
+            InsertChunkActor(value, handle);
+            OccupyActorTile(handle);
             if (actor.player) { TrackPlayer(actor.id, actor.position); }
         }
         for (const SavedObject& object : saved.objects) {
@@ -1476,7 +1513,7 @@ SaveResult<void> World::ReconcileChunks(Diagnostics* diagnostics) {
         if (impl_->columns_.contains(entry.first)) { continue; }
         for (int y = world_min_y; y <= world_max_y; ++y) {
             if (const Archive* saved = incomingArchive({entry.first.x, entry.first.z, y})) {
-                if (auto valid = ValidateArchiveDeadlines(*saved, impl_->tick, diagnostics); !valid) { return valid; }
+                if (auto valid = ValidateArchiveDeadlines(*saved, impl_->content, impl_->tick, diagnostics); !valid) { return valid; }
             }
         }
     }
@@ -1712,6 +1749,14 @@ void World::ActorChanged(ActorHandle handle) {
 const Item* World::GetItem(ItemHandle handle) const { return Live(impl_->items, handle); }
 const InteractiveObject* World::GetObject(ObjectHandle handle) const { return Live(impl_->objects, handle); }
 ActorHandle World::FindActor(PersistentId id) const { return impl_->FindActor(id); }
+
+ActorHandle World::NextActorInChunk(ChunkCoord position, PersistentId after) const {
+    const Chunk* chunk = GetChunk(position);
+    if (!chunk) { return {}; }
+    const auto found = eastl::upper_bound(chunk->actors.begin(), chunk->actors.end(), after,
+        [this](PersistentId id, ActorHandle candidate) { return id < GetActor(candidate)->id; });
+    return found == chunk->actors.end() ? ActorHandle{} : *found;
+}
 eastl::optional<TileCoord> World::FindPlayerPosition(PersistentId id) const {
     return impl_->PlayerPosition(id);
 }
@@ -1720,16 +1765,7 @@ ObjectHandle World::FindObject(PersistentId id) const { return impl_->FindObject
 
 ActorHandle World::ActorAt(TileCoord position) const {
     const Chunk* value = ValidPosition(position) ? GetChunk(ChunkOf(position)) : nullptr;
-    if (value) {
-        for (ActorHandle handle : value->actors) {
-            const Actor* candidate = GetActor(handle);
-            Require(candidate != nullptr);
-            if (!candidate->parked && candidate->position == position) {
-                return handle;
-            }
-        }
-    }
-    return {};
+    return value ? value->actorOccupancy[TileIndex(position)] : ActorHandle{};
 }
 
 ItemRange::ItemRange(const World& world, const Chunk* chunk, TileCoord position)
@@ -1925,7 +1961,9 @@ WorldResult<ActorHandle> World::CreateActor(TileCoord position, bool player) {
     }
     const auto key = impl_->actors.emplace(Actor(impl_->IssueId(), position, player));
     const ActorHandle handle{key.raw};
-    impl_->GetChunk(ChunkOf(position))->actors.push_back(handle);
+    Require(impl_->actorIds.try_emplace(GetActor(handle)->id, handle).second);
+    impl_->InsertChunkActor(*impl_->GetChunk(ChunkOf(position)), handle);
+    impl_->OccupyActorTile(handle);
     impl_->RefreshSchedule(*Live(impl_->actors, handle));
     if (player) { impl_->TrackPlayer(GetActor(handle)->id, position); }
     impl_->MarkDirty(ChunkOf(position));
@@ -1936,6 +1974,23 @@ WorldResult<ActorHandle> World::CreateActor(TileCoord position, bool player) {
 DataObject World::CaptureActorController(ActorHandle handle) const {
     const Actor* actor = GetActor(handle);
     return actor ? CaptureAiController(actor->controller_.get()) : DataObject{};
+}
+
+AiInspection World::InspectActorAi(ActorHandle handle) const {
+    const Actor* actor = GetActor(handle);
+    return actor && actor->controller_ ? actor->controller_->Inspect() : AiInspection{};
+}
+
+WorldResult<void> World::SetActorAiProfile(ActorHandle handle, eastl::string_view profile) {
+    Actor* actor = Live(impl_->actors, handle);
+    if (!actor) { return eastl::unexpected(WorldError::invalid_handle); }
+    if (actor->player || !impl_->content.FindAiProfile(profile).value) {
+        return eastl::unexpected(WorldError::invalid_request);
+    }
+    actor->controller_ = MakeSightedAiController(profile);
+    impl_->RefreshSchedule(*actor);
+    impl_->MarkDirty(ChunkOf(actor->position), false);
+    return {};
 }
 
 WorldResult<void> World::SetActorController(ActorHandle handle, AiControllerKind kind) {
@@ -1993,11 +2048,13 @@ WorldResult<void> World::MoveActor(ActorHandle handle, TileCoord destination) {
     impl_->QueueGravity(destination);
     const ChunkCoord previous = ChunkOf(value->position);
     const ChunkCoord next = ChunkOf(destination);
+    impl_->VacateActorTile(handle);
     if (previous != next) {
         EraseOne(impl_->GetChunk(previous)->actors, handle);
-        impl_->GetChunk(next)->actors.push_back(handle);
+        impl_->InsertChunkActor(*impl_->GetChunk(next), handle);
     }
     value->position = destination;
+    impl_->OccupyActorTile(handle);
     impl_->RefreshSchedule(*value);
     if (value->light.intensity && !value->parked) {
         impl_->MarkLightingDirty(previous);
@@ -2026,7 +2083,9 @@ WorldResult<void> World::SetActorParked(ActorHandle handle, bool parked) {
             return eastl::unexpected(WorldError::occupied);
         }
     }
+    impl_->VacateActorTile(handle);
     value->parked = parked;
+    impl_->OccupyActorTile(handle);
     impl_->RefreshSchedule(*value);
     if (value->light.intensity) { impl_->MarkLightingDirty(ChunkOf(value->position)); }
     impl_->MarkDirty(ChunkOf(value->position));
@@ -2061,8 +2120,10 @@ WorldResult<void> World::DestroyActor(ActorHandle handle) {
         Require(value != nullptr);
     }
     EraseOne(impl_->GetChunk(ChunkOf(position))->actors, handle);
+    impl_->VacateActorTile(handle);
     if (value->player) { impl_->ForgetPlayer(value->id); }
     if (value->light.intensity && !value->parked) { impl_->MarkLightingDirty(ChunkOf(position)); }
+    Require(impl_->actorIds.erase(value->id) == 1);
     impl_->actors.erase(dod::slot_map64<Actor>::key{handle.value});
     impl_->MarkDirty(ChunkOf(position));
     return {};
@@ -2660,6 +2721,11 @@ void World::ElapseTicks(Tick elapsed) {
     }
     impl_->itemSystem.Elapse(elapsed);
     impl_->combatSystem.Elapse(elapsed);
+    for (Actor& actor : impl_->actors) {
+        if (!actor.player && !actor.parked && actor.controller_ && IsActive(actor.position)) {
+            actor.controller_->Elapse(elapsed);
+        }
+    }
     for (InteractiveObject& object : impl_->objects) {
         if (!object.enabled || !IsActive(object.position)) { continue; }
         if (object.behavior_) {
@@ -2870,18 +2936,24 @@ bool World::CheckInvariants() const {
             for (const Tile& tile : value.tiles) {
                 if (!state.content.TryGetTerrain(tile.terrain)) { return false; }
             }
-            Vector<TileCoord> actor_positions;
+            eastl::array<ActorHandle, chunk_size * chunk_size> expectedOccupancy{};
             Vector<TileCoord> object_positions;
+            PersistentId previousActorId = 0;
             for (ActorHandle handle : value.actors) {
                 const Actor* actor = this->GetActor(handle);
-                if (!actor || !ValidPosition(actor->position) || ChunkOf(actor->position) != value.position
-                    || (actor->parked && !actor->player)
-                    || (!actor->parked && Occurrences(actor_positions, actor->position) != 0)) {
+                if (!actor || actor->id <= previousActorId || !ValidPosition(actor->position) || ChunkOf(actor->position) != value.position
+                    || (actor->parked && !actor->player)) {
                     return false;
                 }
-                if (!actor->parked) { actor_positions.push_back(actor->position); }
+                previousActorId = actor->id;
+                if (!actor->parked) {
+                    ActorHandle& occupant = expectedOccupancy[TileIndex(actor->position)];
+                    if (occupant != ActorHandle{}) { return false; }
+                    occupant = handle;
+                }
                 indexed_actors.push_back(handle);
             }
+            if (value.actorOccupancy != expectedOccupancy) { return false; }
             for (ObjectHandle handle : value.objects) {
                 const InteractiveObject* object = this->GetObject(handle);
                 if (!object || !ValidPosition(object->position) || ChunkOf(object->position) != value.position
@@ -2902,11 +2974,14 @@ bool World::CheckInvariants() const {
             }
         }
     }
+    if (state.actorIds.size() != state.actors.size()) { return false; }
     for (const auto& entry : state.actors.items()) {
         const Actor& value = entry.second.get();
         const ActorHandle handle{entry.first.raw};
+        if (state.FindActor(value.id) != handle) { return false; }
         const auto controller = ReadAiController(CaptureAiController(value.controller_.get()));
         if (!controller || (value.player && value.controller_)) { return false; }
+        if (!ValidateAiControllerContent(CaptureAiController(value.controller_.get()), state.content)) { return false; }
         if (!ValidateCombatState(value.combat)) { return false; }
         const bool running = !value.parked && IsActive(value.position) && (value.player || value.controller_);
         if (value.actionDeadline.suspended == running) { return false; }

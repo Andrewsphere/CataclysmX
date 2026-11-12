@@ -35,9 +35,10 @@ valid and generate terrain/roads without buildings.
 
 ## Schema and validation
 
-The root has exactly `format_version` and `definitions`, both required. Version
+The root requires `format_version` and accepts `definitions`, `objects`, and
+`ai_profiles`. At least one of those arrays must be present. Version
 must be an integer; an unsigned integer other than 1 returns `UnsupportedVersion`.
-Definitions is an array (possibly empty). Each definition requires `type` and
+Definitions, when present, is an array (possibly empty). Each definition requires `type` and
 `id`; types are `terrain`, `building_pattern`, and `item`. Terrain definitions require:
 
 | Field | Value |
@@ -126,6 +127,35 @@ references are resolved directly to runtime `TerrainId`s, without traversing
 their graph. Reciprocal closed/open doors and self-references are legal; they
 are transitions, not inheritance. Absence becomes the invalid ID zero. The
 loader does not impose extra gameplay rules on target passability or appearance.
+
+## AI profiles
+
+The optional top-level `ai_profiles` array contains closed-schema objects with a
+required stable `id` (`[a-z][a-z0-9_]*`) and optional integer fields:
+
+| Field | Default | Bounds |
+| --- | ---: | --- |
+| `sight_range` | 12 | 1–32 |
+| `dim_range` | 6 | 0–32 |
+| `dark_range` | 1 | 0–32 |
+| `scan_interval_ticks` | 100 | 1–60000 |
+| `memory_ticks` | 1200 | 1–60000 |
+| `search_ticks` | 300 | 1–60000 |
+| `candidate_budget` | 8 | 1–32 |
+| `bucket_budget` | 16 | 1–64 |
+| `switch_advantage` | 2 | 0–32 |
+
+Additionally, `dark_range <= dim_range <= sight_range` and `search_ticks <=
+memory_ticks`. Unknown or duplicate fields, invalid types, and duplicate IDs
+across sources or definition types are errors. Legacy sources need no profiles.
+The bundled `sighted_zombie` uses the defaults.
+
+`AiProfile` owns the effective values; `ValidAiProfile` checks their numeric
+constraints. The loader separately validates ID syntax. `FindAiProfile`,
+`TryGetAiProfile`, `GetAiProfile`, and `AiProfileCount` follow terrain lookup
+conventions, with lexically sorted catalog-local `AiProfileId` values. Typed
+profiles keep gameplay parameters independent of JSON and avoid a generic
+configuration interface in simulation code.
 
 ## Building patterns
 

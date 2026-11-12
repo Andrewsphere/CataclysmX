@@ -156,7 +156,7 @@ TEST_CASE("None and controller identities have no permissive fallback", "[actors
     CHECK_FALSE(MakeAiController(invalidKind));
     CHECK_FALSE(ValidateAiControllerState(invalidKind, empty));
     CHECK(AiControllerKindName(invalidKind).empty());
-    for (const auto kind : {AiControllerKind::None, AiControllerKind::Wander, AiControllerKind::Melee}) {
+    for (const auto kind : {AiControllerKind::None, AiControllerKind::Wander, AiControllerKind::Melee, AiControllerKind::Sighted}) {
         CHECK(ReadAiControllerKind(AiControllerKindName(kind)) == kind);
     }
     for (const auto name : {"", "Wander", "unknown", "wander "}) {

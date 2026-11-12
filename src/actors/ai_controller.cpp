@@ -1,4 +1,5 @@
 #include "actors/ai_controller.h"
+#include "actors/sighted_ai.h"
 #include "combat/combat_system.h"
 #include "core/state_reader.h"
 #include "core/world.h"
@@ -58,6 +59,7 @@ eastl::string_view AiControllerKindName(AiControllerKind kind) {
     case AiControllerKind::None: return "none";
     case AiControllerKind::Wander: return "wander";
     case AiControllerKind::Melee: return "melee";
+    case AiControllerKind::Sighted: return "sighted";
     }
     return {};
 }
@@ -67,6 +69,7 @@ StateResult<AiControllerKind> ReadAiControllerKind(eastl::string_view name,
     if (name == "none") { return AiControllerKind::None; }
     if (name == "wander") { return AiControllerKind::Wander; }
     if (name == "melee") { return AiControllerKind::Melee; }
+    if (name == "sighted") { return AiControllerKind::Sighted; }
     return cataclysmx::InvalidState(diagnostics, "actors.controller", "type", "unknown controller kind");
 }
 
@@ -74,6 +77,8 @@ StateResult<void> ValidateAiControllerState(AiControllerKind kind, const DataObj
     Diagnostics* diagnostics) {
     StateReader reader(state, diagnostics, "actors.controller.state");
     switch (kind) {
+    case AiControllerKind::Sighted:
+        return cataclysmx::ValidateSightedAiState(state, diagnostics);
     case AiControllerKind::None: {
         const auto result = reader.Result();
         if (!result) { return result; }
@@ -105,6 +110,7 @@ StateResult<eastl::unique_ptr<AiController>> MakeAiController(AiControllerKind k
     case AiControllerKind::None: return eastl::unique_ptr<AiController>{};
     case AiControllerKind::Wander: return eastl::unique_ptr<AiController>(new WanderController());
     case AiControllerKind::Melee: return eastl::unique_ptr<AiController>(new MeleeController());
+    case AiControllerKind::Sighted: return cataclysmx::RestoreSightedAiController(state, diagnostics);
     }
     return cataclysmx::InvalidState(diagnostics, "actors.controller", "type", "unknown controller kind");
 }
@@ -131,6 +137,26 @@ StateResult<eastl::unique_ptr<AiController>> ReadAiController(const DataObject& 
     const auto kind = cataclysmx::ReadAiControllerKind(name, diagnostics);
     if (!kind) { return eastl::unexpected(kind.error()); }
     return cataclysmx::MakeAiController(*kind, state, diagnostics);
+}
+
+StateResult<void> ValidateAiControllerContent(const DataObject& envelope,
+    const ContentCatalog& content, Diagnostics* diagnostics) {
+    StateReader reader(envelope, diagnostics, "actors.controller");
+    const auto name = reader.GetStringOrError("type");
+    const auto* state = reader.GetObjectOrError("state");
+    if (const auto result = reader.Result(); !result) { return result; }
+    if (envelope.Size() != 2) { return reader.Invalid({}, "unknown controller envelope field"); }
+    const auto kind = cataclysmx::ReadAiControllerKind(name, diagnostics);
+    if (!kind) { return eastl::unexpected(kind.error()); }
+    const auto valid = cataclysmx::ValidateAiControllerState(*kind, *state, diagnostics);
+    if (!valid) { return valid; }
+    if (*kind == AiControllerKind::Sighted) {
+        const auto profile = *state->GetString("profile");
+        if (!profile.empty() && content.FindAiProfile(profile).value == 0) {
+            return cataclysmx::InvalidState(diagnostics, "actors.controller.state", "profile", "unknown AI profile");
+        }
+    }
+    return {};
 }
 
 }

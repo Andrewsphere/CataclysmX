@@ -143,6 +143,11 @@ void CombatSystem::Record(ActorHandle handle, const AttackResult& result, bool i
     }
 }
 
+bool CombatSystem::CanAttack(ActorHandle handle) const {
+    const auto* actor = world_.GetActor(handle);
+    return Available(world_, actor) && SelectMove(actor->combat) != CombatMove::None;
+}
+
 bool CombatSystem::CanReach(ActorHandle handle, ActorHandle target) const {
     if (handle == target) { return false; }
     const auto* actor = world_.GetActor(handle);

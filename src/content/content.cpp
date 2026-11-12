@@ -339,6 +339,40 @@ struct PendingObject {
     Context context;
 };
 
+struct PendingAiProfile {
+    AiProfile definition;
+    std::size_t inputOrder = 0;
+    Context context;
+};
+
+bool ParseAiProfile(yyjson_val* object, PendingAiProfile& pending) {
+    const auto& context = pending.context;
+    auto& profile = pending.definition;
+    if (!CheckObject(object, {"id", "sight_range", "dim_range", "dark_range", "scan_interval_ticks",
+                              "memory_ticks", "search_ticks", "candidate_budget", "bucket_budget",
+                              "switch_advantage"}, context)
+        || !ReadId(yyjson_obj_get(object, "id"), profile.id, context.Child("id"))) { return false; }
+    struct Field { const char* name; std::uint32_t minimum, maximum; std::uint32_t* value; };
+    const Field fields[] = {
+        {"sight_range", 1, 32, &profile.sightRange}, {"dim_range", 0, 32, &profile.dimRange},
+        {"dark_range", 0, 32, &profile.darkRange}, {"scan_interval_ticks", 1, 60000, &profile.scanIntervalTicks},
+        {"memory_ticks", 1, 60000, &profile.memoryTicks}, {"search_ticks", 1, 60000, &profile.searchTicks},
+        {"candidate_budget", 1, 32, &profile.candidateBudget}, {"bucket_budget", 1, 64, &profile.bucketBudget},
+        {"switch_advantage", 0, 32, &profile.switchAdvantage},
+    };
+    for (const auto& field : fields) {
+        if (auto* value = yyjson_obj_get(object, field.name)) {
+            if (!ReadBoundedInteger(value, field.minimum, field.maximum, *field.value, context.Child(field.name))) {
+                return false;
+            }
+        }
+    }
+    if (profile.dimRange > profile.sightRange) { return context.Child("dim_range").Fail("dim_range must not exceed sight_range"); }
+    if (profile.darkRange > profile.dimRange) { return context.Child("dark_range").Fail("dark_range must not exceed dim_range"); }
+    if (profile.searchTicks > profile.memoryTicks) { return context.Child("search_ticks").Fail("search_ticks must not exceed memory_ticks"); }
+    return ValidAiProfile(profile);
+}
+
 bool ParseObject(yyjson_val* object, PendingObject& pending) {
     const auto& context = pending.context;
     auto& definition = pending.definition;
@@ -705,7 +739,7 @@ struct Document {
 
 ContentResult<bool> ParseSource(const ContentSource& source, Vector<PendingTerrain>& pending,
                                 Vector<PendingPattern>& patterns, Vector<PendingItem>& items,
-                                Vector<PendingObject>& objects,
+                                Vector<PendingObject>& objects, Vector<PendingAiProfile>& aiProfiles,
                                 const ItemBehaviorRegistry& registry, Diagnostics* diagnostics) {
     Context context{diagnostics, source.name, {}};
     yyjson_alc allocator{JsonMalloc, JsonRealloc, JsonFree, nullptr};
@@ -729,7 +763,7 @@ ContentResult<bool> ParseSource(const ContentSource& source, Vector<PendingTerra
         return eastl::unexpected(ContentError::InvalidData);
     }
     auto* root = yyjson_doc_get_root(document.value);
-    if (!CheckObject(root, {"format_version", "definitions", "objects"}, context)) {
+    if (!CheckObject(root, {"format_version", "definitions", "objects", "ai_profiles"}, context)) {
         return eastl::unexpected(ContentError::InvalidData);
     }
     auto* version = yyjson_obj_get(root, "format_version");
@@ -740,6 +774,25 @@ ContentResult<bool> ParseSource(const ContentSource& source, Vector<PendingTerra
     if (yyjson_get_uint(version) != 1) {
         context.Child("format_version").Fail("unsupported content format version");
         return eastl::unexpected(ContentError::UnsupportedVersion);
+    }
+    auto* profileArray = yyjson_obj_get(root, "ai_profiles");
+    if (profileArray) {
+        if (!yyjson_is_arr(profileArray)) {
+            context.Child("ai_profiles").Fail("expected an array");
+            return eastl::unexpected(ContentError::InvalidData);
+        }
+        std::size_t index, count;
+        yyjson_val* value;
+        yyjson_arr_foreach(profileArray, index, count, value) {
+            PendingAiProfile profile;
+            profile.context = ArrayElement(context.Child("ai_profiles"), index);
+            profile.inputOrder = pending.size() + patterns.size() + items.size() + objects.size() + aiProfiles.size();
+            if (!ParseAiProfile(value, profile)) {
+                profile.context.Fail("while loading AI profile definition");
+                return eastl::unexpected(ContentError::InvalidData);
+            }
+            aiProfiles.push_back(eastl::move(profile));
+        }
     }
     auto* objectArray = yyjson_obj_get(root, "objects");
     if (objectArray) {
@@ -752,7 +805,7 @@ ContentResult<bool> ParseSource(const ContentSource& source, Vector<PendingTerra
         yyjson_arr_foreach(objectArray, objectIndex, objectCount, value) {
             PendingObject object;
             object.context = ArrayElement(context.Child("objects"), objectIndex);
-            object.inputOrder = pending.size() + patterns.size() + items.size() + objects.size();
+            object.inputOrder = pending.size() + patterns.size() + items.size() + objects.size() + aiProfiles.size();
             if (!ParseObject(value, object)) {
                 object.context.Fail("while loading object definition");
                 return eastl::unexpected(ContentError::InvalidData);
@@ -761,7 +814,7 @@ ContentResult<bool> ParseSource(const ContentSource& source, Vector<PendingTerra
         }
     }
     auto* definitions = yyjson_obj_get(root, "definitions");
-    if (!definitions && objectArray) { return true; }
+    if (!definitions && (objectArray || profileArray)) { return true; }
     if (!yyjson_is_arr(definitions)) {
         context.Child("definitions").Fail("expected an array");
         return eastl::unexpected(ContentError::InvalidData);
@@ -777,7 +830,7 @@ ContentResult<bool> ParseSource(const ContentSource& source, Vector<PendingTerra
         }
         PendingTerrain terrain;
         terrain.context = definitionContext;
-        terrain.inputOrder = pending.size() + patterns.size() + items.size() + objects.size();
+        terrain.inputOrder = pending.size() + patterns.size() + items.size() + objects.size() + aiProfiles.size();
         bool parsed = false;
         // Dispatch definition kinds at the document boundary; individual parsers own their schemas.
         if (!yyjson_is_obj(value)) {
@@ -950,12 +1003,14 @@ struct DefinitionIdentity {
     bool pattern = false;
     bool item = false;
     bool object = false;
+    bool aiProfile = false;
 };
 
 bool CheckDefinitionIds(const Vector<PendingTerrain>& terrains, const Vector<PendingPattern>& patterns,
-                         const Vector<PendingItem>& items, const Vector<PendingObject>& objects, Diagnostics* diagnostics) {
+                          const Vector<PendingItem>& items, const Vector<PendingObject>& objects,
+                          const Vector<PendingAiProfile>& aiProfiles, Diagnostics* diagnostics) {
     Vector<DefinitionIdentity> identities;
-    identities.reserve(terrains.size() + patterns.size() + items.size() + objects.size());
+    identities.reserve(terrains.size() + patterns.size() + items.size() + objects.size() + aiProfiles.size());
     for (const auto& terrain : terrains) {
         identities.push_back({View(terrain.definition.id), &terrain.context, terrain.inputOrder, false});
     }
@@ -968,6 +1023,9 @@ bool CheckDefinitionIds(const Vector<PendingTerrain>& terrains, const Vector<Pen
     for (const auto& object : objects) {
         identities.push_back({View(object.definition.id), &object.context, object.inputOrder, false, false, true});
     }
+    for (const auto& profile : aiProfiles) {
+        identities.push_back({View(profile.definition.id), &profile.context, profile.inputOrder, false, false, false, true});
+    }
     eastl::sort(identities.begin(), identities.end(), [](const DefinitionIdentity& left, const DefinitionIdentity& right) {
         if (left.id == right.id) { return left.inputOrder < right.inputOrder; }
         return left.id < right.id;
@@ -977,13 +1035,14 @@ bool CheckDefinitionIds(const Vector<PendingTerrain>& terrains, const Vector<Pen
         const auto& previous = identities[i - 1];
         if (previous.id != current.id) { continue; }
         if (diagnostics) {
-            String message = current.object ? "duplicate object definition '" : current.item ? "duplicate item definition '" :
+            String message = current.aiProfile ? "duplicate AI profile definition '" : current.object ? "duplicate object definition '" : current.item ? "duplicate item definition '" :
                 (current.pattern ? "duplicate building pattern definition '" : "duplicate terrain definition '");
             message.append(current.id.data(), current.id.size());
             message += '\'';
             current.context->Child("id").Fail(View(message));
             previous.context->Child("id").Fail("previous definition is here");
-            if (current.object) { current.context->Fail("while loading object definition"); }
+            if (current.aiProfile) { current.context->Fail("while loading AI profile definition"); }
+            else if (current.object) { current.context->Fail("while loading object definition"); }
             else if (current.item) { AddItemContext(*current.context, current.id); }
             else if (current.pattern) { AddPatternContext(*current.context, current.id); }
             else { AddTerrainContext(*current.context, current.id); }
@@ -1108,6 +1167,30 @@ const ObjectDefinition& ContentCatalog::GetObject(ObjectTypeId id) const {
 
 std::size_t ContentCatalog::ObjectCount() const { return objects_.size(); }
 
+AiProfileId ContentCatalog::FindAiProfile(eastl::string_view id) const {
+    std::size_t begin = 0, end = aiProfiles_.size();
+    while (begin < end) {
+        const std::size_t middle = begin + (end - begin) / 2;
+        if (View(aiProfiles_[middle].id) < id) { begin = middle + 1; }
+        else { end = middle; }
+    }
+    if (begin == aiProfiles_.size() || View(aiProfiles_[begin].id) != id) { return {}; }
+    return {static_cast<std::uint32_t>(begin + 1)};
+}
+
+const AiProfile* ContentCatalog::TryGetAiProfile(AiProfileId id) const {
+    if (id.value == 0 || id.value > aiProfiles_.size()) { return nullptr; }
+    return &aiProfiles_[id.value - 1];
+}
+
+const AiProfile& ContentCatalog::GetAiProfile(AiProfileId id) const {
+    const auto* profile = TryGetAiProfile(id);
+    if (!profile) { std::abort(); }
+    return *profile;
+}
+
+std::size_t ContentCatalog::AiProfileCount() const { return aiProfiles_.size(); }
+
 ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sources, Diagnostics* diagnostics) {
     ItemBehaviorRegistry registry;
     RegisterBuiltinItemBehaviors(registry);
@@ -1120,8 +1203,9 @@ ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sourc
     Vector<PendingPattern> patterns;
     Vector<PendingItem> items;
     Vector<PendingObject> objects;
+    Vector<PendingAiProfile> aiProfiles;
     for (const auto& source : sources) {
-        auto result = ParseSource(source, pending, patterns, items, objects, registry, diagnostics);
+        auto result = ParseSource(source, pending, patterns, items, objects, aiProfiles, registry, diagnostics);
         if (!result) {
             Context{diagnostics, source.name, {}}.Fail("could not load content source");
             return eastl::unexpected(result.error());
@@ -1130,7 +1214,8 @@ ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sourc
     if (pending.size() > std::numeric_limits<std::uint32_t>::max()
         || patterns.size() > std::numeric_limits<std::uint32_t>::max()
         || items.size() > std::numeric_limits<std::uint32_t>::max()
-        || objects.size() > std::numeric_limits<std::uint32_t>::max()) {
+        || objects.size() > std::numeric_limits<std::uint32_t>::max()
+        || aiProfiles.size() > std::numeric_limits<std::uint32_t>::max()) {
         Context{diagnostics, {}, {}}.Fail("too many content definitions");
         Context{diagnostics, {}, {}}.Fail("could not load content catalog");
         return eastl::unexpected(ContentError::InvalidData);
@@ -1140,12 +1225,17 @@ ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sourc
         if (left.definition.id == right.definition.id) { return left.inputOrder < right.inputOrder; }
         return left.definition.id < right.definition.id;
     });
-    if (!CheckDefinitionIds(pending, patterns, items, objects, diagnostics)) { return eastl::unexpected(ContentError::InvalidData); }
+    if (!CheckDefinitionIds(pending, patterns, items, objects, aiProfiles, diagnostics)) { return eastl::unexpected(ContentError::InvalidData); }
     if (!Resolve(pending)) {
         Context{diagnostics, {}, {}}.Fail("could not load content catalog");
         return eastl::unexpected(ContentError::InvalidData);
     }
     ContentCatalog catalog;
+    eastl::sort(aiProfiles.begin(), aiProfiles.end(), [](const PendingAiProfile& left, const PendingAiProfile& right) {
+        return left.definition.id < right.definition.id;
+    });
+    catalog.aiProfiles_.reserve(aiProfiles.size());
+    for (auto& profile : aiProfiles) { catalog.aiProfiles_.push_back(eastl::move(profile.definition)); }
     eastl::sort(items.begin(), items.end(), [](const PendingItem& left, const PendingItem& right) {
         return left.definition.id < right.definition.id;
     });

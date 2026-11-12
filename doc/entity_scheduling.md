@@ -50,6 +50,13 @@ IDs may be stale when a windup resolves. See [combat API](combat_api.md).
 Controllerless active NPCs retain frozen action deadlines while body recovery,
 stamina and combat cooldowns advance with their active surroundings.
 
+Sighted AI memory, search and discovery countdowns elapse for active, unparked
+NPCs with controllers, and freeze while inactive, parked or archived. Their
+remaining durations are saved and restored without catch-up. Countdown expiry
+does not schedule an independent sensing event: tracking is checked at every
+action decision, while background discovery runs at the first decision with a
+zero scan countdown and resets it. See [sighted entity AI](entity_ai.md).
+
 Typed object behaviors and item behaviors still receive elapsed work/energy
 processing. Their progress is actual work state, not an entity scheduling timer.
 Typed objects leave their unused legacy timer suspended; its saved value remains

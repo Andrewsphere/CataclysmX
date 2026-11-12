@@ -342,7 +342,11 @@ Server::Server(const ContentCatalog& content, std::uint32_t seed) : world_(conte
     auto enemyCombat = MakeCombatState(false);
     enemyCombat.faction = CombatFaction::Undead;
     Require(world_.Combat().Configure(enemy, enemyCombat).has_value());
-    Require(world_.SetActorController(enemy, AiControllerKind::Melee).has_value());
+    if (content.FindAiProfile("sighted_zombie").value) {
+        Require(world_.SetActorAiProfile(enemy, "sighted_zombie").has_value());
+    } else {
+        Require(world_.SetActorController(enemy, AiControllerKind::Sighted).has_value());
+    }
     // Optional demo equipment follows the original entities, preserving their IDs.
     for (const char* id : {"field_charger", "rechargeable_battery", "door_controller", "utility_controller"}) {
         if (const auto type = content.FindItem(id); type.value != 0) {

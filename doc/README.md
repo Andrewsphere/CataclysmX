@@ -23,6 +23,7 @@
 - [World API](world_api.md): identity, ownership, coordinates, chunk demand and
   in-memory archives. Start here for scenario setup and administrative tools.
 - [Actors and AI controllers](actors_api.md): deterministic intents and controller state.
+- [Sighted entity AI](entity_ai.md): sensing, memory, discovery, profiles and inspection.
 - [Combat API](combat_api.md): body, injury, moves, disruption and recovery.
 - [Combat presentation](combat_presentation.md): frontend status and feedback text.
 - [Objects API](objects_api.md): typed crafting machines, actions, and saved-state defaults.

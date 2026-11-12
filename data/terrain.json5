@@ -1,6 +1,7 @@
 // Stable content names; numeric runtime IDs are assigned after sorting each type.
 {
   format_version: 1,
+  ai_profiles: [{id: 'sighted_zombie'}],
   objects: [
     {
       id: 'scrap_press', name: 'scrap press', behavior: 'crafting_machine',

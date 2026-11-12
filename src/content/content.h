@@ -3,6 +3,7 @@
 #include "core/containers.h"
 #include "core/diagnostics.h"
 #include "core/light_types.h"
+#include "content/ai_definition.h"
 #include "content/item_definition.h"
 #include "content/object_definition.h"
 #include "content/content_result.h"
@@ -93,12 +94,17 @@ public:
     const ObjectDefinition* TryGetObject(ObjectTypeId id) const;
     const ObjectDefinition& GetObject(ObjectTypeId id) const;
     std::size_t ObjectCount() const;
+    AiProfileId FindAiProfile(eastl::string_view id) const;
+    const AiProfile* TryGetAiProfile(AiProfileId id) const;
+    const AiProfile& GetAiProfile(AiProfileId id) const;
+    std::size_t AiProfileCount() const;
 
 private:
     Vector<TerrainDefinition> definitions_;
     Vector<BuildingPattern> patterns_;
     Vector<ItemDefinition> items_;
     Vector<ObjectDefinition> objects_;
+    Vector<AiProfile> aiProfiles_;
     friend ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource>, Diagnostics*);
     friend ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource>, const ItemBehaviorRegistry&, Diagnostics*);
 };

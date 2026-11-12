@@ -19,6 +19,10 @@ hundredths, then passes whole post-protection injury to the body; less than 1 HP
 is blocked. `Describe` produces a value-only view. These boundaries keep rules in
 combat while World owns identity, scheduling and persistence.
 
+`CanAttack(actor)` queries the actor's own attack capability for AI decisions;
+it does not establish readiness, target hostility, reach or range. `Attack` and
+the scheduling/execution path remain responsible for validating an actual attack.
+
 ## Body and recovery
 
 Initial balancing defaults, subject to tuning, are 100 HP per detailed head, torso,

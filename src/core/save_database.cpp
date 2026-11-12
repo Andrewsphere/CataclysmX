@@ -353,6 +353,13 @@ SaveResult<void> ValidateEntityState(const ContentCatalog& content, const ChunkA
             return eastl::unexpected(controller.error() == StateError::UnsupportedVersion
                 ? SaveError::UnsupportedVersion : SaveError::InvalidData);
         }
+        if (!EmptyController(actor.controller)) {
+            const auto valid = ValidateAiControllerContent(actor.controller, content, diagnostics);
+            if (!valid) {
+                return eastl::unexpected(valid.error() == StateError::UnsupportedVersion
+                    ? SaveError::UnsupportedVersion : SaveError::InvalidData);
+            }
+        }
         if (actor.player && *controller) {
             return Failure(SaveError::InvalidData, "Player actor must have no AI controller", diagnostics);
         }

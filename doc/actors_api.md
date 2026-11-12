@@ -11,8 +11,8 @@ controller can remain forward-declared in the actor header.
 Each actor owns one private `eastl::unique_ptr<AiController> controller_`. Only
 `World` is its friend. Controller ownership and mutable access never escape through
 `World::GetActor`. This avoids the mutable-pointee loophole in const smart-pointer
-inspection. No Actor inheritance is involved. `AiController` has one implementation,
-the private final `WanderController` and `MeleeController`, with explicit enum-based construction.
+inspection. No Actor inheritance is involved. Private Wander, Melee and Sighted
+controllers use explicit enum-based construction.
 
 ## Decision callback
 
@@ -31,7 +31,8 @@ callback. The context itself does not acquire residency or validate the handle.
 
 The executor must require positive `baseCost`, schedule the actor once, and apply
 movement validation/mutation through World. Choosing an action does not mutate the
-world, schedule time, move actors, or update observations. The default intent is a
+world, schedule time, or move actors; sighted decisions can update controller
+observations and memory. The default intent is a
 100-cost Wait. `direction` uses the existing X/Z/Y coordinate order.
 
 Wander consumes exactly one unsigned modulo-2^32 LCG draw:
@@ -69,6 +70,7 @@ null. `StateResult`/`StateError` are shared vocabulary in `core/state_result.h`;
 | None / null pointer | `{"type":"none","state":{}}` |
 | Wander | `{"type":"wander","state":{"version":1}}` |
 | Melee | `{"type":"melee","state":{"version":1}}` |
+| Sighted | `{"type":"sighted","state":{...}}` (versioned memory and cursor) |
 
 The Wander and Melee version is an **unsigned** DataObject integer. Missing fields, unknown
 fields, unknown/case-mismatched names, wrong types (including signed version 1),
@@ -77,6 +79,8 @@ than 1 returns `StateError::UnsupportedVersion`. None requires an empty object,
 not an empty list. Envelopes require exactly `type` and `state`, in either order.
 `AiControllerKindName` and `ReadAiControllerKind` convert stable names explicitly.
 Runtime controllers must not report None; None is exclusively a null pointer.
+Sighted payloads are strictly validated, and archive/content validation also
+checks named profile references. See [sighted entity AI](entity_ai.md).
 
 The parser uses the borrowed [StateReader](data_object.md#shared-state-reader):
 typed reads retain their first error, followed by one explicit `Result()` check
@@ -91,6 +95,8 @@ qualification. Validation and construction use the same payload parser.
 `world.CreateActor(position, player)` returns a `WorldResult<ActorHandle>`.
 `world.SetActorController(actor, kind)` replaces the controller with its default
 state; it rejects stale handles, invalid kinds, and non-None controllers on players.
+`SetActorAiProfile(actor, name)` installs a sighted controller with a validated
+named profile; `InspectActorAi(actor)` returns a value-only AI inspection.
 `world.CaptureActorController(actor)` returns the owned envelope, or an empty
 object for an invalid handle. For example, given a live NPC handle:
 

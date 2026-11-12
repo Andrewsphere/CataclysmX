@@ -14,6 +14,8 @@ public:
     WorldResult<void> Configure(ActorHandle actor, const CombatState& state);
     WorldResult<void> SetStyle(ActorHandle actor, CombatStyle style);
     CombatView Describe(ActorHandle actor) const;
+    // Own repertoire/capability query; does not discover a target or spend time.
+    bool CanAttack(ActorHandle actor) const;
     ActorHandle FindTarget(ActorHandle actor) const;
     bool CanReach(ActorHandle actor, ActorHandle target) const;
     AttackResult Attack(ActorHandle actor, ActorHandle target, std::uint32_t& rng);

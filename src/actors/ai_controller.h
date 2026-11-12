@@ -3,11 +3,29 @@
 #include "core/data_object.h"
 #include "core/world_types.h"
 #include "core/state_result.h"
+#include "core/timing.h"
 #include <EASTL/unique_ptr.h>
 
 namespace cataclysmx {
 
 class World;
+class ContentCatalog;
+
+enum class AiBehavior : std::uint8_t { Idle, Pursue, Search, Attack };
+// Value-only debug view. Work counters describe the most recent decision.
+struct AiInspection {
+    AiBehavior behavior = AiBehavior::Idle;
+    PersistentId target = 0;
+    TileCoord lastKnownPosition{};
+    Tick observedTick = 0;
+    Tick memoryRemaining = 0;
+    Tick scanRemaining = 0;
+    std::uint32_t candidates = 0;
+    std::uint32_t buckets = 0;
+    std::uint32_t rays = 0;
+    std::uint32_t cells = 0;
+    bool targetVisible = false;
+};
 
 enum class ActorIntentKind : std::uint8_t { Wait, Move, Attack };
 struct ActorIntent {
@@ -30,7 +48,7 @@ private:
     ActorHandle self_;
 };
 
-enum class AiControllerKind : std::uint8_t { None, Wander, Melee };
+enum class AiControllerKind : std::uint8_t { None, Wander, Melee, Sighted };
 
 class AiController {
 public:
@@ -38,6 +56,8 @@ public:
     virtual AiControllerKind Kind() const = 0;
     virtual ActorIntent ChooseAction(const ActorReadContext& context, std::uint32_t& rng) = 0;
     virtual DataObject SaveState() const = 0;
+    virtual void Elapse(Tick) {}
+    virtual AiInspection Inspect() const { return {}; }
 };
 
 // Stable persistence names; invalid enum values return an empty view.
@@ -57,5 +77,10 @@ StateResult<eastl::unique_ptr<AiController>> MakeAiController(AiControllerKind k
 DataObject CaptureAiController(const AiController* controller);
 StateResult<eastl::unique_ptr<AiController>> ReadAiController(const DataObject& envelope,
     Diagnostics* diagnostics = nullptr);
+
+// Empty profile selects intrinsic defaults; World validates named definitions.
+eastl::unique_ptr<AiController> MakeSightedAiController(eastl::string_view profile);
+StateResult<void> ValidateAiControllerContent(const DataObject& envelope,
+    const ContentCatalog& content, Diagnostics* diagnostics = nullptr);
 
 }

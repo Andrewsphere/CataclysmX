@@ -90,8 +90,11 @@ add_library(cataclysmx_engine STATIC
     src/content/content.cpp src/content/content.h
     src/content/item_definition.cpp src/content/item_definition.h
     src/content/object_definition.cpp src/content/object_definition.h
+    src/content/ai_definition.cpp src/content/ai_definition.h
     src/actors/actor.cpp src/actors/actor.h
     src/actors/ai_controller.cpp src/actors/ai_controller.h
+    src/actors/ai_vision.cpp src/actors/ai_vision.h
+    src/actors/sighted_ai.cpp src/actors/sighted_ai.h
     src/actors/action.cpp src/actors/action.h
     src/combat/body.cpp src/combat/body.h
     src/combat/combat_types.cpp src/combat/combat_types.h
@@ -239,6 +242,8 @@ if(CATACLYSMX_BUILD_TESTS)
         tests/item_save_tests.cpp tests/item_network_tests.cpp tests/item_server_tests.cpp
         tests/item_behavior_tests.cpp
         tests/actor_controller_tests.cpp tests/entity_world_tests.cpp
+        tests/ai_vision_tests.cpp tests/ai_content_tests.cpp tests/ai_world_tests.cpp
+        tests/sighted_ai_tests.cpp
         tests/actor_action_tests.cpp tests/combat_body_tests.cpp
         tests/combat_state_tests.cpp tests/combat_system_tests.cpp
         tests/combat_integration_tests.cpp
