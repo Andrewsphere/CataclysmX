@@ -236,6 +236,15 @@ bool Execute(eastl::unique_ptr<Server>& ownedServer, eastl::string_view line, bo
     if (name == "wait" && (count == 1 || count == 2)) {
         command.kind = CommandKind::wait;
         if (count == 2 && (!Number(words[1], command.waitCost) || command.waitCost == 0)) { return false; }
+    } else if (name == "attack" && (count == 1 || count == 2)) {
+        command.kind = CommandKind::attack;
+        if (count == 2 && !Number(words[1], command.target)) { return false; }
+    } else if (name == "style" && count == 2) {
+        command.kind = CommandKind::combat_style;
+        if (words[1] == "balanced") { command.style = CombatStyle::Balanced; }
+        else if (words[1] == "aggressive") { command.style = CombatStyle::Aggressive; }
+        else if (words[1] == "defensive") { command.style = CombatStyle::Defensive; }
+        else { return false; }
     } else if ((name == "move" || name == "interact") && count == 2) {
         command.kind = name == "move" ? CommandKind::move : CommandKind::interact;
         if (!Direction(words[1], command)) { return false; }
@@ -309,7 +318,7 @@ int main(int argc, char** argv) {
         } else if (argument == "--user-dir" && i + 1 < argc) { configuration.userRoot = argv[++i]; configuration.enabled = true;
         } else if (argument == "--world-dir" && i + 1 < argc) { configuration.worldDirectory = argv[++i]; configuration.enabled = true;
         } else {
-            std::fputs("Usage: cataclysmx_headless [--content path] [--user-dir path] [--world-dir path] [--save path | --load path] [--script | --host | --join address[:port] | --discover] [--port n] [--discovery-port n] [--discovery-address address] [--name name] [--profile path] [--new-character] [--run-for ms] [--command 'move e'] | --probe | --fail-log\nMovement: move n/s/e/w, move down or move < (downstairs), move up or move > (upstairs).\n", stderr);
+            std::fputs("Usage: cataclysmx_headless [--content path] [--user-dir path] [--world-dir path] [--save path | --load path] [--script | --host | --join address[:port] | --discover] [--port n] [--discovery-port n] [--discovery-address address] [--name name] [--profile path] [--new-character] [--run-for ms] [--command 'move e'] | --probe | --fail-log\nMovement: move n/s/e/w, move down or move < (downstairs), move up or move > (upstairs).\nCombat: attack [persistentId], style balanced|aggressive|defensive.\n", stderr);
             return 2;
         }
     }

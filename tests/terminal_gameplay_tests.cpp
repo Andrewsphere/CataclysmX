@@ -2,6 +2,7 @@
 #include "terminal/keyboard.h"
 #include "terminal/render.h"
 #include "client/text.h"
+#include "client/combat_text.h"
 #include "network/network.h"
 #include "content_fixture.h"
 
@@ -121,6 +122,41 @@ TEST_CASE("Gameplay localizes player light in wide and compact status", "[termin
                 : band == LightBand::Ordinary ? "Normal" : "Radiant";
             CHECK(Find(screen, expected));
         }
+    }
+}
+
+TEST_CASE("Combat presentation shows injury and incoming feedback", "[terminal][gameplay][combat]") {
+    Fixture f;
+    auto& combat = f.view.combat;
+    combat.style = CombatStyle::Defensive; combat.stamina = 61;
+    combat.action = ActorActionKind::MeleeWindup; combat.accuracyPenalty = 15;
+    combat.parts[static_cast<std::size_t>(BodyPart::LeftHand)] = {1250, 9000, true};
+    combat.feedback.result.outcome = AttackOutcome::Hit;
+    combat.feedback.result.part = BodyPart::LeftHand;
+    combat.feedback.result.lostCapability = true;
+    combat.feedback.result.disruption = DisruptionResponse::Canceled;
+    combat.feedback.incoming = true;
+    const auto status = CombatStatusText(combat); const auto feedback = CombatFeedbackText(combat);
+    CHECK(status.find("stamina 61%") != String::npos);
+    CHECK(status.find("left hand 12.50/90.00 broken") != String::npos);
+    CHECK(status.find("accuracy -15%") != String::npos);
+    CHECK(feedback.find("Received: hit (left hand)") != String::npos);
+    CHECK(feedback.find("capability lost") != String::npos);
+    CHECK(feedback.find("action canceled") != String::npos);
+    const auto screen = f.Draw(120, 50);
+    INFO(Plain(screen));
+    CHECK(Find(screen, "Received: hit"));
+    CHECK(Find(screen, "Combat: Defensive"));
+    CHECK(Find(screen, "stamina 61%"));
+    CHECK(Find(screen, "accuracy -15%"));
+    CHECK(Find(screen, "12.50/90.00"));
+    CHECK(CombatStatusText(CombatView{}).empty());
+    CHECK(CombatFeedbackText(CombatView{}).empty());
+    for (const auto [outcome, expected] : {eastl::pair<AttackOutcome, const char*>{AttackOutcome::Miss, "missed"},
+        {AttackOutcome::Parried, "parried"}, {AttackOutcome::Blocked, "blocked"},
+        {AttackOutcome::Windup, "windup"}, {AttackOutcome::Defeated, "defeated"}}) {
+        combat.feedback.incoming = false; combat.feedback.result.outcome = outcome;
+        CHECK(CombatFeedbackText(combat).find(expected) != String::npos);
     }
 }
 
@@ -396,6 +432,9 @@ TEST_CASE("Status groups readiness location and pacing with aligned values and c
     auto screen = f.Draw(100, 24);
     CHECK(Find(screen, "Pending"));
     CHECK(Find(screen, "Pending: move east #14"));
+    CHECK(Find(screen, "Combat: Balanced"));
+    CHECK(Find(screen, "stamina 100%"));
+    CHECK(Find(screen, "Location"));
     CHECK(Find(screen, "Latest outcome."));
 }
 

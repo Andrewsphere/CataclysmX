@@ -4,6 +4,7 @@
 // simulation-facing World interface; item parents precede their descendants.
 #include "core/world.h"
 #include "content/object_definition.h"
+#include "combat/combat_types.h"
 
 namespace cataclysmx {
 
@@ -19,6 +20,9 @@ struct SavedActor {
     LightEmission light{};
     // Empty object is a source-construction sentinel, normalized at persistence.
     DataObject controller;
+    // Source aggregates get a complete neutral/simple default, independent of player.
+    // Runtime capture and legacy migration explicitly supply creation/runtime state.
+    DataObject combat = CaptureCombatState(MakeCombatState(false));
 };
 
 struct SavedObject {

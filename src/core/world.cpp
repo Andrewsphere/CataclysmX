@@ -7,6 +7,7 @@
 #include "core/perception.h"
 #include "core/slot_map.h"
 #include "core/save_database.h"
+#include "combat/combat_system.h"
 #include "items/item_system.h"
 #include "items/item_snapshot.h"
 #include "worldgen/worldgen.h"
@@ -120,7 +121,10 @@ SaveResult<void> SaveFailure(SaveError error, const char* message, Diagnostics* 
 SaveResult<void> ValidateArchiveDeadlines(const Archive& saved, Tick tick, Diagnostics* diagnostics) {
     const Tick room = eastl::numeric_limits<Tick>::max() - tick;
     for (const SavedActor& actor : saved.actors) {
-        if (actor.remainingTicks > room) {
+        const auto combat = ReadCombatState(actor.combat, diagnostics);
+        if (!combat) { return eastl::unexpected(SaveError::InvalidData); }
+        const Tick recovery = combat->action.recoveryTicks;
+        if (actor.remainingTicks > room || recovery > room - actor.remainingTicks) {
             return SaveFailure(SaveError::InvalidData, "Saved actor delay exceeds simulation clock headroom", diagnostics);
         }
     }
@@ -155,6 +159,7 @@ bool ValidateArchive(const ContentCatalog& content, const Archive& saved,
     for (const SavedActor& actor : saved.actors) {
         const auto controller = ReadAiController(actor.controller);
         if (!controller || (actor.player && *controller)) { return false; }
+        if (!ReadCombatState(actor.combat)) { return false; }
         if (!ValidLightEmission(actor.light) || actor.speed == 0 || (actor.parked && !actor.player) || !addId(actor.id)
             || !ValidPosition(actor.position) || ChunkOf(actor.position) != saved.position
             || (!actor.parked && Occurrences(positions, actor.position))) {
@@ -373,7 +378,8 @@ public:
             const Actor* actor = Live(actors, handle);
             Require(actor != nullptr);
             if (actor->actionDeadline.suspended && !actor->parked && (actor->player || actor->controller_)
-                && actor->actionDeadline.suspendedTicks > room) {
+                && (actor->actionDeadline.suspendedTicks > room
+                    || actor->combat.action.recoveryTicks > room - actor->actionDeadline.suspendedTicks)) {
                 return SaveFailure(SaveError::InvalidData, "Suspended actor delay exceeds simulation clock headroom", diagnostics);
             }
         }
@@ -400,6 +406,7 @@ public:
     ankerl::unordered_dense::set<ChunkCoord, ChunkHash> dirtyChunks; // Includes pending unloaded archives.
     ankerl::unordered_dense::map<PersistentId, TileCoord> playerPositions; // Survives unload and archive eviction.
     ItemSystem itemSystem;
+    CombatSystem combatSystem;
     eastl::unique_ptr<SaveDatabase> database;
     Vector<TileCoord> gravityColumns; // X/Z tile columns, normalized Y.
     unsigned gravityDepth = 0;
@@ -635,7 +642,7 @@ public:
 
     explicit Impl(World& world, const ContentCatalog& catalog, std::uint32_t value)
         : content(catalog), floor(catalog.FindTerrain("floor")),
-          wall(catalog.FindTerrain("wall")), seed(value), itemSystem(world) {
+          wall(catalog.FindTerrain("wall")), seed(value), itemSystem(world), combatSystem(world) {
         Require(floor.value != 0 && wall.value != 0);
     }
 
@@ -1041,7 +1048,7 @@ public:
             Require(actor != nullptr);
             saved.actors.push_back({actor->id, actor->position, actor->player, actor->turns,
                 actor->speed, actor->actionDeadline.Remaining(tick), actor->parked, actor->carryCapacityGrams, actor->light,
-                CaptureAiController(actor->controller_.get())});
+                CaptureAiController(actor->controller_.get()), CaptureCombatState(actor->combat)});
             for (ItemHandle item : actor->inventory) {
                 pending.push_back(item);
             }
@@ -1110,6 +1117,9 @@ public:
             restored.parked = actor.parked;
             restored.carryCapacityGrams = actor.carryCapacityGrams;
             restored.light = actor.light;
+            const auto combat = ReadCombatState(actor.combat);
+            Require(combat.has_value());
+            restored.combat = *combat;
             auto controller = ReadAiController(actor.controller);
             Require(controller.has_value());
             restored.controller_ = eastl::move(*controller);
@@ -1691,6 +1701,14 @@ Vector<ChunkCoord> World::LoadedChunks() const {
 
 std::size_t World::ArchivedChunkCount() const { return impl_->archives.size(); }
 const Actor* World::GetActor(ActorHandle handle) const { return Live(impl_->actors, handle); }
+CombatSystem& World::Combat() { return impl_->combatSystem; }
+const CombatSystem& World::Combat() const { return impl_->combatSystem; }
+Actor* World::MutableActor(ActorHandle handle) { return Live(impl_->actors, handle); }
+void World::ActorChanged(ActorHandle handle) {
+    const auto* actor = GetActor(handle);
+    Require(actor != nullptr);
+    impl_->MarkDirty(ChunkOf(actor->position), false);
+}
 const Item* World::GetItem(ItemHandle handle) const { return Live(impl_->items, handle); }
 const InteractiveObject* World::GetObject(ObjectHandle handle) const { return Live(impl_->objects, handle); }
 ActorHandle World::FindActor(PersistentId id) const { return impl_->FindActor(id); }
@@ -1988,6 +2006,9 @@ WorldResult<void> World::MoveActor(ActorHandle handle, TileCoord destination) {
     if (value->player) { impl_->TrackPlayer(value->id, destination); }
     impl_->MarkDirty(previous);
     impl_->MarkDirty(next);
+    // A pending activity cannot accompany an authoritative displacement intact.
+    // Ordinary steps have no pending activity; gravity and external moves do.
+    if (!value->parked) { impl_->combatSystem.Disrupt(handle, {DisruptionCause::ForcedMovement}); }
     return {};
 }
 
@@ -2588,7 +2609,8 @@ WorldResult<void> World::ScheduleActorAction(ActorHandle handle, std::uint32_t b
     Actor* value = Live(impl_->actors, handle);
     if (!value) { return eastl::unexpected(WorldError::invalid_handle); }
     if (!IsActive(value->position) || value->parked) { return eastl::unexpected(WorldError::chunk_unavailable); }
-    if (baseCost == 0 || value->actionDeadline.Remaining(impl_->tick) != 0) {
+    if (baseCost == 0 || value->actionDeadline.Remaining(impl_->tick) != 0
+        || value->combat.action.kind != ActorActionKind::None) {
         return eastl::unexpected(WorldError::invalid_request);
     }
     Require(value->speed != 0);
@@ -2637,6 +2659,7 @@ void World::ElapseTicks(Tick elapsed) {
         }
     }
     impl_->itemSystem.Elapse(elapsed);
+    impl_->combatSystem.Elapse(elapsed);
     for (InteractiveObject& object : impl_->objects) {
         if (!object.enabled || !IsActive(object.position)) { continue; }
         if (object.behavior_) {
@@ -2668,7 +2691,8 @@ void World::CollectReadyPlayers(Vector<ActorHandle>& output) const {
     output.clear();
     for (const auto& entry : impl_->actors.items()) {
         const Actor& actor = entry.second.get();
-        if (actor.player && !actor.actionDeadline.suspended && actor.actionDeadline.dueTick <= impl_->tick) {
+        if (actor.player && !actor.actionDeadline.suspended && actor.actionDeadline.dueTick <= impl_->tick
+            && actor.combat.action.kind == ActorActionKind::None) {
             output.push_back({entry.first.raw});
         }
     }
@@ -2685,17 +2709,31 @@ void World::ProcessNpcActions(std::uint32_t& rng) {
     for (const auto& entry : impl_->actors.items()) {
         const Actor& actor = entry.second.get();
         if (!actor.player && !actor.parked && actor.controller_ && IsActive(actor.position)
-            && actor.actionDeadline.dueTick <= impl_->tick) { due.push_back({actor.id, {entry.first.raw}}); }
+            && actor.actionDeadline.dueTick <= impl_->tick
+            && actor.combat.action.kind == ActorActionKind::None) { due.push_back({actor.id, {entry.first.raw}}); }
     }
     eastl::sort(due.begin(), due.end(), [](const auto& a, const auto& b) { return a.id < b.id; });
     for (const auto record : due) {
         Actor* actor = Live(impl_->actors, record.handle);
         if (!actor || actor->id != record.id || actor->player || actor->parked || !actor->controller_
-            || !IsActive(actor->position) || actor->actionDeadline.dueTick > impl_->tick) { continue; }
+            || !IsActive(actor->position) || actor->actionDeadline.dueTick > impl_->tick
+            || actor->combat.action.kind != ActorActionKind::None) { continue; }
         const ActorIntent intent = actor->controller_->ChooseAction(ActorReadContext(*this, record.handle), rng);
         Require(intent.baseCost > 0);
-        Require(intent.kind == ActorIntentKind::Wait || intent.kind == ActorIntentKind::Move);
-        Require(ScheduleActorAction(record.handle, intent.baseCost).has_value());
+        Require(intent.kind == ActorIntentKind::Wait || intent.kind == ActorIntentKind::Move
+            || intent.kind == ActorIntentKind::Attack);
+        if (intent.kind == ActorIntentKind::Attack) {
+            const auto attack = impl_->combatSystem.Attack(record.handle, intent.target, rng);
+            // A refused AI intent still makes progress; never leave a due NPC spinning.
+            if (!attack.committed) { Require(ScheduleActorAction(record.handle, intent.baseCost).has_value()); }
+            UpdatePlayerObservations();
+            continue;
+        }
+        const std::uint64_t baseCost = intent.kind == ActorIntentKind::Move
+            ? (std::uint64_t{intent.baseCost} * LocomotionBaseCost(actor->combat.body)) / 100
+            : intent.baseCost;
+        Require(baseCost <= eastl::numeric_limits<std::uint32_t>::max());
+        Require(ScheduleActorAction(record.handle, static_cast<std::uint32_t>(baseCost)).has_value());
         // Commit the deadline before execution: blocked movement still costs time.
         if (intent.kind == ActorIntentKind::Move) {
             const auto moved = TryActorStep(record.handle, intent.direction, true);
@@ -2869,6 +2907,7 @@ bool World::CheckInvariants() const {
         const ActorHandle handle{entry.first.raw};
         const auto controller = ReadAiController(CaptureAiController(value.controller_.get()));
         if (!controller || (value.player && value.controller_)) { return false; }
+        if (!ValidateCombatState(value.combat)) { return false; }
         const bool running = !value.parked && IsActive(value.position) && (value.player || value.controller_);
         if (value.actionDeadline.suspended == running) { return false; }
         if (!ValidLightEmission(value.light) || value.speed == 0 || !add_id(value.id) || Occurrences(indexed_actors, handle) != 1

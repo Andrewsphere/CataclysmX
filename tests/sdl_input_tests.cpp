@@ -43,6 +43,23 @@ TEST_CASE("SDL input handles named keys and ignores unsupported events", "[sdl][
     CHECK_FALSE(sdl::TranslateKey(event));
 }
 
+TEST_CASE("SDL Tab resolves to a non-repeating gameplay attack", "[sdl][input]") {
+    const auto chord = sdl::TranslateKey(Key(SDLK_TAB)); REQUIRE(chord);
+    const auto keys = DefaultKeymap();
+    CHECK(ResolveAction(keys, InputContext::Gameplay, *chord) == InputAction::Attack);
+    CHECK(ResolveAction(keys, InputContext::Menu, *chord) == InputAction::Next);
+    CHECK(ResolveAction(keys, InputContext::Debug, *chord) == InputAction::Next);
+    CHECK_FALSE(sdl::AllowsKeyRepeat(InputContext::Gameplay, InputAction::Attack));
+    const auto one = sdl::TranslateKey(Key(SDLK_1)); REQUIRE(one);
+    const auto two = sdl::TranslateKey(Key(SDLK_2)); REQUIRE(two);
+    const auto three = sdl::TranslateKey(Key(SDLK_3)); REQUIRE(three);
+    CHECK(ResolveAction(keys, InputContext::Gameplay, *one) == InputAction::StyleBalanced);
+    CHECK(ResolveAction(keys, InputContext::Gameplay, *two) == InputAction::StyleAggressive);
+    CHECK(ResolveAction(keys, InputContext::Gameplay, *three) == InputAction::StyleDefensive);
+    CHECK(ResolveAction(keys, InputContext::Debug, *one) == InputAction::Layer1);
+    CHECK_FALSE(sdl::AllowsKeyRepeat(InputContext::Gameplay, InputAction::StyleBalanced));
+}
+
 TEST_CASE("SDL map zoom uses case-sensitive z shortcuts", "[sdl][input]") {
     const SDL_Keymod modifiers[]{SDL_KMOD_NONE, SDL_KMOD_SHIFT, SDL_KMOD_CAPS,
         SDL_KMOD_CAPS | SDL_KMOD_SHIFT};

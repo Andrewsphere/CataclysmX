@@ -164,6 +164,15 @@ String Localization::OutcomeText(Outcome outcome) const {
     case Outcome::item_use_failed: return Text("outcome.item_use_failed", OutcomeMessage(outcome));
     case Outcome::capacity_exceeded: return Text("outcome.capacity_exceeded", OutcomeMessage(outcome));
     case Outcome::invalid_container: return Text("outcome.invalid_container", OutcomeMessage(outcome));
+    case Outcome::attacked: return Text("outcome.attacked", OutcomeMessage(outcome));
+    case Outcome::attack_missed: return Text("outcome.attack_missed", OutcomeMessage(outcome));
+    case Outcome::attack_parried: return Text("outcome.attack_parried", OutcomeMessage(outcome));
+    case Outcome::attack_blocked: return Text("outcome.attack_blocked", OutcomeMessage(outcome));
+    case Outcome::attack_windup: return Text("outcome.attack_windup", OutcomeMessage(outcome));
+    case Outcome::target_defeated: return Text("outcome.target_defeated", OutcomeMessage(outcome));
+    case Outcome::no_target: return Text("outcome.no_target", OutcomeMessage(outcome));
+    case Outcome::no_combat_move: return Text("outcome.no_combat_move", OutcomeMessage(outcome));
+    case Outcome::combat_style_changed: return Text("outcome.combat_style_changed", OutcomeMessage(outcome));
     }
     std::abort();
 }

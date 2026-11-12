@@ -25,6 +25,7 @@
 namespace cataclysmx {
 
 struct VisibilityMask;
+class CombatSystem;
 
 // Authoritative server state captured in the same transaction as chunk values.
 struct SavedPlayer {
@@ -207,6 +208,9 @@ public:
     std::size_t ArchivedChunkCount() const;
 
     const Actor* GetActor(ActorHandle handle) const;
+    // World owns the coordinator; combat rules and action transitions live there.
+    CombatSystem& Combat();
+    const CombatSystem& Combat() const;
     const Item* GetItem(ItemHandle handle) const;
     const InteractiveObject* GetObject(ObjectHandle handle) const;
     ActorHandle FindActor(PersistentId id) const;
@@ -309,6 +313,9 @@ public:
     bool CheckInvariants() const;
 
 private:
+    friend class CombatSystem;
+    Actor* MutableActor(ActorHandle actor);
+    void ActorChanged(ActorHandle actor);
     friend bool LineVisible(const World&, TileCoord, TileCoord);
     void RecordPointLos(bool voxel, std::uint64_t count = 1) const;
     friend class ItemSystem;

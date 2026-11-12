@@ -109,7 +109,7 @@ void Replace(std::string& text, const char* before, const char* after) {
 
 void StripV9ChunkFields(RawDatabase& raw) {
     raw.Exec("UPDATE chunks SET payload=json_set(payload,"
-        "'$.actors',json((SELECT json_group_array(json_remove(value,'$.controller')) FROM json_each(chunks.payload,'$.actors'))),"
+        "'$.actors',json((SELECT json_group_array(json_remove(value,'$.controller','$.combat')) FROM json_each(chunks.payload,'$.actors'))),"
         "'$.objects',json((SELECT json_group_array(json_remove(value,'$.type','$.state')) FROM json_each(chunks.payload,'$.objects'))))");
 }
 
@@ -182,7 +182,7 @@ TEST_CASE("Save terrain names survive catalog renumbering and missing content fa
     }
     {
         RawDatabase raw(file.path.c_str());
-        CHECK(raw.Text("SELECT format_version FROM metadata") == "9");
+        CHECK(raw.Text("SELECT format_version FROM metadata") == "10");
         const auto payload = raw.Text("SELECT payload FROM chunks");
         CHECK(payload.find("\"terrain\":\"moss\"") != std::string::npos);
         CHECK(payload.find("\"terrain\":\"floor\"") != std::string::npos);
@@ -531,7 +531,7 @@ TEST_CASE("Save database rejects unknown versions and incomplete or extended sch
     Populate(file.path.c_str());
     {
         RawDatabase raw(file.path.c_str());
-        SECTION("future version") { raw.Exec("UPDATE metadata SET format_version=10"); }
+        SECTION("future version") { raw.Exec("UPDATE metadata SET format_version=11"); }
         SECTION("previous v6 format") { raw.Exec("UPDATE metadata SET format_version=6"); }
         SECTION("previous v5 format") { raw.Exec("UPDATE metadata SET format_version=5"); }
         SECTION("previous v4 format") { raw.Exec("UPDATE metadata SET format_version=4"); }
@@ -692,7 +692,7 @@ TEST_CASE("Save database validates session, counters and generator version", "[s
     CHECK(database.Open(file.path.c_str()) == eastl::unexpected(expected));
 }
 
-TEST_CASE("Save format nine round trips square and tile circle residency", "[save][database][residency]") {
+TEST_CASE("Save format ten round trips square and tile circle residency", "[save][database][residency]") {
     SaveFile file;
     auto snapshot = SampleSnapshot();
     SECTION("square") {}
@@ -711,7 +711,7 @@ TEST_CASE("Save format nine round trips square and tile circle residency", "[sav
     }
     {
         RawDatabase raw(file.path.c_str());
-        CHECK(raw.Text("SELECT format_version FROM metadata") == "9");
+        CHECK(raw.Text("SELECT format_version FROM metadata") == "10");
         const auto payload = raw.Text("SELECT payload FROM world_state");
         CHECK(payload.find("\"circle_residency\":") != std::string::npos);
         if (!snapshot.session.circleResidency) {
@@ -972,7 +972,7 @@ TEST_CASE("Opening genuine v7 preserves square residency until the first committ
     REQUIRE(database.Commit());
     {
         RawDatabase raw(file.path.c_str());
-        CHECK(raw.Text("SELECT format_version FROM metadata") == "9");
+        CHECK(raw.Text("SELECT format_version FROM metadata") == "10");
         CHECK(raw.Text("SELECT payload FROM world_state").find("\"circle_residency\":") != std::string::npos);
         CHECK(raw.Text("SELECT payload FROM chunks") != originalChunk);
         CHECK(raw.Text("SELECT payload FROM chunks").find("\"controller\":") != std::string::npos);
@@ -1085,10 +1085,10 @@ TEST_CASE("Failed v7 migration keeps durable version and permits retry on the sa
     REQUIRE(upgraded);
     CHECK_FALSE(upgraded->session.circleResidency);
     RawDatabase raw(file.path.c_str());
-    CHECK(raw.Text("SELECT format_version FROM metadata") == "9");
+    CHECK(raw.Text("SELECT format_version FROM metadata") == "10");
 }
 
-TEST_CASE("Legacy checkpoints rewrite every chunk before accepting new v9 writes and roll back atomically", "[save][database][migration]") {
+TEST_CASE("Legacy checkpoints rewrite every chunk before accepting new v10 writes and roll back atomically", "[save][database][migration]") {
     int version = 7;
     SECTION("version seven") { version = 7; }
     SECTION("version eight") { version = 8; }
@@ -1136,6 +1136,7 @@ TEST_CASE("Legacy checkpoints rewrite every chunk before accepting new v9 writes
     CHECK((*npc)->Kind() == AiControllerKind::Wander);
     CHECK((**remote).objects[0].type == ObjectTypeId{});
     CHECK((**remote).objects[0].state == DataObject{});
+    CHECK((**remote).actors[0].combat == CaptureCombatState(MakeCombatState(false)));
 
     // A failed checkpoint must undo migration of untouched remote rows too.
     REQUIRE(database.Begin());
@@ -1143,6 +1144,7 @@ TEST_CASE("Legacy checkpoints rewrite every chunk before accepting new v9 writes
     REQUIRE(local);
     REQUIRE(*local);
     CHECK((**local).actors[0].controller == CaptureAiController(nullptr));
+    CHECK((**local).actors[0].combat == CaptureCombatState(MakeCombatState(true)));
     REQUIRE(database.WriteChunk(SampleChunk()));
     auto bad = *snapshot;
     bad.nextId = 9; // Remote ID 9 remains present.
@@ -1164,11 +1166,11 @@ TEST_CASE("Legacy checkpoints rewrite every chunk before accepting new v9 writes
     REQUIRE(database.Begin());
     auto replacement = SampleChunk();
     replacement.tiles[0].damage = 67;
-    REQUIRE(database.WriteChunk(replacement)); // New v9 row must not use legacy decoder at commit.
+    REQUIRE(database.WriteChunk(replacement)); // New v10 row must not use legacy decoder at commit.
     REQUIRE(database.Commit());
     {
         RawDatabase raw(file.path.c_str());
-        CHECK(raw.Text("SELECT format_version FROM metadata") == "9");
+        CHECK(raw.Text("SELECT format_version FROM metadata") == "10");
         CHECK(raw.Text("SELECT count(*) FROM chunks WHERE json_type(payload,'$.actors[0].controller')='object'") == "2");
         CHECK(raw.Text("SELECT count(*) FROM chunks WHERE json_type(payload,'$.objects[0].type')='text' AND json_type(payload,'$.objects[0].state')='object'") == "2");
     }
@@ -1569,6 +1571,147 @@ TEST_CASE("Save database never removes a preexisting file after failed creation 
     std::string content;
     std::getline(existing, content);
     CHECK(content == "external data");
+}
+
+TEST_CASE("V10 combat state round trips injuries protection and stale pending targets", "[save][database][combat]") {
+    SaveFile file;
+    auto chunk = SampleChunk();
+    auto combat = MakeCombatState(true);
+    combat.body.parts[0] = {9876, 0, 0, 17, 0, false};
+    combat.body.parts[2] = {0, 123, 456, 0, 0, true};
+    combat.body.parts[3] = {9877, 123, 0, 0, 789, false};
+    combat.injury.mendedHp = 60;
+    combat.style = CombatStyle::Aggressive;
+    combat.faction = CombatFaction::Undead;
+    combat.action = {ActorActionKind::MeleeWindup, UINT64_MAX,
+        static_cast<std::uint32_t>(CombatMove::HeavyAttack), UINT64_MAX, 30};
+    SECTION("heavy windup") {}
+    SECTION("aiming") { combat.action = {ActorActionKind::Aiming, UINT64_MAX}; }
+    combat.stamina = 42;
+    combat.staminaElapsed = 9;
+    combat.reactionCooldown = UINT64_MAX;
+    combat.heavyCooldown = UINT64_MAX - 1;
+    combat.protection[2][3] = UINT32_MAX;
+    chunk.actors[0].combat = CaptureCombatState(combat);
+    {
+        SaveDatabase database(TestContent());
+        REQUIRE(database.Create(file.path.c_str()));
+        REQUIRE(database.Begin());
+        REQUIRE(database.WriteChunk(chunk));
+        REQUIRE(database.WriteSnapshot(SampleSnapshot()));
+        REQUIRE(database.Commit());
+    }
+    SaveDatabase database(TestContent());
+    REQUIRE(database.Open(file.path.c_str()));
+    auto loaded = database.ReadChunk({}, 8);
+    REQUIRE(loaded);
+    REQUIRE(*loaded);
+    const auto restored = ReadCombatState((**loaded).actors[0].combat);
+    REQUIRE(restored);
+    CHECK(*restored == combat);
+    REQUIRE(database.Begin());
+    REQUIRE(database.Commit());
+}
+
+TEST_CASE("V10 requires strict valid combat envelopes on disk and before writing", "[save][database][combat]") {
+    SaveFile file;
+    Populate(file.path.c_str());
+    SaveError expected = SaveError::InvalidData;
+    {
+        RawDatabase raw(file.path.c_str());
+        SECTION("missing combat") { raw.Exec("UPDATE chunks SET payload=json_remove(payload,'$.actors[0].combat')"); }
+        SECTION("empty combat") { raw.Exec("UPDATE chunks SET payload=json_set(payload,'$.actors[0].combat',json('{}'))"); }
+        SECTION("combat list") { raw.Exec("UPDATE chunks SET payload=json_set(payload,'$.actors[0].combat',json('[]'))"); }
+        SECTION("unknown nested field") { raw.Exec("UPDATE chunks SET payload=json_set(payload,'$.actors[0].combat.action.extra',0)"); }
+        SECTION("missing nested field") { raw.Exec("UPDATE chunks SET payload=json_remove(payload,'$.actors[0].combat.profile.regeneration')"); }
+        SECTION("overflow before cast") { raw.Exec("UPDATE chunks SET payload=json_set(payload,'$.actors[0].combat.accuracy',256)"); }
+        SECTION("invalid body") { raw.Exec("UPDATE chunks SET payload=json_set(payload,'$.actors[0].combat.body.parts[0].hp',1)"); }
+        SECTION("future combat version") {
+            raw.Exec("UPDATE chunks SET payload=json_set(payload,'$.actors[0].combat.version',2)");
+            expected = SaveError::UnsupportedVersion;
+        }
+        SECTION("duplicate combat version") {
+            auto payload = raw.Text("SELECT payload FROM chunks");
+            Replace(payload, "\"combat\":{\"version\":1", "\"combat\":{\"version\":1,\"version\":1");
+            raw.SetText("UPDATE chunks SET payload=?1", payload);
+        }
+        SECTION("invalid in-memory write") {
+            SaveDatabase database(TestContent());
+            REQUIRE(database.Open(file.path.c_str()));
+            auto chunk = SampleChunk();
+            chunk.actors[0].combat.SetUnsigned("stamina", 101);
+            REQUIRE(database.Begin());
+            CHECK(database.WriteChunk(chunk) == eastl::unexpected(SaveError::InvalidData));
+            CHECK(database.Commit() == eastl::unexpected(SaveError::InvalidState));
+            return;
+        }
+    }
+    SaveDatabase database(TestContent());
+    CHECK(database.Open(file.path.c_str()) == eastl::unexpected(expected));
+}
+
+TEST_CASE("V9 migration synthesizes combat defaults and preserves existing actor state", "[save][database][combat][migration]") {
+    SaveFile file;
+    auto chunk = SampleChunk();
+    chunk.actors.push_back({8, {1, 0}, false, 77, 137, 456});
+    auto controller = MakeAiController(AiControllerKind::Wander);
+    REQUIRE(controller);
+    chunk.actors[1].controller = CaptureAiController(controller->get());
+    chunk.actors[1].light = {4, 2};
+    auto snapshot = SampleSnapshot();
+    snapshot.nextId = 9;
+    {
+        SaveDatabase database(TestContent());
+        REQUIRE(database.Create(file.path.c_str()));
+        REQUIRE(database.Begin());
+        REQUIRE(database.WriteChunk(chunk));
+        REQUIRE(database.WriteSnapshot(snapshot));
+        REQUIRE(database.Commit());
+    }
+    std::string original;
+    {
+        RawDatabase raw(file.path.c_str());
+        raw.Exec("UPDATE chunks SET payload=json_set(payload,'$.actors',json((SELECT json_group_array(json_remove(value,'$.combat')) FROM json_each(chunks.payload,'$.actors'))));"
+            "UPDATE metadata SET format_version=9");
+        original = raw.Text("SELECT payload FROM chunks");
+    }
+    SaveDatabase database(TestContent());
+    REQUIRE(database.Open(file.path.c_str()));
+    auto loaded = database.ReadChunk({}, 9);
+    REQUIRE(loaded);
+    REQUIRE(*loaded);
+    CHECK((**loaded).actors[0].combat == CaptureCombatState(MakeCombatState(true)));
+    CHECK((**loaded).actors[1].combat == CaptureCombatState(MakeCombatState(false)));
+    CHECK((**loaded).actors[1].controller == chunk.actors[1].controller);
+    CHECK((**loaded).actors[1].light == chunk.actors[1].light);
+    CHECK((**loaded).actors[1].turns == 77);
+    CHECK((**loaded).actors[1].speed == 137);
+    CHECK((**loaded).actors[1].remainingTicks == 456);
+    {
+        RawDatabase raw(file.path.c_str());
+        CHECK(raw.Text("SELECT format_version FROM metadata") == "9");
+        CHECK(raw.Text("SELECT payload FROM chunks") == original);
+    }
+    REQUIRE(database.Begin());
+    SECTION("rollback retains legacy format") {
+        database.Rollback();
+        RawDatabase raw(file.path.c_str());
+        CHECK(raw.Text("SELECT format_version FROM metadata") == "9");
+        CHECK(raw.Text("SELECT payload FROM chunks") == original);
+        REQUIRE(database.Begin());
+    }
+    SECTION("empty checkpoint") {}
+    REQUIRE(database.Commit());
+    RawDatabase raw(file.path.c_str());
+    CHECK(raw.Text("SELECT format_version FROM metadata") == "10");
+    CHECK(raw.Text("SELECT payload FROM chunks").find("\"combat\":") != std::string::npos);
+    SaveDatabase observer(TestContent());
+    REQUIRE(observer.Open(file.path.c_str()));
+    const auto upgraded = observer.ReadChunk({}, 9);
+    REQUIRE(upgraded);
+    REQUIRE(*upgraded);
+    CHECK((**upgraded).actors[1].combat == (**loaded).actors[1].combat);
+    CHECK((**upgraded).actors[1].controller == chunk.actors[1].controller);
 }
 
 } // namespace

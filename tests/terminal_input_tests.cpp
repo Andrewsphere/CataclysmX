@@ -5,6 +5,21 @@
 namespace {
 using namespace cataclysmx;
 
+TEST_CASE("Tab attacks only in gameplay and retains menu navigation", "[terminal][input]") {
+    const auto keys = DefaultKeymap();
+    const auto tab = DecodeTerminalInput("\t"); REQUIRE(tab);
+    CHECK(ResolveAction(keys, InputContext::Gameplay, *tab) == InputAction::Attack);
+    CHECK(ResolveAction(keys, InputContext::Menu, *tab) == InputAction::Next);
+    CHECK(ResolveAction(keys, InputContext::Debug, *tab) == InputAction::Next);
+    CHECK_FALSE(ResolveAction(keys, InputContext::Interaction, *tab));
+    CHECK(ParseAction("attack") == InputAction::Attack);
+    CHECK(ResolveAction(keys, InputContext::Gameplay, {"1", false}) == InputAction::StyleBalanced);
+    CHECK(ResolveAction(keys, InputContext::Gameplay, {"2", false}) == InputAction::StyleAggressive);
+    CHECK(ResolveAction(keys, InputContext::Gameplay, {"3", false}) == InputAction::StyleDefensive);
+    CHECK(ResolveAction(keys, InputContext::Debug, {"1", false}) == InputAction::Layer1);
+    CHECK(ParseAction("style_defensive") == InputAction::StyleDefensive);
+}
+
 TEST_CASE("Stair bindings use requested symbols in directional contexts", "[terminal][input]") {
     const auto keys = DefaultKeymap();
     REQUIRE(ValidateKeymap(keys));

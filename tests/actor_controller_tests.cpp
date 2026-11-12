@@ -1,4 +1,5 @@
 #include "actors/ai_controller.h"
+#include "combat/combat_system.h"
 #include "core/world.h"
 #include "content_fixture.h"
 #include <EASTL/array.h>
@@ -135,6 +136,12 @@ TEST_CASE("Controller payload validation is strict and typed", "[actors][control
     const auto controller = MakeAiController(AiControllerKind::Wander, &state);
     REQUIRE_FALSE(controller);
     CHECK(controller.error() == expected);
+    const auto meleeValid = ValidateAiControllerState(AiControllerKind::Melee, state);
+    REQUIRE_FALSE(meleeValid);
+    CHECK(meleeValid.error() == expected);
+    const auto melee = MakeAiController(AiControllerKind::Melee, &state);
+    REQUIRE_FALSE(melee);
+    CHECK(melee.error() == expected);
 }
 
 TEST_CASE("None and controller identities have no permissive fallback", "[actors][controller]") {
@@ -149,13 +156,74 @@ TEST_CASE("None and controller identities have no permissive fallback", "[actors
     CHECK_FALSE(MakeAiController(invalidKind));
     CHECK_FALSE(ValidateAiControllerState(invalidKind, empty));
     CHECK(AiControllerKindName(invalidKind).empty());
-    for (const auto kind : {AiControllerKind::None, AiControllerKind::Wander}) {
+    for (const auto kind : {AiControllerKind::None, AiControllerKind::Wander, AiControllerKind::Melee}) {
         CHECK(ReadAiControllerKind(AiControllerKindName(kind)) == kind);
     }
     for (const auto name : {"", "Wander", "unknown", "wander "}) {
         CHECK(ReadAiControllerKind(name) == eastl::unexpected(StateError::InvalidData));
     }
     CHECK_FALSE(ReadAiControllerKind(eastl::string_view("wander\0", 7)));
+}
+
+TEST_CASE("Melee snapshots use a stable name and versioned state", "[actors][controller]") {
+    auto controller = MakeAiController(AiControllerKind::Melee);
+    REQUIRE(controller);
+    REQUIRE(*controller);
+    CHECK((*controller)->Kind() == AiControllerKind::Melee);
+    const auto envelope = CaptureAiController(controller->get());
+    REQUIRE(envelope.GetString("type"));
+    CHECK(*envelope.GetString("type") == "melee");
+    REQUIRE(envelope.Find("state"));
+    CHECK(*envelope.Find("state") == WanderState());
+    auto restored = ReadAiController(envelope);
+    REQUIRE(restored);
+    REQUIRE(*restored);
+    CHECK((*restored)->Kind() == AiControllerKind::Melee);
+    CHECK(CaptureAiController(restored->get()) == envelope);
+}
+
+TEST_CASE("Melee selects adjacent hostiles and otherwise follows wander", "[actors][controller]") {
+    World world(TestContent());
+    REQUIRE(world.RequestChunks({{}, 0}, LoadMode::active));
+    REQUIRE(world.ReconcileChunks());
+    for (int z = 1; z <= 5; ++z) {
+        for (int x = 1; x <= 5; ++x) {
+            REQUIRE(world.SetTile({x, z}, {TestTerrain("floor"), 0}));
+        }
+    }
+    const auto selfResult = world.CreateActor({3, 3});
+    REQUIRE(selfResult);
+    const auto self = *selfResult;
+    const auto neutralResult = world.CreateActor({4, 3});
+    REQUIRE(neutralResult);
+    const auto hostileResult = world.CreateActor({3, 2});
+    REQUIRE(hostileResult);
+    auto state = MakeCombatState(false);
+    state.faction = CombatFaction::Survivors;
+    REQUIRE(world.Combat().Configure(self, state));
+    state.faction = CombatFaction::Undead;
+    REQUIRE(world.Combat().Configure(*hostileResult, state));
+    auto melee = MakeAiController(AiControllerKind::Melee);
+    auto wander = MakeAiController(AiControllerKind::Wander);
+    REQUIRE(melee);
+    REQUIRE(*melee);
+    REQUIRE(wander);
+    REQUIRE(*wander);
+    const ActorReadContext context(world, self);
+    std::uint32_t rng = 42;
+    const auto attack = (*melee)->ChooseAction(context, rng);
+    CHECK(attack.kind == ActorIntentKind::Attack);
+    CHECK(attack.target == *hostileResult);
+    CHECK(rng == 42);
+    REQUIRE(world.MoveActor(*hostileResult, {3, 1}));
+    std::uint32_t wanderRng = rng;
+    for (int i = 0; i < 9; ++i) {
+        const auto intent = (*melee)->ChooseAction(context, rng);
+        CHECK(intent.kind == ActorIntentKind::Move);
+        CHECK(intent.target == ActorHandle{});
+        CHECK(intent == (*wander)->ChooseAction(context, wanderRng));
+        CHECK(rng == wanderRng);
+    }
 }
 
 TEST_CASE("Controller required reads retain exact diagnostic paths", "[actors][controller]") {

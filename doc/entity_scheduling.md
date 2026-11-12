@@ -36,6 +36,20 @@ sorted by persistent ID, independent of handle allocation and dense storage orde
 Objects/items complete before the player input barrier; NPCs execute after it.
 Overdue periodic events execute once and schedule from the current tick.
 
+Combat pending actions use the same actor deadline. Heavy windup and its subsequent
+recovery capture speed at commitment; ordinary damaging hits or forced movement
+preserve the windup deadline while applying the strongest bounded accuracy penalty.
+Cancellation replaces a pending deadline with disruption recovery; further
+disruptions cannot reset it. Combat events are processed in persistent-ID order.
+Due combat transitions complete after object/item events and before the player
+input barrier. A due windup is not a new input opportunity: it executes the strike
+and enters its already committed recovery without counting another actor turn.
+Active elapsed time advances combat cooldowns, stamina and body recovery; parked,
+inactive and archived actors freeze these values without catch-up. Pending target
+IDs may be stale when a windup resolves. See [combat API](combat_api.md).
+Controllerless active NPCs retain frozen action deadlines while body recovery,
+stamina and combat cooldowns advance with their active surroundings.
+
 Typed object behaviors and item behaviors still receive elapsed work/energy
 processing. Their progress is actual work state, not an entity scheduling timer.
 Typed objects leave their unused legacy timer suspended; its saved value remains
@@ -66,6 +80,8 @@ deadlines cannot underflow.
 Reconciliation treats saved relative delays as untrusted input. Before changing
 live chunks, activity flags, handles, or archive ownership, it checks that every
 incoming actor delay and untyped-object delay fits `UINT64_MAX - GetTick()`.
+For a pending heavy attack, that check includes its committed follow-up recovery
+as well as its remaining windup, including on resident reactivation.
 This includes resident-only loads and pending/warm RAM archives; unused legacy
 timers on typed objects are excluded. It also preflights eligible suspended live
 timers before reactivating resident chunks, including the same-columns fast path:

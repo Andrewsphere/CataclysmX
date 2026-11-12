@@ -494,6 +494,12 @@ int main(int argc, char** argv) {
         if (directional) { command.kind = interacting ? CommandKind::interact : CommandKind::move; }
         else if (*action == InputAction::Interact) { interacting = true; return true; }
         else if (*action == InputAction::Wait) { command.kind = CommandKind::wait; }
+        else if (*action == InputAction::Attack) { command.kind = CommandKind::attack; }
+        else if (*action == InputAction::StyleBalanced || *action == InputAction::StyleAggressive || *action == InputAction::StyleDefensive) {
+            command.kind = CommandKind::combat_style;
+            command.style = *action == InputAction::StyleBalanced ? CombatStyle::Balanced
+                : *action == InputAction::StyleAggressive ? CombatStyle::Aggressive : CombatStyle::Defensive;
+        }
         else if (*action == InputAction::PickUp) { command.kind = CommandKind::pick_up; }
         else if (*action == InputAction::Drop) { command.kind = CommandKind::drop; }
         else { return true; }

@@ -15,7 +15,8 @@ constexpr eastl::string_view actionNames[] = {
     "accept", "next", "previous", "jump_west", "jump_east", "jump_north", "jump_south",
     "recenter", "layer_1", "layer_2", "layer_3", "layer_4", "layer_5", "zoom_in", "zoom_out",
     "details_up", "details_down", "apply", "save_settings", "reload", "inspect", "add_binding", "unbind", "reset",
-    "inventory", "players", "help", "quick_actions", "use", "move_down", "move_up"
+    "inventory", "players", "help", "quick_actions", "use", "move_down", "move_up", "attack",
+    "style_balanced", "style_aggressive", "style_defensive"
 };
 constexpr eastl::string_view contextNames[] = {"gameplay", "interaction", "menu", "debug", "items"};
 constexpr eastl::string_view namedKeys[] = {
@@ -108,6 +109,10 @@ Keymap DefaultKeymap() {
         add(context, InputAction::Cancel, {"Escape"});
     }
     const auto game = InputContext::Gameplay;
+    add(game, InputAction::Attack, {"Tab"});
+    add(game, InputAction::StyleBalanced, {"1"});
+    add(game, InputAction::StyleAggressive, {"2"});
+    add(game, InputAction::StyleDefensive, {"3"});
     add(game, InputAction::Wait, {"."}); add(game, InputAction::PickUp, {"g"});
     add(game, InputAction::Drop, {"d"}); add(game, InputAction::Interact, {"o"});
     add(game, InputAction::Save, {"S"}); add(game, InputAction::Quit, {"q"});

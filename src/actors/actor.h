@@ -4,6 +4,7 @@
 #include "core/light_types.h"
 #include "core/timing.h"
 #include "core/world_types.h"
+#include "combat/combat_types.h"
 #include <EASTL/unique_ptr.h>
 
 namespace cataclysmx {
@@ -31,6 +32,8 @@ public:
     bool parked = false;
     std::uint64_t carryCapacityGrams = 100000;
     LightEmission light{};
+    CombatState combat;
+    CombatFeedback combatFeedback;
 
 private:
     friend class World;

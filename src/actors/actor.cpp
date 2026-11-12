@@ -5,7 +5,7 @@
 namespace cataclysmx {
 
 Actor::Actor(PersistentId id, TileCoord position, bool player)
-    : id(id), position(position), player(player) {
+    : id(id), position(position), player(player), combat(MakeCombatState(player)) {
     if (!player) {
         auto controller = cataclysmx::MakeAiController(AiControllerKind::Wander);
         if (!controller) { std::abort(); }

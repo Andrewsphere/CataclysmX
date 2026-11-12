@@ -2,6 +2,7 @@
 #include <limits>
 
 #include "core/simulation.h"
+#include "combat/combat_system.h"
 
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
 #error Engine must compile without exceptions
@@ -31,6 +32,11 @@ SimulationResult AdvanceUntilInput(World& world, Tick& tick,
         const auto dueItemEvent = world.NextItemEventIn();
         effectsCompleted |= dueItemEvent && *dueItemEvent == 0;
         world.ProcessItemEvents();
+        const auto combatEvent = world.Combat().NextEventIn();
+        if (combatEvent && *combatEvent == 0) {
+            world.Combat().ProcessEvents(rngState);
+            effectsCompleted = true;
+        }
         // Due effects at the same tick form one observation boundary. This is
         // inside the loop so a long wait cannot skip intermediate observations.
         if (effectsCompleted) { world.UpdatePlayerObservations(); }

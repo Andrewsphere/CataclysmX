@@ -92,6 +92,10 @@ add_library(cataclysmx_engine STATIC
     src/content/object_definition.cpp src/content/object_definition.h
     src/actors/actor.cpp src/actors/actor.h
     src/actors/ai_controller.cpp src/actors/ai_controller.h
+    src/actors/action.cpp src/actors/action.h
+    src/combat/body.cpp src/combat/body.h
+    src/combat/combat_types.cpp src/combat/combat_types.h
+    src/combat/combat_system.cpp src/combat/combat_system.h
     src/objects/interactive_object.cpp src/objects/interactive_object.h
     src/objects/object_behavior.cpp src/objects/object_behavior.h
     src/core/data_object.cpp src/core/data_object.h src/core/item_state.cpp src/core/item_state.h
@@ -133,6 +137,7 @@ endif()
 cataclysmx_no_exceptions(cataclysmx_network)
 
 add_library(cataclysmx_client STATIC src/client/text.cpp src/client/text.h
+    src/client/combat_text.cpp src/client/combat_text.h
     src/client/perception_style.cpp src/client/perception_style.h
     src/client/worldgen_debug.cpp src/client/worldgen_debug.h
     src/client/lan_profile.cpp src/client/lan_profile.h
@@ -234,6 +239,9 @@ if(CATACLYSMX_BUILD_TESTS)
         tests/item_save_tests.cpp tests/item_network_tests.cpp tests/item_server_tests.cpp
         tests/item_behavior_tests.cpp
         tests/actor_controller_tests.cpp tests/entity_world_tests.cpp
+        tests/actor_action_tests.cpp tests/combat_body_tests.cpp
+        tests/combat_state_tests.cpp tests/combat_system_tests.cpp
+        tests/combat_integration_tests.cpp
         tests/object_content_tests.cpp tests/object_behavior_tests.cpp
         tests/object_server_tests.cpp tests/object_network_tests.cpp
         tests/settings_tests.cpp tests/localization_tests.cpp)

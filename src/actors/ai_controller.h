@@ -9,11 +9,12 @@ namespace cataclysmx {
 
 class World;
 
-enum class ActorIntentKind : std::uint8_t { Wait, Move };
+enum class ActorIntentKind : std::uint8_t { Wait, Move, Attack };
 struct ActorIntent {
     ActorIntentKind kind = ActorIntentKind::Wait;
     TileCoord direction{};
     std::uint32_t baseCost = 100;
+    ActorHandle target{};
     bool operator==(const ActorIntent&) const = default;
 };
 
@@ -29,7 +30,7 @@ private:
     ActorHandle self_;
 };
 
-enum class AiControllerKind : std::uint8_t { None, Wander };
+enum class AiControllerKind : std::uint8_t { None, Wander, Melee };
 
 class AiController {
 public:
@@ -45,7 +46,7 @@ StateResult<AiControllerKind> ReadAiControllerKind(eastl::string_view name,
     Diagnostics* diagnostics = nullptr);
 
 // Validates the payload, not the {type,state} envelope. None requires {};
-// Wander requires exactly {version: unsigned(1)}.
+// Wander and Melee require exactly {version: unsigned(1)}.
 StateResult<void> ValidateAiControllerState(AiControllerKind kind, const DataObject& state,
     Diagnostics* diagnostics = nullptr);
 // Null state requests defaults. Explicit state must pass strict validation.

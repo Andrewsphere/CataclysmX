@@ -66,9 +66,9 @@ assigning an actor. Joining has a five-second
 explicit-elapsed timeout. The server does not use wall time or RNG for gameplay;
 network-only tokens and discovery identifiers use OS entropy.
 
-## World and item protocol (version 9, `0x43584e09`)
+## World, item and combat protocol (version 10, `0x43584e0a`)
 
-Version 9 is wire-incompatible with earlier versions and supports maps up to
+Version 10 is wire-incompatible with earlier versions and supports maps up to
 129×129 cells with lossless run-length encoding. Coordinates encode signed
 32-bit X/Z/Y. Commands append signed `dy` after their item arguments; movement,
 interaction and directional item use accept six axial directions. Snapshot
@@ -123,6 +123,15 @@ explicit. Offsets below are relative to the payload, after the run length:
 | 34, 35 | terrain light, overlay light | u8: Dark=0, Dim=1, Ordinary=2, Bright=3 |
 
 `playerLight` is appended after the player-status list as the same light-band u8.
+It is followed by the player's `CombatView`: body kind, style and action (u8),
+stamina (u32), accuracy penalty (u8), then nine body parts (u32 HP, u32 effective
+maximum, boolean broken; HP in hundredths). Last feedback follows: outcome u8,
+move u32, target u64, part u8, injury u32, cost u64, committed/contact/lost
+capability booleans, disruption u8, incoming boolean and tick u64. Enum, boolean,
+HP, stamina and penalty bounds are validated; absent body parts must be zero.
+Feedback is presentation-only and is not persisted. Commands also carry a target
+persistent ID and combat style; the server validates and resolves them
+authoritatively. See [combat API](combat_api.md).
 Object kinds are fixed protocol constants, independent of content ordering.
 None descriptors must have North facing and false state flags. A live object ID
 requires a nonempty descriptor and vice versa. Remembered objects require a

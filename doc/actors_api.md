@@ -12,7 +12,7 @@ Each actor owns one private `eastl::unique_ptr<AiController> controller_`. Only
 `World` is its friend. Controller ownership and mutable access never escape through
 `World::GetActor`. This avoids the mutable-pointee loophole in const smart-pointer
 inspection. No Actor inheritance is involved. `AiController` has one implementation,
-the private final `WanderController`, with explicit enum-based construction.
+the private final `WanderController` and `MeleeController`, with explicit enum-based construction.
 
 ## Decision callback
 
@@ -27,6 +27,7 @@ callback. The context itself does not acquire residency or validate the handle.
 
 - `Wait`: spend `baseCost`, with no movement.
 - `Move`: attempt the relative `direction`, spending `baseCost` even if blocked.
+- `Attack`: request combat against the selected actor.
 
 The executor must require positive `baseCost`, schedule the actor once, and apply
 movement validation/mutation through World. Choosing an action does not mutate the
@@ -38,6 +39,11 @@ Wander consumes exactly one unsigned modulo-2^32 LCG draw:
 `+X, +Z, -X, -Z`. It always returns a horizontal Move with base cost 100,
 including when the destination is blocked or unavailable. It does not inspect
 passability or draw again to find another destination.
+
+Melee chooses an adjacent reachable hostile when available, otherwise uses the
+same Wander decision. It is deliberately minimal and does not pursue a target.
+NPC movement scales authored base cost by `LocomotionBaseCost` before actor speed;
+body model, controller and faction are independent. See [combat API](combat_api.md).
 
 The same logical world/self, saved controller state, and explicit RNG state must
 produce the same intent, next controller state, and next RNG state. RNG belongs to
@@ -62,8 +68,9 @@ null. `StateResult`/`StateError` are shared vocabulary in `core/state_result.h`;
 | --- | --- |
 | None / null pointer | `{"type":"none","state":{}}` |
 | Wander | `{"type":"wander","state":{"version":1}}` |
+| Melee | `{"type":"melee","state":{"version":1}}` |
 
-The Wander version is an **unsigned** DataObject integer. Missing fields, unknown
+The Wander and Melee version is an **unsigned** DataObject integer. Missing fields, unknown
 fields, unknown/case-mismatched names, wrong types (including signed version 1),
 and invalid enum values return `StateError::InvalidData`. An unsigned version other
 than 1 returns `StateError::UnsupportedVersion`. None requires an empty object,
@@ -106,6 +113,6 @@ duration while suspended. Read the current delay with
 `World::GetActorRemainingTicks(actor)`. The [entity scheduling API](entity_scheduling.md)
 describes the authoritative World clock, activation transitions, and persistence.
 
-Save v9 stores controller state and entity references through stable identities.
-See [save format: v7/v8 compatibility and checkpoint upgrade](save_format.md#version-78-compatibility-and-checkpoint-upgrade)
+Save v10 stores controller and combat state; pending combat targets use persistent identities.
+See [save format: v7/v8/v9 compatibility and checkpoint upgrade](save_format.md#version-789-compatibility-and-checkpoint-upgrade)
 for legacy defaults and upgrade behavior.

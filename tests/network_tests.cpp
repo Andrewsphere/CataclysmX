@@ -62,7 +62,7 @@ TEST_CASE("Network wire rejects truncated values, invalid enums and oversized sn
     wire::Reader badSpeed{{bad.data(), bad.size()}};
     CHECK_FALSE(badSpeed.View(result));
     bad = snapshot.bytes;
-    bad[bad.size() - 20] = 255; // final player connection state, before flags/u64s and appended player light
+    bad[bad.size() - 148] = 255; // player state, followed by player light and 128-byte combat view
     wire::Reader badState{{bad.data(), bad.size()}};
     CHECK_FALSE(badState.View(result));
     wire::Writer commandBytes;
@@ -105,7 +105,7 @@ bool Poll(LanHost& host, LanClient& a, LanClient& b, Predicate predicate) {
 }
 
 TEST_CASE("Current protocol preserves signed six-axis commands and authoritative shapes", "[network][codec][3d]") {
-    CHECK(wire::protocol == 0x43584e09);
+    CHECK(wire::protocol == 0x43584e0a);
     for (const auto kind : {CommandKind::move, CommandKind::interact}) {
         for (const TileCoord direction : {TileCoord{1, 0, 0}, {-1, 0, 0}, {0, 1, 0},
             {0, -1, 0}, {0, 0, 1}, {0, 0, -1}, {0, 0, 0}, {1, 0, 1}, {0, 1, -1}, {0, 0, INT_MIN}}) {
@@ -118,12 +118,89 @@ TEST_CASE("Current protocol preserves signed six-axis commands and authoritative
             REQUIRE(reader.CommandValue(decoded)); CHECK(reader.Done());
             CHECK(decoded.kind == kind); CHECK(decoded.dx == command.dx);
             CHECK(decoded.dz == command.dz); CHECK(decoded.dy == command.dy);
-            // dy is appended to the command, and the reader must validate it too.
-            writer.bytes.back() = 2;
+            // dy precedes the appended target and style.
+            writer.bytes[writer.bytes.size() - 10] = 2;
             wire::Reader malformed{{writer.bytes.data(), writer.bytes.size()}};
             CHECK_FALSE(malformed.CommandValue(decoded));
         }
     }
+}
+
+TEST_CASE("Combat commands and outcomes roundtrip with bounded style", "[network][codec][combat]") {
+    for (const auto target : {PersistentId{0}, PersistentId{123456789}}) {
+        Command command; command.kind = CommandKind::attack; command.target = target;
+        wire::Writer writer; REQUIRE(writer.CommandValue(command));
+        wire::Reader reader{{writer.bytes.data(), writer.bytes.size()}};
+        Command decoded; REQUIRE(reader.CommandValue(decoded)); CHECK(reader.Done());
+        CHECK(decoded.kind == command.kind); CHECK(decoded.target == target);
+        for (std::size_t n = 0; n < writer.bytes.size(); ++n) {
+            wire::Reader truncated{{writer.bytes.data(), n}};
+            CHECK_FALSE(truncated.CommandValue(decoded));
+        }
+    }
+    for (const auto style : {CombatStyle::Balanced, CombatStyle::Aggressive, CombatStyle::Defensive}) {
+        Command command; command.kind = CommandKind::combat_style; command.style = style;
+        wire::Writer writer; REQUIRE(writer.CommandValue(command));
+        wire::Reader reader{{writer.bytes.data(), writer.bytes.size()}};
+        Command decoded; REQUIRE(reader.CommandValue(decoded)); CHECK(reader.Done());
+        CHECK(decoded.kind == command.kind); CHECK(decoded.style == style);
+        writer.bytes.back() = 255;
+        wire::Reader malformed{{writer.bytes.data(), writer.bytes.size()}};
+        CHECK_FALSE(malformed.CommandValue(decoded));
+    }
+    Command invalid; invalid.kind = CommandKind::combat_style; invalid.style = static_cast<CombatStyle>(255);
+    wire::Writer invalidWriter; CHECK_FALSE(invalidWriter.CommandValue(invalid));
+    for (const auto outcome : {Outcome::attacked, Outcome::attack_missed, Outcome::attack_parried,
+        Outcome::attack_blocked, Outcome::attack_windup, Outcome::target_defeated, Outcome::no_target,
+        Outcome::no_combat_move, Outcome::combat_style_changed}) {
+        PlayerCommandResult result; result.player = 1; result.sequence = 1; result.opportunity = 1;
+        result.result.outcome = outcome;
+        wire::Writer writer; REQUIRE(writer.Result(result));
+        wire::Reader reader{{writer.bytes.data(), writer.bytes.size()}};
+        PlayerCommandResult decoded; REQUIRE(reader.Result(decoded)); CHECK(reader.Done());
+        CHECK(decoded.result.outcome == outcome);
+    }
+}
+
+TEST_CASE("Combat snapshot roundtrips and validates all fields", "[network][codec][combat]") {
+    Server server(TestContent());
+    auto view = server.View(0);
+    auto& combat = view.combat;
+    combat = {};
+    combat.style = CombatStyle::Defensive; combat.action = ActorActionKind::MeleeWindup;
+    combat.stamina = 47; combat.accuracyPenalty = 30;
+    combat.parts[static_cast<std::size_t>(BodyPart::LeftHand)] = {1234, 8000, true};
+    combat.feedback.result = {AttackOutcome::Hit, CombatMove::HeavyAttack, 123, BodyPart::LeftHand,
+        17, 50, true, true, true, DisruptionResponse::Canceled};
+    combat.feedback.incoming = true; combat.feedback.tick = 999;
+    wire::Writer writer; REQUIRE(writer.View(view));
+    wire::Reader reader{{writer.bytes.data(), writer.bytes.size()}};
+    WorldView decoded; REQUIRE(reader.View(decoded)); CHECK(reader.Done()); CHECK(decoded.combat == combat);
+    const auto start = writer.bytes.size() - 128;
+    // Each entry names an invalid byte: enums, limits, flags, and absent simple-body parts.
+    for (const auto [offset, value] : {eastl::pair<std::size_t, std::uint8_t>{0, 2}, {1, 3}, {2, 5},
+        {6, 101}, {7, 31}, {16, 2}, {89, 11}, {93, 5}, {102, 10},
+        {115, 2}, {116, 2}, {117, 2}, {118, 3}, {119, 2}}) {
+        auto bytes = writer.bytes; bytes[start + offset] = value;
+        wire::Reader invalid{{bytes.data(), bytes.size()}};
+        INFO(offset); CHECK_FALSE(invalid.View(decoded));
+    }
+    for (std::size_t n = start; n < writer.bytes.size(); ++n) {
+        wire::Reader truncated{{writer.bytes.data(), n}}; CHECK_FALSE(truncated.View(decoded));
+    }
+    SECTION("invalid style") { combat.style = static_cast<CombatStyle>(3); }
+    SECTION("invalid action") { combat.action = static_cast<ActorActionKind>(-1); }
+    SECTION("invalid body") { combat.bodyKind = static_cast<BodyKind>(2); }
+    SECTION("invalid stamina") { combat.stamina = 101; }
+    SECTION("invalid penalty") { combat.accuracyPenalty = 31; }
+    SECTION("hp exceeds maximum") { combat.parts[2].hp = 8001; }
+    SECTION("maximum exceeds limit") { combat.parts[2].maximum = UnreducedMax(BodyPart::LeftHand) + 1; }
+    SECTION("absent part") { combat.bodyKind = BodyKind::Simple; }
+    SECTION("invalid outcome") { combat.feedback.result.outcome = static_cast<AttackOutcome>(11); }
+    SECTION("invalid move") { combat.feedback.result.move = static_cast<CombatMove>(5); }
+    SECTION("invalid part") { combat.feedback.result.part = static_cast<BodyPart>(10); }
+    SECTION("invalid disruption") { combat.feedback.result.disruption = static_cast<DisruptionResponse>(-1); }
+    wire::Writer invalidWriter; CHECK_FALSE(invalidWriter.View(view));
 }
 
 TEST_CASE("Radius 64 snapshots roundtrip and reject oversized dimensions counts packets and coordinate overflow", "[network][codec][view]") {
@@ -383,7 +460,7 @@ TEST_CASE("Snapshot runs reject hidden information and malformed perception stat
 TEST_CASE("Snapshot runs validate the appended player light band", "[network][codec][perception]") {
     auto view = SingleCellView();
     wire::Writer writer; REQUIRE(writer.View(view));
-    writer.bytes.back() = 4;
+    writer.bytes[writer.bytes.size() - 129] = 4;
     wire::Reader reader{{writer.bytes.data(), writer.bytes.size()}};
     WorldView decoded; CHECK_FALSE(reader.View(decoded));
     view.playerLight = static_cast<LightBand>(4);

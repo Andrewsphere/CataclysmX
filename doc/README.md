@@ -23,6 +23,8 @@
 - [World API](world_api.md): identity, ownership, coordinates, chunk demand and
   in-memory archives. Start here for scenario setup and administrative tools.
 - [Actors and AI controllers](actors_api.md): deterministic intents and controller state.
+- [Combat API](combat_api.md): body, injury, moves, disruption and recovery.
+- [Combat presentation](combat_presentation.md): frontend status and feedback text.
 - [Objects API](objects_api.md): typed crafting machines, actions, and saved-state defaults.
 - [Object callbacks](object_callbacks.md): explicit identity, atomic transactions,
   and deferred destruction.
@@ -59,7 +61,7 @@
   crossings, parcels/buildings, terrain materialization and debug inspection.
 - [Diagnostics](diagnostics.md): structured error causes and contextual frames.
 - [Terrain rendering](terrain_rendering.md): UTF-8 symbols, colors, and frontend behavior.
-- [Save format](save_format.md): SQLite v9, snapshots, player memory, validation and checkpoints.
+- [Save format](save_format.md): SQLite v10, snapshots, player memory, validation and checkpoints.
 - [LAN networking](networking.md): ENet hosting, joining, authoritative messages and discovery.
 - [LAN client profile](lan_profile.md): endpoint identities, typed errors and durability.
 - [Project README](../README.md): build instructions and dependencies.

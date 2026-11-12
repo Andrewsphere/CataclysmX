@@ -54,7 +54,7 @@ this deterministic API.
 `Server(content, seed)` defaults to seed `42`, starts at tick `0`, and builds a small demo:
 player at `{0, 0}`, a backpack containing a bandage there, a rock at `{1, 0}`,
 an initially disabled object at `{2, 0}`, a closed door at `{3, 0}`, a wall at
-`{3, 1}`, and an NPC at `{5, 5}`. When `air` and `stairs` roles exist, the demo
+`{3, 1}`, and a simple Undead melee-controller NPC at `{5, 5}`. When `air` and `stairs` roles exist, the demo
 also builds a basement/surface/raised-platform stairwell near `x=-3` and a pit
 with a ground item below. The basement demo includes an enabled lamp (intensity
 240, range 4) at `{-5, 0, -1}`, a chair at `{-5, 1, -1}`, and a table at
@@ -85,12 +85,17 @@ world's `eastl::expected` errors.
 | `interact` | Open/close an adjacent door, otherwise toggle an adjacent object |
 | `use_item` | Execute a capability's explicit action on an accessible item |
 | `store_item` | Move an accessible item into an accessible container, or extract to direct inventory |
+| `attack` | Attack a perceived hostile by persistent target ID, or automatically select one when zero |
+| `combat_style` | Select Balanced, Aggressive or Defensive while ready; consumes no simulation time |
 
 Move and interact require one cardinal direction in X, Z, or Y. Horizontal
 movement is `(dx,dz)=(±1,0)` or `(0,±1)` with `dy=0`; vertical movement is
 `dx=dz=0`, `dy=±1`, and requires stairs on both endpoint tiles at the same X/Z.
 The standard client binds `<` to down and `>` to up. Horizontal walking into
 open space can immediately cause a fall under the deterministic gravity rules.
+Moving into a perceived hostile requests an attack instead of movement. Combat
+reach is cardinal and same Y; automatic targeting chooses the lowest persistent
+ID among eligible adjacent hostiles. An unseen occupant remains an obstruction.
 Pickup/drop use `Command::item`, a **persistent ID**, not a handle. Zero selects
 the lowest-ID eligible item. Nested contents cannot be selected directly;
 moving a backpack preserves its contents. Fields irrelevant to a command are
@@ -121,8 +126,9 @@ Storage uses a normal 100-tick base action. Capacity refusals are ordinary
 The simulation unit is fixed: `ticks_per_turn == 100`. Actor `speed` is a
 **duration factor**, default `100`: lower values finish faster. A successful
 action costs `ceil(baseCost * speed / 100)` ticks. Wait accepts a positive
-`uint32` base duration (for example `150` or `250`); every other command uses
-base cost `100`, except `use_item`, which uses its capability's `actionCost`;
+`uint32` base duration (for example `150` or `250`); ordinary actions use base
+cost `100`, item use uses its capability's `actionCost`, movement uses body
+locomotion cost, and combat uses its selected move's timing; style changes cost zero;
 all non-wait commands ignore `waitCost`. Zero wait cost is `invalid_command`.
 Positive durations always round upward to at least one tick.
 
@@ -292,7 +298,7 @@ state. View queries can be fresh without updating memory. Viewport radius is
 independent of gameplay sight: default vision range is 64 horizontally,
 regardless of displayed square radius. Always check each channel's visibility
 before drawing its payload.
-The terminal defaults to radius 64 (129 × 129); LAN protocol version 9 supports
+The terminal defaults to radius 64 (129 × 129); LAN protocol version 10 supports
 that maximum viewport with a 1 MiB packet limit.
 The nearest remembered furniture is used only when no live overlay is visible.
 Live projection can see a lit lower floor through unknown dark air; remembered
@@ -313,6 +319,8 @@ ticks. Clients render metadata and leave behavior validation authoritative.
 `groundItems` describes complete
 ground-rooted trees on the player's own tile only. Player carried mass and mass
 capacity are included; other players' possessions remain private.
+The player's `CombatView` includes body, style, stamina, pending action and
+transient last feedback. See [combat presentation](combat_presentation.md).
 
 Per-player full snapshots are cached by revision and viewport size. Map cells have
 an independent cache keyed by World map revision, origin, size, and observing state,
@@ -351,6 +359,8 @@ clears, `World::ProcessNpcActions(rng)` runs due controllers in persistent-ID or
 Wander controllers commit positive-cost normal actions and consume one explicit
 RNG draw each, even when blocked. They attempt a horizontal cardinal step through
 `TryActorStep(..., activeOnly=true)` into an active, passable, unoccupied tile.
+Melee controllers attack an eligible adjacent hostile or wander; their movement
+cost scales with locomotion. Combat pending events also participate in scheduling.
 NPCs with controller `None` are idle and contribute no deadline. Players have no
 AI. The simulator then elapses to the minimum of World's actor/object/item event
 queries or the limit. These minimum queries scan directly without sorting;
@@ -387,6 +397,8 @@ drop [persistent-id]
 interact <n|s|e|w|up|down>
 use <item-id> <capability-id> <action> [item-id|n/s/e/w/up/down]
 store <item-id> <container-id|0>
+attack [persistent-id]
+style <balanced|aggressive|defensive>
 items
 view
 inspect
@@ -425,6 +437,8 @@ The TUI uses arrows/hjkl to move, `.` to wait, `g` to pick up, `d` to drop,
 interaction first. `cataclysmx_game --render` prints a snapshot without terminal
 initialization. Both clients render the same value-only view through
 [`client/text.h`](../src/client/text.h).
+Tab requests an automatic attack; bumping a perceived hostile also attacks.
+Keys 1, 2 and 3 select Balanced, Aggressive and Defensive styles respectively.
 During play, `r` toggles the rate cap, `p` toggles idle pause, and `[`/`]`
 halve/double the tick rate within `1..1,000,000`. The terminal supplies elapsed
 microseconds during its update loop; status shows rate, policy, speed, and delay.
@@ -481,14 +495,15 @@ can legitimately drop the active host, so authoritative roster positions and the
 host bubble center are refreshed from the settled world before returning. No
 simulation time elapses during restoration.
 
-Save format **version 9** persists Y coordinates, lighting/appearance, player
+Save format **version 10** persists Y coordinates, lighting/appearance, player
 observations, player roster and reconnect tokens, actor speed, carrying mass limit
 and remaining cooldown, object interval and remaining timer, simulation tick/RNG,
 and session pacing settings. It also stores actor controller envelopes and typed
 object behavior state, including machine energy and pending jobs.
+Actor combat state includes body recovery and pending action, but not last feedback.
 A checkpoint can therefore resume mid-action or partway through an object
 interval. Item definition/capability names, installations, charge fractions and
-remaining door delays are persisted as well. Versions 7/8 are read with legacy
+remaining door delays are persisted as well. Versions 7/8/9 are read with legacy
 defaults and upgraded atomically on checkpoint; versions 1–6 are rejected.
 Memory checkpointing rewrites all memory rows and
 scales with total remembered terrain and objects. Saving never refreshes observations.

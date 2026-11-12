@@ -5,6 +5,7 @@
 #include "core/simulation.h"
 #include "core/perception.h"
 #include "core/lighting.h"
+#include "combat/combat_system.h"
 #include "objects/object_behavior.h"
 #include "worldgen/worldgen.h"
 
@@ -194,10 +195,37 @@ Outcome MovementFailure(WorldError error) {
     }
 }
 
+bool Ready(const World& world, ActorHandle handle) {
+    const auto* actor = world.GetActor(handle);
+    return actor && !actor->actionDeadline.suspended
+        && actor->combat.action.kind == ActorActionKind::None && world.GetActorRemainingTicks(handle) == 0;
+}
+
+Outcome CombatOutcome(AttackOutcome outcome) {
+    switch (outcome) {
+    case AttackOutcome::Unavailable: return Outcome::unavailable;
+    case AttackOutcome::NotReady: return Outcome::not_ready;
+    case AttackOutcome::NoTarget: return Outcome::no_target;
+    case AttackOutcome::OutOfReach: return Outcome::no_target;
+    case AttackOutcome::NoMove: return Outcome::no_combat_move;
+    case AttackOutcome::Windup: return Outcome::attack_windup;
+    case AttackOutcome::Miss: return Outcome::attack_missed;
+    case AttackOutcome::Parried: return Outcome::attack_parried;
+    case AttackOutcome::Blocked: return Outcome::attack_blocked;
+    case AttackOutcome::Hit: return Outcome::attacked;
+    case AttackOutcome::Defeated: return Outcome::target_defeated;
+    }
+    std::abort();
+}
+
 }
 
 bool ValidCommandShape(const Command& command) {
+    if (command.style > CombatStyle::Defensive) { return false; }
     switch (command.kind) {
+    case CommandKind::attack:
+    case CommandKind::combat_style:
+        return command.dx == 0 && command.dz == 0 && command.dy == 0;
     case CommandKind::wait: return command.waitCost != 0;
     case CommandKind::move:
     case CommandKind::interact: return Cardinal(command.dx, command.dz, command.dy);
@@ -242,6 +270,15 @@ const char* OutcomeMessage(Outcome outcome) {
     case Outcome::item_use_failed: return "The item cannot be used.";
     case Outcome::capacity_exceeded: return "Not enough carrying or storage capacity.";
     case Outcome::invalid_container: return "That item cannot be stored there.";
+    case Outcome::attacked: return "Your attack hits.";
+    case Outcome::attack_missed: return "Your attack misses.";
+    case Outcome::attack_parried: return "Your attack is parried.";
+    case Outcome::attack_blocked: return "Protection stops your attack.";
+    case Outcome::attack_windup: return "You prepare a heavy strike.";
+    case Outcome::target_defeated: return "You defeat your target.";
+    case Outcome::no_target: return "No perceived hostile is within melee reach.";
+    case Outcome::no_combat_move: return "You cannot perform an attack with your usable limbs.";
+    case Outcome::combat_style_changed: return "You change your combat style.";
     }
     std::abort();
 }
@@ -301,7 +338,11 @@ Server::Server(const ContentCatalog& content, std::uint32_t seed) : world_(conte
     Take(world_.CreateItem(content.FindItem("bandage"), ItemLocation::Inside(backpack)));
     Take(world_.CreateItem(content.FindItem("rock"), ItemLocation::Ground({1, 0})));
     Take(world_.CreateObject({2, 0}, false));
-    Take(world_.CreateActor({5, 5}));
+    const auto enemy = Take(world_.CreateActor({5, 5}));
+    auto enemyCombat = MakeCombatState(false);
+    enemyCombat.faction = CombatFaction::Undead;
+    Require(world_.Combat().Configure(enemy, enemyCombat).has_value());
+    Require(world_.SetActorController(enemy, AiControllerKind::Melee).has_value());
     // Optional demo equipment follows the original entities, preserving their IDs.
     for (const char* id : {"field_charger", "rechargeable_battery", "door_controller", "utility_controller"}) {
         if (const auto type = content.FindItem(id); type.value != 0) {
@@ -365,7 +406,7 @@ CommandResult Server::Send(Command command) {
             otherActive = true;
         }
     }
-    if (world_.GetActorRemainingTicks(player_) != 0 || otherActive) {
+    if (!Ready(world_, player_) || otherActive) {
         // Keep the latest intent, not a chain of key-repeat-generated actions.
         // Destination, item ownership and cost are checked when it becomes due.
         return Submit(GetHostPlayerId(), {++legacySequence_, FindPlayer(GetHostPlayerId())->opportunity, command});
@@ -395,10 +436,26 @@ CommandResult Server::Execute(ActorHandle handle, PlayerSlot& slot, Command comm
     Require(actor != nullptr);
     const TileCoord position = actor->position;
     const auto failed = [this](Outcome outcome) { return CommandResult{outcome, false, GetTick()}; };
-    if (world_.GetActorRemainingTicks(handle) != 0) { return failed(Outcome::not_ready); }
+    if (!Ready(world_, handle)) { return failed(Outcome::not_ready); }
+    const auto attack = [this, handle](ActorHandle target) {
+        const auto result = world_.Combat().Attack(handle, target, rng_state_);
+        if (result.committed) { world_.UpdatePlayerObservations(); }
+        CommandResult command{CombatOutcome(result.outcome), result.committed, GetTick()};
+        command.cost = result.cost;
+        return command;
+    };
     Outcome outcome = Outcome::invalid_command;
     std::uint32_t baseCost = command.kind == CommandKind::wait ? command.waitCost : ticks_per_turn;
     switch (command.kind) {
+    case CommandKind::attack: {
+        const auto target = command.target ? world_.FindActor(command.target) : world_.Combat().FindTarget(handle);
+        const auto* other = world_.GetActor(target);
+        if (!other || !world_.CanPlayerSee(handle, other->position)) { return failed(Outcome::no_target); }
+        return attack(target);
+    }
+    case CommandKind::combat_style:
+        if (!world_.Combat().SetStyle(handle, command.style)) { return failed(Outcome::invalid_command); }
+        return {Outcome::combat_style_changed, false, GetTick()};
     case CommandKind::wait:
         if (command.waitCost == 0) { return failed(Outcome::invalid_command); }
         outcome = Outcome::waited;
@@ -408,6 +465,15 @@ CommandResult Server::Execute(ActorHandle handle, PlayerSlot& slot, Command comm
             return failed(Outcome::invalid_command);
         }
         const TileCoord destination{position.x + command.dx, position.z + command.dz, position.y + command.dy};
+        const auto occupant = world_.ActorAt(destination);
+        const auto* other = world_.GetActor(occupant);
+        if (other && Hostile(actor->combat.faction, other->combat.faction)) {
+            if (!world_.CanPlayerSee(handle, destination)) { return failed(Outcome::occupied); }
+            // Bump requests combat against this actor. It does not move or stage
+            // a new residency bubble and cannot fall through into movement.
+            return attack(occupant);
+        }
+        baseCost = LocomotionBaseCost(actor->combat.body);
         // Validate the complete future bubble before acquiring any demand.
         if (!ResidencyFits(destination, active_radius_, resident_radius_, circleResidency_)) {
             return failed(Outcome::unavailable);
@@ -556,7 +622,7 @@ void Server::SynchronizePacing() {
         const Actor* actor = world_.GetActor(handle);
         Require(actor && actor->player && !actor->parked && world_.IsActive(actor->position));
         players.push_back({handle, slot.id, actor->speed,
-            world_.GetActorRemainingTicks(handle) == 0, slot.pending.has_value()});
+            Ready(world_, handle), slot.pending.has_value()});
     }
     pacer_.Synchronize(players);
 }
@@ -590,7 +656,7 @@ Vector<PlayerStatus> Server::GetPlayers() const {
     for (const PlayerSlot& slot : players_) {
         const Actor* actor = world_.GetActor(PlayerActor(slot));
         const bool ready = slot.state == PlayerConnectionState::Active
-            && actor && world_.GetActorRemainingTicks(PlayerActor(slot)) == 0;
+            && actor && Ready(world_, PlayerActor(slot));
         result.push_back({slot.id, slot.name, slot.state, ready,
             slot.pending.has_value(), slot.opportunity,
             ready ? pacer_.GraceMicroseconds(PlayerActor(slot)) : 0});
@@ -799,7 +865,7 @@ CommandResult Server::Submit(PersistentId id, PlayerInput input) {
     // A shorter grace may expire while a different player still holds the
     // round. Its automatic wait is already decided, even though no action can
     // resolve until the entire cohort is satisfied.
-    if (!slot->pending && world_.GetActorRemainingTicks(actor) == 0
+    if (!slot->pending && Ready(world_, actor)
         && !pacer_.IsIdle() && pacer_.GraceMicroseconds(actor) == 0) {
         return {Outcome::stale_input, false, GetTick()};
     }
@@ -816,7 +882,7 @@ bool Server::ResolveRound(SessionUpdate& result, const Vector<ActorHandle>& expi
         if (slot.state != PlayerConnectionState::Active) { continue; }
         const Actor* actor = world_.GetActor(PlayerActor(slot));
         Require(actor);
-        if (world_.GetActorRemainingTicks(PlayerActor(slot)) != 0) { continue; }
+        if (!Ready(world_, PlayerActor(slot))) { continue; }
         bool timedOut = false;
         for (ActorHandle handle : expired) {
             if (handle == PlayerActor(slot)) { timedOut = true; break; }
@@ -907,7 +973,7 @@ SessionUpdate Server::Update(std::uint64_t elapsedMicroseconds) {
         remaining -= step;
     }
     result.tick = GetTick();
-    result.needsInput = world_.GetActorRemainingTicks(player_) == 0;
+    result.needsInput = Ready(world_, player_);
     if (const auto error = Autosave()) {
         if (!result.storageError) { result.storageError = error; }
     }
@@ -941,6 +1007,7 @@ WorldView Server::ViewForPlayer(PersistentId id, int radius) const {
     result.height = result.width;
     result.tick = GetTick();
     result.remainingTicks = world_.GetActorRemainingTicks(player);
+    result.combat = world_.Combat().Describe(player);
     result.speed = actor->speed;
     result.pacing = pacer_.GetSettings();
     result.commandQueued = slot->pending.has_value();

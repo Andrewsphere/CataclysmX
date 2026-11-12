@@ -21,6 +21,14 @@ TEST_CASE("SDL gameplay dispatch preserves axial directions and action kinds", "
     CHECK(sdl::GameplayCommand(InputAction::MoveDown, false)->dy == -1);
     CHECK(sdl::GameplayCommand(InputAction::MoveUp, false)->dy == 1);
     CHECK(sdl::GameplayCommand(InputAction::Wait, false)->kind == CommandKind::wait);
+    const auto attack = sdl::GameplayCommand(InputAction::Attack, false);
+    REQUIRE(attack); CHECK(attack->kind == CommandKind::attack); CHECK(attack->target == 0);
+    for (const auto [action, style] : {eastl::pair<InputAction, CombatStyle>{InputAction::StyleBalanced, CombatStyle::Balanced},
+        {InputAction::StyleAggressive, CombatStyle::Aggressive},
+        {InputAction::StyleDefensive, CombatStyle::Defensive}}) {
+        const auto command = sdl::GameplayCommand(action, false);
+        REQUIRE(command); CHECK(command->kind == CommandKind::combat_style); CHECK(command->style == style);
+    }
     CHECK(sdl::GameplayCommand(InputAction::PickUp, false)->kind == CommandKind::pick_up);
     CHECK(sdl::GameplayCommand(InputAction::Drop, false)->kind == CommandKind::drop);
     CHECK_FALSE(sdl::GameplayCommand(InputAction::Help, false));

@@ -6,7 +6,7 @@
 - [Goals and agreed direction](#goals-and-agreed-direction)
 - [Combatants and control](#combatants-and-control)
 - [Combat styles and moves](#combat-styles-and-moves)
-- [Suggested deterministic selection](#suggested-deterministic-selection)
+- [Deterministic selection](#deterministic-selection)
 - [Suggested melee process](#suggested-melee-process)
 - [Body parts, reach, and protection](#body-parts-reach-and-protection)
 - [Injury, disability, and defeat](#injury-disability-and-defeat)
@@ -16,10 +16,11 @@
 
 ## Status and scope
 
-This document records the combat design discussion. It describes agreed direction,
-suggested mechanics, and unresolved questions; it is not a description of an
-implemented subsystem or a finalized public API. Sections explicitly marked as
-suggestions must not be treated as approved implementation contracts.
+This document records agreed direction, suggestions and unresolved questions.
+The implemented first melee slice is described in [combat API](../doc/combat_api.md)
+and [combat presentation](../doc/combat_presentation.md). Its numerical values are
+initial balancing defaults, not approved final values. Suggestions below that go
+beyond that slice remain deferred rather than implementation contracts.
 
 The immediate focus is melee combat, with room for ranged combat later. Gameplay
 and clarity take priority over physical simulation. The related
@@ -76,11 +77,11 @@ The player selects an existing combat style, making that style's moves available
 Enemies can have their own styles, implemented through the same mechanism but
 hidden from the player.
 
-- Pressing `Tab` requests an automatic attack against the nearest target.
+- Pressing `Tab` requests an automatic attack against an eligible adjacent target.
 - Attempting to move into an enemy requests an attack against that enemy.
 - Both inputs let the game choose the applicable combat move deterministically.
-- A plain attack participates in selection as a normal move and can almost always
-  be chosen. Its exact physical and resource requirements remain to be defined.
+- A plain attack participates in selection as a normal move; available limbs
+  determine whether it can be chosen.
 
 The earlier custom deck and manual technique selection suggestions are superseded
 by selecting an existing style. Routine attacks should not require technique
@@ -108,16 +109,17 @@ no universal reaction allowance was agreed.
 
 Suggested conditions include awareness, a suitable weapon, usable body parts,
 stamina, cooldowns, a particular triggering event, and consumption of an opening.
-Their exact use and costs remain undecided.
+The initial Defensive parry uses stamina, a cooldown and a functional attack
+capability; other reaction conditions and costs remain undecided.
 
 For example, a counter could require an unconsumed opening from a successful
 parry. Its eligibility rules could exclude counters as triggering attacks, so the
 same mechanic cannot produce an endless counter chain. This is an illustration
 of an explicit restriction, not a final rule for all counters.
 
-## Suggested deterministic selection
+## Deterministic selection
 
-Deterministic move choice is agreed; the following algorithm is only a proposal:
+Deterministic move choice is agreed and the first slice implements:
 
 1. Consider the current style's moves for the relevant trigger.
 2. Filter them through their availability conditions.
@@ -129,15 +131,14 @@ consider defensive reactions. A conditional technique can outrank the broadly
 available plain attack when its opportunity exists. Explicit priorities would
 make overlap understandable without requiring a general combat optimizer.
 
-The proposed selector uses no random draw. This does not settle whether contact
-or damage uses seeded randomness. Simulation reproducibility must still follow
+The selector uses no random draw; contact and region use the explicit seeded LCG.
+Simulation reproducibility must still follow
 the project's logical-state, explicit-RNG, and stable-identity policy rather than
 depending on runtime handle allocation.
 
-Target selection is distinct from move selection. For `Tab`, limiting candidates
-to perceived hostiles attackable from the current position was suggested, but
-distance measurement, ties, reachability, and any automatic approach remain open.
-The chosen enemy is explicit when attacking by movement input.
+Target selection is distinct from move selection. `Tab` considers perceived,
+reachable cardinal hostiles on the same Y layer and picks the lowest persistent ID;
+it does not approach. Bump input selects the perceived hostile in that direction.
 
 ## Suggested melee process
 
@@ -170,11 +171,14 @@ Selecting one primary move rather than executing every eligible technique was
 suggested. A move could explicitly contain several strikes or effects. Exact
 reaction ordering and effect timing are still open.
 
-Ordinary attacks resolving immediately followed by recovery, with interruptible
-windups reserved for selected telegraphed moves, was also suggested. For example,
-a brute could announce an overhead smash; disabling a capability that this move
-requires could interrupt it. This does not imply that every injury interrupts
-every move. Attack costs after interruption or loss of the target need a decision.
+Ordinary attacks resolve immediately followed by recovery; the initial heavy move
+has a windup. Damaging hits and forced movement apply the strongest accuracy
+penalty to that windup, without changing its deadline; default 15, capped at 30.
+Losing a required capability or being staggered cancels a pending windup; aiming
+also cancels on damage or forced movement. Cancellation starts 20 ticks of recovery
+by default, which further disruptions cannot reset. None or already committed
+recovery is not canceled. Heavy costs are committed at the start; losing the
+target does not refund them or eliminate the post-windup recovery.
 
 The existing [entity scheduling](../doc/entity_scheduling.md) provides simulation
 ticks and individual deadlines. Combat timing should integrate with that model;
@@ -225,9 +229,11 @@ illustrative consequences, not universal effects for every enemy.
 ### Local disability
 
 A part receives its negative functional effect at zero HP. Damage above zero
-does not progressively penalize its operation. Zero HP does not automatically
-mean severance or irreversible destruction. Precise disability effects remain
-open; player limb recovery follows the rules below.
+does not progressively penalize its operation. Detailed hands and legs become
+broken at zero; this does not imply severance or irreversible destruction.
+After seven logical days of mending a broken limb returns at 40 HP by default,
+clamped to its effective maximum; 60 is a configurable policy. Further injury
+does not reset mending. Recovery requires regeneration to be enabled.
 
 Enemy consequences should be more drastic and noticeable than routine player
 injuries, but it should be hard to turn an enemy into a harmless collection of
@@ -237,7 +243,9 @@ not require a long cleanup of irrelevant HP pools.
 
 ### Destroyed enemy zones
 
-Two approaches remain under consideration:
+The first slice transfers subsequent hits to a disabled simple attached zone to
+its Core; reaching zero Core defeats a simple non-player. Other anatomy and
+targeting approaches remain under consideration:
 
 - Remove destroyed zones from valid targeting.
 - Allow contact with a destroyed zone and transfer damage to another zone,
@@ -246,7 +254,7 @@ Two approaches remain under consideration:
 A proposed refinement distinguishes an absent or inaccessible zone from a
 disabled but attached one. Attached zones could transfer damage along explicit
 anatomical connections to the core instead of to an unrelated limb. Transfer
-destinations and amounts have not been decided.
+destinations and amounts beyond the simple Core transfer have not been decided.
 
 Enemy vital-zone and defeat rules still need definition. Player death, defeat,
 critical injury, and rescue rules are explicitly deferred. A separate overall
@@ -256,13 +264,18 @@ health pool was suggested earlier but was not accepted as a requirement.
 
 This is an agreed player injury rule:
 
-- When an attack damages a player limb already at zero HP, it instead reduces
-  that limb's maximum HP by 10% of the incoming attack damage. The conversion
+- When a hit injures a detailed limb already broken, it instead reduces
+  that limb's maximum HP by 10% of the whole post-protection injury. The conversion
   percentage is configurable.
 - The accumulated reduction is capped at 50% of the limb's unreduced maximum HP.
   The cap percentage is configurable; repeated hits cannot exceed it.
 - Regular limb HP regenerates first, up to the currently reduced maximum.
   Maximum HP begins restoring only after regular HP has healed to that maximum.
+- Injury below 1 HP after protection is ignored. Maximum loss accumulates in
+  hundredths, including fractional losses from small hits; the breaking hit's
+  overkill does not contribute. Later hits do not reset mending progress.
+- Initial recovery defaults are 1 regular HP per logical hour and 1 maximum HP
+  per logical day, switching back to regular healing after maximum increases.
 - No explicit healing actions or direct HP restoration are planned. Recovery is
   natural regeneration; available aids can speed regeneration or mitigate
   penalties while the limb recovers.
@@ -274,8 +287,8 @@ Regular HP must recover to the reduced maximum before maximum HP recovery begins
 
 This gives continued attacks against a disabled limb a bounded, lasting
 consequence. The reduced maximum persists during recovery without adding
-progressive functional penalties at nonzero HP. Regeneration rates and recovery
-modifiers remain to be defined.
+progressive functional penalties at nonzero HP. Recovery modifiers remain open;
+the initial rates are configurable balancing defaults.
 
 ## Damage and status effects
 
@@ -315,17 +328,14 @@ Mechanical detail should remain compatible with straightforward routine inputs.
 
 ## Open questions
 
-- Which deterministic selection algorithm, priorities, and tie rules should styles
-  use? What happens when no move is available?
-- How does `Tab` define nearest and valid targets? Does it ever approach a target?
+- How should future styles and moves extend the initial selection rules?
 - What costs and restrictions apply to reactions, counters, and consumed openings?
-- Which moves have windups, and what happens to costs on interruption or failure?
+- Which additional moves have windups and interruption consequences?
 - How are contact regions, clothing coverage,
   armor layers, posture, and cross-Y-layer reach represented?
 - What are the exact disability effects, fallback capabilities, and defeat rules
   for each enemy body? How does damage to destroyed zones behave?
-- What are the regular HP and maximum HP regeneration rates, and which effects
-  speed regeneration or mitigate recovery penalties?
+- Which effects speed regeneration or mitigate recovery penalties?
 - Which statuses ship first, how do they stack, and how do protection and immunity
   affect their application?
 - How much firearm detail is appropriate later, and which ranged rules share the

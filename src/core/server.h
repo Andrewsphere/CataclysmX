@@ -7,7 +7,7 @@
 
 namespace cataclysmx {
 
-enum class CommandKind { wait, move, pick_up, drop, interact, use_item, store_item };
+enum class CommandKind { wait, move, pick_up, drop, interact, use_item, store_item, attack, combat_style };
 struct Command {
     CommandKind kind = CommandKind::wait;
     int dx = 0;
@@ -22,13 +22,17 @@ struct Command {
     // Use: battery to install. Store: destination container; zero extracts to inventory.
     PersistentId otherItem = 0;
     int dy = 0; // Vertical axial direction: down -1, up +1.
+    PersistentId target = 0; // Attack: zero chooses an adjacent perceived hostile.
+    CombatStyle style = CombatStyle::Balanced;
 };
 bool ValidCommandShape(const Command& command);
 enum class Outcome {
     waited, moved, picked_up, dropped, opened, closed, toggled,
     blocked, occupied, nothing_here, invalid_command, not_carried, unavailable, not_ready, queued,
     stale_input, duplicate_input, used_item, stored_item, item_use_failed,
-    capacity_exceeded, invalid_container
+    capacity_exceeded, invalid_container,
+    attacked, attack_missed, attack_parried, attack_blocked, attack_windup,
+    target_defeated, no_target, no_combat_move, combat_style_changed
 };
 const char* OutcomeMessage(Outcome outcome);
 // The demo requires floor, wall, and closed_door; floor must be passable.
@@ -152,6 +156,7 @@ struct WorldView {
     std::uint64_t lastInputSequence = 0;
     Vector<PlayerStatus> players;
     LightBand playerLight = LightBand::Dark;
+    CombatView combat;
 };
 
 // Authoritative deterministic endpoint. No transport or clock access.

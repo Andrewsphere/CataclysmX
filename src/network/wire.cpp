@@ -9,6 +9,56 @@ namespace {
 static_assert(static_cast<unsigned>(ObjectKind::None) == 0 && static_cast<unsigned>(ObjectKind::Generic) == 1 &&
     static_cast<unsigned>(ObjectKind::Chair) == 2 && static_cast<unsigned>(ObjectKind::Table) == 3 &&
     static_cast<unsigned>(ObjectKind::Lamp) == 4);
+bool ValidCombatView(const CombatView& v) {
+    const auto& r = v.feedback.result;
+    if (static_cast<unsigned>(v.bodyKind) > static_cast<unsigned>(BodyKind::Simple) ||
+        static_cast<unsigned>(v.style) > static_cast<unsigned>(CombatStyle::Defensive) ||
+        static_cast<unsigned>(v.action) > static_cast<unsigned>(ActorActionKind::DisruptionRecovery) ||
+        v.stamina > 100 || v.accuracyPenalty > 30 ||
+        static_cast<unsigned>(r.outcome) > static_cast<unsigned>(AttackOutcome::Defeated) ||
+        static_cast<std::uint32_t>(r.move) > static_cast<std::uint32_t>(CombatMove::Parry) ||
+        static_cast<unsigned>(r.part) > static_cast<unsigned>(BodyPart::Count) ||
+        static_cast<unsigned>(r.disruption) > static_cast<unsigned>(DisruptionResponse::Canceled)) return false;
+    for (std::size_t i = 0; i < body_part_count; ++i) {
+        const auto part = static_cast<BodyPart>(i);
+        const auto& p = v.parts[i];
+        if (p.hp > p.maximum || p.maximum > UnreducedMax(part) ||
+            (!HasPart(v.bodyKind, part) && (p.hp || p.maximum || p.broken))) return false;
+    }
+    return true;
+}
+void WriteCombat(Writer& w, const CombatView& v) {
+    w.U8(static_cast<std::uint8_t>(v.bodyKind)); w.U8(static_cast<std::uint8_t>(v.style));
+    w.U8(static_cast<std::uint8_t>(v.action)); w.U32(v.stamina); w.U8(v.accuracyPenalty);
+    for (const auto& p : v.parts) { w.U32(p.hp); w.U32(p.maximum); w.U8(p.broken ? 1 : 0); }
+    const auto& r = v.feedback.result;
+    w.U8(static_cast<std::uint8_t>(r.outcome)); w.U32(static_cast<std::uint32_t>(r.move));
+    w.U64(r.target); w.U8(static_cast<std::uint8_t>(r.part)); w.U32(r.injury); w.U64(r.cost);
+    w.U8(r.committed ? 1 : 0); w.U8(r.contact ? 1 : 0); w.U8(r.lostCapability ? 1 : 0);
+    w.U8(static_cast<std::uint8_t>(r.disruption)); w.U8(v.feedback.incoming ? 1 : 0); w.U64(v.feedback.tick);
+}
+bool ReadCombat(Reader& r, CombatView& v) {
+    std::uint8_t body, style, action;
+    if (!r.U8(body) || !r.U8(style) || !r.U8(action) || !r.U32(v.stamina) || !r.U8(v.accuracyPenalty)) return false;
+    v.bodyKind = static_cast<BodyKind>(body); v.style = static_cast<CombatStyle>(style);
+    v.action = static_cast<ActorActionKind>(action);
+    for (auto& p : v.parts) {
+        std::uint8_t broken;
+        if (!r.U32(p.hp) || !r.U32(p.maximum) || !r.U8(broken) || broken > 1) return false;
+        p.broken = broken != 0;
+    }
+    auto& a = v.feedback.result;
+    std::uint8_t outcome, part, committed, contact, lost, disruption, incoming;
+    std::uint32_t move;
+    if (!r.U8(outcome) || !r.U32(move) || !r.U64(a.target) || !r.U8(part) || !r.U32(a.injury) || !r.U64(a.cost) ||
+        !r.U8(committed) || committed > 1 || !r.U8(contact) || contact > 1 || !r.U8(lost) || lost > 1 ||
+        !r.U8(disruption) || !r.U8(incoming) || incoming > 1 || !r.U64(v.feedback.tick)) return false;
+    a.outcome = static_cast<AttackOutcome>(outcome); a.move = static_cast<CombatMove>(move);
+    a.part = static_cast<BodyPart>(part); a.committed = committed != 0; a.contact = contact != 0;
+    a.lostCapability = lost != 0; a.disruption = static_cast<DisruptionResponse>(disruption);
+    v.feedback.incoming = incoming != 0;
+    return ValidCombatView(v);
+}
 bool ValidViewBounds(const WorldView& view) {
     return view.width >= 1 && view.width <= maxViewDimension && view.height == view.width && (view.width & 1) != 0 &&
         ValidPosition(view.player_position) && view.origin.y == view.player_position.y &&
@@ -259,17 +309,17 @@ bool Writer::Text(eastl::string_view v, std::size_t limit) {
     return true;
 }
 bool Writer::CommandValue(const Command& v) {
-    if (!ValidCommandShape(v) || v.capability.value > maxItemCapabilities ||
+    if (!ValidCommandShape(v) || static_cast<unsigned>(v.style) > static_cast<unsigned>(CombatStyle::Defensive) || v.capability.value > maxItemCapabilities ||
         (!v.itemAction.empty() && !ValidItemActionId(v.itemAction))) return false;
     U8(static_cast<std::uint8_t>(v.kind)); I32(v.dx); I32(v.dz); U64(v.item); U32(v.waitCost);
     U16(v.capability.value);
     if (!Text(v.itemAction, maxItemActionName)) return false;
-    U64(v.otherItem); I32(v.dy);
+    U64(v.otherItem); I32(v.dy); U64(v.target); U8(static_cast<std::uint8_t>(v.style));
     return bytes.size() <= maxPacket;
 }
 bool Writer::Result(const PlayerCommandResult& v) {
     if (!v.player || !v.sequence || !v.opportunity || v.result.outcome < Outcome::waited ||
-        v.result.outcome > Outcome::invalid_container ||
+        v.result.outcome > Outcome::combat_style_changed ||
         (v.result.storageError && (*v.result.storageError < SaveError::Io || *v.result.storageError > SaveError::NotOpen)) ||
         !ValidItemUseReason(v.result.itemOutcome, v.result.itemReason)) return false;
     U64(v.player); U64(v.sequence); U64(v.opportunity);
@@ -285,7 +335,7 @@ bool Writer::View(const WorldView& v) {
         v.cells.size() != static_cast<std::size_t>(v.width * v.height) ||
         !ValidLists(v) || v.players.size() > 32 ||
         v.playerId == 0 || v.opportunity == 0 || v.speed == 0 || v.pacing.ticksPerSecond == 0 ||
-        v.playerLight > LightBand::Bright) return false;
+        v.playerLight > LightBand::Bright || !ValidCombatView(v.combat)) return false;
     for (std::size_t i = 0; i < v.cells.size(); ++i)
         if (!ValidCell(v.cells[i], v, i)) return false;
     I32(v.origin.x); I32(v.origin.z); I32(v.origin.y);
@@ -321,6 +371,7 @@ bool Writer::View(const WorldView& v) {
         U8(p.commandQueued ? 1 : 0); U64(p.opportunity); U64(p.graceMicroseconds);
     }
     U8(static_cast<std::uint8_t>(v.playerLight));
+    WriteCombat(*this, v.combat);
     return bytes.size() <= maxPacket;
 }
 bool Reader::U8(std::uint8_t& v) { if (offset >= bytes.size()) return false; v = bytes[offset++]; return true; }
@@ -336,19 +387,21 @@ bool Reader::Text(String& v, std::size_t limit) {
     return true;
 }
 bool Reader::CommandValue(Command& v) {
-    std::uint8_t kind;
-    if (bytes.size() > maxPacket || !U8(kind) || kind > static_cast<std::uint8_t>(CommandKind::store_item) ||
+    std::uint8_t kind, style;
+    if (bytes.size() > maxPacket || !U8(kind) || kind > static_cast<std::uint8_t>(CommandKind::combat_style) ||
         !I32(v.dx) || !I32(v.dz) || !U64(v.item) || !U32(v.waitCost) ||
         !U16(v.capability.value) || v.capability.value > maxItemCapabilities ||
-        !Text(v.itemAction, maxItemActionName) || !U64(v.otherItem) || !I32(v.dy)) return false;
+        !Text(v.itemAction, maxItemActionName) || !U64(v.otherItem) || !I32(v.dy) ||
+        !U64(v.target) || !U8(style) || style > static_cast<std::uint8_t>(CombatStyle::Defensive)) return false;
     v.kind = static_cast<CommandKind>(kind);
+    v.style = static_cast<CombatStyle>(style);
     return (v.itemAction.empty() || ValidItemActionId(v.itemAction)) && ValidCommandShape(v);
 }
 bool Reader::Result(PlayerCommandResult& v) {
     std::uint8_t outcome, advanced;
     if (bytes.size() > maxPacket || !U64(v.player) || !v.player || !U64(v.sequence) || !v.sequence ||
         !U64(v.opportunity) || !v.opportunity || !U8(outcome) ||
-        outcome > static_cast<std::uint8_t>(Outcome::invalid_container) || !U8(advanced) || advanced > 1 ||
+        outcome > static_cast<std::uint8_t>(Outcome::combat_style_changed) || !U8(advanced) || advanced > 1 ||
         !U64(v.result.tick) || !U64(v.result.cost)) return false;
     std::uint8_t hasError;
     if (!U8(hasError) || hasError > 1) return false;
@@ -424,7 +477,7 @@ bool Reader::View(WorldView& v) {
     std::uint8_t playerLight;
     if (!U8(playerLight) || playerLight > static_cast<std::uint8_t>(LightBand::Bright)) return false;
     v.playerLight = static_cast<LightBand>(playerLight);
-    return true;
+    return ReadCombat(*this, v.combat);
 }
 
 }

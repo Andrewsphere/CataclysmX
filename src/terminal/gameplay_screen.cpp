@@ -1,6 +1,7 @@
 #include "terminal/gameplay_screen.h"
 
 #include "client/text.h"
+#include "client/combat_text.h"
 #include "terminal/keyboard.h"
 
 #include <ftxui/dom/node.hpp>
@@ -52,6 +53,17 @@ eastl::string_view View(const String& text) { return {text.data(), text.size()};
 std::string Frontend(const String& text) { return {text.data(), text.size()}; }
 ftxui::Element Text(const String& text) { return ftxui::text(Frontend(text)); }
 ftxui::Element Paragraph(const String& text) { return ftxui::paragraph(Frontend(text)); }
+ftxui::Element ParagraphLines(const String& text) {
+    ftxui::Elements lines;
+    std::size_t start = 0;
+    while (start < text.size()) {
+        const auto end = text.find('\n', start);
+        lines.push_back(Paragraph(text.substr(start, end == String::npos ? end : end - start)));
+        if (end == String::npos) { break; }
+        start = end + 1;
+    }
+    return ftxui::vbox(std::move(lines));
+}
 ftxui::Element Padded(ftxui::Element content) {
     return ftxui::hbox({ftxui::text(" "), std::move(content) | ftxui::flex, ftxui::text(" ")});
 }
@@ -316,7 +328,11 @@ ftxui::Element Hint(const String& key, const String& label) {
 }
 String ActionLabel(const Localization& localization, InputAction action) {
     String key = "action."; const auto name = ActionName(action); key.append(name.data(), name.size());
-    return localization.Text(View(key));
+    const auto fallback = action == InputAction::Attack ? eastl::string_view("Attack")
+        : action == InputAction::StyleBalanced ? eastl::string_view("Balanced style")
+        : action == InputAction::StyleAggressive ? eastl::string_view("Aggressive style")
+        : action == InputAction::StyleDefensive ? eastl::string_view("Defensive style") : name;
+    return localization.Text(View(key), fallback);
 }
 String BindingLabel(const Keymap& keys, const Localization& localization, InputContext context, InputAction action) {
     auto hint = BindingHint(keys, context, action);
@@ -432,6 +448,10 @@ ftxui::Element GameplayUi::Render(WorldView view, const ContentCatalog& content,
         StatusField(t("game.ui.tick_rate"), localization.Format("game.ui.per_second", {{"rate", UnsignedText(view.pacing.ticksPerSecond)}})),
         StatusField(t("game.ui.rate_limit"), on(view.pacing.rateLimited)),
         StatusField(t("game.ui.idle_pause"), on(view.pacing.pauseWhenIdle))};
+    const auto combatStatus = CombatStatusText(view.combat);
+    const auto combatFeedback = CombatFeedbackText(view.combat);
+    if (!combatStatus.empty()) { status.insert(status.begin() + 1, ParagraphLines(combatStatus)); }
+    if (!combatFeedback.empty()) { status.insert(status.begin() + 1, Paragraph(combatFeedback)); }
     String compact = localization.Format("game.ui.compact_state", {{"position", position},
         {"tick", UnsignedText(view.tick)}, {"state", state}});
     compact += '\n';
@@ -440,11 +460,13 @@ ftxui::Element GameplayUi::Render(WorldView view, const ContentCatalog& content,
         {"speed", UnsignedText(view.speed)}, {"delay", UnsignedText(view.remainingTicks)}});
     if (!presentation.pending.empty()) {
         const auto pending = localization.Format("game.ui.pending", {{"value", presentation.pending}});
-        status.push_back(ftxui::separatorLight()); status.push_back(Paragraph(pending));
+        status.insert(status.begin() + 1, Paragraph(pending));
         compact += pending; compact += " | ";
     }
     compact += compactPacing;
     compact += " | "; compact += t("game.ui.light"); compact += ' '; compact += light;
+    if (!combatStatus.empty()) { compact += '\n'; compact += combatStatus; }
+    if (!combatFeedback.empty()) { compact += '\n'; compact += combatFeedback; }
     if (!presentation.lan && !mapCache_) { mapCache_ = std::make_shared<TerminalMapCache>(); }
     auto world = presentation.lan ? presentation.lan
         : std::make_shared<MapViewport>(view, std::move(view.cells), content, mapCache_,
@@ -572,7 +594,8 @@ ftxui::Element GameplayUi::Render(WorldView view, const ContentCatalog& content,
         };
         group("game.ui.windows", {InputAction::QuickActions, InputAction::Inventory, InputAction::Players,
             InputAction::Settings, InputAction::Help});
-        group("game.ui.actions", {InputAction::Use, InputAction::PickUp, InputAction::Drop, InputAction::Interact, InputAction::Wait});
+        group("game.ui.actions", {InputAction::Use, InputAction::PickUp, InputAction::Drop, InputAction::Interact, InputAction::Wait,
+            InputAction::Attack, InputAction::StyleBalanced, InputAction::StyleAggressive, InputAction::StyleDefensive});
         group("game.ui.movement", {InputAction::West, InputAction::North, InputAction::South, InputAction::East, InputAction::MoveDown, InputAction::MoveUp});
         group("game.ui.pacing", {InputAction::RateDown, InputAction::RateUp, InputAction::ToggleRate, InputAction::ToggleIdle});
         group("game.ui.system", {InputAction::Save, InputAction::Debug, InputAction::Quit, InputAction::Cancel});

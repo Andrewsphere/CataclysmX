@@ -27,8 +27,25 @@ bool ParseCommand(const std::string& text, Command& command) {
     if (text == "wait") { command.kind = CommandKind::wait; return true; }
     if (text == "pickup") { command.kind = CommandKind::pick_up; return true; }
     if (text == "drop") { command.kind = CommandKind::drop; return true; }
+    if (text == "attack") { command.kind = CommandKind::attack; return true; }
     const auto space = text.find(' ');
     if (space == std::string::npos) { return false; }
+    if (text.substr(0, space) == "attack") {
+        command.kind = CommandKind::attack;
+        const char* begin = text.data() + space + 1;
+        const char* end = text.data() + text.size();
+        const auto parsed = std::from_chars(begin, end, command.target);
+        return begin != end && parsed.ec == std::errc{} && parsed.ptr == end;
+    }
+    if (text.substr(0, space) == "style") {
+        command.kind = CommandKind::combat_style;
+        const auto style = text.substr(space + 1);
+        if (style == "balanced") { command.style = CombatStyle::Balanced; }
+        else if (style == "aggressive") { command.style = CombatStyle::Aggressive; }
+        else if (style == "defensive") { command.style = CombatStyle::Defensive; }
+        else { return false; }
+        return true;
+    }
     if (text.substr(0, space) == "move") { command.kind = CommandKind::move; }
     else if (text.substr(0, space) == "interact") { command.kind = CommandKind::interact; }
     else { return false; }

@@ -1,4 +1,5 @@
 #include "sdl/app.h"
+#include "client/combat_text.h"
 
 #include "sdl/assets.h"
 #include "sdl/gpu_renderer.h"
@@ -43,7 +44,8 @@ String Hints(const Keymap& keys) {
     String text;
     for (auto action : {InputAction::West, InputAction::East, InputAction::North, InputAction::South,
         InputAction::MoveDown, InputAction::MoveUp, InputAction::Wait, InputAction::PickUp,
-        InputAction::Drop, InputAction::Interact, InputAction::Help, InputAction::Quit}) {
+        InputAction::Drop, InputAction::Interact, InputAction::Attack, InputAction::StyleBalanced,
+        InputAction::StyleAggressive, InputAction::StyleDefensive, InputAction::Help, InputAction::Quit}) {
         text += BindingHint(keys, InputContext::Gameplay, action);
         text += " ";
         const auto name = ActionName(action);
@@ -69,6 +71,10 @@ eastl::optional<Command> GameplayCommand(InputAction action, bool interacting) {
     case InputAction::MoveDown: command.dy = -1; break;
     case InputAction::MoveUp: command.dy = 1; break;
     case InputAction::Wait: command.kind = CommandKind::wait; break;
+    case InputAction::Attack: command.kind = CommandKind::attack; break;
+    case InputAction::StyleBalanced: command.kind = CommandKind::combat_style; command.style = CombatStyle::Balanced; break;
+    case InputAction::StyleAggressive: command.kind = CommandKind::combat_style; command.style = CombatStyle::Aggressive; break;
+    case InputAction::StyleDefensive: command.kind = CommandKind::combat_style; command.style = CombatStyle::Defensive; break;
     case InputAction::PickUp: command.kind = CommandKind::pick_up; break;
     case InputAction::Drop: command.kind = CommandKind::drop; break;
     default: return eastl::nullopt;
@@ -272,8 +278,15 @@ int RunApp(const ContentCatalog& content, const Settings& settings,
         if (assetState == AssetState::Ready) { playback.RetireCompleted(assets.Definition(), elapsedMilliseconds); }
         if (animationDeadline && elapsedMilliseconds >= *animationDeadline) { dirty = true; }
         if (dirty && !minimized) {
+            String display = message;
+            if (mapValid) {
+                const auto combat = CombatStatusText(snapshot.view.combat);
+                const auto feedback = CombatFeedbackText(snapshot.view.combat);
+                if (!combat.empty()) { display += '\n'; display += combat; }
+                if (!feedback.empty()) { display += '\n'; display += feedback; }
+            }
             if (!DrawFrame(platform.renderer, text, assets, mapValid ? &snapshot.view : nullptr,
-                content, message.c_str(), hints.c_str(), elapsedMilliseconds, mapValid ? &mapPacket : nullptr,
+                content, display.c_str(), hints.c_str(), elapsedMilliseconds, mapValid ? &mapPacket : nullptr,
                 zoom, options.uiScale, {}, &playback, &shader)) { return SdlFailure(); }
             dirty = false;
             animationDeadline.reset();

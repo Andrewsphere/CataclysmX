@@ -1,10 +1,10 @@
 # Save format
 
-CataclysmX saves are SQLite database files. The strict v9 format is governed by
-one authoritative `metadata.format_version = 9` for both SQL and JSON. The
+CataclysmX saves are SQLite database files. The strict v10 format is governed by
+one authoritative `metadata.format_version = 10` for both SQL and JSON. The
 `metadata` columns are `singleton INTEGER PRIMARY KEY CHECK(singleton=1)`,
 `format_version INTEGER NOT NULL`, and `game_version TEXT NOT NULL`; its single
-row is `(1, 9, "0.1.0")`. The other tables are
+row is `(1, 10, "0.1.0")`. The other tables are
 `world_state(singleton INTEGER PRIMARY KEY CHECK(singleton=1), payload TEXT NOT
 NULL)` and `chunks(x INTEGER NOT NULL, z INTEGER NOT NULL, y INTEGER NOT NULL,
 payload TEXT NOT NULL, PRIMARY KEY(x,z,y))`, and
@@ -20,7 +20,7 @@ required integer in 0–255: the fixed environment illumination (new-world defau
 192), independent of wall-clock time. The session object has exactly
 `tick`, `rng_state`, `player`, `position` (`x`, `z`, `y`), `active_radius`,
 `resident_radius`, `autosave_interval`, `pacing`, `players`, and `circle_residency`.
-`circle_residency` is required in v8/v9 and is either JSON `null` (legacy square
+`circle_residency` is required in v8/v9/v10 and is either JSON `null` (legacy square
 residency) or an exact object `{ "radius_tiles": integer }` with radius in
 0–128 inclusive. Zero is a valid circle radius; the default `CircleResidency`
 value is 78 tiles. Missing, duplicate, unknown, noninteger or out-of-range fields
@@ -71,14 +71,15 @@ The root object has exactly `tiles`, `actors`, `objects`, and `ground_items`:
   "player": boolean, "parked": boolean, "turns": decimal-string, "inventory": [...],
   "speed": positive-uint32, "remaining_ticks": decimal-string,
   "carry_capacity_g": decimal-string, "light": {"intensity": integer, "range": integer},
-  "controller": {"type": string, "state": structured-value} }`.
+  "controller": {"type": string, "state": structured-value}, "combat": structured-value }`.
   Carry capacity preserves the full uint64 range.
   Controller envelopes have exactly `type` and `state`. Stable controller names
-  are `none` (empty object state) and `wander` (exact `{ "version": 1 }` state,
+  are `none` (empty object state), `wander` and `melee` (exact `{ "version": 1 }` state,
   with an unsigned version). Players, including parked players, require `none`;
-  NPCs may use either controller. Missing/empty envelopes, unknown controller
+  NPCs may use any controller. Missing/empty envelopes, unknown controller
   names, malformed state, duplicate keys and unsupported state versions fail.
   Controller read/factory helpers own the state schema and its validation.
+  The required combat object is described below.
 - `objects`: `{ "id": decimal-string, "position": {"x": int, "z": int, "y": int},
   "enabled": boolean, "updates": decimal-string, "contents": [...],
   "update_interval": positive-uint32, "remaining_ticks": decimal-string,
@@ -135,7 +136,7 @@ tree directly. The controller target is a world position and includes its Y
 coordinate in the v6 state representation. `ValidateItemSnapshot` is the shared item-state and ownership-tree
 validator for both archive paths, dispatching behavior-owned local and relational
 validation. Installation names resolve against the parent definition and its
-`AcceptsInstallation` policy. Metadata is version 9. Energy and charger state
+  `AcceptsInstallation` policy. Metadata is version 10. Energy and charger state
 remain version 1; door state version 2 adds required signed Y. These schemas use
 unsigned JSON numbers and signed `$i64` target
 coordinates. No capacity clamping or implicit state migration is introduced.
@@ -161,7 +162,7 @@ ownership, chunks and session player identity/position are validated. Generic
 `generation_version` accepts 1 and 2 (legacy) and 3 (current); other values fail with
 `SaveError::UnsupportedVersion`. New worlds use generation version 3. Versions 1
 and 2 retain their prior surface generation; nonsurface slices use the layered
-terrain rules. The SQL/JSON save schema is version 9; strict v7/v8 saves are also
+terrain rules. The SQL/JSON save schema is version 10; strict v7/v8/v9 saves are also
 accepted as described below. Save formats v1 through v6 and all other schema
 versions are rejected. In particular, v2 command-count ticks are not silently reinterpreted as
 simulation ticks. Content's own format version is independent of both versions.
@@ -169,28 +170,49 @@ Version 7 explicitly adds illumination sources, object semantic identity,
 fixed skylight and independent per-player observations. Individual state migrations are a separate,
 explicit capability-version policy; no generic auto-clamp or fallback applies.
 
-### Version 7/8 compatibility and checkpoint upgrade
+### Combat state
 
-Versions 7 and 8 have the same SQL tables and memory encoding as v9. Their actor
+The actor `combat` field is an owned version-1 `DataObject`. Its exact fields are
+`version`, `body`, `profile`, `action`, `style`, `faction`, `protection`,
+`attackDamage`, `accuracy`, `stamina`, `staminaElapsed`, `reactionCooldown` and
+`heavyCooldown`. `body` contains `kind` and a fixed nine-entry `parts` list in
+`BodyPart` order; each part has `hp`, `maxLoss`, `mendingElapsed`,
+`healingElapsed`, `maxHealingElapsed` and `broken`. `profile` has
+`mendingDuration`, `healingInterval`, `maxHealingInterval`, `mendedHp`,
+`maxLossConversionPercent`, `maxLossCapPercent` and `regeneration`. `action`
+has `kind`, `target`, `move`, `recoveryTicks` and `accuracyPenalty`.
+`protection` is a fixed body-part by damage-type matrix. Numeric values are
+unsigned DataObject values; flags are booleans. Nested field sets, enum bounds,
+body/profile and action invariants are validated rather than repaired. An unknown
+combat version is unsupported. Pending action targets are persistent IDs and may
+legitimately refer to an actor that has gone away. The action deadline is saved
+separately as `remaining_ticks`. Combat feedback is transient and not saved.
+See [combat API](combat_api.md) and [DataObject encoding](data_object.md).
+
+### Version 7/8/9 compatibility and checkpoint upgrade
+
+Versions 7, 8 and 9 have the same SQL tables and memory encoding as v10. All
+three lack actor `combat`; decoding synthesizes `MakeCombatState(player)` defaults.
+Versions 7 and 8 additionally have actor
 records lack `controller`; object records lack `type` and `state`. Decoding
 synthesizes default player `none` / NPC `wander` envelopes and generic objects
 with empty state. These legacy exact field sets reject the v9 additions.
-Version 7 additionally excludes `circle_residency` from the exact session fields;
+Version 7 also excludes `circle_residency` from the exact session fields;
 opening v7 preserves its chunk radii and selects square residency. Versions 8/9
-require the field, preserving any saved circle. Opening is read-only validation:
+require the field, as does v10, preserving any saved circle. Opening is read-only validation:
 it does not rewrite payloads or metadata. Metadata selects the strict decoder;
 relabeling modern chunks as legacy is invalid.
 
 `SaveDatabase::Begin` starts the first checkpoint with `BEGIN IMMEDIATE`, checks
 that metadata still matches the opened durable version, and validates the old
 database. Before returning to the caller it rewrites **every** legacy chunk and
-the snapshot, then sets metadata to 9, all inside that transaction. A coordinate
+the snapshot, then sets metadata to 10, all inside that transaction. A coordinate
 list allows decoding/writing one chunk at a time without modifying an active
 chunk scan. Each old row is decoded exactly once during the rewrite; newly
-written v9 rows are never decoded as legacy. Memory rows are unchanged by the
+written v10 rows are never decoded as legacy. Memory rows are unchanged by the
 migration itself. Generation versions 1, 2 and 3 are preserved.
 
-A separate transaction-local effective version switches to 9 only after the
+A separate transaction-local effective version switches to 10 only after the
 full rewrite. Reads and commit validation use this effective version, including
 new caller `WriteChunk` rows; the durable version advances only after SQLite
 commits. Snapshot-only, chunk-only and empty checkpoints all migrate the full
@@ -204,10 +226,14 @@ RAM archive fields are appended for source aggregate compatibility:
 `SavedObject::type` and `state` are an `ObjectTypeId` and owned `DataObject`.
 An empty object controller in a source-constructed archive is a compatibility
 sentinel: validation/encoding normalizes it to the player/NPC default via the
-controller factory. This convenience applies only to RAM construction; real v9
+controller factory. This convenience applies only to RAM construction; real v10
 JSON must contain a complete envelope. Object state has no default sentinel for
 typed objects. Shared helper/factory validation keeps persistence independent of
 behavior-specific state internals.
+
+RAM archives also retain owned combat state and freeze pending actions, cooldowns
+and recovery while absent; reactivation resumes from saved progress without
+offline catch-up.
 
 `session.tick` counts global simulation ticks (100 per standard turn), while
 `pacing.ticks_per_second` only maps simulation ticks to real time.

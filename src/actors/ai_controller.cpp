@@ -1,5 +1,7 @@
 #include "actors/ai_controller.h"
+#include "combat/combat_system.h"
 #include "core/state_reader.h"
+#include "core/world.h"
 #include <cstdlib>
 
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
@@ -9,21 +11,38 @@
 namespace cataclysmx {
 namespace {
 
+ActorIntent ChooseWander(std::uint32_t& rng) {
+    // Portable modulo-2^32 legacy draw and direction mapping. A blocked
+    // attempt still consumes this draw; execution is the caller's job.
+    rng = rng * 1'664'525U + 1'013'904'223U;
+    constexpr TileCoord directions[] = {{1, 0}, {0, 1}, {-1, 0}, {0, -1}};
+    return {ActorIntentKind::Move, directions[rng >> 30], 100};
+}
+
+DataObject VersionOneState() {
+    DataObject state;
+    state.SetUnsigned("version", 1);
+    return state;
+}
+
 class WanderController final : public AiController {
 public:
     AiControllerKind Kind() const override { return AiControllerKind::Wander; }
     ActorIntent ChooseAction(const ActorReadContext&, std::uint32_t& rng) override {
-        // Portable modulo-2^32 legacy draw and direction mapping. A blocked
-        // attempt still consumes this draw; execution is the caller's job.
-        rng = rng * 1'664'525U + 1'013'904'223U;
-        constexpr TileCoord directions[] = {{1, 0}, {0, 1}, {-1, 0}, {0, -1}};
-        return {ActorIntentKind::Move, directions[rng >> 30], 100};
+        return ChooseWander(rng);
     }
-    DataObject SaveState() const override {
-        DataObject state;
-        state.SetUnsigned("version", 1);
-        return state;
+    DataObject SaveState() const override { return VersionOneState(); }
+};
+
+class MeleeController final : public AiController {
+public:
+    AiControllerKind Kind() const override { return AiControllerKind::Melee; }
+    ActorIntent ChooseAction(const ActorReadContext& context, std::uint32_t& rng) override {
+        const auto target = context.GetWorld().Combat().FindTarget(context.Self());
+        if (target.value != 0) { return {ActorIntentKind::Attack, {}, 100, target}; }
+        return ChooseWander(rng);
     }
+    DataObject SaveState() const override { return VersionOneState(); }
 };
 
 }
@@ -38,6 +57,7 @@ eastl::string_view AiControllerKindName(AiControllerKind kind) {
     switch (kind) {
     case AiControllerKind::None: return "none";
     case AiControllerKind::Wander: return "wander";
+    case AiControllerKind::Melee: return "melee";
     }
     return {};
 }
@@ -46,6 +66,7 @@ StateResult<AiControllerKind> ReadAiControllerKind(eastl::string_view name,
     Diagnostics* diagnostics) {
     if (name == "none") { return AiControllerKind::None; }
     if (name == "wander") { return AiControllerKind::Wander; }
+    if (name == "melee") { return AiControllerKind::Melee; }
     return cataclysmx::InvalidState(diagnostics, "actors.controller", "type", "unknown controller kind");
 }
 
@@ -59,7 +80,8 @@ StateResult<void> ValidateAiControllerState(AiControllerKind kind, const DataObj
         if (state.Size() != 0) { return reader.Invalid({}, "none controller state must be empty"); }
         return {};
     }
-    case AiControllerKind::Wander: {
+    case AiControllerKind::Wander:
+    case AiControllerKind::Melee: {
         const auto version = reader.GetUnsignedOrError("version");
         const auto result = reader.Result();
         if (!result) { return result; }
@@ -82,6 +104,7 @@ StateResult<eastl::unique_ptr<AiController>> MakeAiController(AiControllerKind k
     switch (kind) {
     case AiControllerKind::None: return eastl::unique_ptr<AiController>{};
     case AiControllerKind::Wander: return eastl::unique_ptr<AiController>(new WanderController());
+    case AiControllerKind::Melee: return eastl::unique_ptr<AiController>(new MeleeController());
     }
     return cataclysmx::InvalidState(diagnostics, "actors.controller", "type", "unknown controller kind");
 }
