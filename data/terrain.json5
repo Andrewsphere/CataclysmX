@@ -87,6 +87,21 @@
       closes_to: 'closed_door',
     },
     {
+      type: 'terrain', id: 'lockable_closed_door', name: 'closed unlocked door',
+      movement: {passable: false}, blocks_sight: true, looks_like: 'closed_door',
+      opens_to: 'lockable_open_door', locks_to: 'locked_door',
+    },
+    {
+      type: 'terrain', id: 'lockable_open_door', name: 'open unlocked door',
+      movement: {passable: true}, blocks_sight: false, looks_like: 'open_door',
+      closes_to: 'lockable_closed_door', locks_to: 'locked_door',
+    },
+    {
+      type: 'terrain', id: 'locked_door', name: 'locked door',
+      movement: {passable: false}, blocks_sight: true, looks_like: 'closed_door',
+      unlocks_to: 'lockable_closed_door',
+    },
+    {
       type: 'terrain', id: 'grass', name: 'grass',
       movement: {passable: true}, blocks_sight: false,
       appearance: {symbol: '.', foreground: 'green'},

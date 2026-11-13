@@ -13,8 +13,8 @@ struct AppOptions {
 };
 
 eastl::optional<Command> GameplayCommand(InputAction action, bool interacting);
-// Called on process main; catalog, settings and localization remain immutable.
-int RunApp(const ContentCatalog& content, const Settings& settings,
-    const Keymap& keys, const Localization& localization, AppOptions options = {});
+// Called on process main. Only the session owner accesses the live world.
+int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& localization,
+    const char* localizationDirectory, AppOptions options = {});
 
 }

@@ -11,11 +11,12 @@ namespace {
 
 constexpr eastl::string_view fieldNames[] = {"language", "view_radius", "autosave_interval",
     "active_radius", "resident_radius", "seed", "ticks_per_second", "rate_limited", "pause_when_idle",
-    "residency_mode", "resident_radius_tiles"};
+    "residency_mode", "resident_radius_tiles", "keyboard_repeat_rate"};
 
 void Overlay(Settings& settings, const SettingsOverrides& overrides) {
     if (overrides.language) { settings.language = *overrides.language; }
     if (overrides.viewRadius) { settings.viewRadius = *overrides.viewRadius; }
+    if (overrides.keyboardRepeatRate) { settings.keyboardRepeatRate = *overrides.keyboardRepeatRate; }
     if (overrides.autosaveInterval) { settings.autosaveInterval = *overrides.autosaveInterval; }
     if (overrides.activeRadius) { settings.activeRadius = *overrides.activeRadius; }
     if (overrides.residentRadius) {
@@ -104,6 +105,7 @@ SettingsResult<void> ValidateSettings(const Settings& settings, Diagnostics* dia
             return Invalid(diagnostics, "language identifier must contain only letters, digits, '-' or '_'");
         }
     }
+    if (settings.keyboardRepeatRate < 1 || settings.keyboardRepeatRate > 60) { return Invalid(diagnostics, "keyboard_repeat_rate must be in [1,60]"); }
     if (settings.viewRadius < 0 || settings.viewRadius > 64) { return Invalid(diagnostics, "view_radius must be in [0,64]"); }
     if (settings.activeRadius < 0 || settings.activeRadius > 8 || settings.residentRadius < 0 || settings.residentRadius > 8
         || (settings.residencyMode == ResidencyMode::Square && settings.residentRadius < settings.activeRadius)) {
@@ -135,8 +137,10 @@ SettingsResult<void> ApplySettings(Server& server, const Settings& settings, Dia
     return {};
 }
 SettingsResult<void> ApplySettings(Server& server, const SettingsStore& store, Diagnostics* diagnostics) {
-    const auto& global = store.Overrides(SettingsScope::Global);
-    const auto& world = store.Overrides(SettingsScope::World);
+    return ApplySettings(server,store.Overrides(SettingsScope::Global),store.Overrides(SettingsScope::World),diagnostics);
+}
+SettingsResult<void> ApplySettings(Server& server, const SettingsOverrides& global,
+    const SettingsOverrides& world, Diagnostics* diagnostics) {
     const auto settings = ResolveSettingsForServer(server, global, world);
     if (HasResidencyOverride(global) || HasResidencyOverride(world)) { return ApplySettings(server, settings, diagnostics); }
     const auto valid = ValidateSettings(settings, diagnostics);
@@ -149,6 +153,7 @@ bool HasOverride(const SettingsOverrides& overrides, SettingsField field) {
     switch (field) {
     case SettingsField::Language: return overrides.language.has_value();
     case SettingsField::ViewRadius: return overrides.viewRadius.has_value();
+    case SettingsField::KeyboardRepeatRate: return overrides.keyboardRepeatRate.has_value();
     case SettingsField::AutosaveInterval: return overrides.autosaveInterval.has_value();
     case SettingsField::ActiveRadius: return overrides.activeRadius.has_value();
     case SettingsField::ResidentRadius: return overrides.residentRadius.has_value();
@@ -166,6 +171,7 @@ void ResetOverride(SettingsOverrides& overrides, SettingsField field) {
     switch (field) {
     case SettingsField::Language: overrides.language.reset(); return;
     case SettingsField::ViewRadius: overrides.viewRadius.reset(); return;
+    case SettingsField::KeyboardRepeatRate: overrides.keyboardRepeatRate.reset(); return;
     case SettingsField::AutosaveInterval: overrides.autosaveInterval.reset(); return;
     case SettingsField::ActiveRadius: overrides.activeRadius.reset(); return;
     case SettingsField::ResidentRadius: overrides.residentRadius.reset(); return;
@@ -183,6 +189,7 @@ String SettingValue(const Settings& settings, SettingsField field) {
     switch (field) {
     case SettingsField::Language: return settings.language;
     case SettingsField::ViewRadius: return Decimal(settings.viewRadius);
+    case SettingsField::KeyboardRepeatRate: return Decimal(settings.keyboardRepeatRate);
     case SettingsField::AutosaveInterval: return Decimal(settings.autosaveInterval);
     case SettingsField::ActiveRadius: return Decimal(settings.activeRadius);
     case SettingsField::ResidentRadius: return Decimal(settings.residentRadius);
@@ -214,11 +221,12 @@ SettingsResult<void> SetOverride(SettingsOverrides& overrides, SettingsField fie
         else if (field == SettingsField::ResidentRadius) { overrides.residentRadius = signedNumber; }
         else { overrides.residentRadiusTiles = signedNumber; }
         return {};
-    case SettingsField::Seed: case SettingsField::TicksPerSecond: case SettingsField::AutosaveInterval:
+    case SettingsField::Seed: case SettingsField::TicksPerSecond: case SettingsField::AutosaveInterval: case SettingsField::KeyboardRepeatRate:
         if (!ParseDecimal(value, number)) { break; }
         if (field == SettingsField::AutosaveInterval) { overrides.autosaveInterval = number; return {}; }
         if (number > UINT32_MAX) { break; }
-        if (field == SettingsField::Seed) { overrides.seed = static_cast<std::uint32_t>(number); }
+        if (field == SettingsField::KeyboardRepeatRate) { overrides.keyboardRepeatRate = static_cast<std::uint32_t>(number); }
+        else if (field == SettingsField::Seed) { overrides.seed = static_cast<std::uint32_t>(number); }
         else { overrides.ticksPerSecond = static_cast<std::uint32_t>(number); }
         return {};
     case SettingsField::RateLimited: case SettingsField::PauseWhenIdle:

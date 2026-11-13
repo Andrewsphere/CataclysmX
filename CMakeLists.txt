@@ -103,6 +103,7 @@ add_library(cataclysmx_engine STATIC
     src/objects/object_behavior.cpp src/objects/object_behavior.h
     src/core/data_object.cpp src/core/data_object.h src/core/item_state.cpp src/core/item_state.h
     src/core/state_result.h src/core/state_reader.cpp src/core/state_reader.h
+    src/core/interaction.cpp src/core/interaction.h
     src/core/world_types.h
     src/core/world_result.h src/content/content_result.h
     src/items/item_types.h src/items/item_types.cpp
@@ -140,6 +141,7 @@ endif()
 cataclysmx_no_exceptions(cataclysmx_network)
 
 add_library(cataclysmx_client STATIC src/client/text.cpp src/client/text.h
+    src/client/tile_inspection.cpp src/client/tile_inspection.h
     src/client/combat_text.cpp src/client/combat_text.h
     src/client/perception_style.cpp src/client/perception_style.h
     src/client/worldgen_debug.cpp src/client/worldgen_debug.h
@@ -201,6 +203,7 @@ if(CATACLYSMX_BUILD_SDL)
         src/content/tileset.cpp src/content/tileset.h
         src/content/tileset_source.cpp src/content/tileset_source.h
         src/sdl/atlas_builder.cpp src/sdl/atlas_builder.h
+        src/sdl/screens.cpp src/sdl/screens.h
         src/sdl/input.cpp src/sdl/input.h
         src/sdl/channels.cpp src/sdl/channels.h
         src/sdl/session.cpp src/sdl/session.h

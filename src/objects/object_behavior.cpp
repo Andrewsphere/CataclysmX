@@ -100,6 +100,23 @@ public:
         state_.hasJob = false;
         state_.running = false;
     }
+    ObjectUseReason Check(const ObjectReadContext& context, ActorHandle actor, ObjectAction action) const {
+        switch (action) {
+        case ObjectAction::Start:
+            if (state_.hasJob && (state_.running || state_.remainingWork == 0)) { return ObjectUseReason::Busy; }
+            if (state_.energy < Config().energyPerTick) { return ObjectUseReason::NoPower; }
+            return state_.hasJob ? ObjectUseReason::None : context.CheckInputs(actor, Config().input, Config().inputCount);
+        case ObjectAction::Stop:
+            return state_.hasJob && state_.running && state_.remainingWork != 0 ? ObjectUseReason::None : ObjectUseReason::NoJob;
+        case ObjectAction::Collect: return context.CheckCollect(actor);
+        default: return ObjectUseReason::NoJob;
+        }
+    }
+    void QueryActions(const ObjectReadContext& context, ActorHandle actor, Vector<ObjectActionInfo>& output) const override {
+        for (auto action : {ObjectAction::Start, ObjectAction::Stop, ObjectAction::Collect}) {
+            output.push_back({action, Check(context, actor, action)});
+        }
+    }
     ObjectUseResult Use(ObjectMutationContext& context, ActorHandle actor, ObjectAction action) override {
         switch (action) {
         case ObjectAction::Start:
@@ -189,4 +206,37 @@ StateResult<eastl::unique_ptr<ObjectBehavior>> MakeObjectBehavior(const ObjectDe
     }
 }
 
+const char* ObjectActionLabel(ObjectAction action) {
+    switch (action) {
+    case ObjectAction::Start: return "Start / resume";
+    case ObjectAction::Stop: return "Stop";
+    case ObjectAction::Collect: return "Collect output";
+    case ObjectAction::Enable: return "Enable";
+    case ObjectAction::Disable: return "Disable";
+    }
+    std::abort();
+}
+const char* ObjectReasonText(ObjectUseReason reason) {
+    switch (reason) {
+    case ObjectUseReason::None: return "";
+    case ObjectUseReason::NoInputs: return "Missing inputs";
+    case ObjectUseReason::NoPower: return "Insufficient power";
+    case ObjectUseReason::NoJob: return "No running job";
+    case ObjectUseReason::Busy: return "Already running";
+    case ObjectUseReason::NoCapacity: return "Insufficient carrying capacity";
+    case ObjectUseReason::NoContents: return "No output to collect";
+    case ObjectUseReason::OutOfReach: return "Out of reach";
+    case ObjectUseReason::InvalidActor: return "Actor unavailable";
+    case ObjectUseReason::AlreadyOpen: return "Already open";
+    case ObjectUseReason::AlreadyClosed: return "Already closed";
+    case ObjectUseReason::AlreadyEnabled: return "Already enabled";
+    case ObjectUseReason::AlreadyDisabled: return "Already disabled";
+    case ObjectUseReason::Occupied: return "Tile occupied";
+    case ObjectUseReason::Locked: return "Door is locked";
+    case ObjectUseReason::AlreadyLocked: return "Already locked";
+    case ObjectUseReason::AlreadyUnlocked: return "Already unlocked";
+    case ObjectUseReason::MustClose: return "Close the door first";
+    }
+    std::abort();
+}
 }

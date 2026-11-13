@@ -373,9 +373,9 @@ paused work: use `Start` explicitly. Enabled state is an independent clock gate,
 so disabling/re-enabling never discards progress or running intent.
 
 `UseObject(actor, object, ObjectAction::{Start,Stop,Collect})` rechecks access for
-every action: active unparked actor, active object, Manhattan distance at most
-one. Vertical neighbors require an open shared face (upper terrain is open space,
-or both endpoints are stairs). Success reports a positive base cost without
+every action: active unparked actor, active object, same Y level, and Chebyshev
+distance at most one. Cross-layer interaction is rejected even through open space
+or matched stairs. Success reports a positive base cost without
 scheduling the actor; refusals report zero cost and preserve state.
 
 World implements callback-scoped `ObjectMutationContext` transactions. Starting

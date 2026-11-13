@@ -50,5 +50,5 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "Content: %s\n", FormatDiagnostics(diagnostics).c_str());
         return 1;
     }
-    return sdl::RunApp(*content, settings.Effective(), settings.Keys(), localization, options);
+    return sdl::RunApp(*content, settings, localization, localizationDirectory.c_str(), options);
 }

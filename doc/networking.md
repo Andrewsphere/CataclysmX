@@ -66,18 +66,27 @@ assigning an actor. Joining has a five-second
 explicit-elapsed timeout. The server does not use wall time or RNG for gameplay;
 network-only tokens and discovery identifiers use OS entropy.
 
-## World, item and combat protocol (version 10, `0x43584e0a`)
+## World, item and combat protocol (version 12, `0x43584e0c`)
 
-Version 10 is wire-incompatible with earlier versions and supports maps up to
+Version 12 is wire-incompatible with earlier versions and supports maps up to
 129×129 cells with lossless run-length encoding. Coordinates encode signed
 32-bit X/Z/Y. Commands append signed `dy` after their item arguments; movement,
-interaction and directional item use accept six axial directions. Snapshot
+and directional item use accept six axial directions. Movement also accepts the
+four horizontal diagonals. Legacy interaction accepts the same tile and eight
+horizontal neighbors only; cross-layer interaction is rejected. Snapshot
 cells carry terrain and overlay depth as bytes, bounded to `0..20` and to the
 distance from the player layer to the bottom of the world. View origin Y must equal
 player Y; unknown channels are entirely default. Inputs include a definition-local
 `ItemCapabilityId` (u16), local action ID (bounded string), and secondary persistent
 item ID (u64) after the existing command fields. Action IDs and reason codes use
 `[a-z][a-z0-9_]*`, with at most 64 bytes. All strings have a u8 byte-length prefix.
+Every command appends a 26-byte interaction payload after target/style: signed
+X/Z/Y (three i32), object persistent ID (u64), expected terrain ID (u32),
+interaction kind (u8: Open, Close, Object, Lock, Unlock), and object action (u8). `interact_action` validates its
+absolute target and exact action against the current authoritative query.
+Object targets require a nonzero object ID and zero terrain ID; terrain targets
+require the inverse. Non-interaction commands use default interaction fields.
+
 `use_item` requires an explicit source item, valid capability and nonempty action
 ID. A secondary item must differ from the source and cannot accompany a direction;
 a direction must be a six-axis unit step. Shape validation deliberately accepts unknown local
@@ -132,6 +141,10 @@ HP, stamina and penalty bounds are validated; absent body parts must be zero.
 Feedback is presentation-only and is not persisted. Commands also carry a target
 persistent ID and combat style; the server validates and resolves them
 authoritatively. See [combat API](combat_api.md).
+Locked/unlocked outcomes are part of protocol v12. Terrain locking references are
+included in content fingerprints. Selected-layer Examine views remain local and
+do not change the network snapshot origin contract.
+
 Object kinds are fixed protocol constants, independent of content ordering.
 None descriptors must have North facing and false state flags. A live object ID
 requires a nonempty descriptor and vice versa. Remembered objects require a

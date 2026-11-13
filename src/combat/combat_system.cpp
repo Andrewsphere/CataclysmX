@@ -155,7 +155,7 @@ bool CombatSystem::CanReach(ActorHandle handle, ActorHandle target) const {
     if (!Available(world_, actor) || !Available(world_, other)) { return false; }
     const auto a = actor->position;
     const auto b = other->position;
-    if (a.y != b.y || std::abs(a.x - b.x) + std::abs(a.z - b.z) != 1) { return false; }
+    if (a.y != b.y || eastl::max(std::abs(a.x - b.x), std::abs(a.z - b.z)) != 1) { return false; }
     const auto* first = world_.GetTile(a);
     const auto* second = world_.GetTile(b);
     return first && second && Passable(world_.GetContent(), first->terrain) &&
@@ -168,7 +168,7 @@ ActorHandle CombatSystem::FindTarget(ActorHandle handle) const {
     const auto position = actor->position;
     const auto faction = actor->combat.faction;
     const bool player = actor->player;
-    constexpr TileCoord directions[] = {{1, 0}, {0, 1}, {-1, 0}, {0, -1}};
+    constexpr TileCoord directions[] = {{1, 0}, {0, 1}, {-1, 0}, {0, -1}, {1, 1}, {-1, 1}, {-1, -1}, {1, -1}};
     ActorHandle best{};
     PersistentId bestId = 0;
     for (const auto direction : directions) {

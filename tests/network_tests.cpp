@@ -105,7 +105,7 @@ bool Poll(LanHost& host, LanClient& a, LanClient& b, Predicate predicate) {
 }
 
 TEST_CASE("Current protocol preserves signed six-axis commands and authoritative shapes", "[network][codec][3d]") {
-    CHECK(wire::protocol == 0x43584e0a);
+    CHECK(wire::protocol == 0x43584e0c);
     for (const auto kind : {CommandKind::move, CommandKind::interact}) {
         for (const TileCoord direction : {TileCoord{1, 0, 0}, {-1, 0, 0}, {0, 1, 0},
             {0, -1, 0}, {0, 0, 1}, {0, 0, -1}, {0, 0, 0}, {1, 0, 1}, {0, 1, -1}, {0, 0, INT_MIN}}) {
@@ -118,8 +118,8 @@ TEST_CASE("Current protocol preserves signed six-axis commands and authoritative
             REQUIRE(reader.CommandValue(decoded)); CHECK(reader.Done());
             CHECK(decoded.kind == kind); CHECK(decoded.dx == command.dx);
             CHECK(decoded.dz == command.dz); CHECK(decoded.dy == command.dy);
-            // dy precedes the appended target and style.
-            writer.bytes[writer.bytes.size() - 10] = 2;
+            // dy precedes target/style and the 26-byte explicit interaction.
+            writer.bytes[writer.bytes.size() - 36] = 2;
             wire::Reader malformed{{writer.bytes.data(), writer.bytes.size()}};
             CHECK_FALSE(malformed.CommandValue(decoded));
         }
@@ -152,7 +152,7 @@ TEST_CASE("Combat commands and outcomes roundtrip with bounded style", "[network
     wire::Writer invalidWriter; CHECK_FALSE(invalidWriter.CommandValue(invalid));
     for (const auto outcome : {Outcome::attacked, Outcome::attack_missed, Outcome::attack_parried,
         Outcome::attack_blocked, Outcome::attack_windup, Outcome::target_defeated, Outcome::no_target,
-        Outcome::no_combat_move, Outcome::combat_style_changed}) {
+        Outcome::no_combat_move, Outcome::combat_style_changed, Outcome::locked, Outcome::unlocked}) {
         PlayerCommandResult result; result.player = 1; result.sequence = 1; result.opportunity = 1;
         result.result.outcome = outcome;
         wire::Writer writer; REQUIRE(writer.Result(result));
@@ -960,4 +960,54 @@ TEST_CASE("Incompatible content and unknown reconnect tokens are rejected on loo
     CHECK_FALSE(wrong.HasView());
     CHECK_FALSE(unknown.HasView());
 }
+}
+
+TEST_CASE("Explicit interactions roundtrip exact targets and bounded actions", "[network][codec][interaction]") {
+    using namespace cataclysmx;
+    using namespace cataclysmx::network;
+    Command command; command.kind = CommandKind::interact_action;
+    command.interaction = {{-10,20,-1},17,{},InteractionKind::Object,ObjectAction::Collect};
+    wire::Writer writer; REQUIRE(writer.CommandValue(command));
+    wire::Reader reader{{writer.bytes.data(),writer.bytes.size()}};
+    Command decoded; REQUIRE(reader.CommandValue(decoded)); REQUIRE(reader.Done());
+    CHECK(decoded.interaction == command.interaction);
+    for (std::size_t n = 0; n < writer.bytes.size(); ++n) {
+        wire::Reader truncated{{writer.bytes.data(),n}}; CHECK_FALSE(truncated.CommandValue(decoded));
+    }
+    command.interaction.action = static_cast<ObjectAction>(255);
+    wire::Writer invalid; CHECK_FALSE(invalid.CommandValue(command));
+}
+
+TEST_CASE("Lock and unlock commands roundtrip with expected terrain identity", "[network][codec][interaction]") {
+    using namespace cataclysmx;
+    using namespace cataclysmx::network;
+    for (const auto kind : {InteractionKind::Lock,InteractionKind::Unlock}) {
+        Command command; command.kind = CommandKind::interact_action;
+        command.interaction = {{3,0,0},0,TestContent().FindTerrain("lockable_closed_door"),kind};
+        wire::Writer writer; REQUIRE(writer.CommandValue(command));
+        wire::Reader reader{{writer.bytes.data(),writer.bytes.size()}};
+        Command decoded; REQUIRE(reader.CommandValue(decoded)); CHECK(reader.Done());
+        CHECK(decoded.interaction == command.interaction);
+    }
+}
+
+TEST_CASE("Terrain fingerprints include door lock transitions", "[network][fingerprint][doors]") {
+    using namespace cataclysmx; using namespace cataclysmx::network;
+    const String base = R"({format_version:1,definitions:[
+        {type:'terrain',id:'closed',name:'closed',movement:{passable:false},blocks_sight:true,
+         appearance:{symbol:'+',foreground:'white'},opens_to:'open',locks_to:'locked'},
+        {type:'terrain',id:'open',name:'open',movement:{passable:true},blocks_sight:false,
+         appearance:{symbol:'/',foreground:'white'},closes_to:'closed'},
+        {type:'terrain',id:'locked',name:'locked',movement:{passable:false},blocks_sight:true,
+         appearance:{symbol:'+',foreground:'white'},unlocks_to:'closed'}]})";
+    const ContentSource source{"doors.json5",{base.data(),base.size()}};
+    const auto locked = LoadContent({&source,1}); REQUIRE(locked);
+    String plain = base;
+    for (const auto field : {",locks_to:'locked'",",unlocks_to:'closed'"}) {
+        const auto position = plain.find(field); REQUIRE(position != String::npos);
+        plain.erase(position,String(field).size());
+    }
+    const ContentSource plainSource{"doors.json5",{plain.data(),plain.size()}};
+    const auto unlocked = LoadContent({&plainSource,1}); REQUIRE(unlocked);
+    CHECK(ContentFingerprint(*locked) != ContentFingerprint(*unlocked));
 }

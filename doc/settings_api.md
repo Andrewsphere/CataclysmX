@@ -111,8 +111,8 @@ host perception. See [terminal view](terminal_view.md) and [sight defaults](sigh
 
 ### Settings schema v2 and v1 migration
 
-Only **settings** now write `format_version: 2`. Keybindings and localization
-remain independently versioned at **1**; their parsers still reject version 2.
+Only **settings** now write `format_version: 2`. Keybindings independently use **2** (and accept v1); localization remains
+at **1** and rejects version 2.
 Settings accept versions 1 and 2 and reject all others. V1 remains strict and
 rejects the new fields. Reading a v1 file with either legacy bubble field adds an
 explicit Square mode to its in-memory overrides, even when its values equal
@@ -171,12 +171,22 @@ Malformed existing files are never overwritten by the configuration writer.
 }
 ```
 
-`KeyChord` contains a character or named key and one `ctrl` flag. Character
+`KeyChord` contains a character or named key and `ctrl`, `alt`, and `shift` flags. Character
 case is significant, including with Ctrl: `t`, `T`, `Ctrl+t`, and `Ctrl+T`
-are distinct bindings. Shift and Alt are not configurable modifiers. Text entry
+are distinct bindings. Alt is an explicit modifier; Shift is explicit for named
+keys, while printable keys retain case-based spelling and Shift+Tab remains
+`BackTab`. Text entry
 uses produced UTF-8 characters without shortcut normalization.
 Ctrl currently supports ASCII letters and the named keys; unsupported character
 combinations are rejected during validation.
+
+Keybinding format **v2** adds optional `alt` and `shift` booleans, for example
+`{key: 'Up', alt: true}` and `{key: 'Left', shift: true}`. V1 files remain readable
+with missing flags false; v1 rejects the new fields. Saving writes v2, which older
+clients cannot read. All layers retain sparse overrides. Newly added default
+chords yield to existing explicit bindings, so upgrading does not steal custom
+keys; conflicts between explicit bindings still fail validation. Physical
+terminal/desktop delivery of modified keys remains platform-dependent.
 
 Contexts are `gameplay`, `interaction`, `menu`, `debug`, and `items`. A local entry
 replaces the entire inherited list for that context/action; removing it restores
@@ -208,7 +218,8 @@ including control-byte aliases such as `Ctrl+i`/Tab, rather than aliasing them.
 after entering the alternate screen. Supporting terminals enable disambiguation
 and alternate-key reporting (flags 1 and 4); mode state is popped before exit.
 CSI-u Ctrl-letter events retain case, using reported Shift/Caps Lock only to
-derive the character. Alt and other modifier combinations are ignored. FTXUI
+derive the character. Supported Alt/Shift navigation sequences retain their
+modifiers; unsupported system modifiers are ignored. FTXUI
 continues to assemble input sequences and handle ordinary text entry.
 Unsupported terminals remain usable in basic mode. No terminal capability can
 recover modifier information that the host does not transmit.
@@ -307,3 +318,12 @@ Guest world settings apply to the retained local world; the remote host controls
 own pacing and saves. Interface settings, including view radius, apply to the
 guest terminal immediately. The debug viewer is available only in the local world.
 Save failures remain visibly unsaved.
+
+## SDL held-key rate
+
+`keyboard_repeat_rate` is an integer in [1,60], default 10. It follows existing
+global/world override precedence and settings serialization. It controls only
+SDL frontend repeat dispatch, with a 250 ms initial delay; simulation tick rate
+and replay timing remain unchanged. SDL Save and apply combines runtime application
+and persistence. Reopening clean options reloads files; save failures retain applied
+unsaved settings. Terminal keeps its existing options workflow.

@@ -389,3 +389,22 @@ The guide's 1,000–10,000-frame performance workload still needs a dedicated me
 
 See [`md/build_verification_2026-11-07.md`](md/build_verification_2026-11-07.md)
 for the actual verification record and remaining checks.
+
+### SDL quality-of-life controls
+
+SDL uses **x** to examine and **e/o** to choose a reachable door/object and its
+explicit action. **F2** opens keyboard-only options; **F11** opens the existing
+world-generation debug viewer. These screens pause the local game.
+**Alt+Up/Down** ascends/descends; **Ctrl+Left/Right** moves southwest/southeast;
+**Shift+Left/Right** moves northwest/northeast. Diagonals cost 141% of lateral
+movement and check only the destination. Melee and interaction also reach diagonal
+neighbors; interaction never crosses Y levels. Examine supports diagonal cursor
+moves, layer changes, and zoom. Bumping an unlocked closed door opens it without
+moving; the demo door also offers Lock/Unlock. Directions open interaction actions
+immediately, `.` selects the current tile, and a sole available action executes
+automatically. F1 contains controls; the main view keeps only its Help reminder.
+Options has one Save and apply action and a configurable keyboard repeat rate.
+Zoom multiplies native tileset size independently of window size and UI scale.
+Existing bindings and explicit custom overrides remain supported.
+See [SDL controls](doc/sdl_controls.md) for details and configuration/protocol
+compatibility changes.

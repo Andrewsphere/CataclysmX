@@ -207,13 +207,13 @@ TEST_CASE("Server machine collection checks capacity before transferring output"
     CHECK(world.CheckInvariants());
 }
 
-TEST_CASE("Server machine interaction respects vertical access and terrain priority", "[server][objects]") {
+TEST_CASE("Server machine interaction rejects vertical access and respects terrain priority", "[server][objects]") {
     const auto content = MachineContent();
     Server server(content);
     World& world = server.GetWorld();
     const auto above = CreateMachine(server, {0, 0, 1});
     GiveInputs(server);
-    Blocked(server, Interact(0, 0, 1));
+    CHECK(server.Send(Interact(0,0,1)).outcome == Outcome::invalid_command);
     CHECK_FALSE(State(world, above).hasJob);
     CHECK(world.GetActor(server.GetPlayer())->inventory.size() == 3);
 
@@ -234,4 +234,146 @@ TEST_CASE("Server machine interaction respects vertical access and terrain prior
     CHECK(world.CheckInvariants());
 }
 
+TEST_CASE("Machine action discovery is read-only and agrees with execution refusals", "[server][objects][interaction]") {
+    Server server(TestContent());
+    auto& world = server.GetWorld();
+    const auto machine = CreateMachine(server);
+    Vector<ObjectActionInfo> actions;
+    const auto before = world.CaptureObjectState(machine);
+    world.QueryObjectActions(server.GetPlayer(),machine,actions);
+    REQUIRE(actions.size() == 3);
+    CHECK(actions[0].reason == ObjectUseReason::NoInputs);
+    CHECK(actions[1].reason == ObjectUseReason::NoJob);
+    CHECK(actions[2].reason == ObjectUseReason::NoContents);
+    for (const auto& action : actions) {
+        CHECK(world.UseObject(server.GetPlayer(),machine,action.action).reason == action.reason);
+    }
+    CHECK(world.CaptureObjectState(machine) == before);
+    CHECK(server.GetTick() == 0);
+    GiveInputs(server);
+    actions.clear(); world.QueryObjectActions(server.GetPlayer(),machine,actions);
+    CHECK(actions[0].reason == ObjectUseReason::None);
+    REQUIRE(world.SetObjectEnergy(machine,0));
+    actions.clear(); world.QueryObjectActions(server.GetPlayer(),machine,actions);
+    CHECK(actions[0].reason == ObjectUseReason::NoPower);
+}
+
+TEST_CASE("Explicit interaction preserves selected object action and rejects stale targets", "[server][objects][interaction]") {
+    Server server(TestContent());
+    auto& world = server.GetWorld();
+    const auto machine = CreateMachine(server);
+    GiveInputs(server);
+    Vector<InteractionChoice> choices;
+    QueryInteractions(world,server.GetPlayer(),{1,0},choices);
+    REQUIRE(choices.size() == 3);
+    Command command; command.kind = CommandKind::interact_action; command.interaction = choices[0].request;
+    REQUIRE(ValidCommandShape(command));
+    REQUIRE(server.Send(command).outcome == Outcome::toggled);
+    CHECK(State(world,machine).running);
+    // Repeating Start must not turn into Stop when machine state changes.
+    CHECK(server.Send(command).outcome == Outcome::blocked);
+    CHECK(State(world,machine).running);
+    REQUIRE(world.DestroyObject(machine));
+    CreateMachine(server);
+    CHECK(server.Send(command).outcome == Outcome::unavailable);
+    choices.clear(); QueryInteractions(world,server.GetPlayer(),{2,0},choices);
+    CHECK(choices.empty());
+}
+
+}
+
+TEST_CASE("Door actions include unavailable alternatives and revalidate terrain and occupancy", "[server][interaction][doors]") {
+    using namespace cataclysmx;
+    Server server(TestContent()); auto& world = server.GetWorld();
+    REQUIRE(world.SetTile({1,0},{TestTerrain("closed_door"),0}));
+    Vector<InteractionChoice> choices; QueryInteractions(world,server.GetPlayer(),{1,0},choices);
+    REQUIRE(choices.size() == 2);
+    CHECK(choices[0].reason == ObjectUseReason::None);
+    CHECK(choices[1].reason == ObjectUseReason::AlreadyClosed);
+    Command open; open.kind = CommandKind::interact_action; open.interaction = choices[0].request;
+    REQUIRE(server.Send(open).outcome == Outcome::opened);
+    CHECK(world.GetActor(server.GetPlayer())->position == TileCoord{});
+    CHECK(server.Send(open).outcome == Outcome::unavailable);
+    REQUIRE(world.CreateActor({1,0}));
+    choices.clear(); QueryInteractions(world,server.GetPlayer(),{1,0},choices);
+    REQUIRE(choices.size() == 2);
+    CHECK(choices[0].reason == ObjectUseReason::AlreadyOpen);
+    CHECK(choices[1].reason == ObjectUseReason::Occupied);
+    Command close; close.kind = CommandKind::interact_action; close.interaction = choices[1].request;
+    const auto tick = server.GetTick();
+    CHECK(server.Send(close).outcome == Outcome::blocked); CHECK(server.GetTick() == tick);
+}
+
+TEST_CASE("Lockable door discovers four actions and preserves exact transitions and damage", "[server][interaction][doors]") {
+    using namespace cataclysmx;
+    Server server(TestContent()); auto& world = server.GetWorld();
+    REQUIRE(world.SetTile({1,1},{TestTerrain("lockable_closed_door"),17}));
+    const auto query = [&] { Vector<InteractionChoice> choices; QueryInteractions(world,server.GetPlayer(),{1,1},choices); return choices; };
+    auto choices = query(); REQUIRE(choices.size() == 4);
+    CHECK(choices[0].reason == ObjectUseReason::None);
+    CHECK(choices[1].reason == ObjectUseReason::AlreadyClosed);
+    CHECK(choices[2].reason == ObjectUseReason::None);
+    CHECK(choices[3].reason == ObjectUseReason::AlreadyUnlocked);
+    const auto send = [&](const InteractionChoice& choice) { Command command; command.kind = CommandKind::interact_action; command.interaction = choice.request; return server.Send(command); };
+    const auto lock = send(choices[2]); CHECK(lock.outcome == Outcome::locked); CHECK(lock.cost == 100);
+    CHECK(world.GetTile({1,1})->damage == 17);
+    CHECK(send(choices[0]).outcome == Outcome::unavailable);
+    CHECK_FALSE(server.Send({CommandKind::move,1,1}).advanced);
+    CHECK_FALSE(server.Send({CommandKind::interact,1,1}).advanced);
+    choices = query(); REQUIRE(choices.size() == 4);
+    CHECK(choices[0].reason == ObjectUseReason::Locked);
+    CHECK(choices[2].reason == ObjectUseReason::AlreadyLocked);
+    CHECK(choices[3].reason == ObjectUseReason::None);
+    CHECK_FALSE(send(choices[2]).advanced); CHECK_FALSE(send(choices[1]).advanced);
+    const auto tick = server.GetTick(); CHECK_FALSE(send(choices[0]).advanced); CHECK(server.GetTick() == tick);
+    CHECK(send(choices[3]).outcome == Outcome::unlocked);
+    CHECK(world.GetTile({1,1})->terrain == TestTerrain("lockable_closed_door"));
+    choices = query(); REQUIRE(choices.size() == 4); CHECK(send(choices[0]).outcome == Outcome::opened);
+    choices = query(); REQUIRE(choices.size() == 4);
+    CHECK(choices[0].reason == ObjectUseReason::AlreadyOpen);
+    CHECK(choices[2].reason == ObjectUseReason::MustClose);
+    CHECK(choices[3].reason == ObjectUseReason::AlreadyUnlocked);
+    CHECK_FALSE(send(choices[2]).advanced);
+    CHECK(send(choices[1]).outcome == Outcome::closed);
+    choices = query(); REQUIRE(choices.size() == 4);
+    CHECK(send(choices[0]).outcome == Outcome::opened);
+    REQUIRE(world.CreateActor({1,1})); choices = query(); REQUIRE(choices.size() == 4);
+    CHECK(choices[1].reason == ObjectUseReason::Occupied);
+    CHECK_FALSE(send(choices[1]).advanced);
+    CHECK(world.GetTile({1,1})->damage == 17); CHECK(world.CheckInvariants());
+}
+
+TEST_CASE("Object action discovery includes diagonal and same-tile targets but never other layers", "[server][objects][interaction]") {
+    Server server(TestContent()); auto& world = server.GetWorld();
+    const auto diagonal = CreateMachine(server,{1,1});
+    REQUIRE(world.SetTile({1,0},{TestTerrain("wall"),0}));
+    REQUIRE(world.SetTile({0,1},{TestTerrain("wall"),0}));
+    const auto current = CreateMachine(server,{0,0});
+    const auto upper = CreateMachine(server,{0,0,1});
+    CHECK(world.CanUseObject(server.GetPlayer(),diagonal));
+    CHECK(world.CanUseObject(server.GetPlayer(),current));
+    CHECK_FALSE(world.CanUseObject(server.GetPlayer(),upper));
+    Vector<InteractionChoice> choices;
+    QueryInteractions(world,server.GetPlayer(),{1,1},choices); CHECK(choices.size() == 3);
+    choices.clear(); QueryInteractions(world,server.GetPlayer(),{0,0},choices); CHECK(choices.size() == 3);
+    choices.clear(); QueryInteractions(world,server.GetPlayer(),{0,0,1},choices); CHECK(choices.empty());
+    Command vertical; vertical.kind = CommandKind::interact_action;
+    vertical.interaction = {{0,0,1},world.GetObject(upper)->id,{},InteractionKind::Object,ObjectAction::Start};
+    CHECK_FALSE(server.Send(vertical).advanced);
+}
+
+TEST_CASE("A door locked after arming rejects timed opening and a locked door cannot be armed", "[server][doors][items]") {
+    Server server(TestContent()); auto& world = server.GetWorld();
+    REQUIRE(world.SetTile({1,0},{TestTerrain("lockable_closed_door"),9}));
+    const auto device = world.CreateItem(TestItem("door_controller"),ItemLocation::Ground({0,0})); REQUIRE(device);
+    const auto capability = FindItemCapability(world.GetContent().GetItem(TestItem("door_controller")),"timer");
+    REQUIRE(capability.value != 0);
+    const ItemUseRequest arm{capability,"arm",{},1,0};
+    REQUIRE(world.UseItem(server.GetPlayer(),*device,arm).outcome == ItemUseOutcome::Succeeded);
+    REQUIRE(world.SetTile({1,0},{TestTerrain("locked_door"),9}));
+    world.ElapseTicks(300); world.ProcessItemEvents();
+    CHECK(world.GetTile({1,0})->terrain == TestTerrain("locked_door"));
+    CHECK(world.GetTile({1,0})->damage == 9);
+    CHECK(world.UseItem(server.GetPlayer(),*device,arm).outcome == ItemUseOutcome::Refused);
+    CHECK(world.ActiveItemCount() == 0); CHECK(world.CheckInvariants());
 }

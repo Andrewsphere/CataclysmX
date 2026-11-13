@@ -11,7 +11,7 @@ namespace cataclysmx::sdl {
 
 class SdlText {
 public:
-    static constexpr unsigned int slotCount = 8;
+    static constexpr unsigned int slotCount = 64;
 
     explicit SdlText(SDL_Renderer* renderer, const char* fontPath = nullptr, float pointSize = 16.0f);
     ~SdlText();

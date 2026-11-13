@@ -2,6 +2,7 @@
 #include "sdl/renderer.h"
 
 #include <SDL3/SDL_keyboard.h>
+#include <algorithm>
 
 namespace cataclysmx::sdl {
 eastl::optional<SpriteClickResult> ActivateMapItem(SDL_Renderer* renderer, const SDL_MouseButtonEvent& event,
@@ -20,9 +21,10 @@ eastl::optional<SpriteClickResult> ActivateMapItem(SDL_Renderer* renderer, const
 }
 
 eastl::optional<KeyChord> TranslateKey(const SDL_KeyboardEvent& event) {
-    if (event.type != SDL_EVENT_KEY_DOWN || (event.mod & (SDL_KMOD_ALT | SDL_KMOD_GUI))) {
+    if (event.type != SDL_EVENT_KEY_DOWN || (event.mod & SDL_KMOD_GUI)) {
         return eastl::nullopt;
     }
+    const bool alt = (event.mod & SDL_KMOD_ALT) != 0;
     const bool ctrl = (event.mod & SDL_KMOD_CTRL) != 0;
     const bool shift = (event.mod & SDL_KMOD_SHIFT) != 0;
     const char* name = nullptr;
@@ -55,7 +57,7 @@ eastl::optional<KeyChord> TranslateKey(const SDL_KeyboardEvent& event) {
     case SDLK_F12: name = "F12"; break;
     default: break;
     }
-    if (name) { return KeyChord{String(name), ctrl}; }
+    if (name) { return KeyChord{String(name), ctrl, alt, shift && event.key != SDLK_TAB}; }
 
     SDL_Keycode key = event.key;
     if ((event.mod & (SDL_KMOD_SHIFT | SDL_KMOD_CAPS)) && event.scancode != SDL_SCANCODE_UNKNOWN) {
@@ -79,26 +81,52 @@ eastl::optional<KeyChord> TranslateKey(const SDL_KeyboardEvent& event) {
         text += static_cast<char>(0x80 | ((key >> 6) & 0x3f));
         text += static_cast<char>(0x80 | (key & 0x3f));
     }
-    KeyChord chord{text, ctrl};
+    KeyChord chord{text, ctrl, alt};
     return ValidKey(chord) ? eastl::optional<KeyChord>(chord) : eastl::nullopt;
 }
 
 int MapZoomChange(const KeyChord& chord) {
-    if (chord.ctrl) { return 0; }
+    if (chord.ctrl || chord.alt || chord.shift) { return 0; }
     if (chord.key == "z") { return 1; }
     if (chord.key == "Z") { return -1; }
     return 0;
 }
 
-bool AllowsKeyRepeat(InputContext context, InputAction action) {
-    if (context != InputContext::Gameplay) { return false; }
-    switch (action) {
-    case InputAction::West: case InputAction::East:
-    case InputAction::North: case InputAction::South:
-    case InputAction::MoveDown: case InputAction::MoveUp:
+void HeldKey::Reset() {
+    key_.reset(); text_.clear(); suppressText_ = false;
+}
+bool HeldKey::Observe(const SDL_Event& event, std::uint64_t now) {
+    if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST) { Reset(); return true; }
+    if (event.type == SDL_EVENT_KEY_UP) {
+        modifiers_ = event.key.mod;
+        if (key_ && key_->key == event.key.key) { Reset(); }
         return true;
-    default: return false;
     }
+    if (event.type == SDL_EVENT_TEXT_INPUT) {
+        if (suppressText_) { return false; }
+        if (key_) { text_ = event.text.text; }
+        return true;
+    }
+    if (event.type != SDL_EVENT_KEY_DOWN) { return true; }
+    modifiers_ = event.key.mod;
+    if (event.key.repeat) { suppressText_ = true; return false; }
+    const auto key = event.key.key;
+    if (key == SDLK_LSHIFT || key == SDLK_RSHIFT || key == SDLK_LCTRL || key == SDLK_RCTRL
+        || key == SDLK_LALT || key == SDLK_RALT || key == SDLK_LGUI || key == SDLK_RGUI) { return true; }
+    key_ = event.key; text_.clear(); suppressText_ = false; next_ = now + 250;
+    return true;
+}
+eastl::optional<std::uint64_t> HeldKey::Delay(std::uint64_t now) const {
+    if (!key_) { return {}; }
+    return next_ > now ? next_ - now : 0;
+}
+eastl::optional<SDL_KeyboardEvent> HeldKey::Poll(std::uint64_t now, std::uint32_t rate) {
+    if (!key_ || now < next_) { return {}; }
+    next_ = now + (1000 + std::clamp(rate, 1U, 60U) - 1) / std::clamp(rate, 1U, 60U);
+    auto result = *key_;
+    result.mod = modifiers_;
+    result.repeat = false;
+    return result;
 }
 
 }

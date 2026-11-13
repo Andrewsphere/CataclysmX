@@ -6,8 +6,8 @@
 
 namespace cataclysmx::network::wire {
 
-// Version 10 adds combat target and style to command payloads.
-inline constexpr std::uint32_t protocol = 0x43584e0a;
+// Version 11 adds explicit target/action interactions and diagonal movement.
+inline constexpr std::uint32_t protocol = 0x43584e0c;
 inline constexpr int maxViewRadius = 64;
 inline constexpr int maxViewDimension = 2 * maxViewRadius + 1;
 static_assert(maxViewDimension <= UINT8_MAX && maxViewDimension * maxViewDimension <= UINT16_MAX);

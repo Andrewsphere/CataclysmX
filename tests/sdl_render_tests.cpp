@@ -39,17 +39,20 @@ TEST_CASE("SDL map layout maps output pixels to cells", "[sdl][render]") {
     CHECK_FALSE(sdl::MapCellAt(layout, layout.x + layout.width, layout.y, column, row));
     CHECK_FALSE(sdl::MapCellAt(layout, layout.x, layout.y - 1, column, row));
     const auto compact = sdl::MakeMapLayout(480, 360, 17, 17);
-    CHECK(compact.y + compact.height <= 360 - 154);
-    CHECK(compact.x + compact.width <= 480);
+    CHECK(compact.cellSize == layout.cellSize);
+    CHECK(compact.cellHeight == layout.cellHeight);
     const auto rectangular = sdl::MakeMapLayout(800, 600, 17, 17, 32, 64);
     REQUIRE(sdl::MapCellAt(rectangular, rectangular.x + 3 * rectangular.cellSize,
         rectangular.y + 7 * rectangular.cellHeight, column, row));
     CHECK(column == 3); CHECK(row == 7);
     CHECK(rectangular.cellHeight >= rectangular.cellSize * 2);
     const auto scaledUi = sdl::MakeMapLayout(1600, 1200, 17, 17, 32, 64, 0, 2);
-    CHECK(scaledUi.x == rectangular.x * 2);
-    CHECK(scaledUi.y == rectangular.y * 2);
-    CHECK(scaledUi.cellSize >= rectangular.cellSize * 2);
+    CHECK(rectangular.cellSize == 32);
+    CHECK(rectangular.cellHeight == 64);
+    CHECK(scaledUi.cellSize == rectangular.cellSize);
+    CHECK(scaledUi.cellHeight == rectangular.cellHeight);
+    const auto doubled = sdl::MakeMapLayout(800,600,17,17,32,64,4);
+    CHECK(doubled.cellSize == 64); CHECK(doubled.cellHeight == 128);
 }
 
 TEST_CASE("SDL clipped map animations do not schedule redraws", "[sdl][render]") {
@@ -60,7 +63,7 @@ TEST_CASE("SDL clipped map animations do not schedule redraws", "[sdl][render]")
     sdl::MapPacket packet;
     packet.width = packet.height = 17;
     packet.cells.resize(17 * 17);
-    auto& cell = packet.cells.back();
+    auto& cell = packet.cells[8 * 17 + 12];
     cell.visible = true;
     cell.terrainSprite = {TilesetMappingKind::Animation, 0};
     REQUIRE(sdl::VisibleAnimationDelay(packet, tileset, 0, 480, 360));

@@ -148,6 +148,8 @@ String Localization::OutcomeText(Outcome outcome) const {
     case Outcome::dropped: return Text("outcome.dropped");
     case Outcome::opened: return Text("outcome.opened");
     case Outcome::closed: return Text("outcome.closed");
+    case Outcome::locked: return Text("outcome.locked", OutcomeMessage(outcome));
+    case Outcome::unlocked: return Text("outcome.unlocked", OutcomeMessage(outcome));
     case Outcome::toggled: return Text("outcome.toggled");
     case Outcome::blocked: return Text("outcome.blocked");
     case Outcome::occupied: return Text("outcome.occupied");

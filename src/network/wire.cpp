@@ -315,11 +315,14 @@ bool Writer::CommandValue(const Command& v) {
     U16(v.capability.value);
     if (!Text(v.itemAction, maxItemActionName)) return false;
     U64(v.otherItem); I32(v.dy); U64(v.target); U8(static_cast<std::uint8_t>(v.style));
+    I32(v.interaction.position.x); I32(v.interaction.position.z); I32(v.interaction.position.y);
+    U64(v.interaction.object); U32(v.interaction.terrain.value);
+    U8(static_cast<std::uint8_t>(v.interaction.kind)); U8(static_cast<std::uint8_t>(v.interaction.action));
     return bytes.size() <= maxPacket;
 }
 bool Writer::Result(const PlayerCommandResult& v) {
     if (!v.player || !v.sequence || !v.opportunity || v.result.outcome < Outcome::waited ||
-        v.result.outcome > Outcome::combat_style_changed ||
+        v.result.outcome > Outcome::unlocked ||
         (v.result.storageError && (*v.result.storageError < SaveError::Io || *v.result.storageError > SaveError::NotOpen)) ||
         !ValidItemUseReason(v.result.itemOutcome, v.result.itemReason)) return false;
     U64(v.player); U64(v.sequence); U64(v.opportunity);
@@ -387,12 +390,18 @@ bool Reader::Text(String& v, std::size_t limit) {
     return true;
 }
 bool Reader::CommandValue(Command& v) {
-    std::uint8_t kind, style;
-    if (bytes.size() > maxPacket || !U8(kind) || kind > static_cast<std::uint8_t>(CommandKind::combat_style) ||
+    std::uint8_t kind, style, interactionKind, objectAction;
+    if (bytes.size() > maxPacket || !U8(kind) || kind > static_cast<std::uint8_t>(CommandKind::interact_action) ||
         !I32(v.dx) || !I32(v.dz) || !U64(v.item) || !U32(v.waitCost) ||
         !U16(v.capability.value) || v.capability.value > maxItemCapabilities ||
         !Text(v.itemAction, maxItemActionName) || !U64(v.otherItem) || !I32(v.dy) ||
         !U64(v.target) || !U8(style) || style > static_cast<std::uint8_t>(CombatStyle::Defensive)) return false;
+    if (!I32(v.interaction.position.x) || !I32(v.interaction.position.z) || !I32(v.interaction.position.y)
+        || !U64(v.interaction.object) || !U32(v.interaction.terrain.value)
+        || !U8(interactionKind) || interactionKind > static_cast<std::uint8_t>(InteractionKind::Unlock)
+        || !U8(objectAction) || objectAction > static_cast<std::uint8_t>(ObjectAction::Disable)) { return false; }
+    v.interaction.kind = static_cast<InteractionKind>(interactionKind);
+    v.interaction.action = static_cast<ObjectAction>(objectAction);
     v.kind = static_cast<CommandKind>(kind);
     v.style = static_cast<CombatStyle>(style);
     return (v.itemAction.empty() || ValidItemActionId(v.itemAction)) && ValidCommandShape(v);
@@ -401,7 +410,7 @@ bool Reader::Result(PlayerCommandResult& v) {
     std::uint8_t outcome, advanced;
     if (bytes.size() > maxPacket || !U64(v.player) || !v.player || !U64(v.sequence) || !v.sequence ||
         !U64(v.opportunity) || !v.opportunity || !U8(outcome) ||
-        outcome > static_cast<std::uint8_t>(Outcome::combat_style_changed) || !U8(advanced) || advanced > 1 ||
+        outcome > static_cast<std::uint8_t>(Outcome::unlocked) || !U8(advanced) || advanced > 1 ||
         !U64(v.result.tick) || !U64(v.result.cost)) return false;
     std::uint8_t hasError;
     if (!U8(hasError) || hasError > 1) return false;

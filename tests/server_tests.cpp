@@ -1,5 +1,6 @@
 #include "core/server.h"
 #include "core/simulation.h"
+#include "combat/combat_system.h"
 #include "content_fixture.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -98,7 +99,7 @@ TEST_CASE("Server creates the deterministic demo and advances only successful co
     const ObjectHandle object = world.ObjectAt({2, 0});
     REQUIRE(world.GetObject(object) != nullptr);
     CHECK_FALSE(world.GetObject(object)->enabled);
-    CHECK(world.GetTile({3, 0})->terrain == TestTerrain("closed_door"));
+    CHECK(world.GetTile({3, 0})->terrain == TestTerrain("lockable_closed_door"));
     CHECK(world.GetTile({3, 1})->terrain == TestTerrain("wall"));
     const ActorHandle npc = world.ActorAt({5, 5});
     REQUIRE(world.GetActor(npc) != nullptr);
@@ -117,9 +118,9 @@ TEST_CASE("Server creates the deterministic demo and advances only successful co
     }
 
     expect(server, {CommandKind::move, 0, 0}, Outcome::invalid_command, false);
-    expect(server, {CommandKind::move, 1, 1}, Outcome::invalid_command, false);
+    expect(server, {CommandKind::move, 1, 2}, Outcome::invalid_command, false);
     expect(server, {CommandKind::move, INT_MIN, INT_MAX}, Outcome::invalid_command, false);
-    expect(server, {CommandKind::interact, 0, 0}, Outcome::invalid_command, false);
+    expect(server, {CommandKind::interact, 0, 0}, Outcome::nothing_here, false);
     expect(server, {CommandKind::interact, INT_MAX, INT_MIN}, Outcome::invalid_command, false);
     expect(server, {static_cast<CommandKind>(999)}, Outcome::invalid_command, false);
     expect(server, {CommandKind::drop}, Outcome::not_carried, false);
@@ -139,7 +140,8 @@ TEST_CASE("Server creates the deterministic demo and advances only successful co
     CHECK_FALSE(world.GetObject(object)->enabled);
     CHECK(world.GetObject(object)->updates == 1);
     expect(server, {CommandKind::move, 1, 0}, Outcome::moved, true);
-    expect(server, {CommandKind::move, 1, 0}, Outcome::blocked, false);
+    expect(server, {CommandKind::move, 1, 0}, Outcome::opened, true);
+    expect(server, {CommandKind::interact, 1, 0}, Outcome::closed, true);
     expect(server, {CommandKind::interact, 1, 0}, Outcome::opened, true);
     expect(server, {CommandKind::interact, 1, 0}, Outcome::closed, true);
     expect(server, {CommandKind::interact, 1, 0}, Outcome::opened, true);
@@ -157,8 +159,8 @@ TEST_CASE("Failures do not consume RNG and occupied open doors cannot close", "[
     expect(subject, {CommandKind::move, -1, 0}, Outcome::occupied, false);
     REQUIRE(subject.GetWorld().DestroyActor(blocker));
     REQUIRE(reference.GetWorld().DestroyActor(other));
-    REQUIRE(subject.GetWorld().SetTile({1, 0}, {TestTerrain("closed_door"), 9}));
-    REQUIRE(reference.GetWorld().SetTile({1, 0}, {TestTerrain("closed_door"), 9}));
+    REQUIRE(subject.GetWorld().SetTile({1, 0}, {TestTerrain("wall"), 9}));
+    REQUIRE(reference.GetWorld().SetTile({1, 0}, {TestTerrain("wall"), 9}));
     expect(subject, {CommandKind::move, 1, 0}, Outcome::blocked, false);
     expect(subject, {CommandKind::drop, 0, 0, UINT64_MAX}, Outcome::not_carried, false);
     expect(subject, {static_cast<CommandKind>(-1)}, Outcome::invalid_command, false);
@@ -725,21 +727,21 @@ TEST_CASE("Six axial commands require exact paired stairs and respect layer boun
     }
 }
 
-TEST_CASE("Vertical interaction checks the shared face before exposing an object", "[server][3d][commands]") {
+TEST_CASE("Vertical interaction is rejected even through stairs and open space", "[server][3d][commands]") {
     Server server(TestContent());
     World& world = server.GetWorld();
-    REQUIRE(world.SetTile({0, 0, 1}, {TestTerrain("stairs"), 0}));
-    const auto object = take(world.CreateObject({0, 0, 1}));
-    Command interact{CommandKind::interact};
-    interact.dy = 1;
-    expect(server, interact, Outcome::blocked, false);
+    REQUIRE(world.SetTile({0,0,1},{TestTerrain("stairs"),0}));
+    const auto object = take(world.CreateObject({0,0,1}));
+    REQUIRE(world.SetTile({0,0},{TestTerrain("stairs"),0}));
+    Command interact{CommandKind::interact}; interact.dy = 1;
+    CHECK_FALSE(ValidCommandShape(interact));
+    expect(server,interact,Outcome::invalid_command,false);
+    REQUIRE(world.SetTile({0,0,1},{TestTerrain("air"),0}));
+    expect(server,interact,Outcome::invalid_command,false);
     CHECK_FALSE(world.GetObject(object)->enabled);
-    REQUIRE(world.SetTile({0, 0}, {TestTerrain("stairs"), 0}));
-    expect(server, interact, Outcome::toggled, true);
-    CHECK(world.GetObject(object)->enabled);
-    REQUIRE(world.SetTile({0, 0, 1}, {TestTerrain("air"), 0}));
-    expect(server, interact, Outcome::toggled, true); // Upper air opens its bottom.
-    CHECK_FALSE(world.GetObject(object)->enabled);
+    Vector<InteractionChoice> choices;
+    QueryInteractions(world,server.GetPlayer(),{0,0,1},choices);
+    CHECK(choices.empty());
 }
 
 TEST_CASE("Downward projection follows open columns and isolates lower items", "[server][3d][view]") {
@@ -840,4 +842,87 @@ TEST_CASE("Local server command replay returns identical outcomes and snapshots"
     CHECK(second.GetWorld().CheckInvariants());
 }
 
+TEST_CASE("Diagonal movement is atomic destination-only and charges 141 percent", "[server][movement]") {
+    for (const auto direction : {TileCoord{-1,-1}, {1,-1}, {-1,1}, {1,1}}) {
+        Server server(TestContent());
+        auto& world = server.GetWorld();
+        REQUIRE(world.SetTile(direction,{TestTerrain("floor"),0}));
+        REQUIRE(world.SetTile({direction.x,0},{TestTerrain("wall"),0}));
+        REQUIRE(world.SetTile({0,direction.z},{TestTerrain("wall"),0}));
+        const auto before = world.GetActor(server.GetPlayer())->position;
+        const auto result = server.Send({CommandKind::move,direction.x,direction.z});
+        REQUIRE(result.outcome == Outcome::moved);
+        CHECK(result.cost == 141);
+        CHECK(world.GetActor(server.GetPlayer())->position == direction);
+        CHECK(world.GetActor(server.GetPlayer())->position != before);
+        CHECK(world.CheckInvariants());
+    }
+    Server server(TestContent());
+    auto& world = server.GetWorld();
+    REQUIRE(world.SetTile({1,1},{TestTerrain("wall"),0}));
+    const auto result = server.Send({CommandKind::move,1,1});
+    CHECK(result.outcome == Outcome::blocked);
+    CHECK_FALSE(result.advanced);
+    CHECK(server.GetTick() == 0);
+    REQUIRE(world.SetTile({1,1},{TestTerrain("floor"),0}));
+    REQUIRE(world.CreateActor({1,1}));
+    CHECK(server.Send({CommandKind::move,1,1}).outcome == Outcome::occupied);
+    Command invalid{CommandKind::move,1,1}; invalid.dy = 1;
+    CHECK_FALSE(ValidCommandShape(invalid));
+}
+
+TEST_CASE("Bumping a door opens without moving and preserves tile damage", "[server][movement][doors]") {
+    Server server(TestContent());
+    auto& world = server.GetWorld();
+    REQUIRE(world.SetTile({1,0},{TestTerrain("closed_door"),17}));
+    const auto result = server.Send({CommandKind::move,1,0});
+    CHECK(result.outcome == Outcome::opened);
+    CHECK(result.cost == 100);
+    CHECK(world.GetActor(server.GetPlayer())->position == TileCoord{});
+    CHECK(world.GetTile({1,0})->damage == 17);
+    CHECK(server.Send({CommandKind::move,1,0}).outcome == Outcome::moved);
+}
+
+TEST_CASE("Diagonal steps cross chunk corners without loading side tiles and round injury costs up", "[server][movement][residency]") {
+    Server server(TestContent()); auto& world = server.GetWorld();
+    REQUIRE(server.SetBubbleRadii(0,0));
+    REQUIRE(world.SetTile({15,15},{TestTerrain("floor"),0}));
+    REQUIRE(world.MoveActor(server.GetPlayer(),{15,15}));
+    auto body = world.GetActor(server.GetPlayer())->combat;
+    body.body.parts[static_cast<unsigned>(BodyPart::LeftLeg)].hp = 0;
+    body.body.parts[static_cast<unsigned>(BodyPart::LeftLeg)].broken = true;
+    REQUIRE(world.Combat().Configure(server.GetPlayer(),body));
+    const auto cost = LocomotionBaseCost(body.body);
+    const auto result = server.Send({CommandKind::move,1,1});
+    REQUIRE(result.outcome == Outcome::moved);
+    CHECK(result.cost == (std::uint64_t{cost} * 141 + 99) / 100);
+    CHECK(world.GetActor(server.GetPlayer())->position == TileCoord{16,16});
+    CHECK(world.GetTile({16,15}) == nullptr);
+    CHECK(world.GetTile({15,16}) == nullptr);
+    CHECK(world.CheckInvariants());
+}
+
+}
+
+TEST_CASE("Selected-layer examination preserves perception and gameplay view cache", "[server][3d][view]") {
+    using namespace cataclysmx;
+    Server server(TestContent()); auto& world = server.GetWorld();
+    REQUIRE(world.SetTile({0,0},{TestTerrain("stairs"),0}));
+    REQUIRE(world.SetTile({0,0,1},{TestTerrain("stairs"),0}));
+    REQUIRE(world.SetTile({1,0,1},{TestTerrain("floor"),0}));
+    REQUIRE(world.SetTile({1,0},{TestTerrain("wall"),0}));
+    const auto memories = world.GetPlayerMemories();
+    const auto loaded = world.LoadedChunks();
+    const auto view = server.ViewForPlayerAtLayer(server.GetHostPlayerId(),4,1);
+    CHECK(view.origin.y == 1); CHECK(view.player_position.y == 0);
+    CHECK(cell_at(view,{0,0,1}).terrainVisibility == Visibility::Unknown);
+    CHECK(world.GetPlayerMemories() == memories); CHECK(world.LoadedChunks() == loaded);
+    CHECK(server.View(4).origin.y == 0);
+    REQUIRE(world.MoveActor(server.GetPlayer(),{0,0,1}));
+    world.UpdatePlayerObservations();
+    REQUIRE(world.MoveActor(server.GetPlayer(),{0,0,0}));
+    world.UpdatePlayerObservations();
+    const auto remembered = server.ViewForPlayerAtLayer(server.GetHostPlayerId(),4,1);
+    CHECK(cell_at(remembered,{0,0,1}).terrainVisibility == Visibility::Remembered);
+    CHECK(server.ViewForPlayerAtLayer(server.GetHostPlayerId(),4,world_max_y+1).cells.empty());
 }

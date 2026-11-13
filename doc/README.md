@@ -101,3 +101,7 @@ saves and the local command pipeline; `LanHost::Close()` parks remote players
 before a final save. The profile API uses checked C stdio because project code
 builds without exceptions. Including the port in endpoint keys prevents token
 collisions between independent sessions on the same address.
+
+- [SDL controls and inspection/interaction APIs](sdl_controls.md)
+
+- [Planned SDL options redesign](sdl_options_redesign.md): layout, focus, editing, and failure behavior for the later UI rebuild.

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/server.h"
+#include "client/settings.h"
 #include "sdl/item_visual.h"
 
 #include <EASTL/array.h>
@@ -9,7 +10,7 @@
 
 namespace cataclysmx::sdl {
 
-enum class RequestKind { Command, Pause, Resume };
+enum class RequestKind { Command, Pause, Resume, Inspect, ApplySettings, ResumeAndCommand };
 struct SessionRequest {
     RequestKind kind = RequestKind::Command;
     std::uint64_t generation = 0;
@@ -17,8 +18,11 @@ struct SessionRequest {
     PersistentId player = 0;
     std::uint64_t opportunity = 0;
     Command command;
+    TileCoord cursor{};
+    SettingsOverrides globalSettings;
+    SettingsOverrides worldSettings;
 };
-enum class ReplyKind { Started, StartupFailed, Admission, Completed, Paused, Resumed, Stale, Cancelled };
+enum class ReplyKind { Started, StartupFailed, Admission, Completed, Paused, Resumed, Stale, Cancelled, Inspected, SettingsApplied, SettingsFailed };
 enum class StartupError { None, InvalidContent, InvalidSettings };
 struct SessionReply {
     ReplyKind kind = ReplyKind::Started;
@@ -26,11 +30,19 @@ struct SessionReply {
     std::uint64_t id = 0;
     CommandResult result{};
     StartupError startupError = StartupError::None;
+    Vector<String> details;
+    WorldView inspectionView;
+    Vector<MapItemVisual> inspectionItems;
+    Settings runtimeSettings;
 };
 struct SessionSnapshot {
     std::uint64_t generation = 0;
     bool paused = false;
     WorldView view;
+    Vector<InteractionChoice> interactions;
+    std::uint32_t seed = 0;
+    std::uint32_t generationVersion = 0;
+    Settings runtimeSettings;
     Vector<MapItemVisual> mapItems;
     eastl::optional<SaveError> storageError;
 };

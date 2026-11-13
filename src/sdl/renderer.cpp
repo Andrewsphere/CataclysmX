@@ -1,8 +1,10 @@
 #include "sdl/renderer.h"
+#include "sdl/screens.h"
 
 #include "client/text.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <cstdio>
 
@@ -129,10 +131,8 @@ MapLayout MakeMapLayout(int outputWidth, int outputHeight, int columns, int rows
     const int top = static_cast<int>(32 * uiScale);
     const int availableWidth = side ? std::max(1, outputWidth - panelWidth) : outputWidth;
     const int availableHeight = std::max(1, outputHeight - static_cast<int>((side ? 50 : 240) * uiScale));
-    const double fit = std::min(double(availableWidth) / columns / tileWidth,
-        double(availableHeight) / rows / tileHeight);
-    // Keep rectangular pack cells in their native aspect ratio, independently of UI scale.
-    const double scale = std::max(1.0 / std::max(tileWidth, tileHeight), fit + zoom * 0.25);
+    // Native pack pixels times zoom; resizing never changes the tile scale.
+    const double scale = std::exp2(std::clamp(zoom, -8, 12) / 4.0);
     const int cellWidth = std::max(1, static_cast<int>(tileWidth * scale));
     const int cellHeight = std::max(1, static_cast<int>(tileHeight * scale));
     const int width = columns * cellWidth;
@@ -207,9 +207,9 @@ TerminalAppearance MapAppearance(const ViewCell& cell, PersistentId playerId, co
 }
 
 bool DrawFrame(SDL_Renderer* renderer, SdlText& text, const SdlAssets& assets, const WorldView* view,
-    const ContentCatalog& content, const char* status, const char* hints,
+    const ContentCatalog& content, const char* status, const char* /*hints*/,
     std::uint64_t elapsedMilliseconds, const MapPacket* packet, int zoom, float uiScale, UiPalette palette,
-    const SpritePlaybackController* playback, SpriteShader* shader) {
+    const SpritePlaybackController* playback, SpriteShader* shader, ScreenFrame* screen) {
     if (!SDL_IsMainThread()) { std::abort(); }
     int width = 0, height = 0;
     if (!SDL_GetCurrentRenderOutputSize(renderer, &width, &height)
@@ -226,8 +226,12 @@ bool DrawFrame(SDL_Renderer* renderer, SdlText& text, const SdlAssets& assets, c
         const auto& definition = assets.Definition();
         MapPacket immediate;
         if (!packet) { immediate = PrepareMapPacket(*view, content, definition, {}); packet = &immediate; }
-        const auto layout = MakeMapLayout(width, height, packet->width, packet->height,
+        auto layout = MakeMapLayout(width, height, packet->width, packet->height,
             definition.cellWidth, definition.cellHeight, zoom, uiScale);
+        if (screen && screen->visible && screen->followCursor && screen->cursor) {
+            layout.x -= (screen->cursor->x - view->player_position.x) * layout.cellSize;
+            layout.y -= (screen->cursor->z - view->player_position.z) * layout.cellHeight;
+        }
         const auto clip = ViewClip(layout, MapClip(width, height, uiScale));
         if (!SDL_SetRenderClipRect(renderer, &clip)) { return false; }
         for (int row = 0; row < packet->height; ++row) {
@@ -282,30 +286,15 @@ bool DrawFrame(SDL_Renderer* renderer, SdlText& text, const SdlAssets& assets, c
         infoText = info;
     } else { infoText = "Loading tileset and session..."; }
     if (!SDL_SetRenderScale(renderer, uiScale, uiScale)
-        || !text.Draw(0, "CATACLYSM X  /  LOCAL", 12, 6, TextColor(palette.hints))) { return false; }
+        || !text.Draw(0, "CATACLYSM X  /  LOCAL  |  F1: Help", 12, 6, TextColor(palette.hints))) { return false; }
     const SDL_Rect panelClip{panelX, panelY, std::max(0, uiWidth - panelX), std::max(0, uiHeight - panelY)};
     const int wrap = std::max(1, uiWidth - panelX - 10);
     if (!SDL_SetRenderClipRect(renderer, &panelClip)
         || !text.Draw(1, infoText.c_str(), panelX, panelY, TextColor(palette.text), wrap)) { return false; }
     const int statusY = panelY + text.Height(1) + 8;
     if (!text.Draw(2, status, panelX, statusY, TextColor(palette.text), wrap)) { return false; }
-    const int hintsY = statusY + text.Height(2) + 12;
-    if (side) {
-        if (!text.Draw(3, hints, panelX, hintsY, TextColor(palette.hints), wrap)) { return false; }
-    } else {
-        String left, right;
-        const eastl::string_view bindings(hints ? hints : "");
-        std::size_t start = 0;
-        unsigned line = 0;
-        for (std::size_t end = 0; end <= bindings.size(); ++end) {
-            if (end != bindings.size() && bindings[end] != '\n') { continue; }
-            auto& target = line++ < 6 ? left : right;
-            target.append(bindings.data() + start, end - start); target += '\n';
-            start = end + 1;
-        }
-        if (!text.Draw(4, left.c_str(), panelX, hintsY, TextColor(palette.hints), wrap / 2)
-            || !text.Draw(5, right.c_str(), panelX + wrap / 2, hintsY, TextColor(palette.hints), wrap / 2)) { return false; }
-    }
+    if (screen && !DrawScreen(renderer, text, *screen, width, height, view,
+        assets.Definition().cellWidth, assets.Definition().cellHeight, zoom, uiScale)) { return false; }
     return SDL_SetRenderClipRect(renderer, nullptr) && SDL_SetRenderScale(renderer, 1, 1) && SDL_RenderPresent(renderer);
 }
 

@@ -44,6 +44,8 @@ struct TerrainDefinition {
     bool blocksSight = false;
     TerrainId opensTo{};
     TerrainId closesTo{};
+    TerrainId locksTo{};
+    TerrainId unlocksTo{};
     bool openSpace = false; // No floor support; transmits downward. All other terrain supports a floor.
     bool stairs = false; // Matched stairs at adjacent Y connect travel and vertical sight.
     LightEmission light{};

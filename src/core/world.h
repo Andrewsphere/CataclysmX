@@ -270,6 +270,9 @@ public:
     WorldResult<ObjectHandle> CreateObject(TileCoord position, bool enabled = false);
     WorldResult<ObjectHandle> CreateObject(ObjectTypeId type, TileCoord position, bool enabled = true);
     eastl::optional<ObjectStateView> DescribeObjectState(ObjectHandle object) const;
+    // Same-layer Chebyshev distance <= 1; validates actor/object activity and parking.
+    bool CanUseObject(ActorHandle actor, ObjectHandle object) const;
+    void QueryObjectActions(ActorHandle actor, ObjectHandle object, Vector<ObjectActionInfo>& output) const;
     ObjectUseResult UseObject(ActorHandle actor, ObjectHandle object, ObjectAction action);
     WorldResult<void> SetObjectEnergy(ObjectHandle object, std::uint64_t energy);
     DataObject CaptureObjectState(ObjectHandle object) const;
@@ -329,7 +332,7 @@ private:
     friend class ItemReadContext;
     friend class ItemMutationContext;
     friend class ObjectMutationContext;
-    bool CanUseObject(ActorHandle actor, ObjectHandle object) const;
+    friend class ObjectReadContext;
     WorldResult<void> ConsumeObjectInputs(ActorHandle actor, ObjectHandle object, ItemTypeId type, std::uint32_t count);
     WorldResult<void> ProduceObjectOutputs(ObjectHandle object, ItemTypeId type, std::uint32_t count);
     WorldResult<void> CollectObjectContents(ActorHandle actor, ObjectHandle object);

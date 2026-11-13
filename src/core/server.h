@@ -1,13 +1,14 @@
 #pragma once
 
 #include "core/world.h"
+#include "core/interaction.h"
 #include "core/pacing.h"
 
 #include <EASTL/optional.h>
 
 namespace cataclysmx {
 
-enum class CommandKind { wait, move, pick_up, drop, interact, use_item, store_item, attack, combat_style };
+enum class CommandKind { wait, move, pick_up, drop, interact, use_item, store_item, attack, combat_style, interact_action };
 struct Command {
     CommandKind kind = CommandKind::wait;
     int dx = 0;
@@ -24,6 +25,7 @@ struct Command {
     int dy = 0; // Vertical axial direction: down -1, up +1.
     PersistentId target = 0; // Attack: zero chooses an adjacent perceived hostile.
     CombatStyle style = CombatStyle::Balanced;
+    InteractionRequest interaction;
 };
 bool ValidCommandShape(const Command& command);
 enum class Outcome {
@@ -32,7 +34,7 @@ enum class Outcome {
     stale_input, duplicate_input, used_item, stored_item, item_use_failed,
     capacity_exceeded, invalid_container,
     attacked, attack_missed, attack_parried, attack_blocked, attack_windup,
-    target_defeated, no_target, no_combat_move, combat_style_changed
+    target_defeated, no_target, no_combat_move, combat_style_changed, locked, unlocked
 };
 const char* OutcomeMessage(Outcome outcome);
 // The demo requires floor, wall, and closed_door; floor must be passable.
@@ -178,6 +180,8 @@ public:
     PersistentId GetHostPlayerId() const;
     Vector<PlayerStatus> GetPlayers() const;
     WorldView ViewForPlayer(PersistentId player, int radius = 8) const;
+    // Read-only projection from a selected layer, with the player's actual perception.
+    WorldView ViewForPlayerAtLayer(PersistentId player, int radius, int layerY) const;
     PlayerInputContext GetInputContext(PersistentId player) const;
     std::uint64_t GetRevision() const;
     ViewStats GetViewStats() const;

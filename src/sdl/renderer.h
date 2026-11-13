@@ -8,6 +8,8 @@
 
 namespace cataclysmx::sdl {
 
+struct ScreenFrame;
+
 struct MapLayout {
     int x = 0;
     int y = 0;
@@ -42,6 +44,6 @@ bool DrawFrame(SDL_Renderer* renderer, SdlText& text, const SdlAssets& assets, c
     const ContentCatalog& content, const char* status, const char* hints,
     std::uint64_t elapsedMilliseconds = 0, const MapPacket* packet = nullptr,
     int zoom = 0, float uiScale = 1.0f, UiPalette palette = {},
-    const SpritePlaybackController* playback = nullptr, SpriteShader* shader = nullptr);
+    const SpritePlaybackController* playback = nullptr, SpriteShader* shader = nullptr, ScreenFrame* screen = nullptr);
 
 }

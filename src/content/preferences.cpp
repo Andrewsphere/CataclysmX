@@ -258,7 +258,7 @@ SettingsResult<Keymap> ParseKeymap(eastl::string_view text, Diagnostics* diagnos
     if (!parsed) { return eastl::unexpected(parsed.error()); }
     auto* root = yyjson_doc_get_root(document.value);
     if (!Object(root, {"format_version", "bindings"}, diagnostics)) { return eastl::unexpected(SettingsError::InvalidData); }
-    const auto version = Version(root, diagnostics);
+    const auto version = Version(root, diagnostics, 2);
     if (!version) { return eastl::unexpected(version.error()); }
     auto* bindings = yyjson_obj_get(root, "bindings");
     if (!yyjson_is_arr(bindings)) { Report(diagnostics, "expected bindings array"); return eastl::unexpected(SettingsError::InvalidData); }
@@ -280,13 +280,17 @@ SettingsResult<Keymap> ParseKeymap(eastl::string_view text, Diagnostics* diagnos
         std::size_t keyIndex, keyCount;
         yyjson_val* key;
         yyjson_arr_foreach(keys, keyIndex, keyCount, key) {
-            if (!Object(key, {"key", "ctrl"}, diagnostics)) { return eastl::unexpected(SettingsError::InvalidData); }
+            const bool modern = yyjson_get_uint(yyjson_obj_get(root, "format_version")) == 2;
+            if (!(modern ? Object(key, {"key", "ctrl", "alt", "shift"}, diagnostics) : Object(key, {"key", "ctrl"}, diagnostics))) { return eastl::unexpected(SettingsError::InvalidData); }
             auto* name = yyjson_obj_get(key, "key");
             auto* ctrl = yyjson_obj_get(key, "ctrl");
-            if (!StringValue(name) || (ctrl && !yyjson_is_bool(ctrl))) {
+            auto* alt = yyjson_obj_get(key, "alt");
+            auto* shift = yyjson_obj_get(key, "shift");
+            if (!StringValue(name) || (ctrl && !yyjson_is_bool(ctrl))
+                || (alt && !yyjson_is_bool(alt)) || (shift && !yyjson_is_bool(shift))) {
                 Report(diagnostics, "expected key string and optional ctrl boolean"); return eastl::unexpected(SettingsError::InvalidData);
             }
-            entry.keys.push_back({String(yyjson_get_str(name), yyjson_get_len(name)), ctrl && yyjson_get_bool(ctrl)});
+            entry.keys.push_back({String(yyjson_get_str(name), yyjson_get_len(name)), ctrl && yyjson_get_bool(ctrl), alt && yyjson_get_bool(alt), shift && yyjson_get_bool(shift)});
         }
         map.push_back(eastl::move(entry));
     }
@@ -326,6 +330,7 @@ SettingsResult<void> SaveSettingsFile(const char* path, const SettingsOverrides&
         // Write integers directly, preserving the full uint64 range.
         switch (field) {
         case SettingsField::Language: AddString(document.value, settings, name.data(), View(resolved.language)); break;
+        case SettingsField::KeyboardRepeatRate: yyjson_mut_obj_add_uint(document.value, settings, name.data(), resolved.keyboardRepeatRate); break;
         case SettingsField::ViewRadius: yyjson_mut_obj_add_sint(document.value, settings, name.data(), resolved.viewRadius); break;
         case SettingsField::AutosaveInterval: yyjson_mut_obj_add_uint(document.value, settings, name.data(), resolved.autosaveInterval); break;
         case SettingsField::ActiveRadius: yyjson_mut_obj_add_sint(document.value, settings, name.data(), resolved.activeRadius); break;
@@ -348,7 +353,7 @@ SettingsResult<void> SaveKeymapFile(const char* path, const Keymap& overrides, D
     MutableDocument document;
     auto* root = yyjson_mut_obj(document.value);
     yyjson_mut_doc_set_root(document.value, root);
-    yyjson_mut_obj_add_uint(document.value, root, "format_version", 1);
+    yyjson_mut_obj_add_uint(document.value, root, "format_version", 2);
     auto* bindings = yyjson_mut_obj_add_arr(document.value, root, "bindings");
     for (const auto& binding : overrides) {
         auto* entry = yyjson_mut_arr_add_obj(document.value, bindings);
@@ -359,6 +364,8 @@ SettingsResult<void> SaveKeymapFile(const char* path, const Keymap& overrides, D
             auto* chord = yyjson_mut_arr_add_obj(document.value, keys);
             AddString(document.value, chord, "key", View(key.key));
             yyjson_mut_obj_add_bool(document.value, chord, "ctrl", key.ctrl);
+            yyjson_mut_obj_add_bool(document.value, chord, "alt", key.alt);
+            yyjson_mut_obj_add_bool(document.value, chord, "shift", key.shift);
         }
     }
     return WriteDocument(path, document.value, diagnostics);

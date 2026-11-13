@@ -16,7 +16,8 @@ constexpr eastl::string_view actionNames[] = {
     "recenter", "layer_1", "layer_2", "layer_3", "layer_4", "layer_5", "zoom_in", "zoom_out",
     "details_up", "details_down", "apply", "save_settings", "reload", "inspect", "add_binding", "unbind", "reset",
     "inventory", "players", "help", "quick_actions", "use", "move_down", "move_up", "attack",
-    "style_balanced", "style_aggressive", "style_defensive"
+    "style_balanced", "style_aggressive", "style_defensive", "examine",
+    "northwest", "northeast", "southwest", "southeast"
 };
 constexpr eastl::string_view contextNames[] = {"gameplay", "interaction", "menu", "debug", "items"};
 constexpr eastl::string_view namedKeys[] = {
@@ -71,12 +72,18 @@ eastl::optional<InputAction> ParseAction(eastl::string_view name) {
 }
 bool ValidKey(const KeyChord& chord) {
     const eastl::string_view key(chord.key.data(), chord.key.size());
-    if (OneScalar(key)) { return !chord.ctrl || (key.size() == 1 && key[0] >= 'A' && key[0] <= 'Z')
-        || (key.size() == 1 && key[0] >= 'a' && key[0] <= 'z'); }
+    if (OneScalar(key)) { return !chord.shift && ( !chord.ctrl || (key.size() == 1 && key[0] >= 'A' && key[0] <= 'Z')
+        || (key.size() == 1 && key[0] >= 'a' && key[0] <= 'z')); }
     for (const auto name : namedKeys) { if (key == name) { return true; } }
     return false;
 }
 bool LegacyKeyAvailable(const KeyChord& chord) {
+    if (chord.alt || chord.shift) {
+        for (const auto key : {"Left", "Right", "Up", "Down", "Home", "End", "Insert", "Delete", "PageUp", "PageDown"}) {
+            if (chord.key == key) { return true; }
+        }
+        return false;
+    }
     if (!chord.ctrl) { return true; }
     if (chord.key == "F3") { return false; } // Collides with cursor-position replies.
     for (const auto key : {"Left", "Right", "Up", "Down", "Home", "End", "Insert", "Delete", "PageUp", "PageDown"}) {
@@ -91,6 +98,8 @@ bool LegacyKeyAvailable(const KeyChord& chord) {
 }
 String ChordName(const KeyChord& chord) {
     String result = chord.ctrl ? "Ctrl+" : "";
+    if (chord.alt) { result += "Alt+"; }
+    if (chord.shift) { result += "Shift+"; }
     result += chord.key == " " ? String("Space") : chord.key;
     return result;
 }
@@ -109,12 +118,17 @@ Keymap DefaultKeymap() {
         add(context, InputAction::Cancel, {"Escape"});
     }
     const auto game = InputContext::Gameplay;
+    add(game, InputAction::Examine, {"x"});
+    map.push_back({game, InputAction::Northwest, {{"Left", false, false, true}}});
+    map.push_back({game, InputAction::Northeast, {{"Right", false, false, true}}});
+    map.push_back({game, InputAction::Southwest, {{"Left", true}}});
+    map.push_back({game, InputAction::Southeast, {{"Right", true}}});
     add(game, InputAction::Attack, {"Tab"});
     add(game, InputAction::StyleBalanced, {"1"});
     add(game, InputAction::StyleAggressive, {"2"});
     add(game, InputAction::StyleDefensive, {"3"});
     add(game, InputAction::Wait, {"."}); add(game, InputAction::PickUp, {"g"});
-    add(game, InputAction::Drop, {"d"}); add(game, InputAction::Interact, {"o"});
+    add(game, InputAction::Drop, {"d"}); add(game, InputAction::Interact, {"e", "o"});
     add(game, InputAction::Save, {"S"}); add(game, InputAction::Quit, {"q"});
     add(game, InputAction::Settings, {"F2"}); add(game, InputAction::Debug, {"F11"});
     add(game, InputAction::RateDown, {"["}); add(game, InputAction::RateUp, {"]"});
@@ -122,6 +136,8 @@ Keymap DefaultKeymap() {
     for (auto context : {InputContext::Gameplay, InputContext::Interaction}) {
         add(context, InputAction::MoveDown, {"<"});
         add(context, InputAction::MoveUp, {">"});
+        map[map.size() - 2].keys.push_back({"Down", false, true});
+        map.back().keys.push_back({"Up", false, true});
         add(context, InputAction::Inventory, {"i"});
         add(context, InputAction::Use, {"u"});
         add(context, InputAction::Players, {"P"});
@@ -173,6 +189,30 @@ void ResetBinding(Keymap& overrides, InputContext context, InputAction action) {
 }
 Keymap ResolveKeymap(const Keymap& global, const Keymap& world) {
     auto resolved = DefaultKeymap();
+    // Newly introduced defaults must not invalidate existing explicit bindings.
+    for (auto& binding : resolved) {
+        bool explicitAction = false;
+        for (const auto* layer : {&global, &world}) {
+            for (const auto& entry : *layer) { explicitAction |= entry.context == binding.context && entry.action == binding.action; }
+        }
+        if (explicitAction) { continue; }
+        for (auto it = binding.keys.begin(); it != binding.keys.end();) {
+            const bool introduced = binding.action == InputAction::Examine || binding.action == InputAction::Northwest
+                || binding.action == InputAction::Northeast || binding.action == InputAction::Southwest || binding.action == InputAction::Southeast
+                || (binding.action == InputAction::Interact && it->key == "e")
+                || ((binding.action == InputAction::MoveUp || binding.action == InputAction::MoveDown) && it->alt);
+            bool claimed = false;
+            if (introduced) {
+                for (const auto* layer : {&global,&world}) {
+                    for (const auto& entry : *layer) {
+                        if (entry.context != binding.context || entry.action == binding.action) { continue; }
+                        for (const auto& key : entry.keys) { claimed |= key == *it; }
+                    }
+                }
+            }
+            if (claimed) { it = binding.keys.erase(it); } else { ++it; }
+        }
+    }
     for (const auto& binding : global) { SetBinding(resolved, binding); }
     for (const auto& binding : world) { SetBinding(resolved, binding); }
     return resolved;
@@ -199,7 +239,7 @@ eastl::expected<void, InputError> ValidateKeymap(const Keymap& map, Diagnostics*
             const auto& key = binding.keys[k];
             if (!ValidKey(key)) { return fail(InputError::InvalidKey, "expected a character or named key; Ctrl supports ASCII letters and named keys"); }
             if ((key.ctrl && key.key == "c")
-                || (key.key == "Escape" && (key.ctrl || binding.action != InputAction::Cancel))) {
+                || (key.key == "Escape" && (key.ctrl || key.alt || key.shift || binding.action != InputAction::Cancel))) {
                 return fail(InputError::ReservedKey, "Escape and Ctrl+c are reserved for cancellation and exit");
             }
             for (std::size_t j = 0; j <= i; ++j) {
@@ -214,7 +254,7 @@ eastl::expected<void, InputError> ValidateKeymap(const Keymap& map, Diagnostics*
     return {};
 }
 eastl::optional<InputAction> ResolveAction(const Keymap& map, InputContext context, const KeyChord& chord) {
-    if (chord.key == "Escape" && !chord.ctrl) { return InputAction::Cancel; }
+    if (chord.key == "Escape" && !chord.ctrl && !chord.alt && !chord.shift) { return InputAction::Cancel; }
     for (const auto& binding : map) {
         if (binding.context != context) { continue; }
         for (const auto& key : binding.keys) { if (key == chord) { return binding.action; } }

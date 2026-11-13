@@ -243,7 +243,7 @@ TEST_CASE("Settings v1 migrates bubble choices to square and v2 circle choices r
         "{format_version:2,settings:{residency_mode:'circle',resident_radius:5}}"}) {
         CHECK_FALSE(ParseSettings(text));
     }
-    CHECK_FALSE(ParseKeymap("{format_version:2,bindings:[]}"));
+    CHECK(ParseKeymap("{format_version:2,bindings:[]}"));
 }
 
 TEST_CASE("Store application preserves default and saved residency without bubble overrides", "[settings][server][save][circle]") {
@@ -443,4 +443,38 @@ TEST_CASE("Gameplay modal bindings preserve case round trip overrides and report
     REQUIRE_FALSE(validation); CHECK(validation.error() == InputError::Conflict);
 }
 
+}
+
+TEST_CASE("Keybinding v2 persists Alt and named Shift while reading v1", "[settings][input]") {
+    using namespace cataclysmx;
+    SettingsDirectory files;
+    const Keymap keys{{InputContext::Gameplay,InputAction::MoveUp,{{"Up",false,true}}},
+        {InputContext::Gameplay,InputAction::Northwest,{{"Left",false,false,true}}}};
+    REQUIRE(SaveKeymapFile(files.File("modifiers.json5").c_str(),keys));
+    const auto loaded = LoadKeymapFile(files.File("modifiers.json5").c_str());
+    REQUIRE(loaded); CHECK(*loaded == keys);
+    const auto legacy = ParseKeymap("{format_version:1,bindings:[{context:'gameplay',action:'move_up',keys:[{key:'>'}]}]}");
+    REQUIRE(legacy); CHECK_FALSE(legacy->front().keys.front().alt); CHECK_FALSE(legacy->front().keys.front().shift);
+    CHECK(ChordName({"Left",false,false,true}) == "Shift+Left");
+    CHECK(ChordName({"Up",false,true}) == "Alt+Up");
+    CHECK_FALSE(ParseKeymap("{format_version:2,bindings:[{context:'gameplay',action:'move_up',keys:[{key:'Up',alt:1}]}]}"));
+    CHECK_FALSE(ParseKeymap("{format_version:2,bindings:[{context:'gameplay',action:'wait',keys:[{key:'t',shift:true}]}]}"));
+}
+
+TEST_CASE("Keyboard repeat preference validates overlays and persists", "[settings]") {
+    using namespace cataclysmx;
+    SettingsDirectory files; SettingsStore store(String(files.File("user").c_str()));
+    CHECK(store.Effective().keyboardRepeatRate == 10);
+    for (const char* value : {"0","61","-1"}) {
+        SettingsOverrides overrides;
+        const auto parsed = SetOverride(overrides,SettingsField::KeyboardRepeatRate,value);
+        CHECK_FALSE((parsed && ValidateOverrides(overrides)));
+    }
+    SettingsOverrides global; global.keyboardRepeatRate = 30;
+    REQUIRE(store.SetOverrides(SettingsScope::Global,global,{}));
+    REQUIRE(store.Save(SettingsScope::Global));
+    SettingsStore loaded(store.UserRoot()); REQUIRE(loaded.Load());
+    CHECK(loaded.Effective().keyboardRepeatRate == 30);
+    SettingsOverrides world; world.keyboardRepeatRate = 60;
+    REQUIRE(loaded.SetOverrides(SettingsScope::World,world,{})); CHECK(loaded.Effective().keyboardRepeatRate == 60);
 }

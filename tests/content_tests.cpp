@@ -459,17 +459,17 @@ TEST_CASE("Bundled terrain content loads from stdio with door transitions", "[co
     path.resize(separator);
     path += "/../data/terrain.json5";
     const auto catalog = Take(LoadContentFile(path.c_str()));
-    CHECK(catalog.TerrainCount() == 10);
+    CHECK(catalog.TerrainCount() == 13);
     CHECK(catalog.FindTerrain("air") == TerrainId{1});
     CHECK(catalog.FindTerrain("closed_door") == TerrainId{2});
     CHECK(catalog.FindTerrain("floor") == TerrainId{3});
     CHECK(catalog.FindTerrain("grass") == TerrainId{4});
-    CHECK(catalog.FindTerrain("open_door") == TerrainId{5});
-    CHECK(catalog.FindTerrain("road") == TerrainId{6});
-    CHECK(catalog.FindTerrain("rubble") == TerrainId{7});
-    CHECK(catalog.FindTerrain("stairs") == TerrainId{8});
-    CHECK(catalog.FindTerrain("tree") == TerrainId{9});
-    CHECK(catalog.FindTerrain("wall") == TerrainId{10});
+    CHECK(catalog.FindTerrain("open_door") == TerrainId{8});
+    CHECK(catalog.FindTerrain("road") == TerrainId{9});
+    CHECK(catalog.FindTerrain("rubble") == TerrainId{10});
+    CHECK(catalog.FindTerrain("stairs") == TerrainId{11});
+    CHECK(catalog.FindTerrain("tree") == TerrainId{12});
+    CHECK(catalog.FindTerrain("wall") == TerrainId{13});
     CHECK(Get(catalog, "air").openSpace);
     CHECK(Get(catalog, "air").passable);
     CHECK_FALSE(Get(catalog, "air").blocksSight);
@@ -506,4 +506,27 @@ TEST_CASE("Bundled terrain content loads from stdio with door transitions", "[co
     CHECK(LoadContentFiles({&invalidPath, 1}).error() == ContentError::Io);
 }
 
+}
+
+TEST_CASE("Lockable terrain validates references and closed-state reciprocity", "[content][doors]") {
+    const String definitions = R"(
+        {type:'terrain',id:'closed',name:'closed',movement:{passable:false},blocks_sight:true,
+         appearance:{symbol:'+',foreground:'white'},opens_to:'open',locks_to:'locked'},
+        {type:'terrain',id:'open',name:'open',movement:{passable:true},blocks_sight:false,
+         appearance:{symbol:'/',foreground:'white'},closes_to:'closed',locks_to:'locked'},
+        {type:'terrain',id:'locked',name:'locked',movement:{passable:false},blocks_sight:true,
+         appearance:{symbol:'+',foreground:'white'},unlocks_to:'closed'})";
+    const auto valid = Take(Load(View(Document(View(definitions)))));
+    CHECK(Get(valid,"closed").locksTo == valid.FindTerrain("locked"));
+    CHECK(Get(valid,"locked").unlocksTo == valid.FindTerrain("closed"));
+    for (const auto replacement : {"locks_to:'missing'", "locks_to:'open'", "locks_to:'closed'"}) {
+        String broken = definitions;
+        const auto position = broken.find("locks_to:'locked'"); REQUIRE(position != String::npos);
+        broken.replace(position,String("locks_to:'locked'").size(),replacement);
+        Invalid(View(Document(View(broken))));
+    }
+    String broken = definitions;
+    const auto position = broken.find("unlocks_to:'closed'"); REQUIRE(position != String::npos);
+    broken.replace(position,String("unlocks_to:'closed'").size(),"unlocks_to:'closed',opens_to:'open'");
+    Invalid(View(Document(View(broken))));
 }

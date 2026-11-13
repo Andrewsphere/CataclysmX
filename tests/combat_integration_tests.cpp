@@ -655,3 +655,26 @@ TEST_CASE("Combat integration suspended windup preflights both committed phases"
 }
 
 }
+
+TEST_CASE("Diagonal bump attacks and target discovery use destination-only melee reach", "[combat][integration][diagonal]") {
+    ServerRig rig; auto& server = rig.server; auto& world = server.GetWorld();
+    const auto target = Target(world,{1,1});
+    REQUIRE(world.SetTile({1,0},{TestTerrain("wall"),0}));
+    REQUIRE(world.SetTile({0,1},{TestTerrain("wall"),0}));
+    REQUIRE(world.CanPlayerSee(server.GetPlayer(),{1,1}));
+    CHECK(world.Combat().CanReach(server.GetPlayer(),target));
+    CHECK(world.Combat().FindTarget(server.GetPlayer()) == target);
+    const auto result = server.Send({CommandKind::move,1,1});
+    CHECK(result.outcome == Outcome::attacked); CHECK(result.cost == 100);
+    CHECK(world.GetActor(server.GetPlayer())->position == TileCoord{});
+    CHECK(world.ActorAt({1,1}) == target);
+}
+
+TEST_CASE("Locked demo terrain and damage persist through server save", "[server][doors][save]") {
+    SaveFile file; Server original(TestContent());
+    REQUIRE(original.GetWorld().SetTile({3,0},{TestTerrain("locked_door"),23}));
+    REQUIRE(original.CreateSave(file.path.c_str()));
+    auto loaded = Server::LoadSave(TestContent(),file.path.c_str()); REQUIRE(loaded);
+    const auto* tile = (*loaded)->GetWorld().GetTile({3,0}); REQUIRE(tile);
+    CHECK(tile->terrain == TestTerrain("locked_door")); CHECK(tile->damage == 23);
+}

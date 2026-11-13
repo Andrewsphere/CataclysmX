@@ -79,22 +79,24 @@ world's `eastl::expected` errors.
 | Command kind | Semantics |
 | --- | --- |
 | `wait` | Succeeds without moving; positive `waitCost` base duration, default `100` |
-| `move` | One cardinal tile; requires passable, unoccupied terrain |
+| `move` | One horizontal neighbor or axial vertical step; bumps open unlocked doors or attack perceived hostiles |
 | `pick_up` | Move a ground item on the player's tile to direct inventory |
 | `drop` | Move a directly carried item to the player's tile |
-| `interact` | Open/close an adjacent door, otherwise toggle an adjacent object |
+| `interact` | Open/close a same-layer neighboring door, otherwise operate an object on this or a neighboring tile |
+| `interact_action` | Revalidate and execute an exact discovered action, including Lock and Unlock |
 | `use_item` | Execute a capability's explicit action on an accessible item |
 | `store_item` | Move an accessible item into an accessible container, or extract to direct inventory |
 | `attack` | Attack a perceived hostile by persistent target ID, or automatically select one when zero |
 | `combat_style` | Select Balanced, Aggressive or Defensive while ready; consumes no simulation time |
 
-Move and interact require one cardinal direction in X, Z, or Y. Horizontal
-movement is `(dx,dz)=(±1,0)` or `(0,±1)` with `dy=0`; vertical movement is
+Interaction uses the current tile or eight horizontal neighbors, always with `dy=0`.
+Horizontal movement accepts eight unit directions with `dy=0`; vertical movement is
 `dx=dz=0`, `dy=±1`, and requires stairs on both endpoint tiles at the same X/Z.
-The standard client binds `<` to down and `>` to up. Horizontal walking into
+The standard client binds `<` to down and `>` to up, with Alt+Down/Up aliases.
+Diagonal locomotion costs `ceil(base * 141 / 100)` before speed scaling. Horizontal walking into
 open space can immediately cause a fall under the deterministic gravity rules.
 Moving into a perceived hostile requests an attack instead of movement. Combat
-reach is cardinal and same Y; automatic targeting chooses the lowest persistent
+reach includes eight immediate neighbors on the same Y; automatic targeting chooses the lowest persistent
 ID among eligible adjacent hostiles. An unseen occupant remains an obstruction.
 Pickup/drop use `Command::item`, a **persistent ID**, not a handle. Zero selects
 the lowest-ID eligible item. Nested contents cannot be selected directly;

@@ -2013,7 +2013,9 @@ WorldResult<void> World::TryActorStep(ActorHandle handle, TileCoord direction, b
     const bool cardinal = (direction == TileCoord{1, 0, 0}) || (direction == TileCoord{-1, 0, 0})
         || (direction == TileCoord{0, 1, 0}) || (direction == TileCoord{0, -1, 0})
         || (direction == TileCoord{0, 0, 1}) || (direction == TileCoord{0, 0, -1});
-    if (!cardinal) { return eastl::unexpected(WorldError::invalid_request); }
+    const bool diagonal = direction.y == 0 && (direction.x == -1 || direction.x == 1)
+        && (direction.z == -1 || direction.z == 1);
+    if (!cardinal && !diagonal) { return eastl::unexpected(WorldError::invalid_request); }
     const TileCoord source = actor->position;
     const TileCoord target{source.x + direction.x, source.z + direction.z, source.y + direction.y};
     if (const auto available = impl_->Available(target); !available) { return available; }
@@ -2352,14 +2354,47 @@ bool World::CanUseObject(ActorHandle actorHandle, ObjectHandle objectHandle) con
     if (!actor || actor->parked || !IsActive(actor->position) || !object || !IsActive(object->position)) { return false; }
     const TileCoord a = actor->position;
     const TileCoord b = object->position;
-    if (std::abs(a.x - b.x) + std::abs(a.z - b.z) + std::abs(a.y - b.y) > 1) { return false; }
-    if (a.y != b.y) {
-        const auto& source = impl_->content.GetTerrain(GetTile(a)->terrain);
-        const auto& target = impl_->content.GetTerrain(GetTile(b)->terrain);
-        const auto& upper = a.y > b.y ? source : target;
-        if (!upper.openSpace && !(source.stairs && target.stairs)) { return false; }
-    }
+    if (a.y != b.y || eastl::max(std::abs(a.x - b.x), std::abs(a.z - b.z)) > 1) { return false; }
     return true;
+}
+
+ObjectUseReason ObjectReadContext::CheckInputs(ActorHandle actor, ItemTypeId type, std::uint32_t count) const {
+    if (!world_.CanUseObject(actor, self_)) { return ObjectUseReason::OutOfReach; }
+    std::uint32_t found = 0;
+    for (auto handle : world_.GetActor(actor)->inventory) {
+        const auto* item = world_.GetItem(handle);
+        if (item->type == type && item->contents.empty() && ++found >= count) { return ObjectUseReason::None; }
+    }
+    return ObjectUseReason::NoInputs;
+}
+ObjectUseReason ObjectReadContext::CheckCollect(ActorHandle actor) const {
+    if (!world_.CanUseObject(actor, self_)) { return ObjectUseReason::OutOfReach; }
+    const auto& contents = world_.GetObject(self_)->contents;
+    if (contents.empty()) { return ObjectUseReason::NoContents; }
+    const auto capacity = world_.GetActor(actor)->carryCapacityGrams;
+    const auto mass = world_.GetCarriedMass(actor);
+    std::uint64_t available = capacity > mass ? capacity - mass : 0;
+    for (auto item : contents) {
+        const auto weight = world_.GetItemMass(item);
+        if (weight > available || !world_.CheckItemTransfer(item, ItemLocation::Carried(actor))) {
+            return ObjectUseReason::NoCapacity;
+        }
+        available -= weight;
+    }
+    return ObjectUseReason::None;
+}
+void World::QueryObjectActions(ActorHandle actor, ObjectHandle handle, Vector<ObjectActionInfo>& output) const {
+    const auto* object = GetObject(handle);
+    if (!object) { return; }
+    const auto start = output.size();
+    if (object->behavior_) { object->behavior_->QueryActions(ObjectReadContext(*this, handle), actor, output); }
+    else {
+        output.push_back({ObjectAction::Enable,object->enabled ? ObjectUseReason::AlreadyEnabled : ObjectUseReason::None});
+        output.push_back({ObjectAction::Disable,object->enabled ? ObjectUseReason::None : ObjectUseReason::AlreadyDisabled});
+    }
+    if (!CanUseObject(actor, handle)) {
+        for (auto i = start; i < output.size(); ++i) { output[i].reason = ObjectUseReason::OutOfReach; }
+    }
 }
 
 ObjectUseResult World::UseObject(ActorHandle actor, ObjectHandle handle, ObjectAction action) {
@@ -2369,7 +2404,16 @@ ObjectUseResult World::UseObject(ActorHandle actor, ObjectHandle handle, ObjectA
             GetActor(actor) ? ObjectUseReason::OutOfReach : ObjectUseReason::InvalidActor};
     }
     auto* object = Live(impl_->objects, handle);
-    if (!object->behavior_) { return {}; }
+    Vector<ObjectActionInfo> actions;
+    QueryObjectActions(actor, handle, actions);
+    const auto found = eastl::find_if(actions.begin(), actions.end(), [action](const ObjectActionInfo& info) { return info.action == action; });
+    if (found == actions.end()) { return {}; }
+    if (found->reason != ObjectUseReason::None) { return {ObjectUseOutcome::Refused, 0, found->reason}; }
+    if (!object->behavior_) {
+        const auto changed = SetObjectEnabled(handle, action == ObjectAction::Enable);
+        Require(changed.has_value());
+        return {ObjectUseOutcome::Succeeded, 100};
+    }
     Impl::ObjectCallbackScope scope(*this);
     ObjectMutationContext context(*this, handle);
     const auto result = object->behavior_->Use(context, actor, action);

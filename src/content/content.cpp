@@ -189,7 +189,7 @@ bool ReadColor(yyjson_val* value, RgbColor& output, const Context& context) {
 
 struct PendingTerrain {
     TerrainDefinition definition;
-    String looksLike, opensTo, closesTo;
+    String looksLike, opensTo, closesTo, locksTo, unlocksTo;
     bool hasSymbol = false, hasForeground = false, hasBackground = false;
     std::size_t parent = 0;
     std::size_t inputOrder = 0;
@@ -214,7 +214,7 @@ bool MissingReference(const PendingTerrain& terrain, eastl::string_view field,
 bool ParseTerrain(yyjson_val* object, PendingTerrain& terrain) {
     const auto& context = terrain.context;
     if (!CheckObject(object, {"type", "id", "name", "movement", "blocks_sight", "appearance",
-                               "looks_like", "opens_to", "closes_to", "open_space", "stairs", "light"}, context)) { return false; }
+                               "looks_like", "opens_to", "closes_to", "locks_to", "unlocks_to", "open_space", "stairs", "light"}, context)) { return false; }
     if (!ReadId(yyjson_obj_get(object, "id"), terrain.definition.id, context.Child("id"))
         || !ReadString(yyjson_obj_get(object, "name"), terrain.definition.name, context.Child("name"))) {
         return false;
@@ -255,10 +255,18 @@ bool ParseTerrain(yyjson_val* object, PendingTerrain& terrain) {
     auto* looksLike = yyjson_obj_get(object, "looks_like");
     auto* opensTo = yyjson_obj_get(object, "opens_to");
     auto* closesTo = yyjson_obj_get(object, "closes_to");
+    auto* locksTo = yyjson_obj_get(object, "locks_to");
+    auto* unlocksTo = yyjson_obj_get(object, "unlocks_to");
+    if (locksTo && unlocksTo) { return context.Fail("locks_to and unlocks_to are mutually exclusive"); }
+    if (unlocksTo && (opensTo || closesTo || terrain.definition.passable)) {
+        return context.Fail("locked terrain must be impassable without open/close transitions");
+    }
     if (opensTo && closesTo) { return context.Fail("opens_to and closes_to are mutually exclusive"); }
     if ((looksLike && !ReadId(looksLike, terrain.looksLike, context.Child("looks_like")))
         || (opensTo && !ReadId(opensTo, terrain.opensTo, context.Child("opens_to")))
-        || (closesTo && !ReadId(closesTo, terrain.closesTo, context.Child("closes_to")))) { return false; }
+        || (closesTo && !ReadId(closesTo, terrain.closesTo, context.Child("closes_to")))
+        || (locksTo && !ReadId(locksTo, terrain.locksTo, context.Child("locks_to")))
+        || (unlocksTo && !ReadId(unlocksTo, terrain.unlocksTo, context.Child("unlocks_to")))) { return false; }
     if (auto* appearance = yyjson_obj_get(object, "appearance")) {
         const auto appearanceContext = context.Child("appearance");
         if (!CheckObject(appearance, {"symbol", "foreground", "background"}, appearanceContext)) { return false; }
@@ -911,10 +919,35 @@ bool Resolve(Vector<PendingTerrain>& pending) {
             if (target == absent) { return MissingReference(terrain, "opens_to", terrain.opensTo); }
             terrain.definition.opensTo = {static_cast<std::uint32_t>(target + 1)};
         }
+        if (!terrain.locksTo.empty()) {
+            const auto target = FindPending(pending, View(terrain.locksTo));
+            if (target == absent) { return MissingReference(terrain, "locks_to", terrain.locksTo); }
+            terrain.definition.locksTo = {static_cast<std::uint32_t>(target + 1)};
+        }
+        if (!terrain.unlocksTo.empty()) {
+            const auto target = FindPending(pending, View(terrain.unlocksTo));
+            if (target == absent) { return MissingReference(terrain, "unlocks_to", terrain.unlocksTo); }
+            terrain.definition.unlocksTo = {static_cast<std::uint32_t>(target + 1)};
+        }
         if (!terrain.closesTo.empty()) {
             const std::size_t target = FindPending(pending, View(terrain.closesTo));
             if (target == absent) { return MissingReference(terrain, "closes_to", terrain.closesTo); }
             terrain.definition.closesTo = {static_cast<std::uint32_t>(target + 1)};
+        }
+    }
+    for (std::size_t i = 0; i < pending.size(); ++i) {
+        const auto& terrain = pending[i];
+        const auto& definition = terrain.definition;
+        if (definition.locksTo.value) {
+            const auto& locked = pending[definition.locksTo.value - 1].definition;
+            const auto closed = definition.closesTo.value ? definition.closesTo : TerrainId{static_cast<std::uint32_t>(i + 1)};
+            if (locked.unlocksTo != closed) { return terrain.context.Fail("locks_to must unlock back to this door's closed state"); }
+        }
+        if (definition.unlocksTo.value) {
+            const auto& unlocked = pending[definition.unlocksTo.value - 1].definition;
+            if (unlocked.locksTo.value != i + 1 || !unlocked.opensTo.value || unlocked.passable) {
+                return terrain.context.Fail("unlocks_to must name a closed openable door that locks back to this state");
+            }
         }
     }
     Vector<std::size_t> chain;

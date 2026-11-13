@@ -1,4 +1,5 @@
 #include "sdl/session.h"
+#include "client/tile_inspection.h"
 
 #include <EASTL/utility.h>
 #include <chrono>
@@ -39,6 +40,7 @@ void Session::Run(const ContentCatalog& content, std::uint64_t generation, Sessi
     }
     SessionSnapshot building;
     bool paused = false;
+    bool forcePublish = false;
     std::uint64_t sequence = 0;
     eastl::optional<std::uint64_t> pendingId;
     std::uint64_t pendingSequence = 0;
@@ -48,11 +50,28 @@ void Session::Run(const ContentCatalog& content, std::uint64_t generation, Sessi
     eastl::optional<SaveError> publishedStorageError;
     auto publish = [&] {
         const auto revision = server.GetRevision();
-        if (publishedRevision == revision && publishedPaused == paused && publishedStorageError == storageError) { return; }
+        if (!forcePublish && publishedRevision == revision && publishedPaused == paused && publishedStorageError == storageError) { return; }
+        forcePublish = false;
+        building.seed = server.GetWorld().GetSeed();
+        building.generationVersion = server.GetWorld().GetGenerationVersion();
+        const auto runtime = ResolveSettingsForServer(server, {}, {});
+        building.runtimeSettings = options.settings;
+        building.runtimeSettings.activeRadius = runtime.activeRadius;
+        building.runtimeSettings.residencyMode = runtime.residencyMode;
+        building.runtimeSettings.residentRadius = runtime.residentRadius;
+        building.runtimeSettings.residentRadiusTiles = runtime.residentRadiusTiles;
+        building.runtimeSettings.seed = server.GetWorld().GetSeed();
+        building.runtimeSettings.pacing = server.GetPacing();
         building.generation = generation;
         building.paused = paused;
         building.storageError = storageError;
         building.view = server.View(options.settings.viewRadius);
+        building.interactions.clear();
+        constexpr TileCoord offsets[] = {{0,0}, {-1,0}, {1,0}, {0,-1}, {0,1}, {-1,-1}, {1,-1}, {-1,1}, {1,1}};
+        for (auto offset : offsets) {
+            const auto p = building.view.player_position;
+            QueryInteractions(server.GetWorld(), server.GetPlayer(), {p.x + offset.x, p.z + offset.z, p.y + offset.y}, building.interactions);
+        }
         building.mapItems = CaptureMapItems(server.GetWorld(), building.view);
         channels_.PublishSnapshot(building);
         publishedRevision = revision;
@@ -64,6 +83,8 @@ void Session::Run(const ContentCatalog& content, std::uint64_t generation, Sessi
         if (update.storageError) { storageError = update.storageError; }
         for (const auto& result : update.commandResults) {
             if (pendingId && result.sequence == pendingSequence && result.player == server.GetHostPlayerId()) {
+                // Completion permits the next input; its new opportunity must already be visible.
+                publish();
                 channels_.PublishReply({ReplyKind::Completed, generation, *pendingId, result.result});
                 pendingId.reset();
                 Notify();
@@ -92,14 +113,37 @@ void Session::Run(const ContentCatalog& content, std::uint64_t generation, Sessi
                 channels_.PublishReply({ReplyKind::Cancelled, generation, request.id}, true);
             } else if (request.generation != generation) {
                 channels_.PublishReply({ReplyKind::Stale, generation, request.id}, true);
+            } else if (request.kind == RequestKind::Inspect) {
+                SessionReply reply{ReplyKind::Inspected, generation, request.id};
+                if (paused) {
+                    reply.inspectionView = server.ViewForPlayerAtLayer(server.GetHostPlayerId(), options.settings.viewRadius, request.cursor.y);
+                    DescribeTile(server.GetWorld(), reply.inspectionView, request.cursor, reply.details);
+                    reply.inspectionItems = CaptureMapItems(server.GetWorld(), reply.inspectionView);
+                }
+                channels_.PublishReply(eastl::move(reply), true);
+            } else if (request.kind == RequestKind::ApplySettings) {
+                SessionReply reply{ReplyKind::SettingsFailed, generation, request.id};
+                Diagnostics diagnostics;
+                const auto effective = ResolveSettingsForServer(server, request.globalSettings, request.worldSettings);
+                if (paused && ApplySettings(server, request.globalSettings, request.worldSettings, &diagnostics)) {
+                    options.settings = effective;
+                    reply.kind = ReplyKind::SettingsApplied;
+                    reply.runtimeSettings = effective;
+                    forcePublish = true;
+                } else { reply.details.push_back(FormatDiagnostics(diagnostics)); }
+                channels_.PublishReply(eastl::move(reply), true);
             } else if (request.kind == RequestKind::Pause || request.kind == RequestKind::Resume) {
                 paused = request.kind == RequestKind::Pause;
                 baseline = Clock::now();
                 publish();
                 channels_.PublishReply({paused ? ReplyKind::Paused : ReplyKind::Resumed, generation, request.id}, true);
-            } else if (paused || request.player != server.GetHostPlayerId()) {
+            } else if ((paused && request.kind != RequestKind::ResumeAndCommand) || request.player != server.GetHostPlayerId()) {
                 channels_.PublishReply({ReplyKind::Cancelled, generation, request.id}, true);
             } else {
+                if (request.kind == RequestKind::ResumeAndCommand) {
+                    paused = false;
+                    baseline = Clock::now();
+                }
                 const auto result = server.Submit(request.player, {++sequence, request.opportunity, eastl::move(request.command)});
                 if (result.outcome == Outcome::queued) {
                     if (pendingId) { channels_.PublishReply({ReplyKind::Cancelled, generation, *pendingId}); }

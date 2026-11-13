@@ -257,7 +257,7 @@ TEST_CASE("World machine energy exhaustion requires explicit reactivation and pr
     CHECK(rig.world.GetObject(rig.machine)->updates == 1);
 }
 
-TEST_CASE("All World object actions revalidate actor residency parking distance and vertical faces", "[world][entities][objects]") {
+TEST_CASE("All World object actions revalidate actor residency parking distance and reject vertical reach", "[world][entities][objects]") {
     Rig rig;
     rig.Inputs();
     CHECK(rig.world.UseObject({}, rig.machine, ObjectAction::Start).outcome == ObjectUseOutcome::Inaccessible);
@@ -288,16 +288,16 @@ TEST_CASE("All World object actions revalidate actor residency parking distance 
     inaccessible(); // Solid floor separates the vertical neighbors.
     REQUIRE(rig.world.SetTile({3, 2, 0}, {rig.content.FindTerrain("stairs"), 0}));
     REQUIRE(rig.world.SetTile({3, 2, 1}, {rig.content.FindTerrain("stairs"), 0}));
-    rig.Use(ObjectAction::Start);
+    inaccessible(); // Stairs never permit cross-layer interaction.
     CHECK(rig.world.CheckInvariants());
 }
 
-TEST_CASE("World object access crosses open vertical faces but excludes resident-only objects", "[world][entities][objects]") {
+TEST_CASE("World object access rejects open vertical faces but excludes resident-only objects", "[world][entities][objects]") {
     Rig rig;
     rig.Inputs();
     REQUIRE(rig.world.SetTile({2, 2, 1}, {rig.content.FindTerrain("air"), 0}));
     const auto upper = Take(rig.world.CreateObject(rig.content.FindObject("press"), {2, 2, 1}));
-    CHECK(rig.world.UseObject(rig.player, upper, ObjectAction::Start).outcome == ObjectUseOutcome::Succeeded);
+    CHECK(rig.world.UseObject(rig.player, upper, ObjectAction::Start).outcome == ObjectUseOutcome::Inaccessible);
     const auto request = Take(rig.world.RequestChunks({{1, 0}, 0}, LoadMode::resident));
     REQUIRE(rig.world.ReconcileChunks());
     REQUIRE(rig.world.MoveActor(rig.player, {15, 2}));
@@ -545,7 +545,7 @@ TEST_CASE("World running machine jobs freeze in resident and archived chunks", "
     CHECK(rig.world.CheckInvariants());
 }
 
-TEST_CASE("World gameplay steps validate cardinal movement and ready player collection orders only the barrier", "[world][entities][scheduling]") {
+TEST_CASE("World gameplay steps validate movement and ready player collection orders only the barrier", "[world][entities][scheduling]") {
     Rig rig;
     auto& world = rig.world;
     const auto other = Take(world.CreateActor({4, 4}, true));
@@ -555,7 +555,7 @@ TEST_CASE("World gameplay steps validate cardinal movement and ready player coll
     REQUIRE(world.ScheduleActorAction(other));
     world.CollectReadyPlayers(ready);
     CHECK(ready == Vector<ActorHandle>{rig.player});
-    CHECK(world.TryActorStep(rig.player, {1, 1}) == eastl::unexpected(WorldError::invalid_request));
+    CHECK(world.TryActorStep(rig.player, {1, 2}) == eastl::unexpected(WorldError::invalid_request));
     CHECK(world.TryActorStep(rig.player, {0, 0, 1}) == eastl::unexpected(WorldError::blocked));
     REQUIRE(world.SetTile({3, 2}, {rig.content.FindTerrain("wall"), 0}));
     CHECK(world.TryActorStep(rig.player, {1, 0}) == eastl::unexpected(WorldError::blocked));

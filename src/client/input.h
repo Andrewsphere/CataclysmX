@@ -9,10 +9,12 @@
 namespace cataclysmx {
 
 // A key is one UTF-8 scalar or an explicit name (Left, Enter, F2, ...).
-// Character case is significant even with Ctrl. Shift and Alt are not bindings.
+// Printable keys retain case; Shift is explicit only for named keys.
 struct KeyChord {
     String key;
     bool ctrl = false;
+    bool alt = false;
+    bool shift = false;
     bool operator==(const KeyChord&) const = default;
 };
 
@@ -24,7 +26,7 @@ enum class InputAction {
     Recenter, Layer1, Layer2, Layer3, Layer4, Layer5, ZoomIn, ZoomOut,
     DetailsUp, DetailsDown, Apply, SaveSettings, Reload, Inspect, AddBinding, Unbind, Reset,
     Inventory, Players, Help, QuickActions, Use, MoveDown, MoveUp, Attack,
-    StyleBalanced, StyleAggressive, StyleDefensive
+    StyleBalanced, StyleAggressive, StyleDefensive, Examine, Northwest, Northeast, Southwest, Southeast
 };
 struct InputBinding {
     InputContext context = InputContext::Gameplay;

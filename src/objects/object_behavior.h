@@ -11,16 +11,35 @@ namespace cataclysmx {
 
 class World;
 
-enum class ObjectAction { Start, Stop, Collect };
+enum class ObjectAction { Start, Stop, Collect, Enable, Disable };
 enum class ObjectUseOutcome { Succeeded, Refused, Inaccessible, InvalidAction };
 enum class ObjectUseReason {
-    None, NoInputs, NoPower, NoJob, Busy, NoCapacity, NoContents, OutOfReach, InvalidActor
+    None, NoInputs, NoPower, NoJob, Busy, NoCapacity, NoContents, OutOfReach, InvalidActor,
+    AlreadyOpen, AlreadyClosed, AlreadyEnabled, AlreadyDisabled, Occupied, Locked, AlreadyLocked, AlreadyUnlocked, MustClose
 };
 struct ObjectUseResult {
     ObjectUseOutcome outcome = ObjectUseOutcome::InvalidAction;
     std::uint32_t baseCost = 0;
     ObjectUseReason reason = ObjectUseReason::None;
 };
+struct ObjectActionInfo {
+    ObjectAction action = ObjectAction::Start;
+    ObjectUseReason reason = ObjectUseReason::None;
+};
+const char* ObjectActionLabel(ObjectAction action);
+const char* ObjectReasonText(ObjectUseReason reason);
+
+class ObjectReadContext {
+public:
+    ObjectUseReason CheckInputs(ActorHandle actor, ItemTypeId type, std::uint32_t count) const;
+    ObjectUseReason CheckCollect(ActorHandle actor) const;
+private:
+    friend class World;
+    ObjectReadContext(const World& world, ObjectHandle self) : world_(world), self_(self) {}
+    const World& world_;
+    ObjectHandle self_;
+};
+
 struct ObjectStateView {
     ObjectBehaviorKind behavior = ObjectBehaviorKind::None;
     std::uint64_t energy = 0;
@@ -62,6 +81,8 @@ public:
     virtual eastl::optional<Tick> NextEventIn() const = 0;
     virtual void Elapse(Tick elapsed) = 0;
     virtual void ProcessEvent(ObjectMutationContext& context) = 0;
+    virtual void QueryActions(const ObjectReadContext& context, ActorHandle actor,
+        Vector<ObjectActionInfo>& output) const = 0;
     virtual ObjectUseResult Use(ObjectMutationContext& context, ActorHandle actor, ObjectAction action) = 0;
     virtual DataObject SaveState() const = 0;
     virtual ObjectStateView Describe() const = 0;

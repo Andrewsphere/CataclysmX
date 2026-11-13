@@ -39,6 +39,10 @@ bool Cardinal(int dx, int dz, int dy) {
         || (dx == 0 && dz == 0 && (dy == -1 || dy == 1));
 }
 
+bool MovementDirection(int dx, int dz, int dy) {
+    return Cardinal(dx, dz, dy) || (dy == 0 && (dx == -1 || dx == 1) && (dz == -1 || dz == 1));
+}
+
 ChunkCoord BubbleCenter(TileCoord position) {
     const ChunkCoord chunk = ChunkOf(position);
     return {chunk.x, chunk.z, 0};
@@ -223,12 +227,13 @@ Outcome CombatOutcome(AttackOutcome outcome) {
 bool ValidCommandShape(const Command& command) {
     if (command.style > CombatStyle::Defensive) { return false; }
     switch (command.kind) {
+    case CommandKind::interact_action: return ValidInteraction(command.interaction);
     case CommandKind::attack:
     case CommandKind::combat_style:
         return command.dx == 0 && command.dz == 0 && command.dy == 0;
     case CommandKind::wait: return command.waitCost != 0;
-    case CommandKind::move:
-    case CommandKind::interact: return Cardinal(command.dx, command.dz, command.dy);
+    case CommandKind::move: return MovementDirection(command.dx, command.dz, command.dy);
+    case CommandKind::interact: return command.dy == 0 && command.dx >= -1 && command.dx <= 1 && command.dz >= -1 && command.dz <= 1;
     case CommandKind::pick_up:
     case CommandKind::drop: return true;
     case CommandKind::store_item:
@@ -254,6 +259,8 @@ const char* OutcomeMessage(Outcome outcome) {
     case Outcome::dropped: return "You drop the item.";
     case Outcome::opened: return "You open the door.";
     case Outcome::closed: return "You close the door.";
+    case Outcome::locked: return "You lock the door.";
+    case Outcome::unlocked: return "You unlock the door.";
     case Outcome::toggled: return "You toggle the object.";
     case Outcome::blocked: return "The way is blocked.";
     case Outcome::occupied: return "The tile is occupied.";
@@ -330,7 +337,8 @@ Server::Server(const ContentCatalog& content, std::uint32_t seed) : world_(conte
     for (TileCoord position : floors) {
         Require(world_.SetTile(position, {content.FindTerrain("floor"), 0}).has_value());
     }
-    Require(world_.SetTile({3, 0}, {content.FindTerrain("closed_door"), 0}).has_value());
+    const auto demoDoor = content.FindTerrain("lockable_closed_door");
+    Require(world_.SetTile({3, 0}, {demoDoor.value ? demoDoor : content.FindTerrain("closed_door"), 0}).has_value());
     Require(world_.SetTile({3, 1}, {content.FindTerrain("wall"), 0}).has_value());
     player_ = Take(world_.CreateActor({0, 0}, true));
     players_.push_back({world_.GetActor(player_)->id, "Host", 0, {0, 0}, PlayerConnectionState::Active});
@@ -465,7 +473,7 @@ CommandResult Server::Execute(ActorHandle handle, PlayerSlot& slot, Command comm
         outcome = Outcome::waited;
         break;
     case CommandKind::move: {
-        if (!Cardinal(command.dx, command.dz, command.dy)) {
+        if (!MovementDirection(command.dx, command.dz, command.dy)) {
             return failed(Outcome::invalid_command);
         }
         const TileCoord destination{position.x + command.dx, position.z + command.dz, position.y + command.dy};
@@ -477,7 +485,19 @@ CommandResult Server::Execute(ActorHandle handle, PlayerSlot& slot, Command comm
             // a new residency bubble and cannot fall through into movement.
             return attack(occupant);
         }
+        if (const auto* tile = world_.GetTile(destination); tile
+            && world_.GetContent().GetTerrain(tile->terrain).opensTo.value != 0) {
+            if (command.dy != 0 && !OpenVerticalFace(world_, position, destination)) { return failed(Outcome::blocked); }
+            Tile opened = *tile;
+            opened.terrain = world_.GetContent().GetTerrain(tile->terrain).opensTo;
+            if (!world_.SetTile(destination, opened)) { return failed(Outcome::unavailable); }
+            outcome = Outcome::opened;
+            break;
+        }
         baseCost = LocomotionBaseCost(actor->combat.body);
+        if (command.dx != 0 && command.dz != 0) {
+            baseCost = static_cast<std::uint32_t>((std::uint64_t{baseCost} * 141 + 99) / 100);
+        }
         // Validate the complete future bubble before acquiring any demand.
         if (!ResidencyFits(destination, active_radius_, resident_radius_, circleResidency_)) {
             return failed(Outcome::unavailable);
@@ -557,8 +577,35 @@ CommandResult Server::Execute(ActorHandle handle, PlayerSlot& slot, Command comm
         outcome = Outcome::stored_item;
         break;
     }
+    case CommandKind::interact_action: {
+        Vector<InteractionChoice> choices;
+        QueryInteractions(world_, handle, command.interaction.position, choices);
+        const auto found = eastl::find_if(choices.begin(), choices.end(), [&](const InteractionChoice& choice) {
+            return choice.request == command.interaction;
+        });
+        if (found == choices.end()) { return failed(Outcome::unavailable); }
+        if (found->reason != ObjectUseReason::None) { return failed(Outcome::blocked); }
+        if (command.interaction.kind == InteractionKind::Object) {
+            const auto used = world_.UseObject(handle, world_.FindObject(command.interaction.object), command.interaction.action);
+            if (used.outcome != ObjectUseOutcome::Succeeded) { return failed(Outcome::blocked); }
+            baseCost = used.baseCost;
+            outcome = Outcome::toggled;
+        } else {
+            Tile tile = *world_.GetTile(command.interaction.position);
+            const auto& terrain = world_.GetContent().GetTerrain(tile.terrain);
+            switch (command.interaction.kind) {
+            case InteractionKind::Open: tile.terrain = terrain.opensTo; outcome = Outcome::opened; break;
+            case InteractionKind::Close: tile.terrain = terrain.closesTo; outcome = Outcome::closed; break;
+            case InteractionKind::Lock: tile.terrain = terrain.locksTo; outcome = Outcome::locked; break;
+            case InteractionKind::Unlock: tile.terrain = terrain.unlocksTo; outcome = Outcome::unlocked; break;
+            case InteractionKind::Object: std::abort();
+            }
+            if (!world_.SetTile(command.interaction.position, tile)) { return failed(Outcome::unavailable); }
+        }
+        break;
+    }
     case CommandKind::interact: {
-        if (!Cardinal(command.dx, command.dz, command.dy)) {
+        if (command.dy != 0 || command.dx < -1 || command.dx > 1 || command.dz < -1 || command.dz > 1) {
             return failed(Outcome::invalid_command);
         }
         const TileCoord destination{position.x + command.dx, position.z + command.dz, position.y + command.dy};
@@ -566,10 +613,8 @@ CommandResult Server::Execute(ActorHandle handle, PlayerSlot& slot, Command comm
         if (!tile) {
             return failed(Outcome::unavailable);
         }
-        if (command.dy != 0 && !OpenVerticalFace(world_, position, destination)) {
-            return failed(Outcome::blocked);
-        }
         const TerrainDefinition& terrain = world_.GetContent().GetTerrain(tile->terrain);
+        if (terrain.unlocksTo.value != 0) { return failed(Outcome::blocked); }
         if (terrain.opensTo.value != 0 || terrain.closesTo.value != 0) {
             const bool closing = terrain.closesTo.value != 0;
             if (closing && world_.ActorAt(destination).value != 0) {
@@ -989,6 +1034,13 @@ WorldView Server::View(int radius) const {
 }
 
 WorldView Server::ViewForPlayer(PersistentId id, int radius) const {
+    const auto* slot = FindPlayer(id);
+    const auto* actor = slot ? world_.GetActor(PlayerActor(*slot)) : nullptr;
+    return actor ? ViewForPlayerAtLayer(id, radius, actor->position.y) : WorldView{};
+}
+
+WorldView Server::ViewForPlayerAtLayer(PersistentId id, int radius, int layerY) const {
+    if (layerY < world_min_y || layerY > world_max_y) { return {}; }
     ++viewStats_.requests;
     // Radius is a viewport extent, independent of the fixed gameplay sight range.
     // Queries use current perception and existing memories without learning.
@@ -1000,13 +1052,13 @@ WorldView Server::ViewForPlayer(PersistentId id, int radius) const {
     if (!actor) { return {}; }
     Require(actor != nullptr);
     const auto revision = GetRevision();
-    if (slot->cachedView.revision == revision && slot->cachedView.width == radius * 2 + 1) {
+    if (slot->cachedView.revision == revision && slot->cachedView.width == radius * 2 + 1 && slot->cachedView.origin.y == layerY) {
         return slot->cachedView;
     }
     ++viewStats_.constructions;
     WorldView result;
     result.player_position = actor->position;
-    result.origin = {actor->position.x - radius, actor->position.z - radius, actor->position.y};
+    result.origin = {actor->position.x - radius, actor->position.z - radius, layerY};
     result.width = 2 * radius + 1;
     result.height = result.width;
     result.tick = GetTick();

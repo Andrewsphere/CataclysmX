@@ -54,8 +54,8 @@ scales its authored base cost by this factor before speed scaling.
 The initial selector filters eligible moves, chooses highest priority and breaks
 ties by stable `CombatMove` enum value, without RNG: aggressive heavy priority
 100, plain and fallback bite priority 10. Hit and region use the explicit seeded
-LCG (`state = state * 1664525 + 1013904223`, modulo 2^32). Reach is cardinal,
-same Y, with passable endpoint tiles. Automatic player targeting requires perception
+LCG (`state = state * 1664525 + 1013904223`, modulo 2^32). Reach includes eight immediate neighbors on the
+same Y, with passable endpoint tiles and no adjoining-wall restriction. Automatic player targeting requires perception
 and picks the lowest persistent ID among adjacent reachable hostiles.
 
 Default plain attacks resolve immediately, base cost 100 and damage 12; fallback
@@ -80,3 +80,7 @@ See [entity scheduling](entity_scheduling.md) and [combat presentation](combat_p
 
 No body geometry, clothing system, general status engine or firearms are implemented
 by this slice. See [combat design](../md/CombatDesign.md) for agreed and deferred ideas.
+
+Melee reach includes all eight immediate horizontal neighbors on the same Y level.
+It checks source/destination passability and normal perception; adjoining diagonal
+walls add no restriction. Target ties remain ordered by persistent identity.

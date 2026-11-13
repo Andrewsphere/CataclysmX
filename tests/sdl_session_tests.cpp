@@ -230,3 +230,66 @@ TEST_CASE("Frontend can read a snapshot and fill the inbox while the owner stall
     while (session.TryPopReply(reply)) { ++replies; }
     CHECK(replies == SessionChannels::requestCapacity);
 }
+
+TEST_CASE("Paused session inspections and settings never advance time and resume command is ordered", "[sdl][session]") {
+    WakeState wake;
+    Session session(TestContent(),3,{},Wake,&wake);
+    SessionReply reply;
+    REQUIRE(WaitForReply(session,wake,reply)); REQUIRE(reply.kind == ReplyKind::Started);
+    SessionRequest request; request.generation = 3; request.id = 1; request.kind = RequestKind::Pause;
+    REQUIRE(session.TrySubmit(request) == EnqueueResult::Accepted);
+    REQUIRE(WaitForReply(session,wake,reply)); REQUIRE(reply.kind == ReplyKind::Paused);
+    SessionSnapshot snapshot; REQUIRE(session.TakeSnapshot(snapshot));
+    REQUIRE(snapshot.paused);
+    const auto tick = snapshot.view.tick;
+    request.id = 2; request.kind = RequestKind::Inspect; request.cursor = snapshot.view.player_position;
+    REQUIRE(session.TrySubmit(request) == EnqueueResult::Accepted);
+    REQUIRE(WaitForReply(session,wake,reply)); REQUIRE(reply.kind == ReplyKind::Inspected);
+    CHECK_FALSE(reply.details.empty()); CHECK(reply.id == 2);
+    CHECK(reply.inspectionView.origin.y == request.cursor.y);
+    request.cursor.y = 1; request.id = 20;
+    REQUIRE(session.TrySubmit(request) == EnqueueResult::Accepted);
+    REQUIRE(WaitForReply(session,wake,reply)); REQUIRE(reply.kind == ReplyKind::Inspected);
+    CHECK(reply.inspectionView.origin.y == 1); CHECK(reply.inspectionView.tick == tick);
+    CHECK(reply.inspectionView.player_position == snapshot.view.player_position);
+    request.id = 3; request.kind = RequestKind::ApplySettings; request.globalSettings.viewRadius = 4;
+    REQUIRE(session.TrySubmit(request) == EnqueueResult::Accepted);
+    REQUIRE(WaitForReply(session,wake,reply)); REQUIRE(reply.kind == ReplyKind::SettingsApplied);
+    CHECK(reply.runtimeSettings.viewRadius == 4);
+    REQUIRE(session.TakeSnapshot(snapshot)); CHECK(snapshot.view.tick == tick); CHECK(snapshot.view.width == 9);
+    request.id = 4; request.globalSettings.viewRadius = 65;
+    REQUIRE(session.TrySubmit(request) == EnqueueResult::Accepted);
+    REQUIRE(WaitForReply(session,wake,reply)); CHECK(reply.kind == ReplyKind::SettingsFailed);
+    CHECK_FALSE(reply.details.empty());
+    request.id = 5; request.kind = RequestKind::ResumeAndCommand;
+    request.player = snapshot.view.playerId; request.opportunity = snapshot.view.opportunity;
+    REQUIRE(session.TrySubmit(request) == EnqueueResult::Accepted);
+    REQUIRE(WaitForReply(session,wake,reply)); REQUIRE(reply.kind == ReplyKind::Admission);
+    REQUIRE(WaitForReply(session,wake,reply)); REQUIRE(reply.kind == ReplyKind::Completed);
+    CHECK(reply.result.outcome == Outcome::waited); CHECK(reply.result.cost == 100);
+    CHECK(reply.result.tick == tick); // Admission commits the action before rate-capped recovery.
+}
+
+TEST_CASE("Session completion publishes the next opportunity before accepting another frontend action", "[sdl][session]") {
+    WakeState wake; SessionOptions options; options.settings.viewRadius = 4;
+    Session session(TestContent(),1,options,Wake,&wake);
+    SessionReply reply; REQUIRE(WaitForReply(session,wake,reply)); REQUIRE(reply.kind == ReplyKind::Started);
+    SessionRequest pause; pause.kind = RequestKind::Pause; pause.generation = 1; pause.id = 1;
+    REQUIRE(session.TrySubmit(pause) == EnqueueResult::Accepted);
+    REQUIRE(WaitForReply(session,wake,reply)); REQUIRE(reply.kind == ReplyKind::Paused);
+    SessionSnapshot snapshot; REQUIRE(session.TakeSnapshot(snapshot));
+    auto opportunity = snapshot.view.opportunity;
+    for (std::uint64_t i = 0; i < 8; ++i) {
+        SessionRequest command; command.kind = i == 0 ? RequestKind::ResumeAndCommand : RequestKind::Command;
+        command.generation = 1; command.id = 2+i; command.player = snapshot.view.playerId;
+        command.opportunity = opportunity;
+        REQUIRE(session.TrySubmit(command) == EnqueueResult::Accepted);
+        REQUIRE(WaitForReply(session,wake,reply)); REQUIRE(reply.kind == ReplyKind::Admission);
+        REQUIRE(WaitForReply(session,wake,reply)); REQUIRE(reply.kind == ReplyKind::Completed);
+        REQUIRE(reply.result.outcome == Outcome::waited);
+        REQUIRE(session.TakeSnapshot(snapshot));
+        REQUIRE(snapshot.view.opportunity > opportunity);
+        CHECK(snapshot.view.lastInputSequence == i+1);
+        opportunity = snapshot.view.opportunity;
+    }
+}

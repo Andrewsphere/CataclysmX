@@ -66,6 +66,7 @@ TEST_CASE("Heavy windup captures recovery speed and consumes one actor turn", "[
 TEST_CASE("Neighbor targeting uses hostility and persistent identity ties", "[combat][targeting]") {
     Rig rig;
     // Use a non-player observer to isolate targeting from the lighting profile.
+    REQUIRE(rig.world.MoveActor(rig.target,{5,5}));
     const auto observer = Take(rig.world.CreateActor({3, 2}));
     auto state = MakeCombatState(false);
     state.faction = CombatFaction::Survivors;

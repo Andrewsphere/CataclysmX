@@ -43,7 +43,7 @@ eastl::optional<KeyChord> CsiKey(eastl::string_view input) {
     if (!Number(modifierPart, encodedModifiers) || encodedModifiers == 0) { return {}; }
     const unsigned modifiers = encodedModifiers - 1;
     // Shift is used only to determine character case; it is not a bindable flag.
-    if (modifiers & ~(1U | 4U | 64U | 128U)) { return {}; }
+    if (modifiers & ~(1U | 2U | 4U | 64U | 128U)) { return {}; }
     unsigned key = 0;
     unsigned shifted = 0;
     const auto alternate = keyPart.find(':');
@@ -70,7 +70,7 @@ eastl::optional<KeyChord> CsiKey(eastl::string_view input) {
     if (key >= 'a' && key <= 'z') {
         if (((modifiers & 1) != 0) != ((modifiers & 64) != 0)) { key -= 'a' - 'A'; }
     } else if ((modifiers & 1) && shifted) { key = shifted; }
-    KeyChord chord{Scalar(key), ctrl};
+    KeyChord chord{Scalar(key), ctrl, (modifiers & 2) != 0};
     return ValidKey(chord) ? eastl::optional<KeyChord>(chord) : eastl::nullopt;
 }
 eastl::optional<KeyChord> CsiFunctional(eastl::string_view input) {
@@ -91,7 +91,7 @@ eastl::optional<KeyChord> CsiFunctional(eastl::string_view input) {
         if (!Number(modifierPart, encodedModifiers) || encodedModifiers == 0) { return {}; }
     }
     const auto modifiers = encodedModifiers - 1;
-    if (modifiers & ~(4U | 64U | 128U)) { return {}; }
+    if (modifiers & ~(1U | 2U | 4U | 64U | 128U)) { return {}; }
     const char* name = nullptr;
     if (input.back() == '~') {
         switch (number) {
@@ -117,7 +117,7 @@ eastl::optional<KeyChord> CsiFunctional(eastl::string_view input) {
         default: return {};
         }
     }
-    return name ? eastl::optional<KeyChord>(KeyChord{String(name), (modifiers & 4) != 0}) : eastl::nullopt;
+    return name ? eastl::optional<KeyChord>(KeyChord{String(name), (modifiers & 4) != 0, (modifiers & 2) != 0, (modifiers & 1) != 0}) : eastl::nullopt;
 }
 struct NamedSequence { eastl::string_view input; eastl::string_view key; bool ctrl = false; };
 constexpr NamedSequence sequences[] = {

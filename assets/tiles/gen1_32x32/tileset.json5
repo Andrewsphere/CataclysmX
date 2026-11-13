@@ -5,6 +5,8 @@
   terrain: {
     floor: {visual: 'tile.world.floor'}, wall: {visual: 'tile.world.wall'},
     closed_door: {visual: 'tile.world.door.closed'}, open_door: {visual: 'tile.world.door.open'},
+    lockable_closed_door: {visual: 'tile.world.door.closed'},
+    lockable_open_door: {visual: 'tile.world.door.open'}, locked_door: {visual: 'tile.world.door.closed'},
     grass: {visual: 'tile.world.grass.varied'}, tree: {visual: 'sprite.world.tree.tall', ground: 'tile.world.grass.meadow'},
     road: {visual: 'tile.world.road.asphalt'}, rubble: {visual: 'tile.world.rubble'},
     stairs: {visual: 'tile.world.stairs'}, air: {visual: 'tile.world.air'},

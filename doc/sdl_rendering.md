@@ -2,9 +2,8 @@
 
 The SDL client implements startup native tileset selection, PNG atlases, looping
 and on-demand animations, worker-prepared map packets, and cached UTF-8 UI text. It keeps the
-existing session thread and deterministic engine contracts. LAN/storage separation
-and the inventory/settings screens in [the architecture](sdl_client.md) remain
-separate milestones.
+existing session thread and deterministic engine contracts. [The architecture](sdl_client.md) documents implemented screen ownership and
+[the options redesign](sdl_options_redesign.md) specifies the later visual rebuild.
 
 Run `cataclysmx_sdl_game` for the bundled `assets/tiles/gen1_32x32` pack, or pass
 `--tileset <directory>`. An explicit missing/invalid pack fails with diagnostics;
@@ -16,7 +15,7 @@ supported; all source paths are contained within the selected pack, including
 symlinks. See [metadata API](tileset_api.md) for loading contracts, limits, and
 exact animation sampling rules.
 
-The default Gen1 32x32 pack maps all ten bundled terrain types and six generic
+The default Gen1 32x32 pack maps all thirteen bundled terrain types and six generic
 overlays to individual sprites and adds plain asphalt, horizontally mirrored grass
 and an oversized upright tree. Separate off/on PNGs supply the three lightbulb
 items. Individual production PNGs and retained asphalt/tree references are
@@ -37,8 +36,10 @@ controls consume no gameplay time and do not introduce simulated lighting.
 DejaVu Sans Mono with its redistribution license under `assets/fonts`.
 `--font-size 8-48` and `--ui-scale 1-4` change the UI independently of tile size.
 Press `z` to zoom in and `Z` (Shift+z) to zoom out; the mouse wheel does not zoom.
-Zoom stays centered on the character, including when the map extends beyond the
-viewport. These SDL shortcuts do not submit simulation commands and are inactive
+Zoom multiplies native tileset size by `2^(step/4)`, bounded to 1/4x–8x.
+At step zero tiles retain native pixel size; resizing changes the visible area.
+Zoom stays centered on the character, or the Examine cursor, including when the
+map extends beyond the viewport. These SDL shortcuts do not submit simulation commands and are inactive
 in help modals. `UiPalette` controls screen colors separately from
 artwork; terrain glyph colors still come from the catalog. PNG RGB receives the
 source cell's light, memory and depth styling; see [sprite shading](sprite_shading.md).
@@ -88,7 +89,7 @@ are supported, but complex-script shaping is limited.
   clip, including upright overhang across fog. Static scenes have no animation deadline. Animation
   draws do not submit map jobs, capture views, or upload textures.
 - `SpriteShader` owns the GPU fragment shader and cached render states on the main
-  thread. Production passes it as the final `DrawFrame` argument; its renderer
+  thread. Production passes it through the shader argument of `DrawFrame`; its renderer
   must be the same one used to draw. See [sprite shading](sprite_shading.md) for
   the API, null-shader test restriction, color rules and backend requirements.
 - `MakeMapLayout` returns snapped render-pixel geometry, retaining rectangular
@@ -96,7 +97,7 @@ are supported, but complex-script shaping is limited.
   Origins can be negative when the map exceeds the viewport. `MapCellAt` uses
   that same geometry; callers must convert
   window coordinates to render coordinates before hit testing on high-DPI displays.
-- `SdlText` owns a font, renderer text engine, and eight screen text slots.
+- `SdlText` owns a font, renderer text engine, and 64 screen text slots.
   `Draw` updates text/wrapping/color only when changed, and `Height` provides the
   wrapped layout size. All text and GPU calls stay on the SDL main thread.
 - `MapZoomChange` maps case-sensitive SDL `z`/`Z` chords to +1/-1 zoom steps;

@@ -535,7 +535,7 @@ TEST_CASE("The latest valid intent replaces one buffered slot and executes exact
     }
     CHECK(server.Send({CommandKind::move, 0, 1}).outcome == Outcome::queued);
     for (Command invalid : {Command{CommandKind::move, 0, 0},
-             Command{CommandKind::interact, 1, 1}, Command{static_cast<CommandKind>(999)}, Wait(0)}) {
+             Command{CommandKind::interact, 1, 2}, Command{static_cast<CommandKind>(999)}, Wait(0)}) {
         CHECK(server.Send(invalid).outcome == Outcome::invalid_command);
         CHECK(server.View().commandQueued);
     }

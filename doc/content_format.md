@@ -364,3 +364,14 @@ lookup without hash iteration semantics or an additional indexing dependency.
 Appearance-only inheritance lets content share presentation while keeping
 gameplay definitions explicit and reviewable. World, save, and renderer adapters
 decide how to retain the catalog and use these typed values.
+
+## Lockable terrain
+
+Optional `locks_to` and `unlocks_to` reference terrain IDs and are mutually
+exclusive. A locked terrain has `unlocks_to`, is impassable, and has no `opens_to`
+or `closes_to`. Its destination is a closed openable terrain whose `locks_to`
+points back. An unlocked open variant has `closes_to` pointing at that closed
+terrain and may share its `locks_to`; action discovery refuses locking while open.
+Appearance inheritance does not inherit transition rules. Missing or inconsistent
+lock references fail content validation. These fields participate in the network
+content fingerprint. Lock state persists as the tile's terrain ID.

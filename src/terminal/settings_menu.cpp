@@ -55,6 +55,7 @@ struct FieldPresentation {
 constexpr FieldPresentation fields[] = {
     {SettingsField::Language, 0, EditorKind::Language},
     {SettingsField::ViewRadius, 0, EditorKind::Number, 0, playerSightRange},
+    {SettingsField::KeyboardRepeatRate, 0, EditorKind::Number, 1, 60},
     {SettingsField::Seed, 1, EditorKind::Number, 0, UINT32_MAX},
     {SettingsField::ActiveRadius, 1, EditorKind::Number, 0, 8},
     {SettingsField::ResidentRadius, 1, EditorKind::Number, 0, 8},

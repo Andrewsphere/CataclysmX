@@ -1,8 +1,8 @@
 # Machine interaction through Server
 
 Directional `interact` keeps the existing terrain priority: doors open or close
-before an object on the same tile is considered. Unavailable tiles and closed
-vertical faces retain their existing failure outcomes. World validates machine
+before an object on the same tile is considered. Unavailable tiles and
+cross-layer targets are rejected. World validates machine
 access again when `UseObject` executes.
 
 For an object with a `DescribeObjectState` value, Server selects one action:
@@ -42,3 +42,7 @@ collection capacity, vertical access, and door priority. The bundled
 `scrap_press` definition is in `data/terrain.json5`. Save v9 and the legacy v7/v8
 upgrade are described in the
 [save format](save_format.md#version-78-compatibility-and-checkpoint-upgrade).
+
+Object access uses the player’s tile and eight immediate neighbors on the same
+Y level. `World::CanUseObject` is the shared read-only access check for action
+discovery, execution, and inspection of stored contents.

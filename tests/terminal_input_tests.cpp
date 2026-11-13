@@ -1,6 +1,7 @@
 #include "terminal/keyboard.h"
 
 #include <catch2/catch_test_macros.hpp>
+#include <utility>
 
 namespace {
 using namespace cataclysmx;
@@ -49,8 +50,8 @@ TEST_CASE("Terminal decoder preserves character case and distinguishes enhanced 
     CHECK(InspectTerminalInput("\x14") == "14 => Ctrl+t");
 }
 
-TEST_CASE("Terminal decoder rejects Alt malformed sequences and unsupported modifier chords", "[terminal][input]") {
-    for (const char* input : {"\x1bt", "\x1b[116;3u", "\x1b[116;7u", "\x1b[116;9u",
+TEST_CASE("Terminal decoder rejects malformed sequences and unsupported modifier chords", "[terminal][input]") {
+    for (const char* input : {"\x1bt", "\x1b[116;9u",
         "\x1b[116;0u", "\x1b[116;999999999999u", "\x1b[116;5:4u", "\x1b[116;5:3u",
         "\x1b[116:bad;6u", "\x1b[1114112u", "\x1b[55296u", "\x1b[57344u", "\x1b[?5u", "ab", ""}) {
         INFO(input); CHECK_FALSE(DecodeTerminalInput(input));
@@ -65,7 +66,7 @@ TEST_CASE("Terminal decoder rejects Alt malformed sequences and unsupported modi
     CHECK(DecodeTerminalInput("\x1b[15;5~") == KeyChord{"F5", true});
     CHECK(DecodeTerminalInput("\x1b[24;5~") == KeyChord{"F12", true});
     CHECK(DecodeTerminalInput("\x1b[9;2u") == KeyChord{"BackTab", false});
-    CHECK_FALSE(DecodeTerminalInput("\x1b[1;6A"));
+    CHECK(DecodeTerminalInput("\x1b[1;6A") == KeyChord{"Up",true,false,true});
     CHECK(DecodeTerminalInput("\x1b[Z") == KeyChord{"BackTab", false});
 }
 
@@ -80,4 +81,16 @@ TEST_CASE("Case sensitive Ctrl bindings resolve to separate actions after termin
     CHECK(ResolveAction(map, InputContext::Gameplay, *upper) == InputAction::PickUp);
 }
 
+}
+
+TEST_CASE("Terminal functional modifier sequences match SDL movement bindings", "[terminal][input]") {
+    using namespace cataclysmx;
+    const auto keys = DefaultKeymap();
+    for (const auto& binding : {std::pair{"\x1b[1;3A",InputAction::MoveUp},
+        {"\x1b[1;3B",InputAction::MoveDown}, {"\x1b[1;2D",InputAction::Northwest},
+        {"\x1b[1;2C",InputAction::Northeast}, {"\x1b[1;5D",InputAction::Southwest},
+        {"\x1b[1;5C",InputAction::Southeast}}) {
+        const auto chord = DecodeTerminalInput(binding.first); REQUIRE(chord);
+        CHECK(ResolveAction(keys,InputContext::Gameplay,*chord) == binding.second);
+    }
 }
