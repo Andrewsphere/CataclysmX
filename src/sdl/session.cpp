@@ -113,6 +113,10 @@ void Session::Run(const ContentCatalog& content, std::uint64_t generation, Sessi
                 channels_.PublishReply({ReplyKind::Cancelled, generation, request.id}, true);
             } else if (request.generation != generation) {
                 channels_.PublishReply({ReplyKind::Stale, generation, request.id}, true);
+            } else if (request.kind == RequestKind::InspectAi) {
+                SessionReply reply{paused ? ReplyKind::AiInspected : ReplyKind::Cancelled, generation, request.id};
+                if (paused) { CaptureAiDebugView(server.GetWorld(), request.cursor, reply.aiDebug); }
+                channels_.PublishReply(eastl::move(reply), true);
             } else if (request.kind == RequestKind::Inspect) {
                 SessionReply reply{ReplyKind::Inspected, generation, request.id};
                 if (paused) {

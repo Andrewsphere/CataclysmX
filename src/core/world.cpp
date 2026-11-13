@@ -3,6 +3,7 @@
 #include <bit>
 
 #include "core/world.h"
+#include "actors/movement.h"
 #include "core/lighting.h"
 #include "core/perception.h"
 #include "core/slot_map.h"
@@ -530,10 +531,10 @@ public:
             cache.visible = cache.geometry;
             cache.footprint.clear();
             const auto observerLight = lighting.Get(actor.position);
-            int squaredRanges[4];
+            int ranges[4];
             for (int i = 0; i < 4; ++i) {
                 const int range = VisionRange(vision, static_cast<LightBand>(i), observerLight);
-                squaredRanges[i] = range * range;
+                ranges[i] = range;
             }
             std::size_t sampleIndex = 0;
             for (const auto& column : columns_) {
@@ -594,7 +595,8 @@ public:
                             ? TerrainLightLevel(world, actor.position, p) : samples.levels[index];
                         const int dx = p.x - actor.position.x;
                         const int dz = p.z - actor.position.z;
-                        if (dx*dx + dz*dz > squaredRanges[static_cast<int>(ClassifyLight(light))]) {
+                        if (!WithinSightRange(dx*dx + dz*dz, ranges[static_cast<int>(ClassifyLight(light))],
+                            p.y == actor.position.y)) {
                             cache.visible.MaterializeLayer(coord.y);
                             cache.visible.cells[cache.visible.Index(p)] = 0;
                         } else {
@@ -2843,7 +2845,10 @@ void World::ProcessNpcActions(std::uint32_t& rng) {
             ? (std::uint64_t{intent.baseCost} * LocomotionBaseCost(actor->combat.body)) / 100
             : intent.baseCost;
         Require(baseCost <= eastl::numeric_limits<std::uint32_t>::max());
-        Require(ScheduleActorAction(record.handle, static_cast<std::uint32_t>(baseCost)).has_value());
+        const auto actionCost = intent.kind == ActorIntentKind::Move
+            ? ActorStepBaseCost(static_cast<std::uint32_t>(baseCost), intent.direction)
+            : static_cast<std::uint32_t>(baseCost);
+        Require(ScheduleActorAction(record.handle, actionCost).has_value());
         // Commit the deadline before execution: blocked movement still costs time.
         if (intent.kind == ActorIntentKind::Move) {
             const auto moved = TryActorStep(record.handle, intent.direction, true);

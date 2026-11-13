@@ -22,7 +22,7 @@ struct ScreenFrame {
     int detailScroll = 0;
     eastl::optional<TileCoord> cursor;
     Vector<TileCoord> highlights;
-    const WorldgenDebugView* debugImage = nullptr;
+    const DebugMapView* debugImage = nullptr;
 };
 // Screen coordinates are logical UI pixels. Never retains the supplied frame.
 bool DrawScreen(SDL_Renderer* renderer, SdlText& text, ScreenFrame& frame,

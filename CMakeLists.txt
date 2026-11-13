@@ -96,6 +96,7 @@ add_library(cataclysmx_engine STATIC
     src/actors/ai_vision.cpp src/actors/ai_vision.h
     src/actors/sighted_ai.cpp src/actors/sighted_ai.h
     src/actors/action.cpp src/actors/action.h
+    src/actors/movement.h
     src/combat/body.cpp src/combat/body.h
     src/combat/combat_types.cpp src/combat/combat_types.h
     src/combat/combat_system.cpp src/combat/combat_system.h
@@ -145,6 +146,7 @@ add_library(cataclysmx_client STATIC src/client/text.cpp src/client/text.h
     src/client/combat_text.cpp src/client/combat_text.h
     src/client/perception_style.cpp src/client/perception_style.h
     src/client/worldgen_debug.cpp src/client/worldgen_debug.h
+    src/client/ai_debug.cpp src/client/ai_debug.h src/client/debug_map.h
     src/client/lan_profile.cpp src/client/lan_profile.h
     src/client/input.cpp src/client/input.h src/client/settings.cpp src/client/settings.h
     src/client/localization.cpp src/client/localization.h src/content/preferences.cpp)
@@ -246,7 +248,7 @@ if(CATACLYSMX_BUILD_TESTS)
         tests/item_behavior_tests.cpp
         tests/actor_controller_tests.cpp tests/entity_world_tests.cpp
         tests/ai_vision_tests.cpp tests/ai_content_tests.cpp tests/ai_world_tests.cpp
-        tests/sighted_ai_tests.cpp
+        tests/sighted_ai_tests.cpp tests/ai_debug_tests.cpp
         tests/actor_action_tests.cpp tests/combat_body_tests.cpp
         tests/combat_state_tests.cpp tests/combat_system_tests.cpp
         tests/combat_integration_tests.cpp

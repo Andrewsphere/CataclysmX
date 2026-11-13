@@ -1,5 +1,6 @@
 #include "terminal/debug_menu.h"
 
+#include "client/ai_debug.h"
 #include "client/worldgen_debug.h"
 #include "terminal/render.h"
 #include "terminal/keyboard.h"
@@ -30,11 +31,14 @@ public:
     WorldgenDebugMenu(const World& world, TileCoord playerPosition, std::function<void()> onClose,
         const Localization* localization, const Keymap* keymap)
         : world_(world), initialPosition_(ClampPosition(playerPosition)), cursor_(initialPosition_),
+          aiInitialPosition_{initialPosition_.x, initialPosition_.z, std::clamp(playerPosition.y, world_min_y, world_max_y)},
+          aiCursor_(aiInitialPosition_),
           onClose_(std::move(onClose)), localization_(localization), keymap_(keymap) {
         if (Available()) { RebuildPlan(); }
     }
 
     ftxui::Element OnRender() override {
+        if (aiMode_) { return RenderAi(); }
         ftxui::Elements lines{
             ftxui::text(T("debug.title", "Debug menu | World generation")) | ftxui::bold,
             ftxui::text(F("debug.seed", "Seed: " + std::to_string(world_.GetSeed()) + " | Generation version: "
@@ -97,6 +101,7 @@ public:
                 lines.push_back(ftxui::text("1-5/Tab layers; +/- zoom; PgUp/PgDn details"));
             } else { lines.push_back(ftxui::paragraph(Controls())); }
         }
+        lines.push_back(ftxui::text(ToggleHint()));
         lines.push_back(ftxui::text(keymap_ ? Hint(InputAction::Debug) + " / Escape" : "F11 / Escape / q: close"));
         return ftxui::vbox(std::move(lines)) | ftxui::border;
     }
@@ -111,6 +116,12 @@ public:
             if (onClose_) { onClose_(); }
             return true;
         }
+        if (action == InputAction::Inspect) {
+            aiMode_ = !aiMode_;
+            if (aiMode_) { CaptureAi(); }
+            return true;
+        }
+        if (aiMode_) { return OnAiEvent(action); }
         if (!Available()) { return true; }
         const auto oldLayer = layer_;
         const int oldScale = scale_;
@@ -147,6 +158,80 @@ public:
     }
 
 private:
+    std::string ToggleHint() const {
+        return (keymap_ ? Hint(InputAction::Inspect) : "a") + ": AI / world generation";
+    }
+    ftxui::Element RenderAi() const {
+        ftxui::Elements lines{
+            ftxui::text("Debug menu | AI inspector") | ftxui::bold,
+            ftxui::text("Live resident map | Last-decision overlay"),
+            ftxui::text("Cursor: " + std::to_string(aiCursor_.x) + "," + std::to_string(aiCursor_.z)
+                + "," + std::to_string(aiCursor_.y) + " (X,Z,Y) | Tick: " + std::to_string(aiView_.tick)),
+            ftxui::separator(),
+        };
+        ftxui::Elements rows;
+        const auto& image = aiView_.image;
+        const int selectedX = aiCursor_.x - image.bounds.min.x;
+        const int selectedZ = aiCursor_.z - image.bounds.min.z;
+        for (int z = 0; z < image.height; ++z) {
+            ftxui::Elements cells;
+            for (int x = 0; x < image.width; ++x) {
+                auto cell = RenderTerrainCell(image.cells[static_cast<std::size_t>(z * image.width + x)]);
+                if (x == selectedX && z == selectedZ) { cell = cell | ftxui::inverted | ftxui::focus; }
+                cells.push_back(std::move(cell));
+            }
+            rows.push_back(ftxui::hbox(std::move(cells)));
+        }
+        ftxui::Elements details;
+        for (std::size_t i = 0; i < aiView_.details.size(); ++i) {
+            const auto& text = aiView_.details[i];
+            auto line = ftxui::paragraph(std::string(text.data(), text.size()));
+            if (i == aiDetailLine_) { line = line | ftxui::focus; }
+            details.push_back(std::move(line));
+        }
+        lines.push_back(ftxui::hbox({ftxui::vbox(std::move(rows)) | ftxui::frame | ftxui::flex,
+            ftxui::separator(), ftxui::vbox(std::move(details)) | ftxui::yframe | ftxui::flex}) | ftxui::flex);
+        lines.push_back(ftxui::paragraph("Green eligible; red blocked; yellow chosen; blue decision origin; purple goal; orange backtracking"));
+        lines.push_back(ftxui::paragraph(keymap_ ? AiControls() :
+            "Arrows/hjkl move; Alt+Up/Down or >/< change Y; Home/c recenter; PgUp/PgDn details"));
+        lines.push_back(ftxui::text(ToggleHint()));
+        lines.push_back(ftxui::text(keymap_ ? Hint(InputAction::Debug) + " / Escape" : "F11 / Escape / q: close"));
+        return ftxui::vbox(std::move(lines)) | ftxui::border;
+    }
+    std::string AiControls() const {
+        std::string text;
+        for (const auto action : {InputAction::West, InputAction::East, InputAction::North, InputAction::South,
+            InputAction::MoveUp, InputAction::MoveDown, InputAction::Recenter, InputAction::DetailsUp, InputAction::DetailsDown}) {
+            if (!text.empty()) { text += " | "; }
+            String key = "action."; const auto name = ActionName(action); key.append(name.data(), name.size());
+            text += Hint(action) + " " + T({key.data(), key.size()}, name);
+        }
+        return text;
+    }
+    void CaptureAi() {
+        CaptureAiDebugView(world_, aiCursor_, aiView_);
+        aiDetailLine_ = 0;
+    }
+    bool OnAiEvent(eastl::optional<InputAction> action) {
+        const auto oldCursor = aiCursor_;
+        if (action) { switch (*action) {
+        case InputAction::West: --aiCursor_.x; break;
+        case InputAction::East: ++aiCursor_.x; break;
+        case InputAction::North: --aiCursor_.z; break;
+        case InputAction::South: ++aiCursor_.z; break;
+        case InputAction::MoveUp: aiCursor_.y = std::min(world_max_y, aiCursor_.y + 1); break;
+        case InputAction::MoveDown: aiCursor_.y = std::max(world_min_y, aiCursor_.y - 1); break;
+        case InputAction::Recenter: aiCursor_ = aiInitialPosition_; break;
+        case InputAction::DetailsDown:
+            if (aiDetailLine_ + 1 < aiView_.details.size()) { ++aiDetailLine_; } break;
+        case InputAction::DetailsUp: if (aiDetailLine_ > 0) { --aiDetailLine_; } break;
+        default: break;
+        } }
+        aiCursor_.x = std::clamp(aiCursor_.x, -world_coordinate_limit, world_coordinate_limit);
+        aiCursor_.z = std::clamp(aiCursor_.z, -world_coordinate_limit, world_coordinate_limit);
+        if (aiCursor_ != oldCursor) { CaptureAi(); }
+        return true;
+    }
     std::string T(eastl::string_view key, eastl::string_view fallback) const {
         if (!localization_) { return {fallback.data(), fallback.size()}; }
         const auto text = localization_->Text(key, fallback); return {text.data(), text.size()};
@@ -189,6 +274,11 @@ private:
     const World& world_;
     TileCoord initialPosition_;
     TileCoord cursor_;
+    TileCoord aiInitialPosition_;
+    TileCoord aiCursor_;
+    AiDebugView aiView_;
+    std::size_t aiDetailLine_ = 0;
+    bool aiMode_ = false;
     std::function<void()> onClose_;
     WorldgenDebugLayer layer_ = WorldgenDebugLayer::Roads;
     int scale_ = 8;

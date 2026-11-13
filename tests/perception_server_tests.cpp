@@ -16,6 +16,86 @@ const ViewCell& Cell(const WorldView& view, int x, int z) {
     return view.cells[static_cast<std::size_t>(index)];
 }
 
+TEST_CASE("Dark close-range views expose all eight neighbors and their overlays", "[server][perception][close-range]") {
+    Server server(TestContent());
+    World& world = server.GetWorld();
+    const TileCoord origin{8,8,0};
+    for (int z = 6; z <= 10; ++z) {
+        for (int x = 6; x <= 10; ++x) {
+            REQUIRE(world.SetTile({x,z,0}, {TestTerrain("floor"),0}));
+            REQUIRE(world.SetTile({x,z,1}, {TestTerrain("floor"),0}));
+        }
+    }
+    REQUIRE(world.MoveActor(server.GetPlayer(), origin));
+    world.SetSkyLight(0);
+    for (int z = 7; z <= 9; ++z) {
+        for (int x = 7; x <= 9; ++x) {
+            if (x == 8 && z == 8) { continue; }
+            REQUIRE(world.CreateActor({x,z,0}));
+            REQUIRE(world.CreateObject({x,z,0}));
+            REQUIRE(world.CreateItem(TestItem("rock"), ItemLocation::Ground({x,z,0})));
+        }
+    }
+    REQUIRE(world.CreateActor({10,8,0}));
+    REQUIRE(world.CreateObject({10,8,0}));
+    REQUIRE(world.CreateItem(TestItem("rock"), ItemLocation::Ground({10,8,0})));
+    for (const int range : {playerSightRange, 1, 0}) {
+        VisionProfile vision;
+        vision.range = range;
+        vision.darkRange = range == 0 ? 0 : 1;
+        vision.dimRange = range == playerSightRange ? 6 : range;
+        vision.glareDimRange = range == playerSightRange ? 3 : range;
+        REQUIRE(world.SetVisionProfile(vision));
+        const auto view = server.View(2);
+        for (int z = 7; z <= 9; ++z) {
+            for (int x = 7; x <= 9; ++x) {
+                if (x == 8 && z == 8) { continue; }
+                const auto& cell = Cell(view, x, z);
+                CHECK((cell.terrainVisibility == Visibility::Visible) == (range > 0));
+                CHECK((cell.actor != 0) == (range > 0));
+                CHECK((cell.object != 0) == (range > 0));
+                CHECK(cell.ground_items == (range > 0 ? 1 : 0));
+            }
+        }
+        CHECK(Cell(view, 10, 8).terrainVisibility != Visibility::Visible);
+        CHECK(Cell(view, 10, 8).actor == 0);
+        CHECK(Cell(view, 10, 8).object == 0);
+        CHECK(Cell(view, 10, 8).ground_items == 0);
+    }
+}
+
+TEST_CASE("Dark neighbor overlay allowance stays on the observer layer", "[server][perception][close-range][3d]") {
+    Server server(TestContent());
+    auto& world = server.GetWorld();
+    REQUIRE(world.SetTile({8,8,1}, {TestTerrain("floor"),0}));
+    REQUIRE(world.MoveActor(server.GetPlayer(), {8,8,1}));
+    for (const auto position : {TileCoord{9,8,0}, TileCoord{9,9,0}}) {
+        REQUIRE(world.SetTile(position, {TestTerrain("floor"),0}));
+        REQUIRE(world.SetTile({position.x,position.z,1}, {TestTerrain("air"),0}));
+        REQUIRE(world.CreateActor(position));
+        REQUIRE(world.CreateObject(position));
+        REQUIRE(world.CreateItem(TestItem("rock"), ItemLocation::Ground(position)));
+    }
+    world.SetSkyLight(0);
+    for (const int range : {playerSightRange, 1}) {
+        VisionProfile vision;
+        vision.range = range;
+        vision.dimRange = vision.glareDimRange = vision.darkRange = 1;
+        REQUIRE(world.SetVisionProfile(vision));
+        const auto view = server.View(2);
+        const auto& cardinal = Cell(view, 9, 8);
+        CHECK(cardinal.actor != 0);
+        CHECK(cardinal.object != 0);
+        CHECK(cardinal.ground_items == 1);
+        CHECK(cardinal.overlayDepth == 1);
+        const auto& diagonal = Cell(view, 9, 9);
+        CHECK(diagonal.actor == 0);
+        CHECK(diagonal.object == 0);
+        CHECK(diagonal.ground_items == 0);
+        CHECK_FALSE(world.CanPlayerSee(server.GetPlayer(), {9,9,0}));
+    }
+}
+
 TEST_CASE("Views expose current appearance without teaching memory or using viewport as sight range",
     "[server][perception][memory]") {
     Server server(TestContent());

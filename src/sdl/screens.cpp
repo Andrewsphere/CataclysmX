@@ -66,14 +66,18 @@ bool DrawScreen(SDL_Renderer* renderer, SdlText& text, ScreenFrame& frame,
     if (columns) { listWidth = clip.w / 2; }
     if (frame.debugImage) {
         const auto& image = *frame.debugImage;
-        const float cell = std::max(1.0f, std::min(static_cast<float>(listWidth) / std::max(1,image.width),
-            static_cast<float>(bodyHeight) / std::max(1,image.height)));
+        const int mapHeight = !columns && !frame.details.empty() ? std::max(1,(bodyHeight-8)/2) : bodyHeight;
+        const SDL_Rect mapClip{clip.x,y,listWidth,mapHeight};
+        if (!SDL_SetRenderClipRect(renderer,&mapClip)) { return false; }
+        const float cell = std::min(static_cast<float>(listWidth) / std::max(1,image.width),
+            static_cast<float>(mapHeight) / std::max(1,image.height));
         for (int z = 0; z < image.height; ++z) {
             for (int x = 0; x < image.width; ++x) {
                 const auto& appearance = image.cells[static_cast<std::size_t>(z * image.width + x)];
                 SDL_FRect box{left + 8 + x * cell, y + z * cell, cell, cell};
                 const bool glyph = cell >= 8;
-                const auto color = glyph ? appearance.background : appearance.foreground;
+                const auto color = glyph || appearance.background != RgbColor{}
+                    ? appearance.background : appearance.foreground;
                 if (!SDL_SetRenderDrawColor(renderer, color.red, color.green, color.blue, 255)
                     || !SDL_RenderFillRect(renderer, &box)) { return false; }
                 if (glyph) {
@@ -84,7 +88,7 @@ bool DrawScreen(SDL_Renderer* renderer, SdlText& text, ScreenFrame& frame,
                     const auto fg = appearance.foreground;
                     if (!SDL_SetRenderScale(renderer,uiScale*scale,uiScale*scale) || !SDL_SetRenderClipRect(renderer,&glyphClip)
                         || !text.Draw(7,appearance.symbol.c_str(),box.x/scale+3,box.y/scale,{fg.red,fg.green,fg.blue,255})
-                        || !SDL_SetRenderScale(renderer,uiScale,uiScale) || !SDL_SetRenderClipRect(renderer,&clip)) { return false; }
+                        || !SDL_SetRenderScale(renderer,uiScale,uiScale) || !SDL_SetRenderClipRect(renderer,&mapClip)) { return false; }
                 }
                 if (frame.cursor && (frame.cursor->x - image.bounds.min.x) / image.scale == x
                     && (frame.cursor->z - image.bounds.min.z) / image.scale == z) {
@@ -92,6 +96,7 @@ bool DrawScreen(SDL_Renderer* renderer, SdlText& text, ScreenFrame& frame,
                 }
             }
         }
+        if (!columns) { y += mapHeight + 8; }
     } else {
         if (!text.Draw(7,"M",-100,-100,normal)) { return false; }
         const int rowHeight = std::max(24,text.Height(7) * 2 + 6);

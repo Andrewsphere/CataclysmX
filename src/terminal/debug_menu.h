@@ -9,8 +9,9 @@
 
 namespace cataclysmx {
 
-// World and its immutable content must outlive the component. Inspection uses
-// generated baseline data only; onClose dismisses the owning application's modal.
+// World and its immutable content must outlive the component. The initial view
+// is generated terrain; Inspect toggles read-only resident AI inspection.
+// onClose dismisses the owning application's modal.
 ftxui::Component CreateWorldgenDebugMenu(const World& world, TileCoord playerPosition,
     std::function<void()> onClose, const Localization* localization = nullptr,
     const Keymap* keymap = nullptr);

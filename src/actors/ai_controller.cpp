@@ -10,6 +10,13 @@
 #endif
 
 namespace cataclysmx {
+std::int64_t AiMovementScore(TileCoord position, TileCoord goal) {
+    const auto dx = std::int64_t{position.x} - goal.x;
+    const auto dz = std::int64_t{position.z} - goal.z;
+    const auto dy = std::int64_t{position.y} - goal.y;
+    return dx * dx + dz * dz + dy * dy;
+}
+
 namespace {
 
 ActorIntent ChooseWander(std::uint32_t& rng) {

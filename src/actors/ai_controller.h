@@ -4,6 +4,7 @@
 #include "core/world_types.h"
 #include "core/state_result.h"
 #include "core/timing.h"
+#include "actors/movement.h"
 #include <EASTL/unique_ptr.h>
 
 namespace cataclysmx {
@@ -12,6 +13,33 @@ class World;
 class ContentCatalog;
 
 enum class AiBehavior : std::uint8_t { Idle, Pursue, Search, Attack };
+enum class ActorIntentKind : std::uint8_t { Wait, Move, Attack };
+enum class AiMoveStatus : std::uint8_t {
+    Available, Unavailable, Inactive, Impassable, Unsupported, Occupied,
+    StairsRequired, Backtracking, OutsideSearch
+};
+
+// Bounded, allocation-free evidence from the last actual decision, not a fresh
+// sensor query. Scores are derived from origin/goal and actorStepDirections.
+// Ephemeral: not persisted and never used as a simulation input.
+struct AiDecisionInspection {
+    Tick tick = 0;
+    TileCoord origin{};
+    TileCoord goal{};
+    TileCoord previousPosition{};
+    eastl::array<AiMoveStatus, actorStepDirections.size()> moves{};
+    AiBehavior behavior = AiBehavior::Idle;
+    ActorIntentKind intent = ActorIntentKind::Wait;
+    int selectedMove = -1;
+    bool valid = false;
+    bool hasGoal = false;
+    bool hasPrevious = false;
+};
+
+// Squared geometric separation used for local pursuit, not an action cost or
+// global path estimate. World-coordinate differences are evaluated in 64 bits.
+std::int64_t AiMovementScore(TileCoord position, TileCoord goal);
+
 // Value-only debug view. Work counters describe the most recent decision.
 struct AiInspection {
     AiBehavior behavior = AiBehavior::Idle;
@@ -25,9 +53,9 @@ struct AiInspection {
     std::uint32_t rays = 0;
     std::uint32_t cells = 0;
     bool targetVisible = false;
+    AiDecisionInspection decision;
 };
 
-enum class ActorIntentKind : std::uint8_t { Wait, Move, Attack };
 struct ActorIntent {
     ActorIntentKind kind = ActorIntentKind::Wait;
     TileCoord direction{};

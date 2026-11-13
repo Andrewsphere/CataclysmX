@@ -1,5 +1,26 @@
 # Terminal view and LAN snapshots
 
+## F11 AI inspector
+
+The local F11 debug menu opens on the existing surface world-generation preview.
+Press `a` (or the configured Debug Inspect binding) to toggle the AI inspector,
+including for saves whose generation version does not support the preview. The
+two modes retain independent cursors and the world-generation layer and zoom.
+
+The AI cursor starts at the player's actual X/Z/Y position. Arrows or hjkl move
+one horizontal tile, Alt+Up/Down or `>`/`<` change elevation within world bounds,
+and Home/c returns to the opening position. Page Up/Down scroll the details.
+The map is a live resident-world capture, not player knowledge or a generated
+preview. Its colored overlay describes the selected actor's last actual AI
+decision: green eligible, red blocked, yellow chosen, blue decision origin,
+purple goal, and orange backtracking. The origin can differ from the actor's
+current position. Empty selections are supported.
+
+The menu captures on entering AI mode and when the cursor changes, rather than
+on every redraw. This keeps rendering independent of simulation work while
+showing current state on each inspection. Capturing does not load terrain,
+advance time, run decisions, or consume RNG; debug input remains modal.
+
 ## Display radius
 
 `Settings::viewRadius` defaults to **64**, with an inclusive validated range of

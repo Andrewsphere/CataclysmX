@@ -1,4 +1,5 @@
 #include "core/world.h"
+#include "core/server.h"
 #include "core/save_database.h"
 #include "combat/combat_system.h"
 #include "content_fixture.h"
@@ -211,6 +212,74 @@ TEST_CASE("World AI inspection and elapsed time respect resident and unloaded su
     CHECK(world.InspectActorAi(restored).scanRemaining == elapsed.scanRemaining);
     CHECK(world.InspectActorAi(restored).memoryRemaining == elapsed.memoryRemaining);
     CHECK(world.CheckInvariants());
+}
+
+TEST_CASE("NPC step deadlines match player injury diagonal and speed costs", "[ai][world][movement-cost]") {
+    for (const bool injured : {false, true}) {
+        for (const int speed : {100, 125}) {
+            for (const bool diagonal : {false, true}) {
+                CAPTURE(injured, speed, diagonal);
+                World world(TestContent());
+                Load(world);
+                for (int z = 1; z <= 7; ++z) {
+                    for (int x = 1; x <= 7; ++x) {
+                        REQUIRE(world.SetTile({x,z}, {TestTerrain("floor"),0}));
+                    }
+                }
+                const auto npc = Create(world, {2,2});
+                const auto target = Create(world, diagonal ? TileCoord{6,6} : TileCoord{6,2}, true);
+                auto state = MakeCombatState(true);
+                state.faction = CombatFaction::Undead;
+                state.injury.regeneration = false;
+                if (injured) { ApplyInjury(state.body, BodyPart::LeftLeg, 100, state.injury); }
+                REQUIRE(world.Combat().Configure(npc, state));
+                REQUIRE(world.SetActorSpeed(npc, speed));
+                REQUIRE(world.SetActorController(npc, AiControllerKind::Sighted));
+                REQUIRE(world.SetActorLight(target, {255,12}));
+                std::uint32_t rng = 42;
+                world.ProcessNpcActions(rng);
+                CHECK(world.GetActor(npc)->position == (diagonal ? TileCoord{3,3} : TileCoord{3,2}));
+                const auto base = diagonal ? (injured ? 212U : 141U) : (injured ? 150U : 100U);
+                const auto expected = (base * speed + 99) / 100;
+                CHECK(world.GetActorRemainingTicks(npc) == expected);
+
+                Server server(TestContent());
+                auto& playerWorld = server.GetWorld();
+                REQUIRE(playerWorld.SetTile({8,8}, {TestTerrain("floor"),0}));
+                REQUIRE(playerWorld.SetTile({9,8}, {TestTerrain("floor"),0}));
+                REQUIRE(playerWorld.SetTile({9,9}, {TestTerrain("floor"),0}));
+                REQUIRE(playerWorld.MoveActor(server.GetPlayer(), {8,8}));
+                state.faction = CombatFaction::Survivors;
+                REQUIRE(playerWorld.Combat().Configure(server.GetPlayer(), state));
+                REQUIRE(playerWorld.SetActorSpeed(server.GetPlayer(), speed));
+                const auto moved = server.Send({CommandKind::move, 1, diagonal ? 1 : 0});
+                REQUIRE(moved.outcome == Outcome::moved);
+                CHECK(moved.cost == expected);
+                CHECK(moved.cost == world.GetActorRemainingTicks(npc));
+            }
+        }
+    }
+}
+
+TEST_CASE("NPC diagonal attacks keep combat deadlines independent of step costs", "[ai][world][movement-cost][combat]") {
+    for (const bool diagonal : {false, true}) {
+        World world(TestContent());
+        Load(world);
+        const auto npc = Create(world, {2,2});
+        const auto player = Create(world, diagonal ? TileCoord{3,3} : TileCoord{3,2}, true);
+        auto state = MakeCombatState(true);
+        state.faction = CombatFaction::Undead;
+        state.injury.regeneration = false;
+        ApplyInjury(state.body, BodyPart::LeftLeg, 100, state.injury);
+        REQUIRE(world.Combat().Configure(npc, state));
+        REQUIRE(world.SetActorSpeed(npc, 125));
+        REQUIRE(world.SetActorController(npc, AiControllerKind::Sighted));
+        REQUIRE(world.SetActorLight(player, {255,1}));
+        std::uint32_t rng = 42;
+        world.ProcessNpcActions(rng);
+        CHECK(world.GetActor(npc)->position == TileCoord{2,2});
+        CHECK(world.GetActorRemainingTicks(npc) == 125);
+    }
 }
 
 ContentCatalog ProfileContent(bool named) {

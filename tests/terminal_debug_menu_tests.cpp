@@ -1,6 +1,7 @@
 #include "terminal/debug_menu.h"
 
 #include "client/worldgen_debug.h"
+#include "client/ai_debug.h"
 #include "content_fixture.h"
 #include "core/server.h"
 #include "core/save_database.h"
@@ -12,6 +13,7 @@
 #include <ftxui/screen/screen.hpp>
 
 #include <string>
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 
@@ -145,6 +147,10 @@ TEST_CASE("Worldgen debug modal consumes gameplay events and never mutates the s
     Key(menu, 'L'); // Inspect an unexplored region as well.
     Key(menu, '5');
     Key(menu, '+');
+    Key(menu, 'a');
+    Key(menu, 'l');
+    Key(menu, '>');
+    CHECK(menu->OnEvent(ftxui::Event::PageDown));
     Draw(menu);
     CHECK(closed == 0);
     CHECK(server.GetTick() == before.tick);
@@ -190,6 +196,10 @@ TEST_CASE("Worldgen debug menu uses saved seed and refuses a regional preview fo
         Has(menu, "Seed: 1707 | Generation version: " + std::to_string(version));
         if (version == 1) {
             Has(menu, "Generated preview unavailable");
+            Key(menu, 'a');
+            Has(menu, "Live resident map");
+            Key(menu, 'a');
+            Has(menu, "Generated preview unavailable");
             CHECK(Draw(menu).find("Layer: Roads") == std::string::npos);
             for (const char key : std::string("12345+jL")) { Key(menu, key); }
             Has(menu, "Generated preview unavailable");
@@ -204,6 +214,55 @@ TEST_CASE("Worldgen debug menu uses saved seed and refuses a regional preview fo
         CHECK(menu->OnEvent(ftxui::Event::Escape));
         CHECK(closed == 1);
     }
+}
+
+TEST_CASE("AI debug inspector navigates three dimensions and captures resident state", "[terminal][ai-debug]") {
+    Server server(TestContent(), 173);
+    const auto position = server.GetWorld().GetActor(server.GetPlayer())->position;
+    const auto before = server.GetTick();
+    auto menu = CreateWorldgenDebugMenu(server.GetWorld(), {position.x, position.z, 3}, [] {});
+    Has(menu, "a: AI / world generation");
+    Key(menu, 'a');
+    Has(menu, "Debug menu | AI inspector");
+    Has(menu, "Cursor: " + std::to_string(position.x) + "," + std::to_string(position.z) + ",3");
+    CHECK(menu->OnEvent(ftxui::Event::ArrowRight));
+    Key(menu, 'j');
+    Key(menu, '>');
+    Has(menu, "Cursor: " + std::to_string(position.x + 1) + "," + std::to_string(position.z + 1) + ",4");
+    for (int i = 0; i < 30; ++i) { Key(menu, '>'); }
+    Has(menu, ",10 (X,Z,Y)");
+    for (int i = 0; i < 30; ++i) { Key(menu, '<'); }
+    Has(menu, ",-10 (X,Z,Y)");
+    CHECK(menu->OnEvent(ftxui::Event::Home));
+    Has(menu, "Cursor: " + std::to_string(position.x) + "," + std::to_string(position.z) + ",3");
+    Key(menu, 'a');
+    Has(menu, "World generation");
+    Key(menu, 'a');
+    Has(menu, ",3 (X,Z,Y)");
+    CHECK(server.GetTick() == before);
+}
+
+TEST_CASE("AI inspector displays the selected resident actor capture", "[terminal][ai-debug]") {
+    Server server(TestContent(), 173);
+    const auto position = server.GetWorld().GetActor(server.GetPlayer())->position;
+    AiDebugView capture;
+    CaptureAiDebugView(server.GetWorld(), position, capture);
+    REQUIRE(capture.actor != 0);
+    REQUIRE_FALSE(capture.details.empty());
+    auto menu = CreateWorldgenDebugMenu(server.GetWorld(), position, [] {});
+    Key(menu, 'a');
+    // Paragraph word separators can be empty screen cells; compare content
+    // independently of those layout spaces.
+    auto rendered = Draw(menu, 140, 50);
+    std::erase(rendered, ' ');
+    const auto actorLabel = "Actor:" + std::to_string(capture.actor) + "(player)";
+    CHECK(rendered.find(actorLabel) != std::string::npos);
+    CHECK(rendered.find("Controller:none") != std::string::npos);
+    Key(menu, 'l');
+    Key(menu, 'h');
+    rendered = Draw(menu, 140, 50);
+    std::erase(rendered, ' ');
+    CHECK(rendered.find(actorLabel) != std::string::npos);
 }
 
 TEST_CASE("Zoomed debug map keeps the selected tile visible in a small terminal", "[terminal][worldgen-debug]") {
@@ -237,7 +296,8 @@ TEST_CASE("Worldgen debug menu uses configured bindings and localized presentati
     World world(TestContent(), 123);
     Localization localization;
     REQUIRE(localization.Load(CATACLYSMX_LOC_DIRECTORY, "en"));
-    Keymap overrides{{InputContext::Debug, InputAction::West, {{"W", false}}}};
+    Keymap overrides{{InputContext::Debug, InputAction::West, {{"W", false}}},
+        {InputContext::Debug, InputAction::Inspect, {{"I", false}}}};
     const auto keys = ResolveKeymap({}, overrides);
     REQUIRE(ValidateKeymap(keys));
     auto menu = CreateWorldgenDebugMenu(world, {1, 2}, [] {}, &localization, &keys);
@@ -247,6 +307,9 @@ TEST_CASE("Worldgen debug menu uses configured bindings and localized presentati
     Has(menu, "Cursor: 1,2");
     Key(menu, 'W');
     Has(menu, "Cursor: -7,2");
+    Has(menu, "I: AI / world generation");
+    Key(menu, 'I');
+    Has(menu, "AI inspector");
     CHECK(world.LoadedChunks().empty());
 }
 

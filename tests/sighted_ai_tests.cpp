@@ -22,9 +22,13 @@ ContentCatalog SightedContent() {
           open_space:true,appearance:{symbol:' ',foreground:'white'}},
         {type:'terrain',id:'floor',name:'Floor',movement:{passable:true},blocks_sight:false,
           appearance:{symbol:'.',foreground:'white'}},
+        {type:'terrain',id:'stairs',name:'Stairs',movement:{passable:true},blocks_sight:false,
+          stairs:true,appearance:{symbol:'>',foreground:'white'}},
         {type:'terrain',id:'wall',name:'Wall',movement:{passable:false},blocks_sight:true,
           appearance:{symbol:'#',foreground:'white'}}],
-      ai_profiles:[{id:'patient',candidate_budget:1,bucket_budget:2}]
+      ai_profiles:[{id:'patient',candidate_budget:1,bucket_budget:2},
+        {id:'near',sight_range:1,dim_range:1,dark_range:1},
+        {id:'blind',dark_range:0}]
     })"};
     return Take(LoadContent({&source, 1}));
 }
@@ -119,6 +123,233 @@ TEST_CASE("Sighted detects a distant hostile and pursues without executing its i
     CHECK(controller->ChooseAction(context, rng).kind == ActorIntentKind::Move);
     CHECK(controller->Inspect().observedTick == 117);
     CHECK(controller->Inspect().memoryRemaining == 1200);
+}
+
+TEST_CASE("Sighted pursues all eight bearings independently of identity tie phase", "[ai][sighted][movement]") {
+    Rig rig;
+    for (int identity = 0; identity < 20; ++identity) {
+        for (int i = 0; i < 8; ++i) {
+            CAPTURE(identity, i);
+            const auto direction = actorStepDirections[i];
+            const auto self = rig.Create({7, 7}, CombatFaction::Undead);
+            const TileCoord goal{7 + 4 * direction.x, 7 + 4 * direction.z};
+            const auto target = rig.Create(goal, CombatFaction::Survivors);
+            auto controller = Controller();
+            std::uint32_t rng = 42;
+            const auto intent = controller->ChooseAction(ActorReadContext(rig.world, self), rng);
+            REQUIRE(intent.kind == ActorIntentKind::Move);
+            CHECK(intent.direction == direction);
+            CHECK(intent.baseCost == 100);
+            const auto decision = controller->Inspect().decision;
+            CHECK(decision.valid);
+            CHECK(decision.origin == TileCoord{7, 7});
+            CHECK(decision.goal == goal);
+            CHECK(decision.hasGoal);
+            CHECK(decision.selectedMove == i);
+            CHECK(decision.intent == intent.kind);
+            CHECK(decision.moves[i] == AiMoveStatus::Available);
+            REQUIRE(rig.world.DestroyActor(target));
+            REQUIRE(rig.world.DestroyActor(self));
+        }
+        // An odd identity stride exercises both parities of the ten-way tie phase.
+        const auto padding = rig.Create({7, 7}, CombatFaction::Neutral);
+        REQUIRE(rig.world.DestroyActor(padding));
+    }
+}
+
+TEST_CASE("Sighted immediately attacks every visible neighbor even in darkness", "[ai][sighted][combat][light]") {
+    Rig rig;
+    for (const auto light : {0, 255}) {
+        rig.world.SetSkyLight(static_cast<std::uint8_t>(light));
+        for (int i = 0; i < 8; ++i) {
+            CAPTURE(light, i);
+            const auto self = rig.Create({7, 7}, CombatFaction::Undead);
+            // Exhaust background discovery's one candidate before the target.
+            const auto target = rig.Create({7 + actorStepDirections[i].x,
+                7 + actorStepDirections[i].z}, CombatFaction::Survivors);
+            for (const auto profile : {"patient", "near", "blind"}) {
+                CAPTURE(profile);
+                auto controller = Controller(profile);
+                std::uint32_t rng = 42;
+                const auto intent = controller->ChooseAction(ActorReadContext(rig.world, self), rng);
+                const bool visible = light != 0 || eastl::string_view(profile) != "blind";
+                CHECK(controller->Inspect().targetVisible == visible);
+                CHECK((intent.kind == ActorIntentKind::Attack) == visible);
+                if (visible) { CHECK(intent.target == target); }
+                const auto decision = controller->Inspect().decision;
+                CHECK(decision.intent == intent.kind);
+                CHECK(decision.moves[i] == AiMoveStatus::Occupied);
+                if (visible) {
+                    CHECK(decision.behavior == AiBehavior::Attack);
+                    CHECK(decision.selectedMove == -1);
+                }
+            }
+            REQUIRE(rig.world.DestroyActor(target));
+            REQUIRE(rig.world.DestroyActor(self));
+        }
+    }
+}
+
+TEST_CASE("Sighted closes the forward gap against sideways and alternating targets", "[ai][sighted][movement]") {
+    Rig rig;
+    for (int identity = 0; identity < 20; ++identity) {
+        for (int bearing = 0; bearing < 4; ++bearing) {
+            for (const bool alternating : {false, true}) {
+                CAPTURE(identity, bearing, alternating);
+                const auto forward = actorStepDirections[bearing];
+                const TileCoord sideways{-forward.z, forward.x};
+                const auto self = rig.Create({7, 7}, CombatFaction::Undead);
+                const auto target = rig.Create({7 + 5 * forward.x, 7 + 5 * forward.z}, CombatFaction::Survivors);
+                auto controller = Controller();
+                std::uint32_t rng = 42;
+                for (int step = 0; step < 3; ++step) {
+                    const int lateral = alternating ? (step % 2 == 0 ? 1 : -1) : step + 1;
+                    const TileCoord goal{7 + 5 * forward.x + lateral * sideways.x,
+                        7 + 5 * forward.z + lateral * sideways.z};
+                    REQUIRE(rig.world.MoveActor(target, goal));
+                    const auto before = rig.world.GetActor(self)->position;
+                    const auto intent = controller->ChooseAction(ActorReadContext(rig.world, self), rng);
+                    REQUIRE(intent.kind == ActorIntentKind::Move);
+                    // A Manhattan tie used to allow mirroring lateral movement
+                    // forever; every step must also close the forward gap.
+                    CHECK(intent.direction.x * forward.x + intent.direction.z * forward.z == 1);
+                    ExecuteMove(rig, self, intent);
+                    CHECK(AiMovementScore(rig.world.GetActor(self)->position, goal) < AiMovementScore(before, goal));
+                    rig.Advance(*controller, 100);
+                }
+                REQUIRE(rig.world.DestroyActor(target));
+                REQUIRE(rig.world.DestroyActor(self));
+            }
+        }
+        const auto padding = rig.Create({7, 7}, CombatFaction::Neutral);
+        REQUIRE(rig.world.DestroyActor(padding));
+    }
+}
+
+TEST_CASE("Sighted diagonal interaction still requires successful geometric detection", "[ai][sighted][combat][light]") {
+    Rig rig;
+    const auto self = rig.Create({7, 7}, CombatFaction::Undead);
+    TileCoord position{8, 8};
+    SECTION("opaque corner blocks an immediate dark diagonal") {
+        rig.world.SetSkyLight(0);
+        REQUIRE(rig.world.SetTile({8, 7}, {rig.content.FindTerrain("wall"), 0}));
+    }
+    SECTION("positive neighbor exception does not extend across layers") {
+        position = {8, 7, 1};
+        REQUIRE(rig.world.SetTile(position, {rig.content.FindTerrain("floor"), 0}));
+    }
+    rig.Create(position, CombatFaction::Survivors);
+    auto controller = Controller("near");
+    std::uint32_t rng = 42;
+    const auto intent = controller->ChooseAction(ActorReadContext(rig.world, self), rng);
+    CHECK(intent.kind != ActorIntentKind::Attack);
+    CHECK_FALSE(controller->Inspect().targetVisible);
+    CHECK(controller->Inspect().target == 0);
+    if (position.y != 0) { CHECK(controller->Inspect().rays == 0); }
+}
+
+TEST_CASE("Sighted captured probes explain a blocked wait and release backtracking", "[ai][sighted][inspection]") {
+    Rig rig;
+    const auto self = rig.Create({7, 7}, CombatFaction::Undead);
+    for (int i = 0; i < 8; ++i) {
+        const auto direction = actorStepDirections[i];
+        REQUIRE(rig.world.SetTile({7 + direction.x, 7 + direction.z},
+            {rig.content.FindTerrain(i == 4 ? "floor" : "wall"), 0}));
+    }
+    auto controller = Controller();
+    std::uint32_t rng = 42;
+    const ActorReadContext context(rig.world, self);
+    const auto first = controller->ChooseAction(context, rng);
+    REQUIRE(first.direction == TileCoord{1, 1});
+    ExecuteMove(rig, self, first);
+    for (int i = 0; i < 8; ++i) {
+        const auto direction = actorStepDirections[i];
+        const TileCoord position{8 + direction.x, 8 + direction.z};
+        if (position != TileCoord{7, 7}) {
+            REQUIRE(rig.world.SetTile(position, {rig.content.FindTerrain("wall"), 0}));
+        }
+    }
+    rig.Advance(*controller, 100);
+    const auto wait = controller->ChooseAction(context, rng);
+    REQUIRE(wait.kind == ActorIntentKind::Wait);
+    const auto snapshot = CaptureAiController(controller.get());
+    const auto evidence = controller->Inspect().decision;
+    CHECK(evidence.tick == 100);
+    CHECK(evidence.origin == TileCoord{8, 8});
+    CHECK(evidence.previousPosition == TileCoord{7, 7});
+    CHECK(evidence.hasPrevious);
+    CHECK_FALSE(evidence.hasGoal);
+    CHECK(evidence.intent == ActorIntentKind::Wait);
+    CHECK(evidence.selectedMove == -1);
+    CHECK(evidence.moves[6] == AiMoveStatus::Backtracking);
+    CHECK(evidence.moves[0] == AiMoveStatus::Impassable);
+    CHECK(evidence.moves[8] == AiMoveStatus::Unsupported);
+    // Inspection cannot refresh probes after the world or clock changes.
+    REQUIRE(rig.world.SetTile({9, 8}, {rig.content.FindTerrain("floor"), 0}));
+    rig.Advance(*controller, 1);
+    CHECK(controller->Inspect().decision.moves == evidence.moves);
+    CHECK(controller->Inspect().decision.tick == evidence.tick);
+    const auto afterElapsed = CaptureAiController(controller.get());
+    controller->Inspect();
+    CHECK(CaptureAiController(controller.get()) == afterElapsed);
+    CHECK(snapshot != afterElapsed);
+    REQUIRE(rig.world.SetTile({9, 8}, {rig.content.FindTerrain("wall"), 0}));
+    const auto reverse = controller->ChooseAction(context, rng);
+    CHECK(reverse.kind == ActorIntentKind::Move);
+    CHECK(reverse.direction == TileCoord{-1, -1});
+    CHECK_FALSE(controller->Inspect().decision.hasPrevious);
+    CHECK(controller->Inspect().decision.moves[6] == AiMoveStatus::Available);
+}
+
+TEST_CASE("Sighted search records its remembered boundary without resensing on inspection", "[ai][sighted][inspection][memory]") {
+    Rig rig;
+    const auto self = rig.Create({7, 7}, CombatFaction::Undead);
+    const auto target = rig.Create({8, 7}, CombatFaction::Survivors);
+    auto controller = Controller();
+    std::uint32_t rng = 42;
+    const ActorReadContext context(rig.world, self);
+    REQUIRE(controller->ChooseAction(context, rng).kind == ActorIntentKind::Attack);
+    REQUIRE(rig.world.DestroyActor(target));
+    REQUIRE(rig.world.MoveActor(self, {8, 7}));
+    controller->ChooseAction(context, rng);
+    REQUIRE(controller->Inspect().behavior == AiBehavior::Search);
+    REQUIRE(rig.world.MoveActor(self, {10, 7}));
+    const auto intent = controller->ChooseAction(context, rng);
+    REQUIRE(intent.kind == ActorIntentKind::Move);
+    const auto decision = controller->Inspect().decision;
+    CHECK(decision.behavior == AiBehavior::Search);
+    CHECK(decision.goal == TileCoord{8, 7});
+    CHECK(decision.moves[0] == AiMoveStatus::OutsideSearch);
+    CHECK(decision.moves[1] == AiMoveStatus::OutsideSearch);
+    CHECK(decision.moves[4] == AiMoveStatus::OutsideSearch);
+    CHECK(decision.moves[decision.selectedMove] == AiMoveStatus::Available);
+    CHECK(Distance({10 + intent.direction.x, 7 + intent.direction.z}, decision.goal) <= 2);
+    const auto saved = CaptureAiController(controller.get());
+    controller->Inspect();
+    controller->Inspect();
+    CHECK(CaptureAiController(controller.get()) == saved);
+}
+
+TEST_CASE("Sighted pursuit retains paired stairs and records missing stair support", "[ai][sighted][movement][inspection]") {
+    Rig rig;
+    const auto self = rig.Create({7, 7}, CombatFaction::Undead);
+    REQUIRE(rig.world.SetTile({7, 7}, {rig.content.FindTerrain("stairs"), 0}));
+    REQUIRE(rig.world.SetTile({7, 7, 1}, {rig.content.FindTerrain("stairs"), 0}));
+    const auto target = rig.Create({7, 7, 1}, CombatFaction::Survivors);
+    auto controller = Controller();
+    std::uint32_t rng = 42;
+    const ActorReadContext context(rig.world, self);
+    CHECK(controller->ChooseAction(context, rng).kind != ActorIntentKind::Attack);
+    REQUIRE(controller->Inspect().targetVisible);
+    CHECK(controller->Inspect().decision.moves[8] == AiMoveStatus::Occupied);
+    REQUIRE(rig.world.DestroyActor(target));
+    const auto up = controller->ChooseAction(context, rng);
+    CHECK(up.kind == ActorIntentKind::Move);
+    CHECK(up.direction == TileCoord{0, 0, 1});
+    CHECK(controller->Inspect().decision.selectedMove == 8);
+    REQUIRE(rig.world.SetTile({7, 7, 1}, {rig.content.FindTerrain("floor"), 0}));
+    controller->ChooseAction(context, rng);
+    CHECK(controller->Inspect().decision.moves[8] == AiMoveStatus::StairsRequired);
 }
 
 TEST_CASE("World executes sighted pursuit and commits an attack on an NPC", "[ai][sighted][world]") {
@@ -217,7 +448,8 @@ TEST_CASE("Sighted locally detours around an occluding obstacle using remembered
     }
     REQUIRE(firstIntent.kind == ActorIntentKind::Move);
     CHECK(firstIntent.direction != TileCoord{1, 0});
-    CHECK(Distance(firstIntent.direction, {}) == 1);
+    CHECK(firstIntent.direction.x == 1);
+    CHECK(std::abs(firstIntent.direction.z) == 1);
     ExecuteMove(rig, self, firstIntent);
     CHECK(Distance(rig.world.GetActor(self)->position, known.lastKnownPosition) <= 6);
 }
@@ -362,8 +594,8 @@ TEST_CASE("Tracking leaves a bounded discovery allowance that reaches new contac
         CHECK(CaptureAiController(first.get()) == CaptureAiController(second.get()));
         CHECK(view.candidates <= 1);
         CHECK(view.buckets <= 2);
-        // Discovery plus tracking, four local neighbors and remembered location.
-        CHECK(view.rays <= 1 + 1 + 4 + 1);
+        // Discovery plus tracking, eight local neighbors and remembered location.
+        CHECK(view.rays <= 1 + 1 + 8 + 1);
         if (view.target == rig.world.GetActor(distant)->id) {
             trackedDistant = true;
             CHECK(view.targetVisible);
@@ -473,7 +705,7 @@ TEST_CASE("Host elapsed subdivisions preserve sighted decisions at equal action 
 TEST_CASE("Sighted attack intents respect self capability without losing the contact", "[ai][sighted][combat]") {
     Rig rig;
     const auto self = rig.Create({2, 2}, CombatFaction::Undead);
-    const auto target = rig.Create({3, 2}, CombatFaction::Survivors);
+    const auto target = rig.Create({3, 3}, CombatFaction::Survivors);
     auto combat = MakeCombatState(false);
     combat.faction = CombatFaction::Undead;
     bool capable = true;

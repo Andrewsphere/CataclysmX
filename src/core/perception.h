@@ -77,6 +77,15 @@ bool TerrainWithinVision(const World& world, TileCoord observer, TileCoord targe
     const VisionProfile& vision);
 int VisionRange(const VisionProfile& vision, LightBand targetBand, std::uint8_t observerLight);
 
+// Range filtering only; callers must still enforce geometric visibility.
+// A positive range includes the eight immediate same-layer neighbors. Zero
+// remains self-only. Player projection supplies horizontal distance; AI supplies
+// full 3D distance. The exception never expands sight onto another layer.
+constexpr bool WithinSightRange(std::int64_t squaredDistance, int range, bool sameLayer) {
+    return squaredDistance <= std::int64_t{range} * range
+        || (range >= 1 && sameLayer && squaredDistance <= 2);
+}
+
 // Geometry queries are independent of illumination and frontend projection.
 bool OpenVerticalFace(const World& world, TileCoord first, TileCoord second);
 // Local observer-plane shadowcast plus only the target's downward column.

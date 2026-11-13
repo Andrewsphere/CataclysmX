@@ -162,6 +162,11 @@ Keymap DefaultKeymap() {
     add(InputContext::Items, InputAction::MoveUp, {">"});
     add(InputContext::Menu, InputAction::Reset, {"Backspace"});
     const auto debug = InputContext::Debug;
+    add(debug, InputAction::Inspect, {"a"});
+    add(debug, InputAction::MoveUp, {">"});
+    map.back().keys.push_back({"Up", false, true});
+    add(debug, InputAction::MoveDown, {"<"});
+    map.back().keys.push_back({"Down", false, true});
     add(debug, InputAction::Debug, {"F11", "q"});
     add(debug, InputAction::JumpWest, {"H"}); add(debug, InputAction::JumpEast, {"L"});
     add(debug, InputAction::JumpNorth, {"K"}); add(debug, InputAction::JumpSouth, {"J"});

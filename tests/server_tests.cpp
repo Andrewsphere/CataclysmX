@@ -151,6 +151,28 @@ TEST_CASE("Server creates the deterministic demo and advances only successful co
     CHECK(world.GetActor(npc)->turns == server.GetTick() / 100);
 }
 
+TEST_CASE("Dark diagonal bump attacks retain combat costs", "[server][commands][movement-cost][perception]") {
+    Server server(TestContent());
+    auto& world = server.GetWorld();
+    REQUIRE(world.SetTile({8,8}, {TestTerrain("floor"),0}));
+    REQUIRE(world.SetTile({9,9}, {TestTerrain("floor"),0}));
+    REQUIRE(world.SetTile({8,8,1}, {TestTerrain("floor"),0}));
+    REQUIRE(world.SetTile({9,9,1}, {TestTerrain("floor"),0}));
+    REQUIRE(world.MoveActor(server.GetPlayer(), {8,8}));
+    const auto target = take(world.CreateActor({9,9}));
+    auto state = MakeCombatState(false);
+    state.faction = CombatFaction::Undead;
+    REQUIRE(world.Combat().Configure(target, state));
+    REQUIRE(world.SetActorController(target, AiControllerKind::None));
+    REQUIRE(world.SetActorSpeed(server.GetPlayer(), 125));
+    world.SetSkyLight(0);
+    REQUIRE(world.CanPlayerSee(server.GetPlayer(), {9,9}));
+    const auto attack = server.Send({CommandKind::move, 1, 1});
+    CHECK(attack.outcome == Outcome::attacked);
+    CHECK(attack.cost == 125);
+    CHECK(world.GetActor(server.GetPlayer())->position == TileCoord{8,8});
+}
+
 TEST_CASE("Failures do not consume RNG and occupied open doors cannot close", "[server][commands][determinism]") {
     Server subject(TestContent(), 918);
     Server reference(TestContent(), 918);

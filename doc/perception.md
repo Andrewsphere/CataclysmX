@@ -13,6 +13,17 @@ unaffected. `ValidVisionProfile` requires ordered nonnegative ranges bounded by
 64, glare range no larger than dim range, and a bright-band glare threshold.
 Passing an invalid profile is an invariant violation.
 
+`WithinSightRange` shares range filtering across terrain, authoritative observation
+footprints, and live actor/item/object overlays. A positive range includes all eight
+immediate same-layer neighbors (horizontal squared distance at most two), including
+in darkness. Zero range remains self-only; distance-two cells and lower diagonals
+receive no exception. Longer ranges keep their Euclidean boundary. Geometry still
+controls visibility: walls and closed doors are visible endpoints, missing tiles
+block, and downward projection requires open columns. For a configured maximum
+range of one, the bulk planar pass uses radius two cropped to the one-tile square;
+only the observer plane receives diagonals, including implicit clear layers/rows.
+This keeps bulk queries consistent with the point query's ceil-distance planar pass.
+
 ## Derived lighting
 
 `World::GetLightLevel` lazily refreshes one shared resident-world field. Geometry,

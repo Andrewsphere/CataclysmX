@@ -4,6 +4,7 @@
 #include "combat/combat_system.h"
 #include "core/state_reader.h"
 #include "core/world.h"
+#include "core/perception.h"
 #include <EASTL/array.h>
 #include <EASTL/algorithm.h>
 #include <cstdlib>
@@ -15,7 +16,6 @@
 namespace cataclysmx {
 namespace {
 
-constexpr TileCoord directions[] = {{1, 0}, {0, 1}, {-1, 0}, {0, -1}, {0, 0, 1}, {0, 0, -1}};
 constexpr std::uint32_t maxDiscoveryBuckets = 25 * 41;
 
 struct SightedState {
@@ -65,17 +65,15 @@ struct DecisionInput {
     CombatFaction faction = CombatFaction::Neutral;
     bool canAttack = false;
     Tick tick = 0;
-    eastl::array<bool, 6> moves{};
-    eastl::array<Observation, 37> observations{}; // tracking + four neighbors + 32 candidates
+    eastl::array<AiMoveStatus, actorStepDirections.size()> moves{};
+    eastl::array<Observation, 41> observations{}; // tracking + eight neighbors + 32 candidates
     std::size_t observationCount = 0;
     bool rememberedLocationEmpty = false;
 };
 
 bool WithinRange(TileCoord origin, TileCoord target, std::uint32_t range) {
-    const std::int64_t dx = std::int64_t{target.x} - origin.x;
-    const std::int64_t dz = std::int64_t{target.z} - origin.z;
-    const std::int64_t dy = std::int64_t{target.y} - origin.y;
-    return dx * dx + dz * dz + dy * dy <= std::int64_t{range} * range;
+    return cataclysmx::WithinSightRange(cataclysmx::AiMovementScore(origin, target),
+        static_cast<int>(range), origin.y == target.y);
 }
 
 bool DetectPosition(const World& world, TileCoord origin, TileCoord target,
@@ -136,19 +134,25 @@ DecisionInput Sense(const World& world, ActorHandle self, SightedState& state,
     // Tracking and nearby interaction do not consume background discovery's
     // allowance. These checks always finish in this callback's stable world.
     if (state.target) { Observe(world, world.FindActor(state.target), profile, input, stats); }
-    for (int i = 0; i < 6; ++i) {
-        const auto destination = Add(input.position, directions[i]);
+    for (std::size_t i = 0; i < actorStepDirections.size(); ++i) {
+        input.moves[i] = AiMoveStatus::Unavailable;
+        const auto destination = Add(input.position, actorStepDirections[i]);
         const auto* tile = world.GetTile(destination);
         if (!tile) { continue; }
         const auto& terrain = world.GetContent().GetTerrain(tile->terrain);
         const auto occupant = world.ActorAt(destination);
-        if (i < 4) { Observe(world, occupant, profile, input, stats); }
+        if (i < 8) { Observe(world, occupant, profile, input, stats); }
         // Deliberately local probes, with no identity exposed by occupancy.
-        input.moves[i] = world.IsActive(destination) && terrain.passable && !terrain.openSpace && !occupant.value;
-        if (i >= 4) {
+        if (!world.IsActive(destination)) { input.moves[i] = AiMoveStatus::Inactive; }
+        else if (!terrain.passable) { input.moves[i] = AiMoveStatus::Impassable; }
+        else if (terrain.openSpace) { input.moves[i] = AiMoveStatus::Unsupported; }
+        else if (occupant.value) { input.moves[i] = AiMoveStatus::Occupied; }
+        else { input.moves[i] = AiMoveStatus::Available; }
+        if (i >= 8 && input.moves[i] == AiMoveStatus::Available) {
             const auto* source = world.GetTile(input.position);
-            input.moves[i] = input.moves[i] && terrain.stairs && source
-                && world.GetContent().GetTerrain(source->terrain).stairs;
+            if (!terrain.stairs || !source || !world.GetContent().GetTerrain(source->terrain).stairs) {
+                input.moves[i] = AiMoveStatus::StairsRequired;
+            }
         }
     }
     if (state.scanRemaining == 0) {
@@ -205,6 +209,19 @@ void Remember(SightedState& state, const Observation& observation, Tick tick, co
 
 ActorIntent Decide(const DecisionInput& input, SightedState& state, const AiProfile& profile,
     AiInspection& inspection, std::uint32_t& rng) {
+    auto& decision = inspection.decision;
+    decision.valid = true;
+    decision.tick = input.tick;
+    decision.origin = input.position;
+    decision.previousPosition = state.previousPosition;
+    decision.hasPrevious = state.hasPrevious;
+    decision.moves = input.moves;
+    for (std::size_t i = 0; i < actorStepDirections.size(); ++i) {
+        if (decision.moves[i] == AiMoveStatus::Available && state.hasPrevious
+            && Add(input.position, actorStepDirections[i]) == state.previousPosition) {
+            decision.moves[i] = AiMoveStatus::Backtracking;
+        }
+    }
     const Observation* tracked = nullptr;
     const Observation* best = nullptr;
     for (std::size_t i = 0; i < input.observationCount; ++i) {
@@ -223,9 +240,14 @@ ActorIntent Decide(const DecisionInput& input, SightedState& state, const AiProf
         tracked = best;
     }
     inspection.targetVisible = tracked && tracked->id == state.target;
+    decision.hasGoal = state.target != 0;
+    decision.goal = state.lastPosition;
     if (inspection.targetVisible && input.canAttack && tracked->position.y == input.position.y
-        && Distance(input.position, tracked->position) == 1) {
+        && eastl::max(std::abs(input.position.x - tracked->position.x),
+            std::abs(input.position.z - tracked->position.z)) == 1) {
         state.behavior = AiBehavior::Attack;
+        decision.behavior = state.behavior;
+        decision.intent = ActorIntentKind::Attack;
         return {ActorIntentKind::Attack, {}, 100, tracked->handle};
     }
     if (state.target && state.behavior != AiBehavior::Search) {
@@ -235,26 +257,33 @@ ActorIntent Decide(const DecisionInput& input, SightedState& state, const AiProf
             state.searchRemaining = eastl::min<Tick>(profile.searchTicks, state.memoryRemaining);
         }
     }
+    decision.behavior = state.behavior;
+    if (state.behavior == AiBehavior::Search) {
+        for (std::size_t i = 0; i < actorStepDirections.size(); ++i) {
+            if (decision.moves[i] == AiMoveStatus::Available
+                && (i >= 8 || Distance(Add(input.position, actorStepDirections[i]), state.lastPosition) > 2)) {
+                decision.moves[i] = AiMoveStatus::OutsideSearch;
+            }
+        }
+    }
     int selected = -1;
     if (state.target && state.behavior == AiBehavior::Pursue) {
-        int bestDistance = Distance(input.position, state.lastPosition) + 2;
+        std::int64_t bestDistance = 0;
         // Stable per-identity tie phase prevents every creature preferring +X.
-        for (int offset = 0; offset < 6; ++offset) {
-            const int i = (static_cast<int>(input.self % 6) + offset) % 6;
-            const auto destination = Add(input.position, directions[i]);
-            if (!input.moves[i] || (state.hasPrevious && destination == state.previousPosition)) { continue; }
-            const int distance = Distance(destination, state.lastPosition);
-            if (distance < bestDistance) { bestDistance = distance; selected = i; }
+        for (int offset = 0; offset < 10; ++offset) {
+            const int i = (static_cast<int>(input.self % 10) + offset) % 10;
+            const auto destination = Add(input.position, actorStepDirections[i]);
+            if (decision.moves[i] != AiMoveStatus::Available) { continue; }
+            const auto distance = cataclysmx::AiMovementScore(destination, state.lastPosition);
+            if (selected < 0 || distance < bestDistance) { bestDistance = distance; selected = i; }
         }
     } else {
         // One explicit draw for idle/search attention. No random numbers are
         // consumed by sensing, continuation, or target ranking.
         rng = rng * 1'664'525U + 1'013'904'223U;
-        for (int offset = 0; offset < 4; ++offset) {
-            const int i = (static_cast<int>(rng >> 30) + offset) % 4;
-            const auto destination = Add(input.position, directions[i]);
-            if (!input.moves[i] || (state.hasPrevious && destination == state.previousPosition)) { continue; }
-            if (state.behavior == AiBehavior::Search && Distance(destination, state.lastPosition) > 2) { continue; }
+        for (int offset = 0; offset < 8; ++offset) {
+            const int i = (static_cast<int>(rng >> 29) + offset) % 8;
+            if (decision.moves[i] != AiMoveStatus::Available) { continue; }
             selected = i;
             break;
         }
@@ -264,7 +293,9 @@ ActorIntent Decide(const DecisionInput& input, SightedState& state, const AiProf
     state.hasPrevious = selected >= 0;
     if (selected < 0) { return {}; }
     state.previousPosition = input.position;
-    return {ActorIntentKind::Move, directions[selected], 100};
+    decision.intent = ActorIntentKind::Move;
+    decision.selectedMove = selected;
+    return {ActorIntentKind::Move, actorStepDirections[selected], 100};
 }
 
 DataObject PositionState(TileCoord position) {

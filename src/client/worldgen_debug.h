@@ -1,6 +1,6 @@
 #pragma once
 
-#include "worldgen/worldgen.h"
+#include "client/debug_map.h"
 
 namespace cataclysmx {
 
@@ -8,13 +8,7 @@ class Localization;
 
 enum class WorldgenDebugLayer { Roads, Parcels, Ownership, Biomes, Terrain };
 
-struct WorldgenDebugView {
-    TileRect bounds{};
-    int scale = 1; // World tiles per displayed cell, in [1,16].
-    int width = 0;
-    int height = 0;
-    Vector<TerminalAppearance> cells; // Row-major; owning, frontend-independent values.
-};
+using WorldgenDebugView = DebugMapView;
 
 const char* WorldgenDebugLayerName(WorldgenDebugLayer layer);
 const char* WorldgenDebugLegend(WorldgenDebugLayer layer);

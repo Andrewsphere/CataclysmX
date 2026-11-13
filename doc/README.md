@@ -24,6 +24,8 @@
   in-memory archives. Start here for scenario setup and administrative tools.
 - [Actors and AI controllers](actors_api.md): deterministic intents and controller state.
 - [Sighted entity AI](entity_ai.md): sensing, memory, discovery, profiles and inspection.
+- [AI debug inspection](ai_debug.md): F11 live actor inspection, historical movement
+  overlays, shared movement costs, and owned frontend captures.
 - [Combat API](combat_api.md): body, injury, moves, disruption and recovery.
 - [Combat presentation](combat_presentation.md): frontend status and feedback text.
 - [Objects API](objects_api.md): typed crafting machines, actions, and saved-state defaults.

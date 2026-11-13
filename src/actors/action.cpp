@@ -1,4 +1,5 @@
 #include "actors/action.h"
+#include "actors/movement.h"
 
 #include <cstdlib>
 
@@ -9,6 +10,16 @@ void Require(bool condition) {
     if (!condition) { std::abort(); }
 }
 
+}
+
+std::uint32_t ActorStepBaseCost(std::uint32_t baseCost, TileCoord direction) {
+    bool valid = false;
+    for (const auto step : actorStepDirections) { valid = valid || direction == step; }
+    Require(baseCost > 0 && valid);
+    const std::uint64_t cost = direction.x != 0 && direction.z != 0
+        ? (std::uint64_t{baseCost} * 141 + 99) / 100 : baseCost;
+    Require(cost <= std::numeric_limits<std::uint32_t>::max());
+    return static_cast<std::uint32_t>(cost);
 }
 
 bool ValidateAction(const ActorActionState& state) {

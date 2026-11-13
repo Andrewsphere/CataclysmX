@@ -8,6 +8,7 @@
 #include <EASTL/sort.h>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 
 namespace {
 using namespace cataclysmx;
@@ -421,6 +422,96 @@ TEST_CASE("Lower walls use lit tops rather than obsolete diagonal floor ties", "
         CHECK(CanSeeTile(world, observer, target));
         CHECK(TerrainLightLevel(world, {7,4,y-1}, target) < 64);
     }
+}
+
+TEST_CASE("Dark close-range terrain agrees between point and bulk visibility", "[lighting][perception][close-range]") {
+    World world(TestContent());
+    Prepare(world);
+    const TileCoord origin{5,5,1};
+    const auto observer = world.CreateActor(origin, true);
+    REQUIRE(observer);
+    for (const int maximumRange : {playerSightRange, 1, 0}) {
+        VisionProfile vision;
+        vision.range = maximumRange;
+        vision.dimRange = eastl::min(6, maximumRange);
+        vision.darkRange = eastl::min(1, maximumRange);
+        vision.glareDimRange = eastl::min(3, vision.dimRange);
+        REQUIRE(world.SetVisionProfile(vision));
+        for (int z = -2; z <= 2; ++z) {
+            for (int x = -2; x <= 2; ++x) {
+                const TileCoord target{origin.x+x,origin.z+z,origin.y};
+                const bool expected = maximumRange == 0 ? x == 0 && z == 0
+                    : std::abs(x) <= 1 && std::abs(z) <= 1;
+                CHECK(CanSeeTile(world, origin, target, vision) == expected);
+                CHECK(world.CanPlayerSee(*observer, target) == expected);
+            }
+        }
+        world.UpdatePlayerObservations();
+        if (maximumRange > 0) {
+            CHECK(world.GetRememberedTile(world.GetActor(*observer)->id, {6,6,1}).terrain == TestTerrain("floor"));
+        }
+    }
+    VisionProfile blindInDark;
+    blindInDark.darkRange = 0;
+    REQUIRE(world.SetVisionProfile(blindInDark));
+    CHECK(world.CanPlayerSee(*observer, origin));
+    CHECK_FALSE(world.CanPlayerSee(*observer, {6,5,1}));
+    CHECK_FALSE(world.CanPlayerSee(*observer, {6,6,1}));
+    CHECK_FALSE(CanSeeTile(world, origin, {6,6,1}, blindInDark));
+}
+
+TEST_CASE("Radius-one geometry preserves opaque endpoints and lower projection boundaries", "[lighting][perception][close-range]") {
+    World world(TestContent());
+    Prepare(world);
+    const TileCoord origin{5,5,1};
+    VisionProfile vision;
+    vision.range = vision.dimRange = vision.darkRange = vision.glareDimRange = 1;
+    REQUIRE(world.SetVisionProfile(vision));
+    const auto observer = world.CreateActor(origin, true);
+    REQUIRE(observer);
+    for (const auto terrain : {"floor", "wall", "closed_door"}) {
+        REQUIRE(world.SetTile({6,5,1}, {TestTerrain(terrain),0}));
+        VisibilityMask mask;
+        PerceptionStats stats;
+        BuildVisibilityMask(world, origin, 1, mask, stats);
+        for (int z = -1; z <= 1; ++z) {
+            for (int x = -1; x <= 1; ++x) {
+                const TileCoord target{5+x,5+z,1};
+                CHECK(mask.Contains(target) == LineVisible(world, origin, target));
+                CHECK(world.CanPlayerSee(*observer, target) == CanSeeTile(world, origin, target, vision));
+            }
+        }
+        CHECK(mask.Contains({6,5,1}));
+        CHECK_FALSE(mask.Contains({7,5,1}));
+        if (eastl::string_view(terrain) == "floor") {
+            CHECK(mask.clearLayers[origin.y - mask.minimumY]);
+            CHECK(mask.ClearRow(6, 1) == eastl::pair<int, int>{4,6});
+            mask.MaterializeLayer(1);
+            CHECK(mask.Contains({6,6,1}));
+        }
+    }
+    REQUIRE(world.SetTile({6,5,1}, {TestTerrain("air"),0}));
+    REQUIRE(world.SetTile({6,6,1}, {TestTerrain("air"),0}));
+    VisibilityMask mask;
+    PerceptionStats stats;
+    BuildVisibilityMask(world, origin, 1, mask, stats);
+    CHECK(mask.Contains({6,6,1}));
+    CHECK(mask.Contains({6,5,0}));
+    CHECK_FALSE(mask.Contains({6,6,0}));
+    CHECK(LineVisible(world, origin, {6,6,0}));
+    CHECK_FALSE(CanSeeTile(world, origin, {6,6,0}, vision));
+    CHECK_FALSE(world.CanPlayerSee(*observer, {6,6,0}));
+    CHECK_FALSE(world.CanPlayerSee(*observer, {5,5,2}));
+    CHECK_FALSE(CanSeeTile(world, origin, {5,5,2}, vision));
+    REQUIRE(world.SetTile({6,5,1}, {TestTerrain("floor"),0}));
+    CHECK_FALSE(world.CanPlayerSee(*observer, {6,5,0}));
+    CHECK_FALSE(CanSeeTile(world, origin, {6,5,0}, vision));
+    // A missing neighboring chunk never becomes visible through the allowance.
+    CHECK_FALSE(CanSeeTile(world, {0,0,1}, {-1,-1,1}, vision));
+    BuildVisibilityMask(world, origin, 2, mask, stats);
+    CHECK(mask.Contains({7,5,1}));
+    CHECK_FALSE(mask.Contains({7,6,1}));
+    CHECK_FALSE(mask.Contains({7,7,1}));
 }
 
 void CheckFields(const World& world, const LightingField& incremental) {

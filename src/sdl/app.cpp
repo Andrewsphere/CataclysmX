@@ -150,11 +150,17 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
     Vector<String> debugDetails;
     WorldgenDebugLayer debugLayer = WorldgenDebugLayer::Roads;
     int debugScale = 8;
+    bool debugAi = false, aiNeeded = false, aiValid = false;
+    AiDebugView aiView;
+    eastl::optional<std::uint64_t> aiRequestId;
+    std::uint64_t aiRevision = 0, requestedAiRevision = 0, requestedAiGeneration = 0;
+    TileCoord requestedAiCursor{};
     std::uint64_t nextId = 1;
     unsigned int smokeStep = 0;
     bool smokeWaiting = false;
     bool smokeFailed = false;
     bool smokeExamined = false;
+    unsigned int smokeAiStep = 0;
     std::uint64_t smokeOpportunity = 0;
     String message = "Starting local session...";
     String hints = Hints(keys);
@@ -184,7 +190,14 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
     };
     const auto close = [&] {
         if (submit(RequestKind::Resume)) { modalPending = true; message = "Resuming..."; SDL_StopTextInput(platform.window);
-            inspectionId.reset(); inspectionNeeded = false; }
+            inspectionId.reset(); inspectionNeeded = false;
+            ++aiRevision; aiNeeded = false; aiValid = false; }
+    };
+    const auto refreshAi = [&] {
+        cursor.x = std::clamp(cursor.x,-world_coordinate_limit,world_coordinate_limit);
+        cursor.z = std::clamp(cursor.z,-world_coordinate_limit,world_coordinate_limit);
+        cursor.y = std::clamp(cursor.y,world_min_y,world_max_y);
+        ++aiRevision; aiNeeded = true; aiValid = false; frame.detailScroll = 0;
     };
     const auto rebuildDebug = [&] {
         cursor.x = std::clamp(cursor.x,-world_coordinate_limit,world_coordinate_limit);
@@ -309,6 +322,31 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             }
             if (screen == Screen::Help) { if (*action == InputAction::Accept) { close(); } return; }
             if (screen == Screen::Debug) {
+                if (*action == InputAction::Inspect) {
+                    debugAi = !debugAi; ++aiRevision; aiNeeded = false; aiValid = false;
+                    frame.detailScroll = 0;
+                    if (debugAi) { cursor = snapshot.view.player_position; refreshAi(); }
+                    else { rebuildDebug(); }
+                    return;
+                }
+                if (*action == InputAction::DetailsDown || *action == InputAction::DetailsUp) {
+                    const auto count = debugAi ? (aiValid ? aiView.details.size() : 0) : debugDetails.size();
+                    frame.detailScroll = std::clamp(frame.detailScroll + (*action == InputAction::DetailsDown ? 1 : -1),
+                        0,std::max(0,static_cast<int>(count)-1)); return;
+                }
+                if (debugAi) {
+                    switch (*action) {
+                    case InputAction::West: --cursor.x; break;
+                    case InputAction::East: ++cursor.x; break;
+                    case InputAction::North: --cursor.z; break;
+                    case InputAction::South: ++cursor.z; break;
+                    case InputAction::MoveUp: cursor.y = std::min(world_max_y,cursor.y+1); break;
+                    case InputAction::MoveDown: cursor.y = std::max(world_min_y,cursor.y-1); break;
+                    case InputAction::Recenter: cursor = snapshot.view.player_position; break;
+                    default: return;
+                    }
+                    refreshAi(); return;
+                }
                 switch (*action) {
                 case InputAction::West: cursor.x -= debugScale; break;
                 case InputAction::East: cursor.x += debugScale; break;
@@ -325,8 +363,6 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 case InputAction::Previous: debugLayer = static_cast<WorldgenDebugLayer>((static_cast<unsigned>(debugLayer)+4)%5); break;
                 case InputAction::Layer1: case InputAction::Layer2: case InputAction::Layer3: case InputAction::Layer4: case InputAction::Layer5:
                     debugLayer = static_cast<WorldgenDebugLayer>(static_cast<unsigned>(*action)-static_cast<unsigned>(InputAction::Layer1)); break;
-                case InputAction::DetailsDown: frame.detailScroll = std::min(frame.detailScroll+1,std::max(0,static_cast<int>(debugDetails.size())-1)); return;
-                case InputAction::DetailsUp: frame.detailScroll = std::max(0,frame.detailScroll-1); return;
                 default: return;
                 }
                 frame.detailScroll = 0; rebuildDebug(); return;
@@ -397,6 +433,16 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
         wakeup.pending.store(false);
         SessionReply reply;
         while (session.TryPopReply(reply)) {
+            if (aiRequestId && reply.id == *aiRequestId) {
+                if (reply.kind == ReplyKind::AiInspected && reply.generation == requestedAiGeneration
+                    && reply.generation == snapshot.generation && screen == Screen::Debug && debugAi
+                    && snapshot.paused && !modalPending && requestedAiRevision == aiRevision
+                    && requestedAiCursor == cursor && reply.aiDebug.cursor == cursor) {
+                    aiView = eastl::move(reply.aiDebug); aiValid = true; dirty = true;
+                }
+                aiRequestId.reset();
+                continue;
+            }
             if (reply.generation != snapshot.generation && reply.generation != 1) { continue; }
             dirty = true;
             switch (reply.kind) {
@@ -437,6 +483,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                     inspectionId.reset();
                 }
                 break;
+            case ReplyKind::AiInspected: break; // Obsolete capture from a previous selection.
             case ReplyKind::SettingsApplied:
                 if (settingsId && *settingsId == reply.id && candidateSettings) {
                     store = eastl::move(*candidateSettings); localization = eastl::move(candidateLocalization);
@@ -493,7 +540,9 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 }
             }
             if (screen == Screen::Examine) { inspectionNeeded = true; }
-            if (screen == Screen::Debug) { rebuildDebug(); }
+            if (screen == Screen::Debug) {
+                debugAi = false; ++aiRevision; aiNeeded = false; aiValid = false; rebuildDebug();
+            }
             if (screen == Screen::Targets && !snapshot.interactions.empty()) {
                 cursor = snapshot.interactions.front().request.position;
                 bool single = true;
@@ -505,6 +554,14 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             SessionRequest request; request.kind = RequestKind::Inspect; request.cursor = cursor;
             const auto id = nextId;
             if (enqueue(eastl::move(request))) { inspectionId = id; requestedCursor = cursor; inspectionNeeded = false; }
+        }
+        if (screen == Screen::Debug && debugAi && aiNeeded && !aiRequestId && snapshot.paused && !modalPending) {
+            SessionRequest request; request.kind = RequestKind::InspectAi; request.cursor = cursor;
+            const auto id = nextId;
+            if (enqueue(eastl::move(request))) {
+                aiRequestId = id; requestedAiCursor = cursor; requestedAiGeneration = snapshot.generation;
+                requestedAiRevision = aiRevision; aiNeeded = false;
+            }
         }
         const auto newAssetState = assets.Poll(platform.renderer);
         dirty = newAssetState != assetState || dirty;
@@ -553,7 +610,23 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 }
             }
             else if (smokeStep == 7) { press(SDLK_F11); smokeWaiting = modalPending; }
-            else if (smokeStep == 8) { press(SDLK_ESCAPE); smokeWaiting = modalPending; }
+            else if (smokeStep == 8) {
+                if (smokeAiStep == 0) { press(SDLK_A); ++smokeAiStep; }
+                else if (aiValid && !aiRequestId && !aiNeeded) {
+                    if (smokeAiStep == 1) {
+                        if (!debugAi || cursor != snapshot.view.player_position) { smokeFailed = true; }
+                        const auto before = cursor;
+                        press(SDLK_RIGHT); press(SDLK_UP,SDL_KMOD_ALT);
+                        if (cursor != TileCoord{before.x+1,before.z,std::min(world_max_y,before.y+1)} || aiValid) { smokeFailed = true; }
+                        ++smokeAiStep;
+                    } else {
+                        if (aiView.cursor != cursor || aiView.tick != snapshot.view.tick) { smokeFailed = true; }
+                        press(SDLK_A);
+                        if (debugAi || aiValid) { smokeFailed = true; }
+                        press(SDLK_ESCAPE); smokeWaiting = modalPending;
+                    }
+                }
+            }
             else if (smokeStep == 9) { press(SDLK_F2); smokeWaiting = modalPending; }
             else if (smokeStep == 10) {
                 press(SDLK_DOWN); press(SDLK_RETURN);
@@ -637,17 +710,30 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 frame.footer = "Up/Down: choose | Enter: confirm | Escape: back / resume";
             }
             if (screen == Screen::Debug) {
-                frame.title = "World generation | Seed " + UnsignedText(snapshot.seed) + " | Version " + UnsignedText(snapshot.generationVersion);
-                if (snapshot.generationVersion != world_generation_version) { frame.rows.push_back({"Preview unavailable for this generation version"}); }
-                else {
-                    frame.title += "\n"; frame.title += WorldgenDebugLayerName(debugLayer);
-                    frame.title += " | Scale "; frame.title += NumberText(debugScale);
-                    frame.title += " | X "; frame.title += NumberText(cursor.x); frame.title += " Z "; frame.title += NumberText(cursor.z);
-                    frame.title += "\nSurface baseline: excludes saved edits and entities";
-                    frame.debugImage = &debugImage; frame.cursor = cursor; frame.details = debugDetails;
+                if (debugAi) {
+                    frame.title = "AI inspector | Live resident map | Local session paused\nX " + NumberText(cursor.x)
+                        + " Z " + NumberText(cursor.z) + " Y " + NumberText(cursor.y);
+                    if (aiValid) { frame.title += " | Tick " + UnsignedText(aiView.tick); }
+                    frame.title += "\nLast-decision snapshots, not fresh scans";
+                    if (aiValid) { frame.debugImage = &aiView.image; frame.cursor = cursor; frame.details = aiView.details; }
+                    else { frame.rows.push_back({"Loading live resident AI capture..."}); }
+                    frame.footer = "a: worldgen | Escape/F11: close\nGreen: candidates | Red: blocked | Yellow: chosen";
+                    frame.footer += "\nBlue: origin | Purple: goal | Orange: backtracking";
+                    frame.footer += "\nArrows/hjkl: tile | Alt+Up/Down, >/<: Y\nHome/c: player | PgUp/PgDn: details";
+                } else {
+                    frame.title = "World generation | Seed " + UnsignedText(snapshot.seed) + " | Version " + UnsignedText(snapshot.generationVersion);
+                    if (snapshot.generationVersion != world_generation_version) { frame.rows.push_back({"Preview unavailable for this generation version"}); }
+                    else {
+                        frame.title += "\n"; frame.title += WorldgenDebugLayerName(debugLayer);
+                        frame.title += " | Scale "; frame.title += NumberText(debugScale);
+                        frame.title += " | X "; frame.title += NumberText(cursor.x); frame.title += " Z "; frame.title += NumberText(cursor.z);
+                        frame.title += "\nSurface baseline: excludes saved edits and entities";
+                        frame.debugImage = &debugImage; frame.cursor = cursor; frame.details = debugDetails;
+                    }
+                    frame.footer = "a: AI inspector | Escape/F11: close\n";
+                    frame.footer += WorldgenDebugLegend(debugLayer);
+                    frame.footer += "\nArrows/hjkl: move | HJKL: region | Home: recenter | 1-5/Tab: layers | +/-: zoom | PgUp/PgDn: details";
                 }
-                frame.footer = WorldgenDebugLegend(debugLayer);
-                frame.footer += "\nArrows/hjkl: move | HJKL: region | Home: recenter | 1-5/Tab: layers | +/-: zoom | PgUp/PgDn: details | Escape: close";
             }
             if (!DrawFrame(platform.renderer, text, assets, mapValid ? &snapshot.view : nullptr,
                 content, display.c_str(), hints.c_str(), elapsedMilliseconds, mapValid ? &mapPacket : nullptr,

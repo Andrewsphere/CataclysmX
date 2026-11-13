@@ -1,6 +1,7 @@
 #include <cstdlib>
 
 #include "core/server.h"
+#include "actors/movement.h"
 
 #include "core/simulation.h"
 #include "core/perception.h"
@@ -494,10 +495,8 @@ CommandResult Server::Execute(ActorHandle handle, PlayerSlot& slot, Command comm
             outcome = Outcome::opened;
             break;
         }
-        baseCost = LocomotionBaseCost(actor->combat.body);
-        if (command.dx != 0 && command.dz != 0) {
-            baseCost = static_cast<std::uint32_t>((std::uint64_t{baseCost} * 141 + 99) / 100);
-        }
+        baseCost = ActorStepBaseCost(LocomotionBaseCost(actor->combat.body),
+            {command.dx, command.dz, command.dy});
         // Validate the complete future bubble before acquiring any demand.
         if (!ResidencyFits(destination, active_radius_, resident_radius_, circleResidency_)) {
             return failed(Outcome::unavailable);
@@ -1088,7 +1087,7 @@ WorldView Server::ViewForPlayerAtLayer(PersistentId id, int radius, int layerY) 
         int overlayRanges[4];
         for (int i = 0; i < 4; ++i) {
             const int range = VisionRange(vision, static_cast<LightBand>(i), observerLight);
-            overlayRanges[i] = range * range;
+            overlayRanges[i] = range;
         }
         // All World accesses below are read-only. Reuse chunk/lighting borrows
         // across each horizontal run instead of resolving them for every cell.
@@ -1140,7 +1139,8 @@ WorldView Server::ViewForPlayerAtLayer(PersistentId id, int radius, int layerY) 
                         const int dx = position.x - actor->position.x;
                         const int dz = position.z - actor->position.z;
                         if (cell.overlayVisibility != Visibility::Visible
-                            && dx*dx + dz*dz <= overlayRanges[static_cast<int>(spaceLight)]) {
+                            && WithinSightRange(dx*dx + dz*dz, overlayRanges[static_cast<int>(spaceLight)],
+                                position.y == actor->position.y)) {
                             const Actor* occupant = chunk->actors.empty() ? nullptr : world_.GetActor(world_.ActorAt(position));
                             const auto items = chunk->ground_items.empty() ? 0U
                                 : static_cast<unsigned int>(world_.CountItemsAt(position));

@@ -15,7 +15,7 @@ baseline; rejected or hidden candidates do not expose their faction or position.
 Only Survivors and Undead are currently hostile to one another.
 
 Tracking checks the remembered actor on **every decision**, independently of the
-discovery allowance. Four horizontal neighbors also receive immediate checks.
+discovery allowance. All eight horizontal neighbors also receive immediate checks.
 Background discovery runs only on a decision when its countdown has reached zero;
 it then resets the countdown. There is no independent sensing event when a timer
 expires. Successful sight refreshes the contact's persistent identity, last seen
@@ -25,14 +25,26 @@ a skipped or incomplete scan is not.
 
 The controller selects the nearest observed hostile by Manhattan distance, with
 persistent ID as tie-breaker. It keeps its current contact unless another is
-strictly closer by more than `switchAdvantage`. A visible, cardinally adjacent
+strictly closer by more than `switchAdvantage`. A visible, eight-neighbor adjacent
 same-layer target can be attacked if the actor has attack capability. Otherwise
 the actor pursues the remembered location using local steps, searches within
 Manhattan radius 2 after reaching a visibly empty location, or wanders when idle.
-Search ends on its timer or memory expiry. Movement probes check local active,
-passable, unoccupied tiles; vertical steps require stairs at both ends. A brief
+Search ends on its timer or memory expiry. Pursuit considers all eight horizontal
+steps and up/down stairs. `AiMovementScore(position, goal)` ranks destinations by
+squared 3D Euclidean separation, evaluated in 64 bits. This makes actual geometric
+approach win over mirroring a sideways-moving target; persistent identity rotates
+the stable direction order only for residual equal scores. Idle and search choose
+among eight horizontal steps using one explicit RNG draw. Search retains Manhattan
+radius 2 so the version-1 search-state contract stays unchanged.
+
+Movement probes check local active, passable, supported (`!openSpace`), unoccupied
+tiles; vertical steps require stairs at both ends. A brief
 anti-backtracking preference limits oscillation, with a wait releasing it when
-boxed in. This is local movement, not global pathfinding.
+boxed in. Diagonal probes validate the destination, without requiring both flank
+tiles to be passable. Attack visibility still uses conservative corner geometry.
+This is local movement, not global pathfinding. Move intents retain base cost 100;
+the shared executor applies the 141% diagonal distance multiplier after locomotion
+scaling and before speed conversion.
 
 ## Sight and discovery
 
@@ -47,8 +59,12 @@ tile reads, including rejected calls and missing tiles.
 
 Detection first applies 3D Euclidean range and the target tile's light band:
 dark uses `darkRange`, dim uses `dimRange`, and ordinary/bright use `sightRange`.
-Only then is a ray attempted. The geometric API itself bounds each coordinate
-delta to 32; profile sight range is also bounded to 32.
+Both maximum range and light-band range use `WithinSightRange`: any positive
+range includes all eight immediate same-layer neighbors, including diagonals in
+darkness at range 1. A zero light-band range has no neighbor exception, and the
+exception never extends across layers. Only then is a ray attempted. The geometric
+API itself bounds each coordinate delta to 32; profile sight range is also bounded
+to 32.
 
 Player perception retains its existing 2.5D planar/downward projection, while AI
 uses these 3D rays. This asymmetry is an accepted gameplay decision, not a blocker
@@ -88,6 +104,24 @@ persistent ID, last known position and observation tick, memory and scan
 remaining, target visibility, and candidates/buckets/rays/cells from the latest
 decision. Visibility is cleared on forgetting; work counts are per decision, not
 population-wide performance measurements.
+
+`AiInspection::decision` is bounded, allocation-free evidence captured by the last
+actual `ChooseAction`, with `valid` false before the first decision. It records the
+decision tick, origin, remembered goal (when `hasGoal`), incoming previous-position
+preference, behavior, intent and selected movement index (`-1` for wait/attack).
+`moves` uses the stable `actorStepDirections` indices: four cardinals, four
+diagonals, then up/down. Probe reasons distinguish unavailable, inactive,
+impassable, unsupported, occupied and missing paired stairs. Otherwise available
+steps can be marked `Backtracking` or `OutsideSearch`; physical probe failures take
+precedence, then backtracking, then the search restriction. Idle/search never
+select vertical steps. `Available` describes an eligible local probe, not a promise
+that its score wins or that idle considers stairs.
+
+`Inspect` never resenses or changes simulation state. The decision snapshot remains
+at its original tick and origin even after movement, elapsed timers, or changes to
+terrain/occupancy. Current memory fields can therefore differ from that historical
+decision. The snapshot is ephemeral, is not an input to simulation, and is not
+serialized; baseline controller saves remain schema version 1.
 
 The versioned controller state saves the profile name, persistent contact ID,
 last observation, remaining timers, behavior, discovery anchor/cursor and local

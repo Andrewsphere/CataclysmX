@@ -97,10 +97,10 @@ bool TerrainWithinVision(const World& world, TileCoord observer, TileCoord targe
     const std::int64_t dx = std::int64_t{target.x} - observer.x;
     const std::int64_t dz = std::int64_t{target.z} - observer.z;
     const auto squared = dx * dx + dz * dz;
-    if (squared > vision.range * vision.range) { return false; }
+    if (!WithinSightRange(squared, vision.range, target.y == observer.y)) { return false; }
     const auto band = ClassifyLight(TerrainLightLevel(world, observer, target));
     const int range = VisionRange(vision, band, world.GetLightLevel(observer));
-    return squared <= range * range;
+    return WithinSightRange(squared, range, target.y == observer.y);
 }
 
 bool CanSeeTile(const World& world, TileCoord observer, TileCoord target,
@@ -243,7 +243,7 @@ std::uint8_t VisibilityMask::Get(TileCoord p) const {
     if (clearLayers[layer]) {
         const int dx = p.x - origin.x;
         const int dz = p.z - origin.z;
-        return dx * dx + dz * dz <= radius * radius ? 1 : 0;
+        return WithinSightRange(dx * dx + dz * dz, radius, p.y == origin.y) ? 1 : 0;
     }
     return layerOffsets[layer] < 0 ? 0 : cells[Index(p)];
 }
@@ -252,6 +252,7 @@ eastl::pair<int, int> VisibilityMask::ClearRow(int z, int y) const {
     if (y < minimumY || y > maximumY || !clearLayers[y - minimumY]) { return {1, 0}; }
     const int dz = z - origin.z;
     if (std::abs(dz) > radius) { return {1, 0}; }
+    if (radius == 1 && y == origin.y) { return {origin.x - 1, origin.x + 1}; }
     const int squared = radius * radius - dz * dz;
     int low = 0;
     int high = radius + 1;
@@ -304,12 +305,13 @@ void BuildVisibilityMask(const World& world, TileCoord origin, int radius,
     VisibilityWorkspace localWorkspace;
     auto& workspace = suppliedWorkspace ? *suppliedWorkspace : localWorkspace;
     workspace.projectionSamples = 0;
-    const auto first = ChunkOf({origin.x - radius, origin.z - radius, origin.y});
-    const auto last = ChunkOf({origin.x + radius, origin.z + radius, origin.y});
+    const int planarRadius = radius == 1 ? 2 : radius;
+    const auto first = ChunkOf({origin.x - planarRadius, origin.z - planarRadius, origin.y});
+    const auto last = ChunkOf({origin.x + planarRadius, origin.z + planarRadius, origin.y});
     if (workspace.Prepare(*suppliedOptics, first, last)) { ++stats.volumeRebuilds; }
     Vector<std::uint8_t> planar(workspace.optics.size(), 0);
     BuildPlanarVisibility({workspace.optics.data(), workspace.optics.size()}, workspace.width, workspace.depth,
-        origin.x - first.x * chunk_size, origin.z - first.z * chunk_size, radius,
+        origin.x - first.x * chunk_size, origin.z - first.z * chunk_size, planarRadius,
         {planar.data(), planar.size()}, &stats.traversedVoxels);
     const auto mark = [&](TileCoord p, std::uint8_t flags) {
         output.MaterializeLayer(p.y);
@@ -323,6 +325,8 @@ void BuildVisibilityMask(const World& world, TileCoord origin, int radius,
             if (!planar[index]) { continue; }
             auto flags = workspace.Sample(p);
             mark(p, flags);
+            // The radius-one diagonal allowance belongs only to this plane.
+            if (x * x + z * z > radius * radius) { continue; }
             while ((flags & 4) && p.y > world_min_y) {
                 --p.y;
                 ++workspace.projectionSamples;
@@ -341,7 +345,8 @@ void BuildVisibilityMask(const World& world, TileCoord origin, int radius,
         bool clear = true;
         for (int z = -radius; z <= radius && clear; ++z) {
             for (int x = -radius; x <= radius; ++x) {
-                if (x * x + z * z <= radius * radius && output.Get({origin.x + x, origin.z + z, y}) != 1) {
+                if (WithinSightRange(x * x + z * z, radius, y == origin.y)
+                    && output.Get({origin.x + x, origin.z + z, y}) != 1) {
                     clear = false;
                     break;
                 }

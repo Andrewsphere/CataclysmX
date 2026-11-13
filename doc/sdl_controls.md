@@ -39,6 +39,22 @@ region, Home/c recenter, 1–5 or Tab/Shift+Tab select the five layers, +/- zoom
 and PageUp/PageDown scroll details. The surface preview excludes live entities
 and saved edits. Unsupported generation versions show an explicit warning.
 
+Within F11, `a` toggles between world generation and the **AI inspector / live
+resident map**. Entering AI mode resets the cursor to the player's actual X, Z,
+and Y, including when the surface worldgen preview had flattened Y to zero.
+Arrows/hjkl move one tile; Alt+Up/Down or `>`/`<` change Y within world bounds.
+Home/c resets to the player; PageUp/PageDown scroll capture details. Escape or
+F11 resumes. Each new F11 opening starts with the world-generation preview.
+
+The AI inspector displays the captured 17×17 resident map and the actor under
+the cursor. It is explicit debug access to current resident state, independent
+of player knowledge. It does not load chunks, update memory, or run AI scans.
+Decision overlays and descriptions are the selected actor's **last actual
+decision snapshots**, which can predate its current position. Overlay colors:
+green candidates, red blocked, yellow chosen, blue origin, purple goal, and
+orange backtracking. Wide windows show map and details alongside each other;
+narrow windows stack the map above independently scrollable details.
+
 F2 opens the keyboard-only preferences and binding editor. Tab/Shift+Tab select
 scope, section, category, list, or details. Arrows navigate; Enter edits. The
 Save binding performs Save and apply. Reset, append binding, unbind, and key
@@ -81,6 +97,16 @@ owner acknowledgement installs frontend preferences/bindings/localization;
 Save and apply reports filesystem failures as Applied, unsaved and retains the
 current settings for retry. Reopening clean options reloads persisted settings. ResumeAndCommand discards paused
 wall time and submits the selected command in one owner operation.
+
+`InspectAi` returns `AiInspected` with an owned `AiDebugView` captured on the
+paused session owner thread. The UI uses its `DebugMapView` image and detail
+strings directly, with no World access. One capture request may be in flight;
+cursor changes coalesce to the latest selection. Session ID, request ID,
+cursor, and selection/mode revision gate acceptance, so returning to the same
+cursor after a toggle cannot revive an obsolete capture. Changing selection
+clears the displayed capture while its replacement is fetched. Shared debug
+map presentation keeps live inspection and generated previews on the same
+renderer without coupling either capture to SDL.
 
 `ScreenFrame` contains presentation values; `OptionsUi` owns drafts and editing
 state. SDL rendering consumes those values without a server dependency or a new

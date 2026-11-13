@@ -270,6 +270,71 @@ TEST_CASE("Paused session inspections and settings never advance time and resume
     CHECK(reply.result.tick == tick); // Admission commits the action before rate-capped recovery.
 }
 
+TEST_CASE("AI inspection is paused owner work with identified owned captures", "[sdl][session]") {
+    WakeState wake;
+    Session session(TestContent(),11,{},Wake,&wake);
+    SessionReply reply;
+    REQUIRE(WaitForReply(session,wake,reply)); REQUIRE(reply.kind == ReplyKind::Started);
+    SessionRequest request; request.generation = 11; request.id = 1; request.kind = RequestKind::InspectAi;
+    REQUIRE(session.TrySubmit(request) == EnqueueResult::Accepted);
+    REQUIRE(WaitForReply(session,wake,reply)); REQUIRE(reply.kind == ReplyKind::Cancelled);
+    CHECK(reply.generation == 11); CHECK(reply.id == 1);
+    CHECK(reply.aiDebug.image.cells.empty());
+
+    request.kind = RequestKind::Pause; request.id = 2;
+    REQUIRE(session.TrySubmit(request) == EnqueueResult::Accepted);
+    REQUIRE(WaitForReply(session,wake,reply)); REQUIRE(reply.kind == ReplyKind::Paused);
+    SessionSnapshot snapshot; REQUIRE(session.TakeSnapshot(snapshot)); REQUIRE(snapshot.paused);
+    const auto tick = snapshot.view.tick;
+    const auto player = snapshot.view.player_position;
+    request.kind = RequestKind::InspectAi; request.id = 3; request.generation = 10; request.cursor = player;
+    REQUIRE(session.TrySubmit(request) == EnqueueResult::Accepted);
+    REQUIRE(WaitForReply(session,wake,reply)); REQUIRE(reply.kind == ReplyKind::Stale);
+    CHECK(reply.generation == 11); CHECK(reply.id == 3);
+    CHECK(reply.aiDebug.image.cells.empty());
+
+    request.generation = 11; request.id = 4;
+    REQUIRE(session.TrySubmit(request) == EnqueueResult::Accepted);
+    REQUIRE(WaitForReply(session,wake,reply)); REQUIRE(reply.kind == ReplyKind::AiInspected);
+    CHECK(reply.generation == 11); CHECK(reply.id == 4);
+    CHECK(reply.aiDebug.cursor == player); CHECK(reply.aiDebug.tick == tick);
+    CHECK(reply.aiDebug.actor == snapshot.view.playerId);
+    CHECK(reply.aiDebug.image.width == 17); CHECK(reply.aiDebug.image.height == 17);
+    CHECK(reply.aiDebug.image.scale == 1);
+    REQUIRE(reply.aiDebug.image.cells.size() == 17 * 17);
+    REQUIRE_FALSE(reply.aiDebug.details.empty());
+    auto retained = reply.aiDebug;
+    const auto firstSymbol = retained.image.cells[0].symbol;
+    const auto firstDetail = retained.details[0];
+    // Mutating the receiver cannot change the saved value or the owner's next capture.
+    reply.aiDebug.image.cells[0].symbol = "receiver edit";
+    reply.aiDebug.details[0] = "receiver edit";
+    request.id = 5;
+    REQUIRE(session.TrySubmit(request) == EnqueueResult::Accepted);
+    REQUIRE(WaitForReply(session,wake,reply)); REQUIRE(reply.kind == ReplyKind::AiInspected);
+    CHECK(reply.generation == 11); CHECK(reply.id == 5);
+    CHECK(reply.aiDebug.cursor == player); CHECK(reply.aiDebug.tick == tick);
+    CHECK(reply.aiDebug.image.cells[0].symbol == firstSymbol);
+    CHECK(reply.aiDebug.details[0] == firstDetail);
+    ++request.cursor.y; ++request.cursor.x; request.id = 6;
+    REQUIRE(session.TrySubmit(request) == EnqueueResult::Accepted);
+    REQUIRE(WaitForReply(session,wake,reply)); REQUIRE(reply.kind == ReplyKind::AiInspected);
+    CHECK(reply.generation == 11); CHECK(reply.id == 6);
+    CHECK(reply.aiDebug.cursor == request.cursor); CHECK(reply.aiDebug.tick == tick);
+    CHECK(reply.aiDebug.image.bounds.min.y == request.cursor.y);
+    request.kind = RequestKind::Resume; request.id = 7;
+    REQUIRE(session.TrySubmit(request) == EnqueueResult::Accepted);
+    REQUIRE(WaitForReply(session,wake,reply)); REQUIRE(reply.kind == ReplyKind::Resumed);
+    request.kind = RequestKind::InspectAi; request.id = 8;
+    REQUIRE(session.TrySubmit(request) == EnqueueResult::Accepted);
+    REQUIRE(WaitForReply(session,wake,reply)); CHECK(reply.kind == ReplyKind::Cancelled);
+    CHECK(reply.id == 8); CHECK(reply.aiDebug.image.cells.empty());
+    session.Stop();
+    CHECK(retained.cursor == player); CHECK(retained.tick == tick);
+    CHECK(retained.image.cells[0].symbol == firstSymbol);
+    CHECK(retained.details[0] == firstDetail);
+}
+
 TEST_CASE("Session completion publishes the next opportunity before accepting another frontend action", "[sdl][session]") {
     WakeState wake; SessionOptions options; options.settings.viewRadius = 4;
     Session session(TestContent(),1,options,Wake,&wake);

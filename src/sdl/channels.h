@@ -2,6 +2,7 @@
 
 #include "core/server.h"
 #include "client/settings.h"
+#include "client/ai_debug.h"
 #include "sdl/item_visual.h"
 
 #include <EASTL/array.h>
@@ -10,7 +11,7 @@
 
 namespace cataclysmx::sdl {
 
-enum class RequestKind { Command, Pause, Resume, Inspect, ApplySettings, ResumeAndCommand };
+enum class RequestKind { Command, Pause, Resume, Inspect, ApplySettings, ResumeAndCommand, InspectAi };
 struct SessionRequest {
     RequestKind kind = RequestKind::Command;
     std::uint64_t generation = 0;
@@ -22,7 +23,7 @@ struct SessionRequest {
     SettingsOverrides globalSettings;
     SettingsOverrides worldSettings;
 };
-enum class ReplyKind { Started, StartupFailed, Admission, Completed, Paused, Resumed, Stale, Cancelled, Inspected, SettingsApplied, SettingsFailed };
+enum class ReplyKind { Started, StartupFailed, Admission, Completed, Paused, Resumed, Stale, Cancelled, Inspected, SettingsApplied, SettingsFailed, AiInspected };
 enum class StartupError { None, InvalidContent, InvalidSettings };
 struct SessionReply {
     ReplyKind kind = ReplyKind::Started;
@@ -34,6 +35,7 @@ struct SessionReply {
     WorldView inspectionView;
     Vector<MapItemVisual> inspectionItems;
     Settings runtimeSettings;
+    AiDebugView aiDebug;
 };
 struct SessionSnapshot {
     std::uint64_t generation = 0;
