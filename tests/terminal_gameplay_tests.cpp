@@ -514,12 +514,15 @@ TEST_CASE("Quick actions wrap navigate preserve selection on resize and activate
     REQUIRE(f.ui.Open(InputAction::QuickActions));
     CHECK(Find(f.Draw(), "Quick actions"));
     f.Event(ftxui::Event::ArrowUp);
+    CHECK(Find(f.Draw(), "> crafting"));
+    CHECK(Find(f.Draw(), "15 / 15"));
+    f.Event(ftxui::Event::ArrowUp); // Debug retains its original position before appended Crafting.
     for (int width : {80, 99, 100, 120, 80}) {
         const auto screen = f.Draw(width, width < 100 ? 24 : 32);
         INFO(Plain(screen));
         const auto row = Find(screen, "> debug"); REQUIRE(row);
         CHECK(screen.PixelAt(row->x, row->y).inverted);
-        CHECK(Find(screen, "14 / 14"));
+        CHECK(Find(screen, "14 / 15"));
         CHECK(Find(screen, "Escape"));
     }
     f.Event(ftxui::Event::Character("g"));
@@ -529,6 +532,12 @@ TEST_CASE("Quick actions wrap navigate preserve selection on resize and activate
     f.Event(ftxui::Event::Return);
     CHECK_FALSE(f.ui.IsOpen());
     CHECK(f.activations == 1); CHECK(f.activated == InputAction::Debug);
+    f.ui.Open(InputAction::QuickActions);
+    f.Event(ftxui::Event::ArrowDown); // Appended Crafting opens its UI without submitting a command.
+    f.Event(ftxui::Event::Return);
+    CHECK(f.ui.IsOpen()); CHECK(Find(f.Draw(), "Crafting and recycling"));
+    CHECK(f.activations == 1); CHECK(f.submissions == 0);
+    f.Event(ftxui::Event::Escape);
     f.ui.Open(InputAction::QuickActions);
     f.Event(ftxui::Event::ArrowDown); // Wrap back to Inventory.
     f.Event(ftxui::Event::Return);

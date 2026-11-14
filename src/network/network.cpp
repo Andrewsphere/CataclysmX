@@ -39,6 +39,16 @@ void HashString(std::uint64_t& hash, const String& s) {
 void HashText(std::uint64_t& hash, const ItemText& text) {
     HashString(hash, text.key); HashString(hash, text.fallback);
 }
+void HashTraits(std::uint64_t& hash, const StaticList<TraitRequirement, maxRecipeTraits>& traits) {
+    HashNumber(hash, traits.Size());
+    for (const auto& trait : traits) {
+        HashNumber(hash, trait.trait.value); HashNumber(hash, trait.tier);
+    }
+}
+void HashInputs(std::uint64_t& hash, const StaticList<RecipeInput, maxRecipeInputs>& inputs) {
+    HashNumber(hash, inputs.Size());
+    for (const auto& input : inputs) { HashNumber(hash, input.Packed()); }
+}
 void HashData(std::uint64_t& hash, const DataObject& data) {
     // Tags distinguish values such as signed 1, unsigned 1, and true.
     HashNumber(hash, static_cast<std::uint64_t>(data.Type()));
@@ -134,6 +144,9 @@ std::uint64_t ContentFingerprint(const ContentCatalog& content) {
         const auto& item = content.GetItem({static_cast<std::uint32_t>(i + 1)});
         HashString(hash, item.id); HashString(hash, item.name);
         HashNumber(hash, item.massGrams); HashNumber(hash, item.volumeMl);
+        HashTraits(hash, item.toolTraits);
+        HashNumber(hash, item.craftingPower.value); HashNumber(hash, item.craftingEnergyPerWork);
+        HashNumber(hash, item.recoveryAllowed); HashNumber(hash, item.unfinishedCraft);
         HashNumber(hash, item.capabilities.size());
         for (std::size_t c = 0; c < item.capabilities.size(); ++c) {
             const auto& capability = item.capabilities[c];
@@ -175,6 +188,30 @@ std::uint64_t ContentFingerprint(const ContentCatalog& content) {
                 break;
             }
         }
+    }
+    HashNumber(hash, content.ToolTraitCount());
+    for (std::size_t i = 0; i < content.ToolTraitCount(); ++i) {
+        const auto& trait = content.GetToolTrait({static_cast<std::uint8_t>(i + 1)});
+        HashString(hash, trait.id); HashString(hash, trait.name);
+    }
+    HashNumber(hash, content.CraftingRecipeCount());
+    for (std::size_t i = 0; i < content.CraftingRecipeCount(); ++i) {
+        const auto& recipe = content.GetCraftingRecipe({static_cast<std::uint32_t>(i + 1)});
+        HashString(hash, recipe.id); HashString(hash, recipe.name);
+        HashInputs(hash, recipe.inputs); HashTraits(hash, recipe.toolTraits);
+        HashNumber(hash, recipe.result.item.value); HashNumber(hash, recipe.result.count);
+        HashNumber(hash, recipe.work); HashNumber(hash, recipe.enabled);
+    }
+    HashNumber(hash, content.RecyclingRecipeCount());
+    for (std::size_t i = 0; i < content.RecyclingRecipeCount(); ++i) {
+        const auto& recipe = content.GetRecyclingRecipe({static_cast<std::uint32_t>(i + 1)});
+        HashString(hash, recipe.id); HashString(hash, recipe.name); HashNumber(hash, recipe.target.value);
+        HashInputs(hash, recipe.inputs); HashTraits(hash, recipe.toolTraits);
+        HashNumber(hash, recipe.returns.Size());
+        for (const auto& output : recipe.returns) {
+            HashNumber(hash, output.item.value); HashNumber(hash, output.count);
+        }
+        HashNumber(hash, recipe.work);
     }
     return hash;
 }

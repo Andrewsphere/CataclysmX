@@ -6,8 +6,8 @@
 
 namespace cataclysmx::network::wire {
 
-// Version 11 adds explicit target/action interactions and diagonal movement.
-inline constexpr std::uint32_t protocol = 0x43584e0c;
+// Version 13 adds crafting commands, outcomes, and persistent job views.
+inline constexpr std::uint32_t protocol = 0x43584e0d;
 inline constexpr int maxViewRadius = 64;
 inline constexpr int maxViewDimension = 2 * maxViewRadius + 1;
 static_assert(maxViewDimension <= UINT8_MAX && maxViewDimension * maxViewDimension <= UINT16_MAX);

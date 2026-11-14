@@ -13,6 +13,9 @@ namespace {
 using namespace cataclysmx;
 using namespace cataclysmx::network;
 
+constexpr std::size_t combatViewWireSize = 128;
+constexpr std::size_t emptyCraftingJobsWireSize = 2; // Protocol 13 appends a u16 job count.
+
 TEST_CASE("Network wire rejects truncated values, invalid enums and oversized snapshots", "[network][codec]") {
     CHECK(NetworkErrorMessage(NetworkError::UnknownToken) != nullptr);
     wire::Writer w;
@@ -35,6 +38,7 @@ TEST_CASE("Network wire rejects truncated values, invalid enums and oversized sn
 
     Server server(TestContent());
     auto view = server.ViewForPlayer(server.GetHostPlayerId());
+    REQUIRE(view.craftingJobs.empty());
     wire::Writer snapshot;
     REQUIRE(snapshot.View(view));
     wire::Reader roundtrip{{snapshot.bytes.data(), snapshot.bytes.size()}};
@@ -62,7 +66,8 @@ TEST_CASE("Network wire rejects truncated values, invalid enums and oversized sn
     wire::Reader badSpeed{{bad.data(), bad.size()}};
     CHECK_FALSE(badSpeed.View(result));
     bad = snapshot.bytes;
-    bad[bad.size() - 148] = 255; // player state, followed by player light and 128-byte combat view
+    // State is followed by 19 bytes of player fields, player light, combat, and the empty job list.
+    bad[bad.size() - (20 + combatViewWireSize + emptyCraftingJobsWireSize)] = 255;
     wire::Reader badState{{bad.data(), bad.size()}};
     CHECK_FALSE(badState.View(result));
     wire::Writer commandBytes;
@@ -105,7 +110,7 @@ bool Poll(LanHost& host, LanClient& a, LanClient& b, Predicate predicate) {
 }
 
 TEST_CASE("Current protocol preserves signed six-axis commands and authoritative shapes", "[network][codec][3d]") {
-    CHECK(wire::protocol == 0x43584e0c);
+    CHECK(wire::protocol == 0x43584e0d);
     for (const auto kind : {CommandKind::move, CommandKind::interact}) {
         for (const TileCoord direction : {TileCoord{1, 0, 0}, {-1, 0, 0}, {0, 1, 0},
             {0, -1, 0}, {0, 0, 1}, {0, 0, -1}, {0, 0, 0}, {1, 0, 1}, {0, 1, -1}, {0, 0, INT_MIN}}) {
@@ -118,8 +123,10 @@ TEST_CASE("Current protocol preserves signed six-axis commands and authoritative
             REQUIRE(reader.CommandValue(decoded)); CHECK(reader.Done());
             CHECK(decoded.kind == kind); CHECK(decoded.dx == command.dx);
             CHECK(decoded.dz == command.dz); CHECK(decoded.dy == command.dy);
-            // dy precedes target/style and the 26-byte explicit interaction.
-            writer.bytes[writer.bytes.size() - 36] = 2;
+            CHECK(decoded.recipe.value == 0);
+            // With an empty itemAction, dy occupies bytes 32..35 (big endian).
+            // Use its fixed prefix offset, independent of appended command fields.
+            writer.bytes[35] = 2;
             wire::Reader malformed{{writer.bytes.data(), writer.bytes.size()}};
             CHECK_FALSE(malformed.CommandValue(decoded));
         }
@@ -144,7 +151,7 @@ TEST_CASE("Combat commands and outcomes roundtrip with bounded style", "[network
         wire::Reader reader{{writer.bytes.data(), writer.bytes.size()}};
         Command decoded; REQUIRE(reader.CommandValue(decoded)); CHECK(reader.Done());
         CHECK(decoded.kind == command.kind); CHECK(decoded.style == style);
-        writer.bytes.back() = 255;
+        writer.bytes[44] = 255; // style follows target with an empty itemAction.
         wire::Reader malformed{{writer.bytes.data(), writer.bytes.size()}};
         CHECK_FALSE(malformed.CommandValue(decoded));
     }
@@ -165,6 +172,7 @@ TEST_CASE("Combat commands and outcomes roundtrip with bounded style", "[network
 TEST_CASE("Combat snapshot roundtrips and validates all fields", "[network][codec][combat]") {
     Server server(TestContent());
     auto view = server.View(0);
+    REQUIRE(view.craftingJobs.empty());
     auto& combat = view.combat;
     combat = {};
     combat.style = CombatStyle::Defensive; combat.action = ActorActionKind::MeleeWindup;
@@ -176,7 +184,7 @@ TEST_CASE("Combat snapshot roundtrips and validates all fields", "[network][code
     wire::Writer writer; REQUIRE(writer.View(view));
     wire::Reader reader{{writer.bytes.data(), writer.bytes.size()}};
     WorldView decoded; REQUIRE(reader.View(decoded)); CHECK(reader.Done()); CHECK(decoded.combat == combat);
-    const auto start = writer.bytes.size() - 128;
+    const auto start = writer.bytes.size() - combatViewWireSize - emptyCraftingJobsWireSize;
     // Each entry names an invalid byte: enums, limits, flags, and absent simple-body parts.
     for (const auto [offset, value] : {eastl::pair<std::size_t, std::uint8_t>{0, 2}, {1, 3}, {2, 5},
         {6, 101}, {7, 31}, {16, 2}, {89, 11}, {93, 5}, {102, 10},

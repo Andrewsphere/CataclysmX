@@ -1,4 +1,5 @@
 #include "content/content.h"
+#include "core/ratio.h"
 #include "items/item_registry.h"
 
 #include <EASTL/optional.h>
@@ -333,8 +334,166 @@ bool ReadBoundedInteger(yyjson_val* value, std::uint32_t minimum, std::uint32_t 
     return true;
 }
 
+struct PendingTrait {
+    String id;
+    std::uint8_t tier = 0;
+};
+
+struct PendingInput {
+    String item;
+    std::uint8_t count = 0;
+    RecipeInputFlags flags = RecipeInputFlags::None;
+};
+
+struct PendingOutput {
+    String item;
+    std::uint32_t count = 0;
+};
+
+struct PendingToolTrait {
+    ToolTraitDefinition definition;
+    std::size_t inputOrder = 0;
+    Context context;
+};
+
+struct PendingCrafting {
+    CraftingRecipeDefinition definition;
+    Vector<PendingInput> inputs;
+    Vector<PendingTrait> traits;
+    PendingOutput result;
+    std::size_t inputOrder = 0;
+    Context context;
+};
+
+struct PendingRecycling {
+    RecyclingRecipeDefinition definition;
+    String target;
+    String generatedFrom;
+    std::uint32_t efficiency = 0;
+    Vector<PendingInput> inputs;
+    Vector<PendingTrait> traits;
+    Vector<PendingOutput> returns;
+    std::size_t inputOrder = 0;
+    Context context;
+};
+
+bool ParseTraits(yyjson_val* array, Vector<PendingTrait>& output, const Context& context) {
+    if (!array) { return true; }
+    if (!yyjson_is_arr(array) || yyjson_arr_size(array) > maxRecipeTraits) {
+        return context.Fail("expected an array of at most 4 tool traits");
+    }
+    std::size_t index, count;
+    yyjson_val* value;
+    yyjson_arr_foreach(array, index, count, value) {
+        const auto child = ArrayElement(context, index);
+        PendingTrait trait;
+        std::uint32_t tier = 0;
+        if (!CheckObject(value, {"id", "tier"}, child)
+            || !ReadId(yyjson_obj_get(value, "id"), trait.id, child.Child("id"))
+            || !ReadBoundedInteger(yyjson_obj_get(value, "tier"), 1, 255, tier, child.Child("tier"))) { return false; }
+        trait.tier = static_cast<std::uint8_t>(tier);
+        for (const auto& previous : output) {
+            if (previous.id == trait.id) { return child.Child("id").Fail("duplicate tool trait id"); }
+        }
+        output.push_back(eastl::move(trait));
+    }
+    return true;
+}
+
+bool ParseInputs(yyjson_val* array, Vector<PendingInput>& output, const Context& context, bool required) {
+    if (!array && !required) { return true; }
+    if (!yyjson_is_arr(array) || yyjson_arr_size(array) > maxRecipeInputs) {
+        return context.Fail("expected an array of at most 8 input item types including retained tools");
+    }
+    std::size_t index, count;
+    yyjson_val* value;
+    yyjson_arr_foreach(array, index, count, value) {
+        const auto child = ArrayElement(context, index);
+        PendingInput input;
+        std::uint32_t amount = 0;
+        bool retained = false, recoverable = true;
+        if (!CheckObject(value, {"item", "count", "retained", "recoverable"}, child)
+            || !ReadId(yyjson_obj_get(value, "item"), input.item, child.Child("item"))
+            || !ReadBoundedInteger(yyjson_obj_get(value, "count"), 1, 255, amount, child.Child("count"))) { return false; }
+        if (auto* field = yyjson_obj_get(value, "retained")) {
+            if (!ReadBool(field, retained, child.Child("retained"))) { return false; }
+        }
+        if (auto* field = yyjson_obj_get(value, "recoverable")) {
+            if (!ReadBool(field, recoverable, child.Child("recoverable"))) { return false; }
+        }
+        input.count = static_cast<std::uint8_t>(amount);
+        input.flags = static_cast<RecipeInputFlags>((retained ? 1 : 0) | (recoverable ? 0 : 2));
+        for (const auto& previous : output) {
+            if (previous.item == input.item) { return child.Child("item").Fail("duplicate input item type"); }
+        }
+        output.push_back(eastl::move(input));
+    }
+    return true;
+}
+
+bool ParseOutput(yyjson_val* object, PendingOutput& output, const Context& context) {
+    return CheckObject(object, {"item", "count"}, context)
+        && ReadId(yyjson_obj_get(object, "item"), output.item, context.Child("item"))
+        && ReadBoundedInteger(yyjson_obj_get(object, "count"), 1, 255, output.count, context.Child("count"));
+}
+
+bool ParseRecipeName(yyjson_val* object, String& name, const String& id, const Context& context) {
+    name = id;
+    auto* value = yyjson_obj_get(object, "name");
+    return !value || ReadString(value, name, context.Child("name"));
+}
+
+bool ParseRecycling(yyjson_val* object, PendingRecycling& pending, bool generated) {
+    const auto& context = pending.context;
+    auto& definition = pending.definition;
+    if (generated) {
+        if (!CheckObject(object, {"id", "work", "efficiency", "inputs", "tool_traits"}, context)
+            || !ReadBoundedInteger(yyjson_obj_get(object, "efficiency"), 0, ratioScale,
+                                   pending.efficiency, context.Child("efficiency"))) { return false; }
+    } else {
+        if (!CheckObject(object, {"type", "id", "name", "target", "inputs", "tool_traits", "returns", "work"}, context)
+            || !ReadId(yyjson_obj_get(object, "target"), pending.target, context.Child("target"))) { return false; }
+        auto* returns = yyjson_obj_get(object, "returns");
+        if (!yyjson_is_arr(returns) || yyjson_arr_size(returns) > maxRecipeInputs) {
+            return context.Child("returns").Fail("expected an array of at most 8 return item types");
+        }
+        std::size_t index, count;
+        yyjson_val* value;
+        yyjson_arr_foreach(returns, index, count, value) {
+            PendingOutput output;
+            const auto child = ArrayElement(context.Child("returns"), index);
+            if (!ParseOutput(value, output, child)) { return false; }
+            for (const auto& previous : pending.returns) {
+                if (previous.item == output.item) { return child.Child("item").Fail("duplicate return item type"); }
+            }
+            pending.returns.push_back(eastl::move(output));
+        }
+    }
+    return ReadId(yyjson_obj_get(object, "id"), definition.id, context.Child("id"))
+        && ParseRecipeName(object, definition.name, definition.id, context)
+        && ReadBoundedInteger(yyjson_obj_get(object, "work"), 1, UINT32_MAX, definition.work, context.Child("work"))
+        && ParseInputs(yyjson_obj_get(object, "inputs"), pending.inputs, context.Child("inputs"), false)
+        && ParseTraits(yyjson_obj_get(object, "tool_traits"), pending.traits, context.Child("tool_traits"));
+}
+
+bool ParseCrafting(yyjson_val* object, PendingCrafting& pending) {
+    auto& definition = pending.definition;
+    const auto& context = pending.context;
+    if (!CheckObject(object, {"type", "id", "name", "crafting_enabled", "inputs", "tool_traits", "result", "work", "recycling"}, context)
+        || !ReadId(yyjson_obj_get(object, "id"), definition.id, context.Child("id"))
+        || !ParseRecipeName(object, definition.name, definition.id, context)
+        || !ReadBoundedInteger(yyjson_obj_get(object, "work"), 1, UINT32_MAX, definition.work, context.Child("work"))
+        || !ParseInputs(yyjson_obj_get(object, "inputs"), pending.inputs, context.Child("inputs"), true)
+        || !ParseTraits(yyjson_obj_get(object, "tool_traits"), pending.traits, context.Child("tool_traits"))
+        || !ParseOutput(yyjson_obj_get(object, "result"), pending.result, context.Child("result"))) { return false; }
+    auto* enabled = yyjson_obj_get(object, "crafting_enabled");
+    return !enabled || ReadBool(enabled, definition.enabled, context.Child("crafting_enabled"));
+}
+
 struct PendingItem {
     ItemDefinition definition;
+    Vector<PendingTrait> traits;
+    String powerStore;
     std::size_t inputOrder = 0;
     Context context;
 };
@@ -582,13 +741,26 @@ bool ParseSharedCapability(PendingCapability& pending, ItemDefinition& item, Ite
 bool ParseItem(yyjson_val* object, PendingItem& item, const ItemBehaviorRegistry& registry) {
     const auto& context = item.context;
     auto& definition = item.definition;
-    if (!CheckObject(object, {"type", "id", "name", "mass_g", "volume_ml", "capabilities"}, context)
+    if (!CheckObject(object, {"type", "id", "name", "mass_g", "volume_ml", "capabilities", "tool_traits", "recovery_allowed", "crafting_power"}, context)
         || !ReadId(yyjson_obj_get(object, "id"), definition.id, context.Child("id"))
         || !ReadString(yyjson_obj_get(object, "name"), definition.name, context.Child("name"))
         || !ReadItemInteger(object, "mass_g", 0, definition.massGrams, context)
         || !ReadItemInteger(object, "volume_ml", 1, definition.volumeMl, context)) { return false; }
+    if (!ParseTraits(yyjson_obj_get(object, "tool_traits"), item.traits, context.Child("tool_traits"))) { return false; }
+    if (auto* recovery = yyjson_obj_get(object, "recovery_allowed")) {
+        if (!ReadBool(recovery, definition.recoveryAllowed, context.Child("recovery_allowed"))) { return false; }
+    }
+    if (auto* power = yyjson_obj_get(object, "crafting_power")) {
+        const auto child = context.Child("crafting_power");
+        if (!CheckObject(power, {"store", "energy_per_work"}, child)
+            || !ReadId(yyjson_obj_get(power, "store"), item.powerStore, child.Child("store"))
+            || !ReadBoundedInteger(yyjson_obj_get(power, "energy_per_work"), 1, UINT32_MAX,
+                                   definition.craftingEnergyPerWork, child.Child("energy_per_work"))) { return false; }
+    }
     auto* capabilities = yyjson_obj_get(object, "capabilities");
-    if (!capabilities) { return true; }
+    if (!capabilities) {
+        return item.powerStore.empty() || context.Child("crafting_power").Child("store").Fail("crafting power store must name this item's energy store");
+    }
     const auto capabilitiesContext = context.Child("capabilities");
     if (!yyjson_is_arr(capabilities) || yyjson_arr_size(capabilities) > maxItemCapabilities) {
         return capabilitiesContext.Fail("expected an array of at most 16 capabilities");
@@ -624,6 +796,12 @@ bool ParseItem(yyjson_val* object, PendingItem& item, const ItemBehaviorRegistry
     for (const auto& store : definition.energyStores) {
         if (!store.config.batteryClass.empty() && definition.energyStores.size() != 1) {
             return capabilitiesContext.Fail("an installable battery requires a sole energy store");
+        }
+    }
+    if (!item.powerStore.empty()) {
+        definition.craftingPower = FindItemCapability(definition, View(item.powerStore));
+        if (!ItemEnergyStore(definition, definition.craftingPower)) {
+            return context.Child("crafting_power").Child("store").Fail("crafting power store must name this item's energy store");
         }
     }
     std::size_t declaredActions = 0;
@@ -748,6 +926,8 @@ struct Document {
 ContentResult<bool> ParseSource(const ContentSource& source, Vector<PendingTerrain>& pending,
                                 Vector<PendingPattern>& patterns, Vector<PendingItem>& items,
                                 Vector<PendingObject>& objects, Vector<PendingAiProfile>& aiProfiles,
+                                Vector<PendingCrafting>& recipes, Vector<PendingRecycling>& recyclers,
+                                Vector<PendingToolTrait>& traits,
                                 const ItemBehaviorRegistry& registry, Diagnostics* diagnostics) {
     Context context{diagnostics, source.name, {}};
     yyjson_alc allocator{JsonMalloc, JsonRealloc, JsonFree, nullptr};
@@ -794,7 +974,8 @@ ContentResult<bool> ParseSource(const ContentSource& source, Vector<PendingTerra
         yyjson_arr_foreach(profileArray, index, count, value) {
             PendingAiProfile profile;
             profile.context = ArrayElement(context.Child("ai_profiles"), index);
-            profile.inputOrder = pending.size() + patterns.size() + items.size() + objects.size() + aiProfiles.size();
+            profile.inputOrder = pending.size() + patterns.size() + items.size() + objects.size() + aiProfiles.size()
+                + recipes.size() + recyclers.size() + traits.size();
             if (!ParseAiProfile(value, profile)) {
                 profile.context.Fail("while loading AI profile definition");
                 return eastl::unexpected(ContentError::InvalidData);
@@ -813,7 +994,8 @@ ContentResult<bool> ParseSource(const ContentSource& source, Vector<PendingTerra
         yyjson_arr_foreach(objectArray, objectIndex, objectCount, value) {
             PendingObject object;
             object.context = ArrayElement(context.Child("objects"), objectIndex);
-            object.inputOrder = pending.size() + patterns.size() + items.size() + objects.size() + aiProfiles.size();
+            object.inputOrder = pending.size() + patterns.size() + items.size() + objects.size() + aiProfiles.size()
+                + recipes.size() + recyclers.size() + traits.size();
             if (!ParseObject(value, object)) {
                 object.context.Fail("while loading object definition");
                 return eastl::unexpected(ContentError::InvalidData);
@@ -838,7 +1020,8 @@ ContentResult<bool> ParseSource(const ContentSource& source, Vector<PendingTerra
         }
         PendingTerrain terrain;
         terrain.context = definitionContext;
-        terrain.inputOrder = pending.size() + patterns.size() + items.size() + objects.size() + aiProfiles.size();
+        terrain.inputOrder = pending.size() + patterns.size() + items.size() + objects.size() + aiProfiles.size()
+            + recipes.size() + recyclers.size() + traits.size();
         bool parsed = false;
         // Dispatch definition kinds at the document boundary; individual parsers own their schemas.
         if (!yyjson_is_obj(value)) {
@@ -860,6 +1043,43 @@ ContentResult<bool> ParseSource(const ContentSource& source, Vector<PendingTerra
                 }
                 items.push_back(eastl::move(item));
                 continue;
+            } else if (JsonString(type) == "tool_trait") {
+                PendingToolTrait trait;
+                trait.context = definitionContext;
+                trait.inputOrder = terrain.inputOrder;
+                if (!CheckObject(value, {"type", "id", "name"}, trait.context)
+                    || !ReadId(yyjson_obj_get(value, "id"), trait.definition.id, trait.context.Child("id"))
+                    || !ReadString(yyjson_obj_get(value, "name"), trait.definition.name, trait.context.Child("name"))) {
+                    return eastl::unexpected(ContentError::InvalidData);
+                }
+                traits.push_back(eastl::move(trait));
+                continue;
+            } else if (JsonString(type) == "recipe") {
+                PendingCrafting recipe;
+                recipe.context = definitionContext;
+                recipe.inputOrder = terrain.inputOrder;
+                if (!ParseCrafting(value, recipe)) { return eastl::unexpected(ContentError::InvalidData); }
+                if (auto* recycling = yyjson_obj_get(value, "recycling")) {
+                    PendingRecycling recycler;
+                    recycler.context = definitionContext.Child("recycling");
+                    recycler.inputOrder = recipe.inputOrder + 1;
+                    recycler.generatedFrom = recipe.definition.id;
+                    if (!ParseRecycling(recycling, recycler, true)) { return eastl::unexpected(ContentError::InvalidData); }
+                    if (recipe.result.count != 1) {
+                        recycler.context.Fail("generated recycling requires result.count == 1");
+                        return eastl::unexpected(ContentError::InvalidData);
+                    }
+                    recyclers.push_back(eastl::move(recycler));
+                }
+                recipes.push_back(eastl::move(recipe));
+                continue;
+            } else if (JsonString(type) == "recycling_recipe") {
+                PendingRecycling recycler;
+                recycler.context = definitionContext;
+                recycler.inputOrder = terrain.inputOrder;
+                if (!ParseRecycling(value, recycler, false)) { return eastl::unexpected(ContentError::InvalidData); }
+                recyclers.push_back(eastl::move(recycler));
+                continue;
             } else if (JsonString(type) == "building_pattern") {
                 PendingPattern pattern;
                 pattern.context = definitionContext;
@@ -875,7 +1095,7 @@ ContentResult<bool> ParseSource(const ContentSource& source, Vector<PendingTerra
                 String message = "unsupported definition type '";
                 const auto typeName = JsonString(type);
                 message.append(typeName.data(), typeName.size());
-                message += "' (expected terrain, building_pattern, or item)";
+                message += "' (expected terrain, building_pattern, item, tool_trait, recipe, or recycling_recipe)";
                 terrain.context.Child("type").Fail(View(message));
             }
         }
@@ -1037,11 +1257,14 @@ struct DefinitionIdentity {
     bool item = false;
     bool object = false;
     bool aiProfile = false;
+    bool craftingContent = false;
 };
 
 bool CheckDefinitionIds(const Vector<PendingTerrain>& terrains, const Vector<PendingPattern>& patterns,
                           const Vector<PendingItem>& items, const Vector<PendingObject>& objects,
-                          const Vector<PendingAiProfile>& aiProfiles, Diagnostics* diagnostics) {
+                          const Vector<PendingAiProfile>& aiProfiles, const Vector<PendingCrafting>& recipes,
+                          const Vector<PendingRecycling>& recyclers, const Vector<PendingToolTrait>& traits,
+                          Diagnostics* diagnostics) {
     Vector<DefinitionIdentity> identities;
     identities.reserve(terrains.size() + patterns.size() + items.size() + objects.size() + aiProfiles.size());
     for (const auto& terrain : terrains) {
@@ -1059,6 +1282,9 @@ bool CheckDefinitionIds(const Vector<PendingTerrain>& terrains, const Vector<Pen
     for (const auto& profile : aiProfiles) {
         identities.push_back({View(profile.definition.id), &profile.context, profile.inputOrder, false, false, false, true});
     }
+    for (const auto& recipe : recipes) { identities.push_back({View(recipe.definition.id), &recipe.context, recipe.inputOrder, false, false, false, false, true}); }
+    for (const auto& recycler : recyclers) { identities.push_back({View(recycler.definition.id), &recycler.context, recycler.inputOrder, false, false, false, false, true}); }
+    for (const auto& trait : traits) { identities.push_back({View(trait.definition.id), &trait.context, trait.inputOrder, false, false, false, false, true}); }
     eastl::sort(identities.begin(), identities.end(), [](const DefinitionIdentity& left, const DefinitionIdentity& right) {
         if (left.id == right.id) { return left.inputOrder < right.inputOrder; }
         return left.id < right.id;
@@ -1068,13 +1294,14 @@ bool CheckDefinitionIds(const Vector<PendingTerrain>& terrains, const Vector<Pen
         const auto& previous = identities[i - 1];
         if (previous.id != current.id) { continue; }
         if (diagnostics) {
-            String message = current.aiProfile ? "duplicate AI profile definition '" : current.object ? "duplicate object definition '" : current.item ? "duplicate item definition '" :
+            String message = current.craftingContent ? "duplicate content definition '" : current.aiProfile ? "duplicate AI profile definition '" : current.object ? "duplicate object definition '" : current.item ? "duplicate item definition '" :
                 (current.pattern ? "duplicate building pattern definition '" : "duplicate terrain definition '");
             message.append(current.id.data(), current.id.size());
             message += '\'';
             current.context->Child("id").Fail(View(message));
             previous.context->Child("id").Fail("previous definition is here");
-            if (current.aiProfile) { current.context->Fail("while loading AI profile definition"); }
+            if (current.craftingContent) { current.context->Fail("while loading crafting content definition"); }
+            else if (current.aiProfile) { current.context->Fail("while loading AI profile definition"); }
             else if (current.object) { current.context->Fail("while loading object definition"); }
             else if (current.item) { AddItemContext(*current.context, current.id); }
             else if (current.pattern) { AddPatternContext(*current.context, current.id); }
@@ -1095,6 +1322,109 @@ struct File {
         return std::fclose(closing) == 0;
     }
 };
+
+template<class Definition>
+std::size_t FindDefinition(const Vector<Definition>& definitions, eastl::string_view id) {
+    std::size_t begin = 0, end = definitions.size();
+    while (begin < end) {
+        const auto middle = begin + (end - begin) / 2;
+        if (View(definitions[middle].id) < id) { begin = middle + 1; }
+        else { end = middle; }
+    }
+    return begin < definitions.size() && View(definitions[begin].id) == id ? begin + 1 : 0;
+}
+
+bool ResolveTraits(const Vector<PendingTrait>& pending, StaticList<TraitRequirement, maxRecipeTraits>& output,
+                   const ContentCatalog& catalog, const Context& context) {
+    for (std::size_t i = 0; i < pending.size(); ++i) {
+        const auto& trait = pending[i];
+        const auto id = catalog.FindToolTrait(View(trait.id));
+        if (!id.value) {
+            if (context.diagnostics) {
+                String message = "unknown tool trait '";
+                message += trait.id;
+                message += '\'';
+                ArrayElement(context, i).Child("id").Fail(View(message));
+            }
+            return false;
+        }
+        if (!output.PushBack({id, trait.tier})) { std::abort(); }
+    }
+    eastl::sort(output.begin(), output.end(), [](const TraitRequirement& left, const TraitRequirement& right) {
+        return left.trait.value < right.trait.value;
+    });
+    return true;
+}
+
+bool ResolveItem(const String& name, ItemTypeId& output, const ContentCatalog& catalog, const Context& context) {
+    output = catalog.FindItem(View(name));
+    if (output.value && output.value <= maxRecipeItemId) {
+        if (catalog.GetItem(output).unfinishedCraft) {
+            return context.Fail("internal item 'unfinished_craft' cannot be referenced by authored recipes");
+        }
+        return true;
+    }
+    if (context.diagnostics) {
+        String message = "unknown or out-of-range recipe item '";
+        message += name;
+        message += '\'';
+        context.Fail(View(message));
+    }
+    return false;
+}
+
+bool ResolveInputs(const Vector<PendingInput>& pending, StaticList<RecipeInput, maxRecipeInputs>& output,
+                   const ContentCatalog& catalog, const Context& context) {
+    for (std::size_t i = 0; i < pending.size(); ++i) {
+        const auto& input = pending[i];
+        ItemTypeId item;
+        if (!ResolveItem(input.item, item, catalog, ArrayElement(context, i).Child("item"))) { return false; }
+        if (!output.PushBack(RecipeInput{item, input.count, input.flags})) { std::abort(); }
+    }
+    eastl::sort(output.begin(), output.end(), [](const RecipeInput& left, const RecipeInput& right) {
+        return left.Item().value < right.Item().value;
+    });
+    return true;
+}
+
+bool ResolveCrafting(PendingCrafting& pending, const ContentCatalog& catalog) {
+    auto& definition = pending.definition;
+    definition.result.count = pending.result.count;
+    return ResolveInputs(pending.inputs, definition.inputs, catalog, pending.context.Child("inputs"))
+        && ResolveTraits(pending.traits, definition.toolTraits, catalog, pending.context.Child("tool_traits"))
+        && ResolveItem(pending.result.item, definition.result.item, catalog, pending.context.Child("result").Child("item"));
+}
+
+bool ResolveRecycling(PendingRecycling& pending, const ContentCatalog& catalog) {
+    auto& definition = pending.definition;
+    if (!ResolveInputs(pending.inputs, definition.inputs, catalog, pending.context.Child("inputs"))
+        || !ResolveTraits(pending.traits, definition.toolTraits, catalog, pending.context.Child("tool_traits"))) { return false; }
+    if (!pending.generatedFrom.empty()) {
+        const auto& recipe = catalog.GetCraftingRecipe(catalog.FindCraftingRecipe(View(pending.generatedFrom)));
+        definition.target = recipe.result.item;
+        for (const auto& input : recipe.inputs) {
+            if (input.Retained() || input.NoRecovery() || !catalog.GetItem(input.Item()).recoveryAllowed) { continue; }
+            const auto amount = static_cast<std::uint32_t>(ScaleRatioFloor(input.Count(), pending.efficiency));
+            if (amount && !definition.returns.PushBack({input.Item(), amount})) { std::abort(); }
+        }
+    } else {
+        if (!ResolveItem(pending.target, definition.target, catalog, pending.context.Child("target"))) { return false; }
+        for (std::size_t i = 0; i < pending.returns.size(); ++i) {
+            const auto& output = pending.returns[i];
+            const auto child = ArrayElement(pending.context.Child("returns"), i);
+            ItemTypeId item;
+            if (!ResolveItem(output.item, item, catalog, child.Child("item"))) { return false; }
+            if (!catalog.GetItem(item).recoveryAllowed) {
+                return child.Child("item").Fail("explicit recycling return violates item's recovery_allowed:false");
+            }
+            if (!definition.returns.PushBack({item, output.count})) { std::abort(); }
+        }
+    }
+    eastl::sort(definition.returns.begin(), definition.returns.end(), [](const ItemOutput& left, const ItemOutput& right) {
+        return left.item.value < right.item.value;
+    });
+    return true;
+}
 
 eastl::unexpected<ContentError> FileFailure(const Context& context, eastl::string_view message) {
     context.Fail(message);
@@ -1224,6 +1554,55 @@ const AiProfile& ContentCatalog::GetAiProfile(AiProfileId id) const {
 
 std::size_t ContentCatalog::AiProfileCount() const { return aiProfiles_.size(); }
 
+CraftingRecipeId ContentCatalog::FindCraftingRecipe(eastl::string_view id) const {
+    return {static_cast<std::uint32_t>(FindDefinition(craftingRecipes_, id))};
+}
+const CraftingRecipeDefinition* ContentCatalog::TryGetCraftingRecipe(CraftingRecipeId id) const {
+    if (!id.value || id.value > craftingRecipes_.size()) { return nullptr; }
+    return &craftingRecipes_[id.value - 1];
+}
+const CraftingRecipeDefinition& ContentCatalog::GetCraftingRecipe(CraftingRecipeId id) const {
+    const auto* definition = TryGetCraftingRecipe(id);
+    if (!definition) { std::abort(); }
+    return *definition;
+}
+std::size_t ContentCatalog::CraftingRecipeCount() const { return craftingRecipes_.size(); }
+
+RecyclingRecipeId ContentCatalog::FindRecyclingRecipe(eastl::string_view id) const {
+    return {static_cast<std::uint32_t>(FindDefinition(recyclingRecipes_, id))};
+}
+const RecyclingRecipeDefinition* ContentCatalog::TryGetRecyclingRecipe(RecyclingRecipeId id) const {
+    if (!id.value || id.value > recyclingRecipes_.size()) { return nullptr; }
+    return &recyclingRecipes_[id.value - 1];
+}
+const RecyclingRecipeDefinition& ContentCatalog::GetRecyclingRecipe(RecyclingRecipeId id) const {
+    const auto* definition = TryGetRecyclingRecipe(id);
+    if (!definition) { std::abort(); }
+    return *definition;
+}
+std::size_t ContentCatalog::RecyclingRecipeCount() const { return recyclingRecipes_.size(); }
+RecyclingRecipeId ContentCatalog::FindRecyclingFor(ItemTypeId item) const {
+    for (std::size_t i = 0; i < recyclingRecipes_.size(); ++i) {
+        if (recyclingRecipes_[i].target == item) { return {static_cast<std::uint32_t>(i + 1)}; }
+    }
+    return {};
+}
+
+ToolTraitId ContentCatalog::FindToolTrait(eastl::string_view id) const {
+    return {static_cast<std::uint8_t>(FindDefinition(toolTraits_, id))};
+}
+const ToolTraitDefinition* ContentCatalog::TryGetToolTrait(ToolTraitId id) const {
+    if (!id.value || id.value > toolTraits_.size()) { return nullptr; }
+    return &toolTraits_[id.value - 1];
+}
+const ToolTraitDefinition& ContentCatalog::GetToolTrait(ToolTraitId id) const {
+    const auto* definition = TryGetToolTrait(id);
+    if (!definition) { std::abort(); }
+    return *definition;
+}
+std::size_t ContentCatalog::ToolTraitCount() const { return toolTraits_.size(); }
+ItemTypeId ContentCatalog::UnfinishedCraftItem() const { return unfinishedCraftItem_; }
+
 ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sources, Diagnostics* diagnostics) {
     ItemBehaviorRegistry registry;
     RegisterBuiltinItemBehaviors(registry);
@@ -1237,18 +1616,44 @@ ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sourc
     Vector<PendingItem> items;
     Vector<PendingObject> objects;
     Vector<PendingAiProfile> aiProfiles;
+    Vector<PendingCrafting> recipes;
+    Vector<PendingRecycling> recyclers;
+    Vector<PendingToolTrait> traits;
     for (const auto& source : sources) {
-        auto result = ParseSource(source, pending, patterns, items, objects, aiProfiles, registry, diagnostics);
+        auto result = ParseSource(source, pending, patterns, items, objects, aiProfiles, recipes, recyclers, traits, registry, diagnostics);
         if (!result) {
             Context{diagnostics, source.name, {}}.Fail("could not load content source");
             return eastl::unexpected(result.error());
         }
     }
+    if (!recipes.empty() || !recyclers.empty()) {
+        PendingItem internal;
+        internal.context = Context{diagnostics, "<generated unfinished craft>", {}};
+        internal.inputOrder = pending.size() + patterns.size() + items.size() + objects.size()
+            + aiProfiles.size() + recipes.size() + recyclers.size() + traits.size();
+        auto& definition = internal.definition;
+        definition.id = "unfinished_craft";
+        definition.name = "unfinished craft";
+        definition.volumeMl = 1;
+        definition.unfinishedCraft = true;
+        definition.container = ItemContainerDefinition{{1}, {UINT32_MAX}};
+        ItemCapabilityDefinition capability;
+        capability.id = "container";
+        capability.type = "container";
+        capability.config.SetString("id", "container");
+        capability.config.SetString("type", "container");
+        capability.config.SetUnsigned("capacity_volume_ml", UINT32_MAX);
+        capability.config = CanonicalContentData(capability.config);
+        definition.capabilities.push_back(eastl::move(capability));
+        items.push_back(eastl::move(internal));
+    }
     if (pending.size() > std::numeric_limits<std::uint32_t>::max()
         || patterns.size() > std::numeric_limits<std::uint32_t>::max()
         || items.size() > std::numeric_limits<std::uint32_t>::max()
         || objects.size() > std::numeric_limits<std::uint32_t>::max()
-        || aiProfiles.size() > std::numeric_limits<std::uint32_t>::max()) {
+        || aiProfiles.size() > std::numeric_limits<std::uint32_t>::max()
+        || recipes.size() > UINT32_MAX || recyclers.size() > UINT32_MAX || traits.size() > 255
+        || ((!recipes.empty() || !recyclers.empty()) && items.size() > maxRecipeItemId)) {
         Context{diagnostics, {}, {}}.Fail("too many content definitions");
         Context{diagnostics, {}, {}}.Fail("could not load content catalog");
         return eastl::unexpected(ContentError::InvalidData);
@@ -1258,12 +1663,16 @@ ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sourc
         if (left.definition.id == right.definition.id) { return left.inputOrder < right.inputOrder; }
         return left.definition.id < right.definition.id;
     });
-    if (!CheckDefinitionIds(pending, patterns, items, objects, aiProfiles, diagnostics)) { return eastl::unexpected(ContentError::InvalidData); }
+    if (!CheckDefinitionIds(pending, patterns, items, objects, aiProfiles, recipes, recyclers, traits, diagnostics)) { return eastl::unexpected(ContentError::InvalidData); }
     if (!Resolve(pending)) {
         Context{diagnostics, {}, {}}.Fail("could not load content catalog");
         return eastl::unexpected(ContentError::InvalidData);
     }
     ContentCatalog catalog;
+    eastl::sort(traits.begin(), traits.end(), [](const PendingToolTrait& left, const PendingToolTrait& right) {
+        return left.definition.id < right.definition.id;
+    });
+    for (auto& trait : traits) { catalog.toolTraits_.push_back(eastl::move(trait.definition)); }
     eastl::sort(aiProfiles.begin(), aiProfiles.end(), [](const PendingAiProfile& left, const PendingAiProfile& right) {
         return left.definition.id < right.definition.id;
     });
@@ -1273,7 +1682,43 @@ ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sourc
         return left.definition.id < right.definition.id;
     });
     catalog.items_.reserve(items.size());
-    for (auto& item : items) { catalog.items_.push_back(eastl::move(item.definition)); }
+    for (auto& item : items) {
+        if (!ResolveTraits(item.traits, item.definition.toolTraits, catalog, item.context.Child("tool_traits"))) {
+            return eastl::unexpected(ContentError::InvalidData);
+        }
+        catalog.items_.push_back(eastl::move(item.definition));
+    }
+    if (!recipes.empty() || !recyclers.empty()) { catalog.unfinishedCraftItem_ = catalog.FindItem("unfinished_craft"); }
+    eastl::sort(recipes.begin(), recipes.end(), [](const PendingCrafting& left, const PendingCrafting& right) {
+        return left.definition.id < right.definition.id;
+    });
+    for (auto& recipe : recipes) {
+        if (!ResolveCrafting(recipe, catalog)) { return eastl::unexpected(ContentError::InvalidData); }
+        catalog.craftingRecipes_.push_back(eastl::move(recipe.definition));
+    }
+    eastl::sort(recyclers.begin(), recyclers.end(), [](const PendingRecycling& left, const PendingRecycling& right) {
+        return left.definition.id < right.definition.id;
+    });
+    for (std::size_t i = 0; i < recyclers.size(); ++i) {
+        auto& recycler = recyclers[i];
+        if (!ResolveRecycling(recycler, catalog)) { return eastl::unexpected(ContentError::InvalidData); }
+        const auto previous = catalog.FindRecyclingFor(recycler.definition.target);
+        if (previous.value) {
+            if (diagnostics) {
+                String message = "recycling target conflict between '";
+                message += catalog.GetRecyclingRecipe(previous).id;
+                message += "' and '";
+                message += recycler.definition.id;
+                message += "' for item '";
+                message += catalog.GetItem(recycler.definition.target).id;
+                message += '\'';
+                recycler.context.Fail(View(message));
+                recyclers[previous.value - 1].context.Fail("previous recycler is here");
+            }
+            return eastl::unexpected(ContentError::InvalidData);
+        }
+        catalog.recyclingRecipes_.push_back(eastl::move(recycler.definition));
+    }
     eastl::sort(objects.begin(), objects.end(), [](const PendingObject& left, const PendingObject& right) {
         return left.definition.id < right.definition.id;
     });

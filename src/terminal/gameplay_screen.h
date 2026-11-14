@@ -2,6 +2,7 @@
 
 #include "client/localization.h"
 #include "client/message_history.h"
+#include "client/crafting_menu.h"
 
 #include <ftxui/component/event.hpp>
 #include <ftxui/dom/elements.hpp>
@@ -63,7 +64,11 @@ public:
 
 private:
     std::shared_ptr<TerminalMapCache> mapCache_;
-    enum class Modal { None, Inventory, Players, Controls, QuickActions };
+    enum class Modal { None, Inventory, Players, Controls, QuickActions, Crafting };
+    Vector<CraftingMenuRow> craftingRows_;
+    eastl::optional<Command> craftingSelection_;
+    std::size_t craftingIndex_ = 0;
+    int craftingScroll_ = 0;
     enum class ItemStage { Browse, Actions, Item, Container, Direction };
     ItemStage itemStage_ = ItemStage::Browse;
     bool useSelection_ = false;

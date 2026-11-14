@@ -405,7 +405,7 @@ TEST_CASE("Content dispatch reports unsupported types at the type field", "[cont
     REQUIRE_FALSE(result.has_value());
     CHECK(result.error() == ContentError::InvalidData);
     REQUIRE(diagnostics.Frames().size() == 3);
-    CHECK(diagnostics.Frames()[0].message == "unsupported definition type 'unknown_type' (expected terrain, building_pattern, or item)");
+    CHECK(diagnostics.Frames()[0].message == "unsupported definition type 'unknown_type' (expected terrain, building_pattern, item, tool_trait, recipe, or recycling_recipe)");
     REQUIRE(diagnostics.Frames()[0].location.has_value());
     CHECK(diagnostics.Frames()[0].location->path == "definitions[0].type");
     CHECK(diagnostics.Frames()[1].message == "while loading content definition");

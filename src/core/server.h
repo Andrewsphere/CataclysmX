@@ -8,7 +8,10 @@
 
 namespace cataclysmx {
 
-enum class CommandKind { wait, move, pick_up, drop, interact, use_item, store_item, attack, combat_style, interact_action };
+enum class CommandKind {
+    wait, move, pick_up, drop, interact, use_item, store_item, attack, combat_style, interact_action,
+    craft, recycle, resume_craft, pause_craft, cancel_craft
+};
 struct Command {
     CommandKind kind = CommandKind::wait;
     int dx = 0;
@@ -26,6 +29,7 @@ struct Command {
     PersistentId target = 0; // Attack: zero chooses an adjacent perceived hostile.
     CombatStyle style = CombatStyle::Balanced;
     InteractionRequest interaction;
+    CraftingRecipeId recipe{}; // Craft only. Recycling resolves the unique recipe from item.
 };
 bool ValidCommandShape(const Command& command);
 enum class Outcome {
@@ -34,7 +38,8 @@ enum class Outcome {
     stale_input, duplicate_input, used_item, stored_item, item_use_failed,
     capacity_exceeded, invalid_container,
     attacked, attack_missed, attack_parried, attack_blocked, attack_windup,
-    target_defeated, no_target, no_combat_move, combat_style_changed, locked, unlocked
+    target_defeated, no_target, no_combat_move, combat_style_changed, locked, unlocked,
+    craft_started, recycling_started, craft_resumed, craft_paused, craft_cancelled, crafting_refused
 };
 const char* OutcomeMessage(Outcome outcome);
 // The demo requires floor, wall, and closed_door; floor must be passable.
@@ -51,6 +56,7 @@ struct CommandResult {
     Tick cost = 0;
     ItemUseOutcome itemOutcome = ItemUseOutcome::Succeeded;
     ItemUseReason itemReason;
+    CraftingOutcome craftingOutcome = CraftingOutcome::ActorUnavailable;
 };
 const char* CommandResultMessage(const CommandResult& result);
 
@@ -135,6 +141,20 @@ struct InventoryEntry {
     Vector<ItemActionInfo> actions;
     bool operator==(const InventoryEntry&) const = default;
 };
+// Transport/presentation values contain persistent identities, never runtime handles.
+struct CraftingEntry {
+    PersistentId id = 0;
+    CraftingKind kind = CraftingKind::Craft;
+    CraftingRecipeId craftingRecipe{};
+    RecyclingRecipeId recyclingRecipe{};
+    CraftingStatus status = CraftingStatus::Paused;
+    PersistentId worker = 0;
+    std::uint32_t totalWork = 0;
+    std::uint32_t completedWork = 0;
+    Tick fundedTicksRemaining = 0;
+    bool pauseRequested = false;
+    bool operator==(const CraftingEntry&) const = default;
+};
 struct WorldView {
     TileCoord origin{};
     int width = 0;
@@ -159,6 +179,7 @@ struct WorldView {
     Vector<PlayerStatus> players;
     LightBand playerLight = LightBand::Dark;
     CombatView combat;
+    Vector<CraftingEntry> craftingJobs; // Reachable wrappers, persistent-ID order.
 };
 
 // Authoritative deterministic endpoint. No transport or clock access.

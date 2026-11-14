@@ -17,7 +17,7 @@ constexpr eastl::string_view actionNames[] = {
     "details_up", "details_down", "apply", "save_settings", "reload", "inspect", "add_binding", "unbind", "reset",
     "inventory", "players", "help", "quick_actions", "use", "move_down", "move_up", "attack",
     "style_balanced", "style_aggressive", "style_defensive", "examine",
-    "northwest", "northeast", "southwest", "southeast"
+    "northwest", "northeast", "southwest", "southeast", "crafting"
 };
 constexpr eastl::string_view contextNames[] = {"gameplay", "interaction", "menu", "debug", "items"};
 constexpr eastl::string_view namedKeys[] = {
@@ -139,6 +139,7 @@ Keymap DefaultKeymap() {
         map[map.size() - 2].keys.push_back({"Down", false, true});
         map.back().keys.push_back({"Up", false, true});
         add(context, InputAction::Inventory, {"i"});
+        add(context, InputAction::Crafting, {"&"});
         add(context, InputAction::Use, {"u"});
         add(context, InputAction::Players, {"P"});
         add(context, InputAction::Help, {"F1"});

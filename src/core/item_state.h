@@ -7,6 +7,8 @@ namespace cataclysmx {
 
 class ItemBehavior;
 class ItemSystem;
+class CraftingSystem;
+struct CraftingJobState;
 struct ItemEnergyState {
     ItemCapabilityId capability{};
     std::uint32_t energy = 0;
@@ -24,10 +26,12 @@ public:
     ItemRuntime& operator=(const ItemRuntime&) = delete;
 private:
     friend class ItemSystem;
+    friend class CraftingSystem;
     friend ItemRuntime MakeItemState(const ItemDefinition&);
     friend void WriteItemState(const ItemDefinition&, const ItemRuntime&, DataObject&);
     friend StateResult<ItemRuntime> ReadItemState(const ItemDefinition&, const DataObject&, Diagnostics*);
     Vector<ItemEnergyState> energy_;
+    eastl::unique_ptr<CraftingJobState> crafting_;
     Vector<eastl::unique_ptr<ItemBehavior>> behaviors_;
 };
 

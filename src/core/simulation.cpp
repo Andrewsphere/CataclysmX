@@ -32,6 +32,7 @@ SimulationResult AdvanceUntilInput(World& world, Tick& tick,
         const auto dueItemEvent = world.NextItemEventIn();
         effectsCompleted |= dueItemEvent && *dueItemEvent == 0;
         world.ProcessItemEvents();
+        effectsCompleted |= world.ProcessCraftingEvents();
         const auto combatEvent = world.Combat().NextEventIn();
         if (combatEvent && *combatEvent == 0) {
             world.Combat().ProcessEvents(rngState);

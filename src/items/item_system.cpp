@@ -1,5 +1,6 @@
 #include "items/item_system.h"
 #include "core/world.h"
+#include "crafting/crafting_state.h"
 #include <EASTL/algorithm.h>
 #include <EASTL/sort.h>
 #include <cstdlib>
@@ -32,6 +33,10 @@ StateResult<void> ItemSystem::Initialize(Item& item, const DataObject* archive, 
         auto state = ReadItemState(definition, *archive, diagnostics);
         if (!state) { return eastl::unexpected(state.error()); }
         item.runtime_ = eastl::move(*state);
+        if (item.runtime_.crafting_) {
+            const auto resolved = ResolveCraftingState(world_.GetContent(), *item.runtime_.crafting_);
+            if (!resolved) { return resolved; }
+        }
     } else { item.runtime_ = MakeItemState(definition); }
     return {};
 }
@@ -215,8 +220,9 @@ void ItemSystem::Refresh(ItemHandle handle) {
         return left < right || (left == right && a.capability.value < b.capability.value);
     });
 }
-void ItemSystem::Attach(ItemHandle item) { Refresh(item); }
+void ItemSystem::Attach(ItemHandle item) { Refresh(item); world_.AttachCrafting(item); }
 void ItemSystem::Detach(ItemHandle item) {
+    world_.DetachCrafting(item);
     eastl::erase_if(scheduled_, [item](const auto& entry) { return entry.item == item; });
     eastl::erase_if(changes_, [item](const auto& entry) { return entry.item == item; });
     eastl::erase(destruction_, item);

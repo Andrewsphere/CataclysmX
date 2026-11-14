@@ -6,6 +6,7 @@
 #include "core/timing.h"
 #include "core/world_types.h"
 #include "core/item_state.h"
+#include "crafting/crafting_types.h"
 #include "core/world_result.h"
 #include "core/perception_types.h"
 #include "core/light_types.h"
@@ -94,6 +95,7 @@ struct Item {
     Vector<ItemHandle> contents;
 private:
     friend class ItemSystem;
+    friend class CraftingSystem;
     ItemRuntime runtime_;
 };
 struct Chunk {
@@ -255,6 +257,18 @@ public:
     WorldResult<void> DestroyItem(ItemHandle item);
     WorldResult<void> SetActorCarryCapacity(ActorHandle actor, std::uint64_t grams);
     std::uint64_t GetItemMass(ItemHandle item) const;
+    std::uint64_t GetItemVolume(ItemHandle item) const;
+    bool IsReservedItem(ItemHandle item) const;
+    WorldResult<void> SetCraftingSettings(CraftingSettings settings);
+    CraftingSettings GetCraftingSettings() const;
+    WorldResult<CraftingResult> StartCrafting(ActorHandle actor, CraftingRecipeId recipe);
+    WorldResult<CraftingResult> StartRecycling(ActorHandle actor, ItemHandle target, RecyclingRecipeId recipe);
+    WorldResult<CraftingResult> ResumeCrafting(ActorHandle actor, ItemHandle unfinished);
+    WorldResult<CraftingResult> PauseCrafting(ActorHandle actor, ItemHandle unfinished);
+    WorldResult<CraftingResult> CancelCrafting(ActorHandle actor, ItemHandle unfinished);
+    eastl::optional<CraftingJobView> InspectCrafting(ItemHandle unfinished) const;
+    void CollectCraftingJobs(ActorHandle actor, Vector<CraftingJobView>& output) const;
+    bool ProcessCraftingEvents();
     std::uint64_t GetCarriedMass(ActorHandle actor) const;
     std::uint64_t GetContainerUsedVolume(ItemHandle item) const;
     bool CanAccessItem(ActorHandle actor, ItemHandle item) const;
@@ -324,6 +338,11 @@ public:
 
 private:
     friend class CombatSystem;
+    friend class CraftingSystem;
+    void AttachCrafting(ItemHandle item);
+    void DetachCrafting(ItemHandle item);
+    void BeginCraftingMutation();
+    void EndCraftingMutation();
     Actor* MutableActor(ActorHandle actor);
     void ActorChanged(ActorHandle actor);
     friend bool LineVisible(const World&, TileCoord, TileCoord);
@@ -339,6 +358,8 @@ private:
     Item* MutableItem(ItemHandle item);
     void MarkItemDirty(ItemHandle item);
     bool ItemEligible(ItemHandle item) const;
+    // Internal valid-handle query; nested items resolve to their spatial root.
+    TileCoord ItemRootPosition(ItemHandle item) const;
     WorldResult<void> CheckItemTransfer(ItemHandle item, ItemLocation destination) const;
     void FlushGravity();
     class Impl;

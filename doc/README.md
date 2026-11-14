@@ -50,6 +50,15 @@
   2022, full symbols, optimized or Debug builds, and reproducible captures.
 - [Items API](items_api.md): physical properties, volume-limited containment,
   installed batteries, explicit use actions, charging and timed door controllers.
+- [Runtime crafting and recycling](crafting.md): jobs, reservations, work,
+  energy accounting and persistence.
+- [Integer ratios and bounded lists](ratios.md): the 10000-based project ratio
+  convention, checked floor scaling, and compact inline content storage.
+- [Crafting content](crafting_content.md): recipes, tool traits, recycling and validation.
+- [Crafting commands and transport](crafting_commands.md): authoritative commands,
+  results and snapshot layout.
+- [Crafting controls and frontend ownership](crafting_ui.md): menus, controls and
+  headless script commands.
 - [Adding item behaviors](item_behaviors.md): virtual interfaces, explicit factories,
   shared definitions, local actions and safe callback/scheduling contracts.
 - [Structured state](data_object.md): owned typed objects and versioned capability

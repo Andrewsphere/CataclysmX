@@ -14,6 +14,12 @@
   ],
   definitions: [
     {type: 'item', id: 'rock', name: 'rock', mass_g: 500, volume_ml: 250},
+    {type: 'item', id: 'stone_marker', name: 'stone marker', mass_g: 500, volume_ml: 250},
+    {
+      type: 'recipe', id: 'shape_stone_marker', name: 'Shape stone marker',
+      inputs: [{item: 'rock', count: 1}], result: {item: 'stone_marker', count: 1}, work: 300,
+      recycling: {id: 'recycle_stone_marker', work: 100, efficiency: 10000},
+    },
     {
       type: 'item', id: 'backpack', name: 'backpack', mass_g: 1000, volume_ml: 2000,
       capabilities: [{type: 'container', id: 'storage', capacity_volume_ml: 20000}],

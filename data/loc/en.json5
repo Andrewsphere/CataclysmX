@@ -146,6 +146,8 @@
     "game.ui.lan_controls": "Fixed LAN keys: F9/Escape close; O host; C stop hosting; R refresh; j edit address; n edit name; Enter accept edit or join; 1-9 join listed session; D leave. X joins the entered address as a new character, replacing its saved identity after admission.",
     "game.ui.fixed_controls": "Fixed controls: Escape always cancels a direction prompt or closes a modal. Outside a prompt, Escape quits. Ctrl+c exits the application. Inventory: use Menu up/down to select and Menu accept to drop the selected item.",
     "action.inventory": "inventory",
+    "action.crafting": "crafting",
+    "settings.ui.action_help.crafting": "Open crafting and recycling. Menu up/down selects a recipe, item, or job control; Menu accept submits it. Jobs offer Resume, Pause, and Cancel. The server checks availability.",
     "action.players": "players",
     "action.help": "controls",
     "settings.ui.action_help.inventory": "Open Inventory. Select a directly carried item and press the Menu accept binding to drop it.",

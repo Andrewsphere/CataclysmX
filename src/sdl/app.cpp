@@ -1,6 +1,7 @@
 #include "sdl/app.h"
 #include "client/combat_text.h"
 #include "client/message_history.h"
+#include "client/crafting_menu.h"
 
 #include "sdl/assets.h"
 #include "sdl/gpu_renderer.h"
@@ -61,7 +62,7 @@ String Hints(const Keymap& keys) {
         InputAction::Northwest, InputAction::Northeast, InputAction::Southwest, InputAction::Southeast,
         InputAction::MoveDown, InputAction::MoveUp, InputAction::Examine, InputAction::Settings, InputAction::Debug, InputAction::Wait, InputAction::PickUp,
         InputAction::Drop, InputAction::Interact, InputAction::Attack, InputAction::StyleBalanced,
-        InputAction::StyleAggressive, InputAction::StyleDefensive, InputAction::Help, InputAction::Quit}) {
+        InputAction::StyleAggressive, InputAction::StyleDefensive, InputAction::Crafting, InputAction::Help, InputAction::Quit}) {
         text += BindingHint(keys, InputContext::Gameplay, action);
         text += " ";
         const auto name = ActionName(action);
@@ -144,6 +145,10 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
     TileCoord requestedCursor{};
     bool inspectionNeeded = false;
     Vector<InteractionChoice> actions;
+    Vector<CraftingMenuRow> craftingRows;
+    eastl::optional<Command> craftingSelection;
+    eastl::optional<std::uint64_t> craftingRequest;
+    String craftingFeedback;
     auto& selectedAction = modal.ActionSelection();
     eastl::optional<SettingsStore> candidateSettings;
     Localization candidateLocalization;
@@ -276,7 +281,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 || gameAction == InputAction::MoveUp || gameAction == InputAction::MoveDown) { action = gameAction; }
         }
         dirty = true;
-        if (modal.Pending() || settingsId) { return; }
+        if (modal.Pending() || settingsId || craftingRequest) { return; }
         if (modal.Active() == Screen::Options) {
             const bool capturing = optionsUi.Capturing();
             const auto result = optionsUi.Key(*chord,store,localization,localizationDirectory);
@@ -317,6 +322,17 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 close(); return;
             }
             if (modal.Active() == Screen::Help) { if (*action == InputAction::Accept) { close(); } return; }
+            if (modal.Active() == Screen::Crafting) {
+                if (!craftingRows.empty() && (*action == InputAction::North || *action == InputAction::South)) {
+                    selectedAction = *action == InputAction::North ? (selectedAction + craftingRows.size() - 1) % craftingRows.size()
+                        : (selectedAction + 1) % craftingRows.size();
+                    craftingSelection = craftingRows[selectedAction].command;
+                } else if (*action == InputAction::Accept && craftingSelection) {
+                    const auto id = nextId;
+                    if (submit(RequestKind::ResumeAndCommand, *craftingSelection)) { craftingRequest = id; }
+                }
+                return;
+            }
             if (modal.Active() == Screen::Debug) {
                 if (*action == InputAction::Inspect) {
                     debugAi = !debugAi; ++aiRevision; aiNeeded = false; aiValid = false;
@@ -409,9 +425,11 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
         if (*action == InputAction::Quit || *action == InputAction::Cancel) { running = false; return; }
         if (!started || assetState != AssetState::Ready || !mapValid) { return; }
         if (*action == InputAction::Help || *action == InputAction::Examine || *action == InputAction::Interact
-            || *action == InputAction::Settings || *action == InputAction::Debug) {
+            || *action == InputAction::Settings || *action == InputAction::Debug || *action == InputAction::Crafting) {
             const auto nextScreen = *action == InputAction::Help ? Screen::Help : *action == InputAction::Examine ? Screen::Examine
-                : *action == InputAction::Interact ? Screen::Targets : *action == InputAction::Settings ? Screen::Options : Screen::Debug;
+                : *action == InputAction::Interact ? Screen::Targets : *action == InputAction::Settings ? Screen::Options
+                : *action == InputAction::Crafting ? Screen::Crafting : Screen::Debug;
+            if (nextScreen == Screen::Crafting) { craftingSelection.reset(); craftingFeedback.clear(); }
             if (submit(RequestKind::Pause)) { modal.BeginOpen(nextScreen); SetMessage("Pausing..."); }
             return;
         }
@@ -447,6 +465,15 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             case ReplyKind::Completed:
                 commandPending = false;
                 SetMessage(localization.ResultText(reply.result) + (reply.result.storageError ? " (world storage failed)" : ""));
+                if (craftingRequest && reply.id == *craftingRequest) {
+                    craftingRequest.reset();
+                    craftingFeedback = message;
+                    const auto outcome = reply.result.outcome;
+                    if (outcome == Outcome::craft_started || outcome == Outcome::recycling_started
+                        || outcome == Outcome::craft_resumed || outcome == Outcome::craft_paused || outcome == Outcome::craft_cancelled) {
+                        modal.Closed(); frame.visible = false;
+                    } else if (submit(RequestKind::Pause)) { modal.BeginOpen(Screen::Crafting); }
+                }
                 if (options.smoke) {
                     const Outcome expected = smokeStep == 1 || smokeStep == 14 ? Outcome::moved
                         : smokeStep == 2 ? Outcome::picked_up : smokeStep == 13 ? Outcome::toggled
@@ -499,8 +526,20 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                     optionsUi.Feedback(reply.details.empty() ? String("Settings could not be applied") : reply.details.front());
                 }
                 break;
-            case ReplyKind::Stale: commandPending = false; SetMessage("Input expired; use the current opportunity."); smokeFailed = options.smoke; smokeWaiting = false; break;
-            case ReplyKind::Cancelled: commandPending = false; SetMessage("Input cancelled."); smokeFailed = options.smoke; smokeWaiting = false; break;
+            case ReplyKind::Stale:
+                commandPending = false; SetMessage("Input expired; use the current opportunity.");
+                if (craftingRequest && reply.id == *craftingRequest) {
+                    craftingRequest.reset(); craftingFeedback = message;
+                    if (submit(RequestKind::Pause)) { modal.BeginOpen(Screen::Crafting); }
+                }
+                smokeFailed = options.smoke; smokeWaiting = false; break;
+            case ReplyKind::Cancelled:
+                commandPending = false; SetMessage("Input cancelled.");
+                if (craftingRequest && reply.id == *craftingRequest) {
+                    craftingRequest.reset(); craftingFeedback = message;
+                    if (submit(RequestKind::Pause)) { modal.BeginOpen(Screen::Crafting); }
+                }
+                smokeFailed = options.smoke; smokeWaiting = false; break;
             }
         }
         if (session.TakeSnapshot(snapshot)) {
@@ -683,6 +722,23 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             frame.cursor.reset(); frame.highlights.clear(); frame.debugImage = nullptr;
             frame.rows.clear(); frame.details.clear(); frame.selected = -1;
             if (modal.Active() == Screen::Options) { optionsUi.Present(store,localization,frame); }
+            if (modal.Active() == Screen::Crafting) {
+                frame.title = "Crafting and recycling | Availability checked by server";
+                CollectCraftingMenu(snapshot.view, content, localization, craftingRows);
+                if (!craftingSelection && !craftingRows.empty()) { craftingSelection = craftingRows.front().command; }
+                for (std::size_t i = 0; i < craftingRows.size(); ++i) {
+                    frame.rows.push_back({craftingRows[i].label});
+                    if (craftingSelection && SameCraftingChoice(*craftingSelection, craftingRows[i].command)) {
+                        selectedAction = i; frame.selected = static_cast<int>(i);
+                    }
+                }
+                if (craftingRows.empty()) { frame.rows.push_back({"No recipes, reachable jobs, or recyclable items."}); }
+                if (!craftingFeedback.empty()) { frame.details.push_back(craftingFeedback); }
+                frame.footer = BindingHint(keys, InputContext::Menu, InputAction::North) + "/"
+                    + BindingHint(keys, InputContext::Menu, InputAction::South) + " choose | "
+                    + BindingHint(keys, InputContext::Menu, InputAction::Accept) + " submit | "
+                    + BindingHint(keys, InputContext::Menu, InputAction::Cancel) + " close";
+            }
             if (modal.Active() == Screen::Help) {
                 frame.title = "Controls | Local session paused";
                 std::size_t start = 0;

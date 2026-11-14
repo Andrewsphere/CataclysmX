@@ -5,6 +5,7 @@
 #include "core/light_types.h"
 #include "content/ai_definition.h"
 #include "content/item_definition.h"
+#include "content/crafting_definition.h"
 #include "content/object_definition.h"
 #include "content/content_result.h"
 
@@ -100,6 +101,20 @@ public:
     const AiProfile* TryGetAiProfile(AiProfileId id) const;
     const AiProfile& GetAiProfile(AiProfileId id) const;
     std::size_t AiProfileCount() const;
+    CraftingRecipeId FindCraftingRecipe(eastl::string_view id) const;
+    const CraftingRecipeDefinition* TryGetCraftingRecipe(CraftingRecipeId id) const;
+    const CraftingRecipeDefinition& GetCraftingRecipe(CraftingRecipeId id) const;
+    std::size_t CraftingRecipeCount() const;
+    RecyclingRecipeId FindRecyclingRecipe(eastl::string_view id) const;
+    const RecyclingRecipeDefinition* TryGetRecyclingRecipe(RecyclingRecipeId id) const;
+    const RecyclingRecipeDefinition& GetRecyclingRecipe(RecyclingRecipeId id) const;
+    std::size_t RecyclingRecipeCount() const;
+    RecyclingRecipeId FindRecyclingFor(ItemTypeId item) const;
+    ToolTraitId FindToolTrait(eastl::string_view id) const;
+    const ToolTraitDefinition* TryGetToolTrait(ToolTraitId id) const;
+    const ToolTraitDefinition& GetToolTrait(ToolTraitId id) const;
+    std::size_t ToolTraitCount() const;
+    ItemTypeId UnfinishedCraftItem() const;
 
 private:
     Vector<TerrainDefinition> definitions_;
@@ -107,6 +122,10 @@ private:
     Vector<ItemDefinition> items_;
     Vector<ObjectDefinition> objects_;
     Vector<AiProfile> aiProfiles_;
+    Vector<CraftingRecipeDefinition> craftingRecipes_;
+    Vector<RecyclingRecipeDefinition> recyclingRecipes_;
+    Vector<ToolTraitDefinition> toolTraits_;
+    ItemTypeId unfinishedCraftItem_{};
     friend ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource>, Diagnostics*);
     friend ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource>, const ItemBehaviorRegistry&, Diagnostics*);
 };

@@ -11,6 +11,7 @@
 #include "combat/combat_system.h"
 #include "items/item_system.h"
 #include "items/item_snapshot.h"
+#include "crafting/crafting_system.h"
 #include "worldgen/worldgen.h"
 
 #include <EASTL/algorithm.h>
@@ -138,6 +139,16 @@ SaveResult<void> ValidateArchiveDeadlines(const Archive& saved, const ContentCat
     for (const SavedObject& object : saved.objects) {
         if (!object.type.value && object.remainingTicks > room) {
             return SaveFailure(SaveError::InvalidData, "Saved object delay exceeds simulation clock headroom", diagnostics);
+        }
+    }
+    for (const SavedItem& item : saved.items) {
+        const auto* definition = content.TryGetItem(item.type);
+        if (!definition || !definition->unfinishedCraft) { continue; }
+        const auto* payload = item.state.Find("crafting_job");
+        if (!payload) { return SaveFailure(SaveError::InvalidData, "Missing saved crafting job", diagnostics); }
+        const auto state = ReadCraftingState(*payload);
+        if (!state || state->remaining > room) {
+            return SaveFailure(SaveError::InvalidData, "Invalid saved crafting delay or simulation clock headroom", diagnostics);
         }
     }
     return {};
@@ -415,6 +426,8 @@ public:
     ankerl::unordered_dense::set<ChunkCoord, ChunkHash> dirtyChunks; // Includes pending unloaded archives.
     ankerl::unordered_dense::map<PersistentId, TileCoord> playerPositions; // Survives unload and archive eviction.
     ItemSystem itemSystem;
+    CraftingSystem craftingSystem;
+    unsigned craftingMutationDepth = 0;
     CombatSystem combatSystem;
     eastl::unique_ptr<SaveDatabase> database;
     Vector<TileCoord> gravityColumns; // X/Z tile columns, normalized Y.
@@ -652,7 +665,7 @@ public:
 
     explicit Impl(World& world, const ContentCatalog& catalog, std::uint32_t value)
         : content(catalog), floor(catalog.FindTerrain("floor")),
-          wall(catalog.FindTerrain("wall")), seed(value), itemSystem(world), combatSystem(world) {
+          wall(catalog.FindTerrain("wall")), seed(value), itemSystem(world), craftingSystem(world), combatSystem(world) {
         Require(floor.value != 0 && wall.value != 0);
     }
 
@@ -764,10 +777,15 @@ public:
             const Item* value = Live(items, child);
             Require(value != nullptr);
             if (child != excluded && !value->location.installation.value) {
-                result = CheckedAdd(result, content.GetItem(value->type).volumeMl);
+                result = CheckedAdd(result, ExternalVolume(child));
             }
         }
         return result;
+    }
+
+    std::uint64_t ExternalVolume(ItemHandle handle) const {
+        const auto& definition = content.GetItem(Live(items, handle)->type);
+        return definition.unfinishedCraft ? Volume(handle) : definition.volumeMl;
     }
 
     std::size_t Height(ItemHandle handle) const {
@@ -809,7 +827,7 @@ public:
                 if (!container) { return eastl::unexpected(WorldError::not_container); }
                 const auto used = Volume(location.item, moving);
                 if (used > container->capacityVolumeMl
-                    || definition.volumeMl > container->capacityVolumeMl - used) {
+                    || (moving.value ? ExternalVolume(moving) : definition.volumeMl) > container->capacityVolumeMl - used) {
                     return eastl::unexpected(WorldError::capacity_exceeded);
                 }
             }
@@ -2137,6 +2155,11 @@ WorldResult<ItemHandle> World::CreateItem(ItemTypeId type, ItemLocation location
     Impl::GravityBatch batch(*this);
     const ItemDefinition* definition = impl_->content.TryGetItem(type);
     if (!definition) { return eastl::unexpected(WorldError::invalid_request); }
+    if (!impl_->craftingMutationDepth && (definition->unfinishedCraft
+        || (location.kind == LocationKind::item && GetItem(location.item)
+            && (IsReservedItem(location.item) || impl_->content.GetItem(GetItem(location.item)->type).unfinishedCraft)))) {
+        return eastl::unexpected(WorldError::invalid_request);
+    }
     const auto destination = impl_->Destination(location);
     if (!destination) {
         return eastl::unexpected(destination.error());
@@ -2157,6 +2180,11 @@ WorldResult<ItemHandle> World::CreateItem(ItemTypeId type, ItemLocation location
 
 WorldResult<void> World::TransferItem(ItemHandle handle, ItemLocation location) {
     Impl::GravityBatch batch(*this);
+    if (!impl_->craftingMutationDepth && (IsReservedItem(handle)
+        || (location.kind == LocationKind::item && GetItem(location.item)
+            && (IsReservedItem(location.item) || impl_->content.GetItem(GetItem(location.item)->type).unfinishedCraft)))) {
+        return eastl::unexpected(WorldError::invalid_request);
+    }
     Item* value = Live(impl_->items, handle);
     if (!value) {
         return eastl::unexpected(WorldError::invalid_handle);
@@ -2195,6 +2223,7 @@ WorldResult<void> World::TransferItem(ItemHandle handle, ItemLocation location) 
 
 WorldResult<void> World::DestroyItem(ItemHandle handle) {
     Impl::GravityBatch batch(*this);
+    if (!impl_->craftingMutationDepth && IsReservedItem(handle)) { return eastl::unexpected(WorldError::invalid_request); }
     const Item* value = GetItem(handle);
     if (!value) {
         return eastl::unexpected(WorldError::invalid_handle);
@@ -2234,6 +2263,19 @@ std::uint64_t World::GetItemMass(ItemHandle handle) const {
     return GetItem(handle) ? impl_->Mass(handle) : 0;
 }
 
+std::uint64_t World::GetItemVolume(ItemHandle handle) const {
+    return GetItem(handle) ? impl_->ExternalVolume(handle) : 0;
+}
+
+bool World::IsReservedItem(ItemHandle handle) const {
+    const Item* item = GetItem(handle);
+    for (unsigned depth = 0; item && item->location.kind == LocationKind::item && depth < 64; ++depth) {
+        item = GetItem(item->location.item);
+        if (item && impl_->content.GetItem(item->type).unfinishedCraft) { return true; }
+    }
+    return false;
+}
+
 std::uint64_t World::GetCarriedMass(ActorHandle handle) const {
     return GetActor(handle) ? impl_->CarriedMass(handle) : 0;
 }
@@ -2245,7 +2287,7 @@ std::uint64_t World::GetContainerUsedVolume(ItemHandle handle) const {
 bool World::CanAccessItem(ActorHandle actorHandle, ItemHandle itemHandle) const {
     const Actor* actor = GetActor(actorHandle);
     const Item* item = GetItem(itemHandle);
-    if (!actor || actor->parked || !IsActive(actor->position) || !item) { return false; }
+    if (!actor || actor->parked || !IsActive(actor->position) || !item || IsReservedItem(itemHandle)) { return false; }
     const ItemLocation root = impl_->Root(item->location);
     return (root.kind == LocationKind::actor && root.actor == actorHandle)
         || (root.kind == LocationKind::ground && root.position == actor->position);
@@ -2286,7 +2328,18 @@ Item* World::MutableItem(ItemHandle item) { return Live(impl_->items, item); }
 void World::MarkItemDirty(ItemHandle handle) {
     if (const auto* item = GetItem(handle)) { impl_->MarkDirty(impl_->RootChunk(item->location), false); }
 }
-bool World::ItemEligible(ItemHandle item) const { return impl_->Eligible(item); }
+bool World::ItemEligible(ItemHandle item) const { return impl_->Eligible(item) && !IsReservedItem(item); }
+TileCoord World::ItemRootPosition(ItemHandle handle) const {
+    const auto* item = GetItem(handle);
+    Require(item != nullptr);
+    const auto root = impl_->Root(item->location);
+    switch (root.kind) {
+    case LocationKind::ground: return root.position;
+    case LocationKind::actor: return GetActor(root.actor)->position;
+    case LocationKind::object: return GetObject(root.object)->position;
+    default: std::abort();
+    }
+}
 WorldResult<void> World::CheckItemTransfer(ItemHandle handle, ItemLocation location) const {
     const auto* item = GetItem(handle);
     if (!item) { return eastl::unexpected(WorldError::invalid_handle); }
@@ -2300,6 +2353,45 @@ eastl::optional<ItemEnergyView> World::GetItemEnergy(ItemHandle item, ItemCapabi
     return impl_->itemSystem.Energy(item, capability);
 }
 ItemPresentation World::DescribeItem(ActorHandle actor, ItemHandle item) const { return impl_->itemSystem.Describe(actor, item); }
+
+void World::AttachCrafting(ItemHandle item) { impl_->craftingSystem.Attach(item); }
+void World::DetachCrafting(ItemHandle item) { impl_->craftingSystem.Detach(item); }
+void World::BeginCraftingMutation() {
+    ++impl_->craftingMutationDepth;
+    impl_->itemSystem.BeginCallback();
+}
+void World::EndCraftingMutation() {
+    Require(impl_->craftingMutationDepth > 0);
+    --impl_->craftingMutationDepth;
+    impl_->itemSystem.EndCallback();
+}
+WorldResult<void> World::SetCraftingSettings(CraftingSettings settings) { return impl_->craftingSystem.SetSettings(settings); }
+CraftingSettings World::GetCraftingSettings() const { return impl_->craftingSystem.Settings(); }
+WorldResult<CraftingResult> World::StartCrafting(ActorHandle actor, CraftingRecipeId recipe) {
+    Impl::GravityBatch batch(*this); BeginCraftingMutation();
+    auto result = impl_->craftingSystem.Start(actor, recipe); EndCraftingMutation(); return result;
+}
+WorldResult<CraftingResult> World::StartRecycling(ActorHandle actor, ItemHandle target, RecyclingRecipeId recipe) {
+    Impl::GravityBatch batch(*this); BeginCraftingMutation();
+    auto result = impl_->craftingSystem.Recycle(actor, target, recipe); EndCraftingMutation(); return result;
+}
+WorldResult<CraftingResult> World::ResumeCrafting(ActorHandle actor, ItemHandle item) {
+    Impl::GravityBatch batch(*this); BeginCraftingMutation();
+    auto result = impl_->craftingSystem.Resume(actor, item); EndCraftingMutation(); return result;
+}
+WorldResult<CraftingResult> World::PauseCrafting(ActorHandle actor, ItemHandle item) {
+    return impl_->craftingSystem.Pause(actor, item);
+}
+WorldResult<CraftingResult> World::CancelCrafting(ActorHandle actor, ItemHandle item) {
+    Impl::GravityBatch batch(*this); BeginCraftingMutation();
+    auto result = impl_->craftingSystem.Cancel(actor, item); EndCraftingMutation(); return result;
+}
+eastl::optional<CraftingJobView> World::InspectCrafting(ItemHandle item) const { return impl_->craftingSystem.Inspect(item); }
+void World::CollectCraftingJobs(ActorHandle actor, Vector<CraftingJobView>& output) const { impl_->craftingSystem.Collect(actor, output); }
+bool World::ProcessCraftingEvents() {
+    Impl::GravityBatch batch(*this); BeginCraftingMutation();
+    const bool result = impl_->craftingSystem.ProcessEvents(); EndCraftingMutation(); return result;
+}
 
 WorldResult<ObjectHandle> World::CreateObject(TileCoord position, bool enabled) {
     if (auto result = impl_->Available(position); !result) {
@@ -2717,7 +2809,7 @@ WorldResult<void> World::ScheduleActorAction(ActorHandle handle, std::uint32_t b
     if (!value) { return eastl::unexpected(WorldError::invalid_handle); }
     if (!IsActive(value->position) || value->parked) { return eastl::unexpected(WorldError::chunk_unavailable); }
     if (baseCost == 0 || value->actionDeadline.Remaining(impl_->tick) != 0
-        || value->combat.action.kind != ActorActionKind::None) {
+        || value->combat.action.kind != ActorActionKind::None || impl_->craftingSystem.Busy(handle)) {
         return eastl::unexpected(WorldError::invalid_request);
     }
     Require(value->speed != 0);
@@ -2766,6 +2858,7 @@ void World::ElapseTicks(Tick elapsed) {
         }
     }
     impl_->itemSystem.Elapse(elapsed);
+    impl_->craftingSystem.Elapse(elapsed);
     impl_->combatSystem.Elapse(elapsed);
     for (Actor& actor : impl_->actors) {
         if (!actor.player && !actor.parked && actor.controller_ && IsActive(actor.position)) {
@@ -2804,7 +2897,7 @@ void World::CollectReadyPlayers(Vector<ActorHandle>& output) const {
     for (const auto& entry : impl_->actors.items()) {
         const Actor& actor = entry.second.get();
         if (actor.player && !actor.actionDeadline.suspended && actor.actionDeadline.dueTick <= impl_->tick
-            && actor.combat.action.kind == ActorActionKind::None) {
+            && actor.combat.action.kind == ActorActionKind::None && !impl_->craftingSystem.Busy({entry.first.raw})) {
             output.push_back({entry.first.raw});
         }
     }
@@ -2822,14 +2915,14 @@ void World::ProcessNpcActions(std::uint32_t& rng) {
         const Actor& actor = entry.second.get();
         if (!actor.player && !actor.parked && actor.controller_ && IsActive(actor.position)
             && actor.actionDeadline.dueTick <= impl_->tick
-            && actor.combat.action.kind == ActorActionKind::None) { due.push_back({actor.id, {entry.first.raw}}); }
+            && actor.combat.action.kind == ActorActionKind::None && !impl_->craftingSystem.Busy({entry.first.raw})) { due.push_back({actor.id, {entry.first.raw}}); }
     }
     eastl::sort(due.begin(), due.end(), [](const auto& a, const auto& b) { return a.id < b.id; });
     for (const auto record : due) {
         Actor* actor = Live(impl_->actors, record.handle);
         if (!actor || actor->id != record.id || actor->player || actor->parked || !actor->controller_
             || !IsActive(actor->position) || actor->actionDeadline.dueTick > impl_->tick
-            || actor->combat.action.kind != ActorActionKind::None) { continue; }
+            || actor->combat.action.kind != ActorActionKind::None || impl_->craftingSystem.Busy(record.handle)) { continue; }
         const ActorIntent intent = actor->controller_->ChooseAction(ActorReadContext(*this, record.handle), rng);
         Require(intent.baseCost > 0);
         Require(intent.kind == ActorIntentKind::Wait || intent.kind == ActorIntentKind::Move
@@ -2861,7 +2954,14 @@ void World::ProcessNpcActions(std::uint32_t& rng) {
 
 eastl::optional<Tick> World::NextActorEventIn() const {
     eastl::optional<Tick> next;
-    for (const Actor& actor : impl_->actors) {
+    for (const auto& entry : impl_->actors.items()) {
+        const Actor& actor = entry.second.get();
+        const ActorHandle handle{entry.first.raw};
+        if (impl_->craftingSystem.Busy(handle)) {
+            const auto delay = impl_->craftingSystem.ActorEventIn(handle);
+            if (delay && (!next || *delay < *next)) { next = *delay; }
+            continue;
+        }
         if (actor.parked || !IsActive(actor.position) || (!actor.player && !actor.controller_)) { continue; }
         const Tick remaining = actor.actionDeadline.Remaining(impl_->tick);
         if (!next || remaining < *next) { next = remaining; }

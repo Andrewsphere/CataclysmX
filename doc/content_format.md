@@ -253,7 +253,21 @@ capability names, never numeric ordinals. The bundled items include ordinary
 props, a 20,000 ml backpack, two AA batteries, a charger, a door timer, and a
 combined utility controller for multi-capability use.
 
-### Registering behaviors
+## Crafting definitions
+
+`tool_trait` defines a named tool capability. `recipe` defines crafting inputs,
+traits, result and work, optionally requesting a generated recycler;
+`recycling_recipe` explicitly defines a target, returns and independent
+requirements. Several crafting recipes may share an output, but a target has at
+most one recycler across generated and explicit definitions. Inputs are bounded
+to eight distinct types, traits to four, and explicit returns to eight types.
+Generated efficiency uses 10000 for 100% and integer floor rounding. All sources
+are resolved transactionally, including cross-file references. The complete
+schema and injected unfinished item are documented in
+[crafting content](crafting_content.md); runtime behavior is in
+[runtime crafting and recycling](crafting.md).
+
+## Registering item behaviors
 
 `items/item_registry.h` provides `ItemBehaviorRegistry`, an explicitly owned small
 vector of type-name/factory pairs. `Add(type, parser)` returns `ContentResult<void>`:

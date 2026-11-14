@@ -1,5 +1,6 @@
 #include "core/item_state.h"
 #include "items/item_behavior.h"
+#include "crafting/crafting_state.h"
 #include <cstdlib>
 
 namespace cataclysmx {
@@ -10,6 +11,7 @@ ItemRuntime& ItemRuntime::operator=(ItemRuntime&&) noexcept = default;
 
 ItemRuntime MakeItemState(const ItemDefinition& definition) {
     ItemRuntime result;
+    if (definition.unfinishedCraft) { result.crafting_.reset(new CraftingJobState); }
     for (const auto& store : definition.energyStores) {
         result.energy_.push_back({store.capability, store.config.initialEnergy});
     }
@@ -22,6 +24,7 @@ ItemRuntime MakeItemState(const ItemDefinition& definition) {
 }
 void WriteItemState(const ItemDefinition& definition, const ItemRuntime& state, DataObject& output) {
     DataObject result;
+    if (state.crafting_) { result.Set("crafting_job", WriteCraftingState(*state.crafting_)); }
     for (std::size_t i = 0; i < definition.capabilities.size(); ++i) {
         const ItemCapabilityId id{static_cast<std::uint16_t>(i + 1)};
         for (const auto& store : state.energy_) {
@@ -53,8 +56,16 @@ StateResult<ItemRuntime> ReadItemState(const ItemDefinition& definition, const D
         return eastl::unexpected(error);
     };
     if (input.Type() != DataType::Object
-        || input.Size() != definition.energyStores.size() + definition.behaviors.size()) { return invalid(); }
+        || input.Size() != definition.energyStores.size() + definition.behaviors.size()
+            + (definition.unfinishedCraft ? 1 : 0)) { return invalid(); }
     ItemRuntime result;
+    if (definition.unfinishedCraft) {
+        const auto* entry = input.Find("crafting_job");
+        if (!entry) { return invalid(); }
+        auto state = ReadCraftingState(*entry);
+        if (!state) { return invalid(state.error()); }
+        result.crafting_.reset(new CraftingJobState(eastl::move(*state)));
+    }
     for (const auto& store : definition.energyStores) {
         const auto* cap = TryGetItemCapability(definition, store.capability);
         const auto* value = input.Find(cap->id);

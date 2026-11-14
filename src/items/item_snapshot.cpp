@@ -2,6 +2,7 @@
 #include "items/item_behavior.h"
 #include "content/content.h"
 #include "core/world_archive.h"
+#include "crafting/crafting_state.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -92,8 +93,60 @@ StateResult<void> ValidateItemSnapshot(const ContentCatalog& content, const Chun
             }
         }
         if (item.state.Type() != DataType::Object
-            || item.state.Size() != definition->energyStores.size() + definition->behaviors.size()) {
+            || item.state.Size() != definition->energyStores.size() + definition->behaviors.size()
+                + (definition->unfinishedCraft ? 1 : 0)) {
             return Invalid(item.id, "state", "Expected exactly the energy and behavior state entries", diagnostics);
+        }
+        if (definition->unfinishedCraft) {
+            const auto* payload = item.state.Find("crafting_job");
+            if (!payload) { return Invalid(item.id, "state", "Missing crafting job", diagnostics); }
+            auto state = ReadCraftingState(*payload);
+            if (!state) { return eastl::unexpected(state.error()); }
+            if (!ResolveCraftingState(content, *state)) { return Invalid(item.id, "state", "Invalid crafting recipe or work", diagnostics); }
+            const auto& inputs = state->kind == CraftingKind::Craft
+                ? content.GetCraftingRecipe(state->craftingRecipe).inputs : content.GetRecyclingRecipe(state->recyclingRecipe).inputs;
+            StaticList<ItemOutput, 9> expected;
+            for (const auto& input : inputs) {
+                if (!input.Retained()) { expected.PushBack({input.Item(), input.Count()}); }
+            }
+            if (state->kind == CraftingKind::Recycle) {
+                expected.PushBack({content.GetRecyclingRecipe(state->recyclingRecipe).target, 1});
+            }
+            unsigned targets = 0;
+            for (const auto& child : chunk.items) {
+                if (child.location != LocationKind::item || child.owner != item.id) { continue; }
+                if (child.installation.value) { return Invalid(item.id, "contents", "Reserved children cannot be installed", diagnostics); }
+                if (state->kind == CraftingKind::Recycle && child.id == state->recyclingTarget) {
+                    if (child.type != content.GetRecyclingRecipe(state->recyclingRecipe).target) {
+                        return Invalid(item.id, "state.target", "Recycling target type does not match recipe", diagnostics);
+                    }
+                    ++targets;
+                }
+                bool matched = false;
+                for (auto& entry : expected) {
+                    if (entry.item == child.type && entry.count) { --entry.count; matched = true; break; }
+                }
+                if (!matched) { return Invalid(item.id, "contents", "Unexpected reserved crafting input", diagnostics); }
+                for (const auto& grandchild : chunk.items) {
+                    if (grandchild.location == LocationKind::item && grandchild.owner == child.id) {
+                        return Invalid(item.id, "contents", "Reserved crafting inputs must be leaves", diagnostics);
+                    }
+                }
+            }
+            if (state->kind == CraftingKind::Recycle && targets != 1) {
+                return Invalid(item.id, "state.target", "Recycling target must identify exactly one reserved child", diagnostics);
+            }
+            for (const auto& entry : expected) {
+                if (entry.count) { return Invalid(item.id, "contents", "Missing reserved crafting input", diagnostics); }
+            }
+            if (state->worker) {
+                for (std::size_t j = 0; j < i; ++j) {
+                    const auto* other = chunk.items[j].state.Find("crafting_job");
+                    if (other && other->GetUnsigned("worker") && *other->GetUnsigned("worker") == state->worker) {
+                        return Invalid(item.id, "state", "Worker assigned to multiple jobs", diagnostics);
+                    }
+                }
+            }
         }
         for (const auto& store : definition->energyStores) {
             const auto* state = context.State(item.id, store.capability);
@@ -195,7 +248,15 @@ StateResult<void> ValidateItemSnapshot(const ContentCatalog& content, const Chun
         std::uint64_t volume = 0;
         for (const auto& child : chunk.items) {
             if (child.location != LocationKind::item || child.owner != item.id || child.installation.value) { continue; }
-            const auto amount = context.Definition(child.id).volumeMl;
+            std::uint64_t amount = context.Definition(child.id).volumeMl;
+            if (context.Definition(child.id).unfinishedCraft) {
+                amount = 0;
+                for (const auto& reserved : chunk.items) {
+                    if (reserved.location == LocationKind::item && reserved.owner == child.id) {
+                        amount += context.Definition(reserved.id).volumeMl;
+                    }
+                }
+            }
             if (amount > UINT64_MAX - volume) { return Invalid(item.id, "contents", "Container volume overflow", diagnostics); }
             volume += amount;
         }

@@ -165,6 +165,40 @@ bool ValidLists(const WorldView& view) {
         if (FindEntry(view.groundItems, entry.id)) return false;
     return true;
 }
+bool ValidCraftingJobs(const Vector<CraftingEntry>& jobs) {
+    if (jobs.size() > maxItemEntries) return false;
+    PersistentId last = 0;
+    for (const auto& job : jobs) {
+        if (job.id <= last || job.kind > CraftingKind::Recycle || job.status > CraftingStatus::WorkerUnavailable
+            || !job.totalWork || job.completedWork >= job.totalWork
+            || (job.kind == CraftingKind::Craft
+                ? !job.craftingRecipe.value || job.recyclingRecipe.value
+                : !job.recyclingRecipe.value || job.craftingRecipe.value)
+            || (job.status == CraftingStatus::Working || job.status == CraftingStatus::PauseRequested) != (job.worker != 0)
+            || (job.status == CraftingStatus::PauseRequested && !job.pauseRequested)
+            || (job.status == CraftingStatus::Working && job.pauseRequested)) return false;
+        last = job.id;
+    }
+    return true;
+}
+bool ValidCraftingResult(const CommandResult& result) {
+    if (result.craftingOutcome > CraftingOutcome::CapacityExceeded) return false;
+    switch (result.outcome) {
+    case Outcome::craft_started:
+    case Outcome::recycling_started:
+        return result.craftingOutcome == CraftingOutcome::Started && result.advanced;
+    case Outcome::craft_resumed:
+        return result.craftingOutcome == CraftingOutcome::Resumed && result.advanced;
+    case Outcome::craft_paused:
+        return (result.craftingOutcome == CraftingOutcome::Paused || result.craftingOutcome == CraftingOutcome::PauseRequested)
+            && !result.advanced && !result.cost;
+    case Outcome::craft_cancelled:
+        return result.craftingOutcome == CraftingOutcome::Cancelled && !result.advanced && !result.cost;
+    case Outcome::crafting_refused:
+        return result.craftingOutcome >= CraftingOutcome::ActorUnavailable && !result.advanced && !result.cost;
+    default: return true;
+    }
+}
 bool WriteEntries(Writer& writer, const Vector<InventoryEntry>& entries) {
     writer.U16(static_cast<std::uint16_t>(entries.size()));
     for (const auto& entry : entries) {
@@ -241,13 +275,26 @@ bool ValidTerrainDefinitions(const WorldView& view, const ContentCatalog& conten
 }
 
 bool ValidItemDefinitions(const WorldView& view, const ContentCatalog& content) {
-    if (!ValidLists(view)) return false;
+    if (!ValidLists(view) || !ValidCraftingJobs(view.craftingJobs)) return false;
+    for (const auto& job : view.craftingJobs) {
+        if (job.kind == CraftingKind::Craft) {
+            const auto* recipe = content.TryGetCraftingRecipe(job.craftingRecipe);
+            if (!recipe || recipe->work != job.totalWork) return false;
+        } else {
+            const auto* recipe = content.TryGetRecyclingRecipe(job.recyclingRecipe);
+            if (!recipe || recipe->work != job.totalWork) return false;
+        }
+    }
     for (const auto* entries : {&view.inventory, &view.groundItems}) {
         for (const auto& entry : *entries) {
             const auto* definition = content.TryGetItem(entry.type);
-            if (!definition || entry.volumeMl != definition->volumeMl) return false;
+            if (!definition || (!definition->unfinishedCraft && entry.volumeMl != definition->volumeMl)) return false;
             const auto* container = ItemContainer(*definition);
-            if (entry.capacityVolumeMl != (container ? container->capacityVolumeMl : 0)) return false;
+            if (definition->unfinishedCraft) {
+                if (!container || entry.volumeMl > container->capacityVolumeMl || entry.contained_items
+                    || entry.capacityVolumeMl || entry.usedVolumeMl) return false;
+                for (const auto& child : *entries) if (child.parent == entry.id) return false;
+            } else if (entry.capacityVolumeMl != (container ? container->capacityVolumeMl : 0)) return false;
             std::uint64_t mass = definition->massGrams, usedVolume = 0;
             std::size_t children = 0;
             for (const auto& child : *entries) {
@@ -264,7 +311,8 @@ bool ValidItemDefinitions(const WorldView& view, const ContentCatalog& content) 
                             sibling.installation == child.installation) return false;
                 }
             }
-            if (children != entry.contained_items || mass != entry.massGrams || usedVolume != entry.usedVolumeMl) return false;
+            if (children != entry.contained_items || (!definition->unfinishedCraft && mass != entry.massGrams)
+                || usedVolume != entry.usedVolumeMl) return false;
             if (entry.installation.value) {
                 const auto* parent = FindEntry(*entries, entry.parent);
                 const auto* parentDefinition = parent ? content.TryGetItem(parent->type) : nullptr;
@@ -318,11 +366,12 @@ bool Writer::CommandValue(const Command& v) {
     I32(v.interaction.position.x); I32(v.interaction.position.z); I32(v.interaction.position.y);
     U64(v.interaction.object); U32(v.interaction.terrain.value);
     U8(static_cast<std::uint8_t>(v.interaction.kind)); U8(static_cast<std::uint8_t>(v.interaction.action));
+    U32(v.recipe.value);
     return bytes.size() <= maxPacket;
 }
 bool Writer::Result(const PlayerCommandResult& v) {
     if (!v.player || !v.sequence || !v.opportunity || v.result.outcome < Outcome::waited ||
-        v.result.outcome > Outcome::unlocked ||
+        v.result.outcome > Outcome::crafting_refused || !ValidCraftingResult(v.result) ||
         (v.result.storageError && (*v.result.storageError < SaveError::Io || *v.result.storageError > SaveError::NotOpen)) ||
         !ValidItemUseReason(v.result.itemOutcome, v.result.itemReason)) return false;
     U64(v.player); U64(v.sequence); U64(v.opportunity);
@@ -331,12 +380,14 @@ bool Writer::Result(const PlayerCommandResult& v) {
     U8(v.result.storageError ? 1 : 0);
     if (v.result.storageError) U8(static_cast<std::uint8_t>(*v.result.storageError));
     U8(static_cast<std::uint8_t>(v.result.itemOutcome));
-    return WriteReason(*this, v.result.itemReason) && bytes.size() <= maxPacket;
+    if (!WriteReason(*this, v.result.itemReason)) return false;
+    U8(static_cast<std::uint8_t>(v.result.craftingOutcome));
+    return bytes.size() <= maxPacket;
 }
 bool Writer::View(const WorldView& v) {
     if (!ValidViewBounds(v) ||
         v.cells.size() != static_cast<std::size_t>(v.width * v.height) ||
-        !ValidLists(v) || v.players.size() > 32 ||
+        !ValidLists(v) || !ValidCraftingJobs(v.craftingJobs) || v.players.size() > 32 ||
         v.playerId == 0 || v.opportunity == 0 || v.speed == 0 || v.pacing.ticksPerSecond == 0 ||
         v.playerLight > LightBand::Bright || !ValidCombatView(v.combat)) return false;
     for (std::size_t i = 0; i < v.cells.size(); ++i)
@@ -375,6 +426,14 @@ bool Writer::View(const WorldView& v) {
     }
     U8(static_cast<std::uint8_t>(v.playerLight));
     WriteCombat(*this, v.combat);
+    U16(static_cast<std::uint16_t>(v.craftingJobs.size()));
+    for (const auto& job : v.craftingJobs) {
+        U64(job.id); U8(static_cast<std::uint8_t>(job.kind));
+        U32(job.craftingRecipe.value); U32(job.recyclingRecipe.value);
+        U8(static_cast<std::uint8_t>(job.status)); U64(job.worker);
+        U32(job.totalWork); U32(job.completedWork); U64(job.fundedTicksRemaining);
+        U8(job.pauseRequested ? 1 : 0);
+    }
     return bytes.size() <= maxPacket;
 }
 bool Reader::U8(std::uint8_t& v) { if (offset >= bytes.size()) return false; v = bytes[offset++]; return true; }
@@ -391,7 +450,7 @@ bool Reader::Text(String& v, std::size_t limit) {
 }
 bool Reader::CommandValue(Command& v) {
     std::uint8_t kind, style, interactionKind, objectAction;
-    if (bytes.size() > maxPacket || !U8(kind) || kind > static_cast<std::uint8_t>(CommandKind::interact_action) ||
+    if (bytes.size() > maxPacket || !U8(kind) || kind > static_cast<std::uint8_t>(CommandKind::cancel_craft) ||
         !I32(v.dx) || !I32(v.dz) || !U64(v.item) || !U32(v.waitCost) ||
         !U16(v.capability.value) || v.capability.value > maxItemCapabilities ||
         !Text(v.itemAction, maxItemActionName) || !U64(v.otherItem) || !I32(v.dy) ||
@@ -399,7 +458,8 @@ bool Reader::CommandValue(Command& v) {
     if (!I32(v.interaction.position.x) || !I32(v.interaction.position.z) || !I32(v.interaction.position.y)
         || !U64(v.interaction.object) || !U32(v.interaction.terrain.value)
         || !U8(interactionKind) || interactionKind > static_cast<std::uint8_t>(InteractionKind::Unlock)
-        || !U8(objectAction) || objectAction > static_cast<std::uint8_t>(ObjectAction::Disable)) { return false; }
+        || !U8(objectAction) || objectAction > static_cast<std::uint8_t>(ObjectAction::Disable)
+        || !U32(v.recipe.value)) { return false; }
     v.interaction.kind = static_cast<InteractionKind>(interactionKind);
     v.interaction.action = static_cast<ObjectAction>(objectAction);
     v.kind = static_cast<CommandKind>(kind);
@@ -410,7 +470,7 @@ bool Reader::Result(PlayerCommandResult& v) {
     std::uint8_t outcome, advanced;
     if (bytes.size() > maxPacket || !U64(v.player) || !v.player || !U64(v.sequence) || !v.sequence ||
         !U64(v.opportunity) || !v.opportunity || !U8(outcome) ||
-        outcome > static_cast<std::uint8_t>(Outcome::unlocked) || !U8(advanced) || advanced > 1 ||
+        outcome > static_cast<std::uint8_t>(Outcome::crafting_refused) || !U8(advanced) || advanced > 1 ||
         !U64(v.result.tick) || !U64(v.result.cost)) return false;
     std::uint8_t hasError;
     if (!U8(hasError) || hasError > 1) return false;
@@ -420,12 +480,15 @@ bool Reader::Result(PlayerCommandResult& v) {
         if (!U8(error) || error > static_cast<std::uint8_t>(SaveError::NotOpen)) return false;
         v.result.storageError = static_cast<SaveError>(error);
     }
-    std::uint8_t itemOutcome;
+    std::uint8_t itemOutcome, craftingOutcome;
     if (!U8(itemOutcome) || itemOutcome > static_cast<std::uint8_t>(ItemUseOutcome::Refused) ||
-        !ReadReason(*this, v.result.itemReason)) return false;
+        !ReadReason(*this, v.result.itemReason) ||
+        !U8(craftingOutcome) || craftingOutcome > static_cast<std::uint8_t>(CraftingOutcome::CapacityExceeded)) return false;
     v.result.itemOutcome = static_cast<ItemUseOutcome>(itemOutcome);
+    v.result.craftingOutcome = static_cast<CraftingOutcome>(craftingOutcome);
     if (!ValidItemUseReason(v.result.itemOutcome, v.result.itemReason)) return false;
-    v.result.outcome = static_cast<Outcome>(outcome); v.result.advanced = advanced != 0; return true;
+    v.result.outcome = static_cast<Outcome>(outcome); v.result.advanced = advanced != 0;
+    return ValidCraftingResult(v.result);
 }
 bool Reader::View(WorldView& v) {
     if (bytes.size() > maxPacket) return false;
@@ -486,7 +549,19 @@ bool Reader::View(WorldView& v) {
     std::uint8_t playerLight;
     if (!U8(playerLight) || playerLight > static_cast<std::uint8_t>(LightBand::Bright)) return false;
     v.playerLight = static_cast<LightBand>(playerLight);
-    return ReadCombat(*this, v.combat);
+    if (!ReadCombat(*this, v.combat) || !U16(count) || count > maxItemEntries) return false;
+    v.craftingJobs.clear();
+    for (unsigned i = 0; i < count; ++i) {
+        CraftingEntry job;
+        std::uint8_t kind, status, pauseRequested;
+        if (!U64(job.id) || !U8(kind) || !U32(job.craftingRecipe.value) || !U32(job.recyclingRecipe.value)
+            || !U8(status) || !U64(job.worker) || !U32(job.totalWork) || !U32(job.completedWork)
+            || !U64(job.fundedTicksRemaining) || !U8(pauseRequested) || pauseRequested > 1) return false;
+        job.kind = static_cast<CraftingKind>(kind); job.status = static_cast<CraftingStatus>(status);
+        job.pauseRequested = pauseRequested != 0;
+        v.craftingJobs.push_back(job);
+    }
+    return ValidCraftingJobs(v.craftingJobs);
 }
 
 }

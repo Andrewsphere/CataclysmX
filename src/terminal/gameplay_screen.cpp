@@ -46,7 +46,7 @@ constexpr InputAction quickActions[] = {
     InputAction::Inventory, InputAction::Use, InputAction::PickUp, InputAction::Interact, InputAction::Wait,
     InputAction::Players, InputAction::Settings, InputAction::Help, InputAction::Save,
     InputAction::ToggleIdle, InputAction::ToggleRate, InputAction::RateDown, InputAction::RateUp,
-    InputAction::Debug
+    InputAction::Debug, InputAction::Crafting
 };
 
 eastl::string_view View(const String& text) { return {text.data(), text.size()}; }
@@ -442,6 +442,7 @@ String GameplayWelcome(const Localization& localization, const Keymap& keys) {
 bool GameplayUi::Open(InputAction action) {
     itemStage_ = ItemStage::Browse; useSelection_ = action == InputAction::Use;
     switch (action) {
+    case InputAction::Crafting: modal_ = Modal::Crafting; craftingSelection_.reset(); craftingIndex_ = 0; break;
     case InputAction::Use:
     case InputAction::Inventory: modal_ = Modal::Inventory; break;
     case InputAction::Players: modal_ = Modal::Players; break;
@@ -455,6 +456,7 @@ bool GameplayUi::IsOpen() const { return modal_ != Modal::None; }
 
 void GameplayUi::Close() { modal_ = Modal::None; feedback_.clear(); }
 bool GameplayUi::PausesLocal(eastl::optional<InputAction> action) const {
+    if (modal_ == Modal::Crafting || action == InputAction::Crafting) { return false; }
     return IsOpen() || action == InputAction::Inventory || action == InputAction::Players
         || action == InputAction::Help || action == InputAction::QuickActions || action == InputAction::Use;
 }
@@ -571,7 +573,23 @@ ftxui::Element GameplayUi::Render(WorldView view, const ContentCatalog& content,
     int preferredWidth = 84;
     int* scroll = nullptr;
     int selected = -1;
-    if (modal_ == Modal::Inventory) {
+    if (modal_ == Modal::Crafting) {
+        if (selectionPlayer_ != view.playerId) {
+            selectionPlayer_ = view.playerId; craftingSelection_.reset(); craftingIndex_ = 0; craftingScroll_ = 0;
+        }
+        title = "Crafting and recycling"; subtitle = "Availability is checked by the server. Work continues while this menu is open.";
+        scroll = &craftingScroll_;
+        CollectCraftingMenu(view, content, localization, craftingRows_);
+        if (!craftingSelection_ && !craftingRows_.empty()) { craftingSelection_ = craftingRows_.front().command; }
+        for (std::size_t i = 0; i < craftingRows_.size(); ++i) {
+            const bool chosen = craftingSelection_ && SameCraftingChoice(*craftingSelection_, craftingRows_[i].command);
+            auto row = Text(craftingRows_[i].label);
+            if (chosen) { craftingIndex_ = i; selected = static_cast<int>(i); row = row | ftxui::bold | ftxui::inverted; }
+            rows.push_back(row);
+        }
+        if (craftingRows_.empty()) { rows.push_back(ftxui::text("No recipes, reachable jobs, or recyclable items.")); }
+        if (!presentation.message.empty()) { subtitle += "\n"; subtitle += presentation.message; }
+    } else if (modal_ == Modal::Inventory) {
         ReconcileInventory(view);
         title = t("game.ui.inventory"); subtitle = t(useSelection_ ? "item.ui.choose_use" : "game.ui.inventory_hint");
         scroll = &inventoryScroll_; preferredWidth = 72;
@@ -676,7 +694,7 @@ ftxui::Element GameplayUi::Render(WorldView view, const ContentCatalog& content,
                     BindingLabel(keys, localization, InputContext::Gameplay, action)));
             }
         };
-        group("game.ui.windows", {InputAction::QuickActions, InputAction::Inventory, InputAction::Players,
+        group("game.ui.windows", {InputAction::QuickActions, InputAction::Inventory, InputAction::Crafting, InputAction::Players,
             InputAction::Settings, InputAction::Help});
         group("game.ui.actions", {InputAction::Use, InputAction::PickUp, InputAction::Drop, InputAction::Interact, InputAction::Wait,
             InputAction::Attack, InputAction::StyleBalanced, InputAction::StyleAggressive, InputAction::StyleDefensive});
@@ -708,9 +726,9 @@ ftxui::Element GameplayUi::Render(WorldView view, const ContentCatalog& content,
     auto contentPane = std::make_shared<ScrollPane>(ftxui::vbox(std::move(rows)), *scroll, selected);
     String directions = BindingLabel(keys, localization, InputContext::Menu, InputAction::North);
     directions += '/'; directions += BindingLabel(keys, localization, InputContext::Menu, InputAction::South);
-    const bool selectable = modal_ == Modal::Inventory || modal_ == Modal::QuickActions;
+    const bool selectable = modal_ == Modal::Inventory || modal_ == Modal::QuickActions || modal_ == Modal::Crafting;
     ftxui::Elements hints{Hint(directions, t(selectable ? "game.ui.select" : "game.ui.scroll"))};
-    if ((modal_ == Modal::Inventory && ItemCount(view) != 0) || modal_ == Modal::QuickActions) {
+    if ((modal_ == Modal::Inventory && ItemCount(view) != 0) || modal_ == Modal::QuickActions || modal_ == Modal::Crafting) {
         hints.push_back(ftxui::text("  |  "));
         hints.push_back(Hint(BindingLabel(keys, localization, InputContext::Menu, InputAction::Accept),
             t(modal_ == Modal::Inventory && itemStage_ == ItemStage::Browse && !useSelection_ ? "action.drop" : "game.ui.activate")));
@@ -744,7 +762,7 @@ bool GameplayUi::HandleEvent(const ftxui::Event& event, const WorldView& view, c
     if (!IsOpen()) { return false; }
     // A player change after the last frame invalidates the entire prompt. Do
     // not reinterpret an activation against the new player's first item.
-    if (modal_ == Modal::Inventory && selectionPlayer_ != view.playerId) {
+    if ((modal_ == Modal::Inventory || modal_ == Modal::Crafting) && selectionPlayer_ != view.playerId) {
         ReconcileInventory(view); Close(); return true;
     }
     const auto chord = DecodeTerminalInput({event.input().data(), event.input().size()});
@@ -760,7 +778,16 @@ bool GameplayUi::HandleEvent(const ftxui::Event& event, const WorldView& view, c
         else { Close(); }
         return true;
     }
-    if (modal_ == Modal::QuickActions) {
+    if (modal_ == Modal::Crafting) {
+        if (!craftingRows_.empty() && (action == InputAction::North || action == InputAction::South)) {
+            craftingIndex_ = action == InputAction::North ? (craftingIndex_ + craftingRows_.size() - 1) % craftingRows_.size()
+                : (craftingIndex_ + 1) % craftingRows_.size();
+            craftingSelection_ = craftingRows_[craftingIndex_].command; feedback_.clear();
+        } else if (action == InputAction::Accept && craftingSelection_) {
+            if (!submit(*craftingSelection_)) { feedback_ = localization.Text("item.ui.submit_failed"); }
+            else { feedback_.clear(); }
+        }
+    } else if (modal_ == Modal::QuickActions) {
         if (action == InputAction::North) {
             quickActionIndex_ = (quickActionIndex_ + std::size(quickActions) - 1) % std::size(quickActions);
             feedback_.clear();

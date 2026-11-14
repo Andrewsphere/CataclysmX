@@ -44,7 +44,9 @@ bool ItemDefinition::operator==(const ItemDefinition& other) const {
     if (id != other.id || name != other.name || massGrams != other.massGrams
         || volumeMl != other.volumeMl || capabilities != other.capabilities
         || container != other.container || energyStores != other.energyStores
-        || behaviors.size() != other.behaviors.size()) { return false; }
+        || behaviors.size() != other.behaviors.size() || toolTraits != other.toolTraits
+        || craftingPower != other.craftingPower || craftingEnergyPerWork != other.craftingEnergyPerWork
+        || recoveryAllowed != other.recoveryAllowed || unfinishedCraft != other.unfinishedCraft) { return false; }
     for (std::size_t i = 0; i < behaviors.size(); ++i) {
         const auto& left = behaviors[i];
         const auto& right = other.behaviors[i];

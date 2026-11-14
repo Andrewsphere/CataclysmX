@@ -24,6 +24,7 @@ Build a small, deterministic C++23 roguelike inspired by Cataclysm: Bright Night
 - Keep third-party libraries behind narrow subsystem boundaries. Prefer EASTL for internal containers and vocabulary types. Use yyjson only in content loading, ENet only in networking, and terminal libraries only in frontends. Never expose third-party implementation details through simulation APIs unless explicitly justified.
 - Use PascalCase for types, methods, functions and enum members.
 - Use camelCase for variables, parameters, and fields.
+- Express integer ratios, efficiencies, and probabilities using `ratioScale` from `core/ratio.h`: 10000 means 1.0, 1000 means 10%. Unit ratios are in [0, 10000]; use explicit integer rounding and carry fractional remainders for incremental accounting.
 - Use a trailing underscore (camelCase_) for private and protected data members.
 - Do not use trailing underscores for public fields, including fields of simple value types and component structs.
 - Consider ankerl hashmaps/sets when designing memory layout if ordering is not required.

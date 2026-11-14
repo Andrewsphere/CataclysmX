@@ -175,10 +175,18 @@ String Localization::OutcomeText(Outcome outcome) const {
     case Outcome::no_target: return Text("outcome.no_target", OutcomeMessage(outcome));
     case Outcome::no_combat_move: return Text("outcome.no_combat_move", OutcomeMessage(outcome));
     case Outcome::combat_style_changed: return Text("outcome.combat_style_changed", OutcomeMessage(outcome));
+    case Outcome::craft_started: case Outcome::recycling_started: case Outcome::craft_resumed:
+    case Outcome::craft_paused: case Outcome::craft_cancelled: case Outcome::crafting_refused:
+        return OutcomeMessage(outcome);
     }
     std::abort();
 }
 String Localization::ResultText(const CommandResult& result) const {
+    if (result.outcome == Outcome::crafting_refused || result.outcome == Outcome::craft_started
+        || result.outcome == Outcome::recycling_started || result.outcome == Outcome::craft_resumed
+        || result.outcome == Outcome::craft_paused || result.outcome == Outcome::craft_cancelled) {
+        return CommandResultMessage(result);
+    }
     return result.outcome == Outcome::item_use_failed ? ItemRefusal(result.itemOutcome, result.itemReason) : OutcomeText(result.outcome);
 }
 String Localization::ItemName(const ItemDefinition& definition) const {

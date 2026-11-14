@@ -211,6 +211,11 @@ int main(int argc, char** argv) {
             case cataclysmx::CommandKind::drop: return std::string("drop");
             case cataclysmx::CommandKind::use_item: return Frontend(localization.Text("action.use"));
             case cataclysmx::CommandKind::store_item: return Frontend(localization.Text("item.ui.store"));
+            case cataclysmx::CommandKind::craft: return std::string("craft");
+            case cataclysmx::CommandKind::recycle: return std::string("recycle");
+            case cataclysmx::CommandKind::resume_craft: return std::string("resume craft");
+            case cataclysmx::CommandKind::pause_craft: return std::string("pause craft");
+            case cataclysmx::CommandKind::cancel_craft: return std::string("cancel craft");
             }
             return std::string("action");
         }();
@@ -224,7 +229,8 @@ int main(int argc, char** argv) {
             else { accepted = true; pendingSequence = submitted; pending = actionDescription + " #" + std::to_string(submitted); SetMessage("Action pending."); }
         } else {
             const auto result = server.Send(command);
-            accepted = result.advanced || result.outcome == Outcome::queued;
+            accepted = result.advanced || result.outcome == Outcome::queued || result.outcome == Outcome::craft_paused
+                || result.outcome == Outcome::craft_cancelled;
             SetMessage(Frontend(localization.ResultText(result)));
             if (result.storageError) {
                 SetMessage(Frontend(localization.Text(result.advanced ? "game.autosave_failed" : "game.load_failed"))
@@ -285,7 +291,7 @@ int main(int argc, char** argv) {
         auto action = chord ? ResolveAction(settings.Keys(), interacting ? InputContext::Interaction : InputContext::Gameplay, *chord)
             : eastl::optional<InputAction>{};
         // Local modals discard elapsed time; an open LAN host continues serving guests.
-        const bool pauseLocal = settingsOpen || debugOpen || gameplayUi.IsOpen()
+        const bool pauseLocal = settingsOpen || debugOpen || gameplayUi.PausesLocal({})
             || (!lanOpen && (gameplayUi.PausesLocal(action) || action == InputAction::Settings
             || action == InputAction::Debug || action == InputAction::Save || action == InputAction::Cancel
             || action == InputAction::Quit || action == InputAction::ToggleRate || action == InputAction::ToggleIdle

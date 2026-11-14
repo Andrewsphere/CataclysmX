@@ -158,6 +158,7 @@ Outcome TransferFailure(WorldError error) {
 
 void AppendItemTreeDescription(const World& world, ActorHandle actor, ItemHandle handle,
     Vector<InventoryEntry>& result) {
+    if (world.IsReservedItem(handle)) { return; }
     const Item* item = world.GetItem(handle);
     Require(item != nullptr);
     const ItemDefinition& definition = world.GetContent().GetItem(item->type);
@@ -167,8 +168,11 @@ void AppendItemTreeDescription(const World& world, ActorHandle actor, ItemHandle
         entry.installation = item->location.installation;
     }
     entry.massGrams = world.GetItemMass(handle);
-    entry.volumeMl = definition.volumeMl;
-    if (const auto* container = ItemContainer(definition)) {
+    const auto volume = world.GetItemVolume(handle);
+    Require(volume <= UINT32_MAX); // Wrapper inputs are bounded by their uint32 container capacity.
+    entry.volumeMl = static_cast<std::uint32_t>(volume);
+    if (definition.unfinishedCraft) { entry.contained_items = 0; }
+    if (const auto* container = ItemContainer(definition); container && !definition.unfinishedCraft) {
         entry.capacityVolumeMl = container->capacityVolumeMl;
         entry.usedVolumeMl = world.GetContainerUsedVolume(handle);
     }
@@ -206,6 +210,64 @@ bool Ready(const World& world, ActorHandle handle) {
         && actor->combat.action.kind == ActorActionKind::None && world.GetActorRemainingTicks(handle) == 0;
 }
 
+bool ActiveCraftingInterrupt(const World& world, ActorHandle actor, const Command& command) {
+    if (command.kind != CommandKind::pause_craft && command.kind != CommandKind::cancel_craft) { return false; }
+    const auto* worker = world.GetActor(actor);
+    const auto job = world.InspectCrafting(world.FindItem(command.item));
+    return worker && job && job->worker == worker->id
+        && (job->status == CraftingStatus::Working || job->status == CraftingStatus::PauseRequested)
+        && worker->combat.action.kind == ActorActionKind::None
+        && !worker->actionDeadline.suspended
+        && job->fundedTicksRemaining != 0
+        && world.GetActorRemainingTicks(actor) == job->fundedTicksRemaining;
+}
+
+CommandResult CraftingCommand(World& world, ActorHandle actor, const Command& command) {
+    auto refused = [&world](CraftingOutcome outcome) {
+        CommandResult result{Outcome::crafting_refused, false, world.GetTick()};
+        result.craftingOutcome = outcome;
+        return result;
+    };
+    const auto item = world.FindItem(command.item);
+    if (command.kind != CommandKind::craft && (!world.GetItem(item) || world.IsReservedItem(item))) {
+        return refused(CraftingOutcome::InvalidTarget);
+    }
+    const auto used = [&]() -> WorldResult<CraftingResult> {
+        switch (command.kind) {
+        case CommandKind::craft:
+            if (!world.GetContent().TryGetCraftingRecipe(command.recipe)) {
+                return CraftingResult{CraftingOutcome::InvalidTarget};
+            }
+            return world.StartCrafting(actor, command.recipe);
+        case CommandKind::recycle: {
+            const auto recipe = world.GetContent().FindRecyclingFor(world.GetItem(item)->type);
+            if (!recipe.value) { return CraftingResult{CraftingOutcome::InvalidTarget}; }
+            return world.StartRecycling(actor, item, recipe);
+        }
+        case CommandKind::resume_craft: return world.ResumeCrafting(actor, item);
+        case CommandKind::pause_craft: return world.PauseCrafting(actor, item);
+        case CommandKind::cancel_craft: return world.CancelCrafting(actor, item);
+        default: std::abort();
+        }
+    }();
+    if (!used) { return refused(CraftingOutcome::InvalidTarget); }
+    CommandResult result = refused(used->outcome);
+    switch (used->outcome) {
+    case CraftingOutcome::Started:
+        result.outcome = command.kind == CommandKind::recycle ? Outcome::recycling_started : Outcome::craft_started;
+        break;
+    case CraftingOutcome::Resumed: result.outcome = Outcome::craft_resumed; break;
+    case CraftingOutcome::PauseRequested:
+    case CraftingOutcome::Paused: result.outcome = Outcome::craft_paused; break;
+    case CraftingOutcome::Cancelled: result.outcome = Outcome::craft_cancelled; break;
+    default: return result;
+    }
+    result.advanced = used->outcome == CraftingOutcome::Started || used->outcome == CraftingOutcome::Resumed;
+    if (result.advanced) { result.cost = world.GetActorRemainingTicks(actor); }
+    world.UpdatePlayerObservations();
+    return result;
+}
+
 Outcome CombatOutcome(AttackOutcome outcome) {
     switch (outcome) {
     case AttackOutcome::Unavailable: return Outcome::unavailable;
@@ -227,6 +289,16 @@ Outcome CombatOutcome(AttackOutcome outcome) {
 
 bool ValidCommandShape(const Command& command) {
     if (command.style > CombatStyle::Defensive) { return false; }
+    if (command.kind >= CommandKind::craft && command.kind <= CommandKind::cancel_craft) {
+        return command.dx == 0 && command.dz == 0 && command.dy == 0
+            && command.waitCost == ticks_per_turn && command.capability.value == 0
+            && command.itemAction.empty() && command.otherItem == 0 && command.target == 0
+            && command.style == CombatStyle::Balanced && command.interaction == InteractionRequest{}
+            && (command.kind == CommandKind::craft
+                ? command.recipe.value != 0 && command.item == 0
+                : command.recipe.value == 0 && command.item != 0);
+    }
+    if (command.recipe.value != 0) { return false; }
     switch (command.kind) {
     case CommandKind::interact_action: return ValidInteraction(command.interaction);
     case CommandKind::attack:
@@ -287,11 +359,32 @@ const char* OutcomeMessage(Outcome outcome) {
     case Outcome::no_target: return "No perceived hostile is within melee reach.";
     case Outcome::no_combat_move: return "You cannot perform an attack with your usable limbs.";
     case Outcome::combat_style_changed: return "You change your combat style.";
+    case Outcome::craft_started: return "You start crafting.";
+    case Outcome::recycling_started: return "You start recycling.";
+    case Outcome::craft_resumed: return "You resume crafting.";
+    case Outcome::craft_paused: return "You pause crafting after the funded work finishes.";
+    case Outcome::craft_cancelled: return "You cancel crafting.";
+    case Outcome::crafting_refused: return "You cannot perform that crafting action.";
     }
     std::abort();
 }
 
 const char* CommandResultMessage(const CommandResult& result) {
+    if (result.outcome == Outcome::crafting_refused) {
+        switch (result.craftingOutcome) {
+        case CraftingOutcome::ActorUnavailable: return "You cannot craft here now.";
+        case CraftingOutcome::ActorBusy: return "You are still busy.";
+        case CraftingOutcome::JobBusy: return "Another worker is assigned to that job.";
+        case CraftingOutcome::OutOfReach: return "That crafting target is out of reach.";
+        case CraftingOutcome::RecipeDisabled: return "That recipe is disabled.";
+        case CraftingOutcome::InvalidTarget: return "That is not a valid crafting target or recipe.";
+        case CraftingOutcome::MissingInputs: return "You lack the required crafting inputs.";
+        case CraftingOutcome::MissingTools: return "You lack the required crafting tools.";
+        case CraftingOutcome::InsufficientEnergy: return "Your crafting tools lack energy.";
+        case CraftingOutcome::CapacityExceeded: return "There is not enough capacity for crafting.";
+        default: return OutcomeMessage(result.outcome);
+        }
+    }
     if (result.outcome != Outcome::item_use_failed) { return OutcomeMessage(result.outcome); }
     return result.itemReason.message.fallback.empty() ? ItemUseMessage(result.itemOutcome)
         : result.itemReason.message.fallback.c_str();
@@ -449,7 +542,10 @@ CommandResult Server::Execute(ActorHandle handle, PlayerSlot& slot, Command comm
     Require(actor != nullptr);
     const TileCoord position = actor->position;
     const auto failed = [this](Outcome outcome) { return CommandResult{outcome, false, GetTick()}; };
-    if (!Ready(world_, handle)) { return failed(Outcome::not_ready); }
+    if (!Ready(world_, handle) && !ActiveCraftingInterrupt(world_, handle, command)) { return failed(Outcome::not_ready); }
+    if (command.kind >= CommandKind::craft && command.kind <= CommandKind::cancel_craft) {
+        return CraftingCommand(world_, handle, command);
+    }
     const auto attack = [this, handle](ActorHandle target) {
         const auto result = world_.Combat().Attack(handle, target, rng_state_);
         if (result.committed) { world_.UpdatePlayerObservations(); }
@@ -918,6 +1014,18 @@ CommandResult Server::Submit(PersistentId id, PlayerInput input) {
         return {Outcome::stale_input, false, GetTick()};
     }
     slot->lastSequence = input.sequence;
+    if (!Ready(world_, actor) && ActiveCraftingInterrupt(world_, actor, input.command)) {
+        const auto result = Execute(actor, *slot, input.command);
+        if (result.outcome == Outcome::craft_paused || result.outcome == Outcome::craft_cancelled) {
+            slot->pending.reset();
+            Require(slot->opportunity != eastl::numeric_limits<std::uint64_t>::max());
+            ++slot->opportunity;
+            pacer_.RestartGrace(actor);
+        }
+        ++revision_;
+        SynchronizePacing();
+        return result;
+    }
     slot->pending = input;
     ++revision_;
     SynchronizePacing();
@@ -1184,6 +1292,14 @@ WorldView Server::ViewForPlayerAtLayer(PersistentId id, int radius, int layerY) 
         }
     }
     result.inventory = DescribeItems(world_, player, actor->inventory);
+    Vector<CraftingJobView> jobs;
+    world_.CollectCraftingJobs(player, jobs);
+    result.craftingJobs.reserve(jobs.size());
+    for (const auto& job : jobs) {
+        result.craftingJobs.push_back({job.id, job.kind, job.craftingRecipe, job.recyclingRecipe,
+            job.status, job.worker, job.totalWork, job.completedWork,
+            job.fundedTicksRemaining, job.pauseRequested});
+    }
     if (observing) { result.groundItems = DescribeItems(world_, player, world_.ItemsAt(actor->position)); }
     result.carriedMassGrams = world_.GetCarriedMass(player);
     result.carryCapacityGrams = actor->carryCapacityGrams;

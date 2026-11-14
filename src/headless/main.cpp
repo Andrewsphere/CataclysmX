@@ -3,6 +3,7 @@
 #include "client/text.h"
 #include "headless/lan.h"
 #include "client/settings.h"
+#include "client/crafting_menu.h"
 
 #include <EASTL/array.h>
 #include <EASTL/unique_ptr.h>
@@ -109,6 +110,14 @@ bool Execute(eastl::unique_ptr<Server>& ownedServer, eastl::string_view line, bo
         return true;
     }
     if (name == "inspect" && count == 1) { Inspect(server); return true; }
+    if ((name == "recipes" || name == "crafting") && count == 1) {
+        Vector<CraftingMenuRow> rows;
+        CollectCraftingMenu(server.View(0), server.GetWorld().GetContent(), Localization{}, rows);
+        for (const auto& row : rows) {
+            if (name == "crafting" || row.command.kind == CommandKind::craft) { std::puts(row.label.c_str()); }
+        }
+        return true;
+    }
     if (name == "items" && count == 1) {
         std::fputs(ItemDetails(server.View(0), server.GetWorld().GetContent()).c_str(), stdout); return true;
     }
@@ -233,7 +242,14 @@ bool Execute(eastl::unique_ptr<Server>& ownedServer, eastl::string_view line, bo
         return true;
     }
     Command command;
-    if (name == "wait" && (count == 1 || count == 2)) {
+    if (name == "craft" && count == 2) {
+        command.kind = CommandKind::craft;
+        if (!Number(words[1], command.recipe.value) || command.recipe.value == 0) { return false; }
+    } else if ((name == "recycle" || name == "resume-craft" || name == "pause-craft" || name == "cancel-craft") && count == 2) {
+        command.kind = name == "recycle" ? CommandKind::recycle : name == "resume-craft" ? CommandKind::resume_craft
+            : name == "pause-craft" ? CommandKind::pause_craft : CommandKind::cancel_craft;
+        if (!Number(words[1], command.item) || command.item == 0) { return false; }
+    } else if (name == "wait" && (count == 1 || count == 2)) {
         command.kind = CommandKind::wait;
         if (count == 2 && (!Number(words[1], command.waitCost) || command.waitCost == 0)) { return false; }
     } else if (name == "attack" && (count == 1 || count == 2)) {
@@ -319,6 +335,7 @@ int main(int argc, char** argv) {
         } else if (argument == "--world-dir" && i + 1 < argc) { configuration.worldDirectory = argv[++i]; configuration.enabled = true;
         } else {
             std::fputs("Usage: cataclysmx_headless [--content path] [--user-dir path] [--world-dir path] [--save path | --load path] [--script | --host | --join address[:port] | --discover] [--port n] [--discovery-port n] [--discovery-address address] [--name name] [--profile path] [--new-character] [--run-for ms] [--command 'move e'] | --probe | --fail-log\nMovement: move n/s/e/w, move down or move < (downstairs), move up or move > (upstairs).\nCombat: attack [persistentId], style balanced|aggressive|defensive.\n", stderr);
+            std::fputs("Crafting (local --script): recipes, crafting, craft ID, recycle ITEM_ID, resume-craft JOB_ID, pause-craft JOB_ID, cancel-craft JOB_ID.\n", stderr);
             return 2;
         }
     }

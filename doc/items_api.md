@@ -16,8 +16,16 @@ Read-only borrows follow the [World lifetime rules](world_api.md).
 
 `ItemLocation::Inside(parent)` is ordinary storage. The parent's
 `ContainerDefinition::capacityVolumeMl` bounds the sum of immediate ordinary
-children's definition volumes. A child's external volume is fixed, regardless
-of its own contents. Containers have no separate mass limit.
+children's external volumes. An ordinary child's external volume is fixed,
+regardless of its own contents. Containers have no separate mass limit.
+
+An unfinished crafting wrapper is a special reserved container: its external
+volume is the sum of its reserved children's volumes, and its zero base mass
+plus recursive child mass gives its mass. The actual children move with the
+wrapper but cannot be publicly accessed, transferred, selected for crafting, or
+independently timed. Frontends traversing raw `Item::contents` must filter them
+using `IsReservedItem`. See [runtime crafting](crafting.md) for reservation,
+cancellation and completion rules.
 
 `ItemLocation::Inside(parent, capability)` uses the behavior definition's
 `AcceptsInstallation(childDefinition)` compatibility rule. Each mount holds one
