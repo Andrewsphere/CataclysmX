@@ -1,7 +1,7 @@
 # AI decision inspection
 
 F11 retains the world-generation preview. `a` toggles the live AI inspector in
-both SDL and terminal clients. Move the cursor onto an actor with arrows/hjkl;
+both SDL and terminal clients. Move the cursor onto an actor with arrows;
 Alt+Up/Down or `>`/`<` selects elevation. Home/c recenters on the player and
 PageUp/PageDown scrolls details. These controls use the Debug keybinding context.
 

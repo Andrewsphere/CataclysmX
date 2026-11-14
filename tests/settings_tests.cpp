@@ -1,4 +1,5 @@
 #include "client/settings.h"
+#include "client/localization.h"
 #include "core/save_database.h"
 #include "content_fixture.h"
 #include "settings_fixture.h"
@@ -9,6 +10,30 @@
 
 namespace {
 using namespace cataclysmx;
+
+TEST_CASE("Message history size defaults to ten and persists sparse overrides", "[settings][messages]") {
+    CHECK(Settings{}.messageHistorySize == 10);
+    SettingsDirectory files;
+    SettingsOverrides global; global.messageHistorySize = 20;
+    SettingsOverrides world; world.messageHistorySize = 1;
+    CHECK(ResolveSettings(global, world).messageHistorySize == 1);
+    REQUIRE(HasOverride(world, SettingsField::MessageHistorySize));
+    ResetOverride(world, SettingsField::MessageHistorySize);
+    CHECK(ResolveSettings(global, world).messageHistorySize == 20);
+    for (int size : {1, 10, 100}) {
+        REQUIRE(SetOverride(world, SettingsField::MessageHistorySize, NumberText(size)));
+        REQUIRE(ValidateOverrides(world));
+        const auto path = files.File("history/settings.json5");
+        REQUIRE(SaveSettingsFile(path.c_str(), world));
+        const auto loaded = LoadSettingsFile(path.c_str());
+        REQUIRE(loaded); CHECK(*loaded == world);
+    }
+    for (const char* text : {"0", "-1", "101", "2147483647"}) {
+        String json = "{format_version:2,settings:{message_history_size:";
+        json += text; json += "}}";
+        CHECK_FALSE(ParseSettings({json.data(), json.size()}));
+    }
+}
 
 TEST_CASE("View radius defaults to 64 and validates both bounds with explicit overrides", "[settings]") {
     CHECK(Settings{}.viewRadius == 64);
@@ -413,6 +438,30 @@ TEST_CASE("Keybinding files round trip sparse entries and reject unsupported mod
         "{format_version:1,bindings:[{context:'gameplay',action:'wait',keys:[{key:'Escape'}]}]}",
         "{format_version:1,bindings:[{context:'gameplay',action:'wait',keys:[]},{context:'gameplay',action:'wait',keys:[]}]}",
         "{format_version:1,bindings:[{context:'gameplay',action:'wait',keys:[{key:'ab'}]}]}"}) { CHECK_FALSE(ParseKeymap(text)); }
+}
+
+TEST_CASE("Default navigation uses arrows and debug region jumps use Shift arrows", "[settings][input]") {
+    const auto keys = DefaultKeymap();
+    REQUIRE(ValidateKeymap(keys));
+    struct Direction { const char* key; InputAction move; InputAction jump; };
+    for (const auto direction : {Direction{"Left", InputAction::West, InputAction::JumpWest},
+        {"Right", InputAction::East, InputAction::JumpEast},
+        {"Up", InputAction::North, InputAction::JumpNorth},
+        {"Down", InputAction::South, InputAction::JumpSouth}}) {
+        for (const auto context : {InputContext::Gameplay, InputContext::Interaction, InputContext::Menu, InputContext::Debug}) {
+            CHECK(ResolveAction(keys, context, {direction.key, false}) == direction.move);
+        }
+        CHECK(ResolveAction(keys, InputContext::Debug, {direction.key, false, false, true}) == direction.jump);
+    }
+    for (const auto context : {InputContext::Gameplay, InputContext::Interaction, InputContext::Menu, InputContext::Debug, InputContext::Items}) {
+        for (const char* key : {"h", "j", "k", "l", "H", "J", "K", "L"}) {
+            CHECK_FALSE(ResolveAction(keys, context, {key, false}));
+        }
+    }
+    const auto overridden = ResolveKeymap({{InputContext::Debug, InputAction::Inspect, {{"Left", false, false, true}}}}, {});
+    REQUIRE(ValidateKeymap(overridden));
+    CHECK(ResolveAction(overridden, InputContext::Debug, {"Left", false, false, true}) == InputAction::Inspect);
+    CHECK(BindingHint(overridden, InputContext::Debug, InputAction::JumpWest) == "—");
 }
 
 TEST_CASE("Gameplay modal bindings preserve case round trip overrides and report existing key conflicts", "[settings][input]") {

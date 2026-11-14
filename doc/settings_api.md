@@ -44,6 +44,11 @@ Global files are written when explicitly saving Global settings.
 
 ## APIs and application
 
+`message_history_size` is an Interface preference shared by both frontends.
+It defaults to 10, accepts 1–100, and controls how many recent messages are
+retained. Reducing it discards the oldest entries. See
+[message history](message_history.md) for presentation and ownership details.
+
 `SettingsStore` owns typed global/world overrides and the resolved `Settings`
 and `Keymap`. `Load` stages all files and preserves the store on failure.
 `SetOverrides` validates the selected layer and its effective configuration

@@ -23,7 +23,7 @@ After building:
 Get-Content tests/scenarios/streaming.txt | ./out/build/win-msvc-debug/cataclysmx_headless.exe --script
 ```
 
-The terminal client uses **arrows/hjkl** to move, **.** to wait, **g** to pick up,
+The terminal client uses **arrows** to move, **.** to wait, **g** to pick up,
 **d** to drop, **o then a direction** to interact, **[/]** to halve/double the
 runtime tick rate, **r** to toggle rate limiting, **p** to toggle pause-when-idle,
 and **q/Escape** to quit. Press **F9** for the LAN menu: **O** opens the current
@@ -66,8 +66,8 @@ numeric address to reconnect. A different world on the same endpoint may reject
 the old token; **X** starts a fresh character explicitly.
 Closing LAN/host exit parks guests so they can return when the same save is
 hosted again. Use matching content files at both ends.
-Press **F11** in-game for the world-generation debug menu; arrows/hjkl move its
-cursor, **HJKL** jump by region, **1–5/Tab/Shift+Tab** change layers, **+/-** zoom,
+Press **F11** in-game for the world-generation debug menu; arrows move its
+cursor, **Shift+arrows** jump by region, **1–5/Tab/Shift+Tab** change layers, **+/-** zoom,
 **Home/c** recenter, **PageUp/PageDown** browse details, and **F11/Escape/q** close.
 The demo has a backpack containing a bandage, a toggleable machine, a door, a
 wandering NPC, and a multi-level stairwell/pit west of the start. The basement

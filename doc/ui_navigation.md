@@ -7,8 +7,8 @@ focused tests. The compatibility notes below describe current exceptions.
 Gameplay movement, action costs, and world interaction are outside this standard.
 
 The aim is to make navigation predictable across screens while keeping every
-essential operation available from the keyboard. Mouse support, if added, should
-complement these controls.
+essential operation available from the keyboard. All gameplay and menu
+interaction uses the keyboard.
 
 ## Default controls
 

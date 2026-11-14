@@ -1,25 +1,9 @@
 #include "sdl/input.h"
-#include "sdl/renderer.h"
 
 #include <SDL3/SDL_keyboard.h>
 #include <algorithm>
 
 namespace cataclysmx::sdl {
-eastl::optional<SpriteClickResult> ActivateMapItem(SDL_Renderer* renderer, const SDL_MouseButtonEvent& event,
-    bool inputBlocked, const MapPacket& packet, const TilesetDefinition& tileset,
-    SpritePlaybackController& playback, std::uint64_t elapsedMilliseconds, int zoom, float uiScale) {
-    if (inputBlocked || event.type != SDL_EVENT_MOUSE_BUTTON_DOWN || event.button != SDL_BUTTON_LEFT) { return {}; }
-    float x = 0, y = 0;
-    int width = 0, height = 0;
-    if (!SDL_RenderCoordinatesFromWindow(renderer, event.x, event.y, &x, &y)
-        || !SDL_GetCurrentRenderOutputSize(renderer, &width, &height)) { return {}; }
-    const auto index = MapItemAt(packet, tileset, x, y, width, height, zoom, uiScale);
-    if (!index) { return {}; }
-    const auto& cell = packet.cells[*index];
-    return SpriteClickResult{cell.itemVisual,
-        playback.Activate(cell.itemVisual.item, cell.overlaySprite, tileset, elapsedMilliseconds)};
-}
-
 eastl::optional<KeyChord> TranslateKey(const SDL_KeyboardEvent& event) {
     if (event.type != SDL_EVENT_KEY_DOWN || (event.mod & SDL_KMOD_GUI)) {
         return eastl::nullopt;

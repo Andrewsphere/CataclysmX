@@ -93,4 +93,9 @@ TEST_CASE("Terminal functional modifier sequences match SDL movement bindings", 
         const auto chord = DecodeTerminalInput(binding.first); REQUIRE(chord);
         CHECK(ResolveAction(keys,InputContext::Gameplay,*chord) == binding.second);
     }
+    for (const auto& binding : {std::pair{"\x1b[1;2D", InputAction::JumpWest},
+        {"\x1b[1;2C", InputAction::JumpEast}, {"\x1b[1;2A", InputAction::JumpNorth}, {"\x1b[1;2B", InputAction::JumpSouth}}) {
+        const auto chord = DecodeTerminalInput(binding.first); REQUIRE(chord);
+        CHECK(ResolveAction(keys, InputContext::Debug, *chord) == binding.second);
+    }
 }

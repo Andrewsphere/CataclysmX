@@ -2,6 +2,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <utility>
+
 namespace {
 using namespace cataclysmx;
 
@@ -56,6 +58,16 @@ TEST_CASE("SDL Tab resolves by input context", "[sdl][input]") {
     CHECK(ResolveAction(keys, InputContext::Gameplay, *two) == InputAction::StyleAggressive);
     CHECK(ResolveAction(keys, InputContext::Gameplay, *three) == InputAction::StyleDefensive);
     CHECK(ResolveAction(keys, InputContext::Debug, *one) == InputAction::Layer1);
+}
+
+TEST_CASE("SDL debug region jumps resolve Shift arrows", "[sdl][input]") {
+    const auto keys = DefaultKeymap();
+    for (const auto binding : {std::pair{SDLK_LEFT, InputAction::JumpWest},
+        {SDLK_RIGHT, InputAction::JumpEast}, {SDLK_UP, InputAction::JumpNorth}, {SDLK_DOWN, InputAction::JumpSouth}}) {
+        const auto shifted = sdl::TranslateKey(Key(binding.first, SDL_SCANCODE_UNKNOWN, SDL_KMOD_SHIFT));
+        REQUIRE(shifted);
+        CHECK(ResolveAction(keys, InputContext::Debug, *shifted) == binding.second);
+    }
 }
 
 TEST_CASE("SDL map zoom uses case-sensitive z shortcuts", "[sdl][input]") {

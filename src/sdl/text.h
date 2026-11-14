@@ -21,6 +21,7 @@ public:
     bool Ready() const { return ready_; }
     bool Draw(unsigned int slot, const char* utf8, float x, float y, SDL_Color color, int wrapWidth = 0);
     int Height(unsigned int slot) const;
+    int Width(unsigned int slot) const;
 
 private:
     struct Slot {

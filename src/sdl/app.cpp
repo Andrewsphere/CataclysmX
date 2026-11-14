@@ -1,5 +1,6 @@
 #include "sdl/app.h"
 #include "client/combat_text.h"
+#include "client/message_history.h"
 
 #include "sdl/assets.h"
 #include "sdl/gpu_renderer.h"
@@ -7,6 +8,8 @@
 #include "sdl/renderer.h"
 #include "sdl/session.h"
 #include "sdl/screens.h"
+#include "sdl/modal.h"
+#include "sdl/health.h"
 
 #include <SDL3/SDL.h>
 #include <EASTL/unique_ptr.h>
@@ -64,7 +67,7 @@ String Hints(const Keymap& keys) {
         const auto name = ActionName(action);
         text.append(name.data(), name.size()); text += "\n";
     }
-    text += "z zoom in (also Examine/Interact)\nZ zoom out (also Examine/Interact)\nInteract: directions open actions; . selects current tile\nExamine: directions move cursor; layer bindings change viewed Y\nExamine: PgUp/PgDn or Ctrl+Up/Down scroll details\nClick bulb: toggle / blink\n";
+    text += "z zoom in (also Examine/Interact)\nZ zoom out (also Examine/Interact)\nInteract: directions open actions; . selects current tile\nExamine: directions move cursor; layer bindings change viewed Y\nExamine: PgUp/PgDn or Ctrl+Up/Down scroll details\n";
     return text;
 }
 int SdlFailure() {
@@ -129,18 +132,19 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
     Session session(content, 1, SessionOptions{settings}, Wake, &wakeup);
     SessionSnapshot snapshot;
     bool running = true, dirty = true, started = false;
-    enum class Screen { None, Help, Examine, Targets, Actions, Options, Debug };
-    Screen screen = Screen::None, pendingScreen = Screen::Help;
-    bool modalPending = false, initializeScreen = false;
+    using Screen = ModalScreen;
+    HeldKey heldKey;
+    ModalController modal(heldKey);
+    bool initializeScreen = false;
     ScreenFrame frame;
     OptionsUi optionsUi;
-    TileCoord cursor{};
+    auto& cursor = modal.Cursor();
     Vector<String> inspection;
     eastl::optional<std::uint64_t> inspectionId;
     TileCoord requestedCursor{};
     bool inspectionNeeded = false;
     Vector<InteractionChoice> actions;
-    std::size_t selectedAction = 0;
+    auto& selectedAction = modal.ActionSelection();
     eastl::optional<SettingsStore> candidateSettings;
     Localization candidateLocalization;
     eastl::optional<std::uint64_t> settingsId;
@@ -160,13 +164,21 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
     bool smokeWaiting = false;
     bool smokeFailed = false;
     bool smokeExamined = false;
+    bool smokeExamineDrawn = false, smokeActionsDrawn = false, smokeHealthDrawn = false;
+    std::uint64_t smokeModalTick = 0;
     unsigned int smokeAiStep = 0;
     std::uint64_t smokeOpportunity = 0;
-    String message = "Starting local session...";
+    MessageHistory messageHistory;
+    String message;
+    const auto SetMessage = [&](String value) {
+        message = eastl::move(value);
+        messageHistory.SetCapacity(store.Effective().messageHistorySize);
+        messageHistory.Add({message.data(), message.size()});
+    };
+    SetMessage("Starting local session...");
     String hints = Hints(keys);
     auto assetState = AssetState::Loading;
     bool minimized = false;
-    HeldKey heldKey;
     bool commandPending = false;
     int zoom = 0;
     using Clock = std::chrono::steady_clock;
@@ -179,7 +191,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
         request.generation = snapshot.generation; request.id = nextId;
         request.player = snapshot.view.playerId; request.opportunity = snapshot.view.opportunity;
         if (session.TrySubmit(eastl::move(request)) != EnqueueResult::Accepted) {
-            message = "Session busy; try again."; dirty = true; return false;
+            SetMessage("Session busy; try again."); dirty = true; return false;
         }
         if (isCommand) { commandPending = true; }
         ++nextId; return true;
@@ -189,7 +201,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
         return enqueue(eastl::move(request));
     };
     const auto close = [&] {
-        if (submit(RequestKind::Resume)) { modalPending = true; message = "Resuming..."; SDL_StopTextInput(platform.window);
+        if (submit(RequestKind::Resume)) { modal.BeginClose(); SetMessage("Resuming..."); SDL_StopTextInput(platform.window);
             inspectionId.reset(); inspectionNeeded = false;
             ++aiRevision; aiNeeded = false; aiValid = false; }
     };
@@ -211,20 +223,20 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
     const auto collectActions = [&] {
         actions.clear();
         for (const auto& choice : snapshot.interactions) { if (choice.request.position == cursor) { actions.push_back(choice); } }
-        selectedAction = 0;
     };
     const auto executeAction = [&] {
         const auto& choice = actions[selectedAction];
-        if (choice.reason != ObjectUseReason::None) { message = InteractionReason(localization,choice.reason); return; }
+        if (choice.reason != ObjectUseReason::None) { SetMessage(InteractionReason(localization,choice.reason)); return; }
         Command command; command.kind = CommandKind::interact_action; command.interaction = choice.request;
         if (submit(RequestKind::ResumeAndCommand,eastl::move(command))) {
-            screen = Screen::None; frame.visible = false; message = "Awaiting admission...";
+            modal.Closed(); frame.visible = false; SetMessage("Awaiting admission...");
         }
     };
     const auto openActions = [&] {
         collectActions();
         if (actions.empty()) { return; }
-        screen = Screen::Actions; frame.scroll = 0;
+        modal.EnterActions(frame.scroll);
+        selectedAction = std::min(selectedAction, actions.size() - 1);
         if (const auto single = SoleAvailableAction(actions)) { selectedAction = *single; executeAction(); }
     };
     const auto handleEvent = [&](const SDL_Event& event) {
@@ -238,24 +250,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             if (mapWorker && snapshot.view.playerId) { mapWorker->Submit(snapshot.view, mapIdentity, snapshot.mapItems); }
             dirty = true;
         }
-        if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_LEFT) {
-            if (assetState != AssetState::Ready) { return; }
-            const auto time = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - animationEpoch).count());
-            const auto clicked = ActivateMapItem(platform.renderer, event.button,
-                screen != Screen::None || modalPending || minimized || !started || !mapValid,
-                mapPacket, assets.Definition(), playback, time, zoom, options.uiScale);
-            if (!clicked) { return; }
-            message = content.GetItem(clicked->item.type).name;
-            switch (clicked->activation) {
-            case SpriteActivationResult::Unavailable: message += ": no visual activation."; break;
-            case SpriteActivationResult::LoopStarted: message += ": blinking started."; break;
-            case SpriteActivationResult::Stopped: message += ": blinking stopped."; break;
-            case SpriteActivationResult::PlayedOnce: message += ": blinking once."; break;
-            }
-            dirty = true;
-            return;
-        }
-        if (event.type == SDL_EVENT_TEXT_INPUT && screen == Screen::Options && !settingsId) {
+        if (event.type == SDL_EVENT_TEXT_INPUT && modal.Active() == Screen::Options && !settingsId && !modal.Pending()) {
             optionsUi.Text(event.text.text); dirty = true; return;
         }
         if (event.type != SDL_EVENT_KEY_DOWN) { return; }
@@ -266,23 +261,23 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             return;
         }
         const int zoomChange = MapZoomChange(*chord);
-        if (zoomChange != 0 && (screen == Screen::None || screen == Screen::Examine || screen == Screen::Targets || screen == Screen::Actions) && !modalPending) {
+        if (zoomChange != 0 && (modal.Active() == Screen::None || modal.Active() == Screen::Examine || modal.Active() == Screen::Targets || modal.Active() == Screen::Actions) && !modal.Pending()) {
             zoom = std::clamp(zoom + zoomChange, -8, 12);
             dirty = true;
             return;
         }
-        const auto context = screen == Screen::Debug ? InputContext::Debug
-            : screen != Screen::None || modalPending ? InputContext::Menu : InputContext::Gameplay;
+        const auto context = modal.Active() == Screen::Debug ? InputContext::Debug
+            : modal.CapturesInput() ? InputContext::Menu : InputContext::Gameplay;
         auto action = ResolveAction(keys, context, *chord);
-        if (screen == Screen::Examine || screen == Screen::Targets) {
+        if (modal.Active() == Screen::Examine || modal.Active() == Screen::Targets) {
             const auto gameAction = ResolveAction(keys,InputContext::Gameplay,*chord);
             if (gameAction == InputAction::Northwest || gameAction == InputAction::Northeast
                 || gameAction == InputAction::Southwest || gameAction == InputAction::Southeast
                 || gameAction == InputAction::MoveUp || gameAction == InputAction::MoveDown) { action = gameAction; }
         }
         dirty = true;
-        if (modalPending || settingsId) { return; }
-        if (screen == Screen::Options) {
+        if (modal.Pending() || settingsId) { return; }
+        if (modal.Active() == Screen::Options) {
             const bool capturing = optionsUi.Capturing();
             const auto result = optionsUi.Key(*chord,store,localization,localizationDirectory);
             if (capturing) { heldKey.Reset(); }
@@ -305,23 +300,24 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             }
             return;
         }
-        if (screen == Screen::Targets && (chord->key == "." || chord->key == "Home")) {
+        if (modal.Active() == Screen::Targets && (chord->key == "." || chord->key == "Home")) {
             cursor = snapshot.view.player_position; openActions(); return;
         }
-        if ((screen == Screen::Examine || screen == Screen::Help)
+        if ((modal.Active() == Screen::Examine || modal.Active() == Screen::Help || modal.Active() == Screen::Actions)
             && ((chord->ctrl && (chord->key == "Up" || chord->key == "Down"))
                 || chord->key == "PageUp" || chord->key == "PageDown")) {
             const bool down = chord->key == "Down" || chord->key == "PageDown";
-            frame.scroll = std::max(0,frame.scroll + (down ? 1 : -1)); return;
+            auto& scroll = modal.Active() == Screen::Actions ? frame.detailScroll : frame.scroll;
+            scroll = std::max(0,scroll + (down ? 1 : -1)); return;
         }
         if (!action) { return; }
-        if (screen != Screen::None) {
-            if (*action == InputAction::Cancel || (screen == Screen::Debug && *action == InputAction::Debug)) {
-                if (screen == Screen::Actions) { screen = Screen::Targets; frame.scroll = 0; return; }
+        if (modal.Active() != Screen::None) {
+            if (*action == InputAction::Cancel || (modal.Active() == Screen::Debug && *action == InputAction::Debug)) {
+                if (modal.Active() == Screen::Actions) { modal.BackToTargets(frame.scroll); return; }
                 close(); return;
             }
-            if (screen == Screen::Help) { if (*action == InputAction::Accept) { close(); } return; }
-            if (screen == Screen::Debug) {
+            if (modal.Active() == Screen::Help) { if (*action == InputAction::Accept) { close(); } return; }
+            if (modal.Active() == Screen::Debug) {
                 if (*action == InputAction::Inspect) {
                     debugAi = !debugAi; ++aiRevision; aiNeeded = false; aiValid = false;
                     frame.detailScroll = 0;
@@ -367,16 +363,16 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 }
                 frame.detailScroll = 0; rebuildDebug(); return;
             }
-            if (screen == Screen::Actions) {
-                if (actions.empty()) { screen = Screen::Targets; return; }
-                if (*action == InputAction::North) { selectedAction = (selectedAction+actions.size()-1)%actions.size(); }
-                if (*action == InputAction::South) { selectedAction = (selectedAction+1)%actions.size(); }
+            if (modal.Active() == Screen::Actions) {
+                if (actions.empty()) { modal.BackToTargets(frame.scroll); return; }
+                if (*action == InputAction::North) { selectedAction = (selectedAction+actions.size()-1)%actions.size(); frame.detailScroll = 0; }
+                if (*action == InputAction::South) { selectedAction = (selectedAction+1)%actions.size(); frame.detailScroll = 0; }
                 if (*action == InputAction::Accept) {
                     executeAction();
                 }
                 return;
             }
-            if (*action == InputAction::Accept && screen == Screen::Targets) {
+            if (*action == InputAction::Accept && modal.Active() == Screen::Targets) {
                 openActions();
                 return;
             }
@@ -386,15 +382,15 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             case InputAction::Northeast: ++next.x; --next.z; break;
             case InputAction::Southwest: --next.x; ++next.z; break;
             case InputAction::Southeast: ++next.x; ++next.z; break;
-            case InputAction::MoveUp: if (screen != Screen::Examine) { return; } next.y = std::min(world_max_y,next.y+1); break;
-            case InputAction::MoveDown: if (screen != Screen::Examine) { return; } next.y = std::max(world_min_y,next.y-1); break;
+            case InputAction::MoveUp: if (modal.Active() != Screen::Examine) { return; } next.y = std::min(world_max_y,next.y+1); break;
+            case InputAction::MoveDown: if (modal.Active() != Screen::Examine) { return; } next.y = std::max(world_min_y,next.y-1); break;
             case InputAction::West: --next.x; break;
             case InputAction::East: ++next.x; break;
             case InputAction::North: --next.z; break;
             case InputAction::South: ++next.z; break;
             default: return;
             }
-            if (screen == Screen::Targets) {
+            if (modal.Active() == Screen::Targets) {
                 // Directions select an adjacent target relative to the player.
                 const auto p = snapshot.view.player_position;
                 next = {p.x + next.x-cursor.x,p.z + next.z-cursor.z,p.y};
@@ -406,23 +402,22 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 next.z = std::clamp(next.z,snapshot.view.origin.z,snapshot.view.origin.z+snapshot.view.height-1);
             }
             cursor = next;
-            if (screen == Screen::Targets) { openActions(); return; }
-            inspectionNeeded = screen == Screen::Examine; frame.scroll = 0;
-            if (inspectionNeeded) { inspection.clear(); inspection.push_back("Loading tile details..."); }
+            if (modal.Active() == Screen::Targets) { openActions(); return; }
+            inspectionNeeded = true; frame.scroll = 0;
             return;
         }
         if (*action == InputAction::Quit || *action == InputAction::Cancel) { running = false; return; }
         if (!started || assetState != AssetState::Ready || !mapValid) { return; }
         if (*action == InputAction::Help || *action == InputAction::Examine || *action == InputAction::Interact
             || *action == InputAction::Settings || *action == InputAction::Debug) {
-            pendingScreen = *action == InputAction::Help ? Screen::Help : *action == InputAction::Examine ? Screen::Examine
+            const auto nextScreen = *action == InputAction::Help ? Screen::Help : *action == InputAction::Examine ? Screen::Examine
                 : *action == InputAction::Interact ? Screen::Targets : *action == InputAction::Settings ? Screen::Options : Screen::Debug;
-            if (submit(RequestKind::Pause)) { modalPending = true; message = "Pausing..."; }
+            if (submit(RequestKind::Pause)) { modal.BeginOpen(nextScreen); SetMessage("Pausing..."); }
             return;
         }
         const auto command = GameplayCommand(*action,false);
-        if (command) { if (submit(RequestKind::Command,*command)) { message = "Awaiting admission..."; } }
-        else { message = "This screen is not available in the local prototype."; }
+        if (command) { if (submit(RequestKind::Command,*command)) { SetMessage("Awaiting admission..."); } }
+        else { SetMessage("This screen is not available in the local prototype."); }
     };
     const auto inputEpoch = Clock::now();
     const auto inputTime = [&] { return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now()-inputEpoch).count()); };
@@ -435,8 +430,8 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
         while (session.TryPopReply(reply)) {
             if (aiRequestId && reply.id == *aiRequestId) {
                 if (reply.kind == ReplyKind::AiInspected && reply.generation == requestedAiGeneration
-                    && reply.generation == snapshot.generation && screen == Screen::Debug && debugAi
-                    && snapshot.paused && !modalPending && requestedAiRevision == aiRevision
+                    && reply.generation == snapshot.generation && modal.Active() == Screen::Debug && debugAi
+                    && snapshot.paused && !modal.Pending() && requestedAiRevision == aiRevision
                     && requestedAiCursor == cursor && reply.aiDebug.cursor == cursor) {
                     aiView = eastl::move(reply.aiDebug); aiValid = true; dirty = true;
                 }
@@ -446,13 +441,12 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             if (reply.generation != snapshot.generation && reply.generation != 1) { continue; }
             dirty = true;
             switch (reply.kind) {
-            case ReplyKind::Started: started = true; message = "Local session ready."; break;
+            case ReplyKind::Started: started = true; SetMessage("Local session ready."); break;
             case ReplyKind::StartupFailed: std::fputs("Session startup failed.\n", stderr); return 1;
-            case ReplyKind::Admission: message = localization.ResultText(reply.result); break;
+            case ReplyKind::Admission: SetMessage(localization.ResultText(reply.result)); break;
             case ReplyKind::Completed:
                 commandPending = false;
-                message = localization.ResultText(reply.result);
-                if (reply.result.storageError) { message += " (world storage failed)"; }
+                SetMessage(localization.ResultText(reply.result) + (reply.result.storageError ? " (world storage failed)" : ""));
                 if (options.smoke) {
                     const Outcome expected = smokeStep == 1 || smokeStep == 14 ? Outcome::moved
                         : smokeStep == 2 ? Outcome::picked_up : smokeStep == 13 ? Outcome::toggled
@@ -464,15 +458,15 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 }
                 smokeWaiting = false; break;
             case ReplyKind::Paused:
-                modalPending = false; screen = pendingScreen; initializeScreen = true;
-                message = "Local session paused.";
+                modal.Paused(); initializeScreen = true;
+                SetMessage("Local session paused.");
                 smokeWaiting = false; break;
             case ReplyKind::Resumed:
-                modalPending = false; screen = Screen::None; frame.visible = false; message = "Local session resumed.";
+                modal.Closed(); frame.visible = false; SetMessage("Local session resumed.");
                 smokeWaiting = false; break;
             case ReplyKind::Inspected:
                 if (inspectionId && *inspectionId == reply.id) {
-                    if (screen == Screen::Examine && cursor == requestedCursor) {
+                    if (modal.Active() == Screen::Examine && cursor == requestedCursor) {
                         inspection = eastl::move(reply.details);
                         if (snapshot.view.origin.y != reply.inspectionView.origin.y) { mapValid = false; }
                         snapshot.view = eastl::move(reply.inspectionView);
@@ -505,8 +499,8 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                     optionsUi.Feedback(reply.details.empty() ? String("Settings could not be applied") : reply.details.front());
                 }
                 break;
-            case ReplyKind::Stale: commandPending = false; message = "Input expired; use the current opportunity."; smokeFailed = options.smoke; smokeWaiting = false; break;
-            case ReplyKind::Cancelled: commandPending = false; message = "Input cancelled."; smokeFailed = options.smoke; smokeWaiting = false; break;
+            case ReplyKind::Stale: commandPending = false; SetMessage("Input expired; use the current opportunity."); smokeFailed = options.smoke; smokeWaiting = false; break;
+            case ReplyKind::Cancelled: commandPending = false; SetMessage("Input cancelled."); smokeFailed = options.smoke; smokeWaiting = false; break;
             }
         }
         if (session.TakeSnapshot(snapshot)) {
@@ -515,12 +509,13 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             playback.SetGeneration(mapIdentity.session, mapIdentity.assetGeneration);
             ++mapIdentity.viewRevision;
             if (mapWorker) { mapWorker->Submit(snapshot.view, mapIdentity, snapshot.mapItems); }
-            if (snapshot.storageError) { message = "World storage failed; see session state."; }
+            if (snapshot.storageError) { SetMessage("World storage failed; see session state."); }
         }
         if (initializeScreen && snapshot.paused) {
             initializeScreen = false; cursor = snapshot.view.player_position;
+            if (options.smoke) { smokeModalTick = snapshot.view.tick; }
             frame.scroll = 0; frame.detailScroll = 0; inspection.clear();
-            if (screen == Screen::Options) {
+            if (modal.Active() == Screen::Options) {
                 optionsUi.Open(store,snapshot.runtimeSettings);
                 if (!store.Dirty(SettingsScope::Global) && !store.Dirty(SettingsScope::World)) {
                     candidateSettings = store;
@@ -539,23 +534,23 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                     } else { candidateSettings.reset(); optionsUi.Feedback(FormatDiagnostics(diagnostics)); }
                 }
             }
-            if (screen == Screen::Examine) { inspectionNeeded = true; }
-            if (screen == Screen::Debug) {
+            if (modal.Active() == Screen::Examine) { inspectionNeeded = true; }
+            if (modal.Active() == Screen::Debug) {
                 debugAi = false; ++aiRevision; aiNeeded = false; aiValid = false; rebuildDebug();
             }
-            if (screen == Screen::Targets && !snapshot.interactions.empty()) {
+            if (modal.Active() == Screen::Targets && !snapshot.interactions.empty()) {
                 cursor = snapshot.interactions.front().request.position;
                 bool single = true;
                 for (const auto& choice : snapshot.interactions) { single &= choice.request.position == cursor; }
                 if (single) { openActions(); }
             }
         }
-        if (screen == Screen::Examine && inspectionNeeded && !inspectionId && snapshot.paused) {
+        if (modal.Active() == Screen::Examine && inspectionNeeded && !inspectionId && snapshot.paused) {
             SessionRequest request; request.kind = RequestKind::Inspect; request.cursor = cursor;
             const auto id = nextId;
             if (enqueue(eastl::move(request))) { inspectionId = id; requestedCursor = cursor; inspectionNeeded = false; }
         }
-        if (screen == Screen::Debug && debugAi && aiNeeded && !aiRequestId && snapshot.paused && !modalPending) {
+        if (modal.Active() == Screen::Debug && debugAi && aiNeeded && !aiRequestId && snapshot.paused && !modal.Pending()) {
             SessionRequest request; request.kind = RequestKind::InspectAi; request.cursor = cursor;
             const auto id = nextId;
             if (enqueue(eastl::move(request))) {
@@ -583,6 +578,8 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             eastl::swap(mapPacket, completedMap); mapValid = true; dirty = true;
         }
         if (smokeFailed) { std::fprintf(stderr,"SDL smoke step %u: %s\n",smokeStep,message.c_str()); return 1; }
+        if (options.smoke && snapshot.paused && (modal.Active() == Screen::Examine || modal.Active() == Screen::Targets || modal.Active() == Screen::Actions)
+            && snapshot.view.tick != smokeModalTick) { std::fputs("SDL modal advanced simulation.\n", stderr); return 1; }
         if (options.smoke && started && snapshot.view.playerId && assetState == AssetState::Ready && mapValid && !smokeWaiting && !settingsId
             && (smokeStep > 3 || snapshot.view.opportunity > smokeOpportunity)) {
             const auto press = [&](SDL_Keycode key, SDL_Keymod modifiers = SDL_KMOD_NONE) {
@@ -595,21 +592,26 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             else if (smokeStep == 2) { smokeWaiting = submit(RequestKind::Command, *GameplayCommand(InputAction::Wait, false)); }
             else if (smokeStep == 3) { smokeWaiting = submit(RequestKind::Pause); }
             else if (smokeStep == 4) { smokeWaiting = submit(RequestKind::Resume); }
-            else if (smokeStep == 5) { press(SDLK_X); smokeWaiting = modalPending; }
+            else if (smokeStep == 5) { press(SDLK_X); smokeWaiting = modal.Pending(); }
             else if (smokeStep == 6) {
                 if (!inspectionId && !inspectionNeeded && !inspection.empty()) {
                     if (!smokeExamined) {
                         const auto before = cursor;
+                        const auto requestBefore = nextId;
+                        const auto previousInspection = inspection;
+                        press(SDLK_F7);
+                        if (nextId != requestBefore || commandPending || modal.Active() != Screen::Examine) { smokeFailed = true; }
                         press(SDLK_Z); press(SDLK_RIGHT,SDL_KMOD_SHIFT); press(SDLK_UP,SDL_KMOD_ALT);
+                        if (!inspectionNeeded || inspection != previousInspection) { smokeFailed = true; }
                         smokeExamined = true;
                         if (zoom != 1 || cursor != TileCoord{before.x+1,before.z-1,before.y+1}) { smokeFailed = true; }
                     } else {
                         if (snapshot.view.origin.y != cursor.y) { smokeFailed = true; }
-                        press(SDLK_ESCAPE); smokeWaiting = modalPending;
+                        press(SDLK_ESCAPE); smokeWaiting = modal.Pending();
                     }
                 }
             }
-            else if (smokeStep == 7) { press(SDLK_F11); smokeWaiting = modalPending; }
+            else if (smokeStep == 7) { press(SDLK_F11); smokeWaiting = modal.Pending(); }
             else if (smokeStep == 8) {
                 if (smokeAiStep == 0) { press(SDLK_A); ++smokeAiStep; }
                 else if (aiValid && !aiRequestId && !aiNeeded) {
@@ -623,11 +625,11 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                         if (aiView.cursor != cursor || aiView.tick != snapshot.view.tick) { smokeFailed = true; }
                         press(SDLK_A);
                         if (debugAi || aiValid) { smokeFailed = true; }
-                        press(SDLK_ESCAPE); smokeWaiting = modalPending;
+                        press(SDLK_ESCAPE); smokeWaiting = modal.Pending();
                     }
                 }
             }
-            else if (smokeStep == 9) { press(SDLK_F2); smokeWaiting = modalPending; }
+            else if (smokeStep == 9) { press(SDLK_F2); smokeWaiting = modal.Pending(); }
             else if (smokeStep == 10) {
                 press(SDLK_DOWN); press(SDLK_RETURN);
                 SDL_Event entry{}; entry.type = SDL_EVENT_TEXT_INPUT; entry.text.text = "12"; handleEvent(entry);
@@ -636,14 +638,18 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             }
             else if (smokeStep == 11) {
                 if (store.Effective().viewRadius != 12) { smokeFailed = true; }
-                press(SDLK_ESCAPE); smokeWaiting = modalPending;
+                press(SDLK_ESCAPE); smokeWaiting = modal.Pending();
             }
-            else if (smokeStep == 12) { press(SDLK_E); smokeWaiting = modalPending; }
+            else if (smokeStep == 12) { press(SDLK_E); smokeWaiting = modal.Pending(); }
             else if (smokeStep == 13) { smokeWaiting = submit(RequestKind::Command,*GameplayCommand(InputAction::East,false)); }
-            else if (smokeStep == 14) { press(SDLK_E); smokeWaiting = modalPending; }
+            else if (smokeStep == 14) { press(SDLK_E); smokeWaiting = modal.Pending(); }
             else if (smokeStep == 15) {
                 press(SDLK_RIGHT);
-                if (screen != Screen::Actions) { smokeFailed = true; }
+                if (modal.Active() != Screen::Actions) { smokeFailed = true; }
+                press(SDLK_ESCAPE);
+                if (modal.Active() != Screen::Targets || commandPending) { smokeFailed = true; }
+                press(SDLK_RIGHT);
+                if (modal.Active() != Screen::Actions) { smokeFailed = true; }
                 ++smokeStep;
             }
             else if (smokeStep == 16) {
@@ -651,7 +657,10 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 smokeWaiting = commandPending;
                 if (!smokeWaiting) { smokeFailed = true; }
             }
-            else { running = false; }
+            else {
+                if (!smokeExamineDrawn || !smokeActionsDrawn || !smokeHealthDrawn) { smokeFailed = true; }
+                running = false;
+            }
             if (smokeWaiting) { ++smokeStep; }
         }
         const auto now = Clock::now();
@@ -659,20 +668,22 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
         if (assetState == AssetState::Ready) { playback.RetireCompleted(assets.Definition(), elapsedMilliseconds); }
         if (animationDeadline && elapsedMilliseconds >= *animationDeadline) { dirty = true; }
         if (dirty && !minimized) {
-            String display = message;
+            messageHistory.SetCapacity(store.Effective().messageHistorySize);
+            String display;
             if (mapValid) {
-                const auto combat = CombatStatusText(snapshot.view.combat);
+                const auto combat = CombatSummaryText(snapshot.view.combat);
                 const auto feedback = CombatFeedbackText(snapshot.view.combat);
-                if (!combat.empty()) { display += '\n'; display += combat; }
-                if (!feedback.empty()) { display += '\n'; display += feedback; }
+                if (!combat.empty()) { display += combat; }
+                if (!feedback.empty()) { if (!display.empty()) { display += '\n'; } display += feedback; }
             }
-            frame.visible = screen != Screen::None;
-            frame.full = screen == Screen::Options || screen == Screen::Debug || screen == Screen::Help;
-            frame.followCursor = screen == Screen::Examine;
+            frame.visible = modal.Active() != Screen::None;
+            frame.presentation = modal.Active() == Screen::Examine || modal.Active() == Screen::Targets || modal.Active() == Screen::Actions
+                ? ScreenPresentation::Anchored : ScreenPresentation::Large;
+            frame.followCursor = modal.Active() == Screen::Examine;
             frame.cursor.reset(); frame.highlights.clear(); frame.debugImage = nullptr;
             frame.rows.clear(); frame.details.clear(); frame.selected = -1;
-            if (screen == Screen::Options) { optionsUi.Present(store,localization,frame); }
-            if (screen == Screen::Help) {
+            if (modal.Active() == Screen::Options) { optionsUi.Present(store,localization,frame); }
+            if (modal.Active() == Screen::Help) {
                 frame.title = "Controls | Local session paused";
                 std::size_t start = 0;
                 for (std::size_t i = 0; i <= hints.size(); ++i) {
@@ -682,34 +693,50 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 }
                 frame.footer = "PgUp/PgDn: scroll | Escape / Enter: resume | Prototype worlds are temporary";
             }
-            if (screen == Screen::Examine) {
-                frame.title = "Examine | X " + NumberText(cursor.x) + " Z " + NumberText(cursor.z) + " Y " + NumberText(cursor.y);
+            if (modal.Active() == Screen::Examine) {
+                frame.title = localization.Text("sdl.ui.examine", "Examine") + " | " + NumberText(cursor.x) + "," + NumberText(cursor.z) + " Y " + NumberText(cursor.y);
                 frame.cursor = cursor;
                 for (const auto& line : inspection) { frame.rows.push_back({line}); }
-                frame.footer = "Directions: cursor | Alt+Up/Down: layer | z/Z: zoom | PgUp/PgDn: scroll | Escape: resume";
+                frame.footer = BindingHint(keys, InputContext::Menu, InputAction::Cancel) + " " + localization.Text("sdl.ui.close", "close")
+                    + " | PgUp/PgDn " + localization.Text("sdl.ui.scroll", "scroll");
             }
-            if (screen == Screen::Targets || screen == Screen::Actions) {
-                frame.cursor = cursor;
+            if (modal.Active() == Screen::Targets || modal.Active() == Screen::Actions) {
+                frame.cursor = modal.Active() == Screen::Targets ? snapshot.view.player_position : cursor;
                 for (const auto& choice : snapshot.interactions) { frame.highlights.push_back(choice.request.position); }
-                frame.title = screen == Screen::Targets ? "Interact | Choose a highlighted tile" : "Interact | Choose an action";
-                if (screen == Screen::Targets) {
-                    frame.rows.push_back({snapshot.interactions.empty() ? "No reachable targets" : "Direction: actions | .: current tile | Escape: resume"});
+                frame.title = localization.Text("sdl.ui.interact", "Interact");
+                if (modal.Active() == Screen::Targets) {
+                    String directions;
+                    for (const auto direction : {InputAction::North, InputAction::South, InputAction::West, InputAction::East}) {
+                        if (!directions.empty()) { directions += '/'; }
+                        directions += BindingHint(keys, InputContext::Menu, direction);
+                    }
+                    frame.rows.push_back({snapshot.interactions.empty() ? localization.Text("sdl.ui.no_targets", "No reachable targets")
+                        : directions + " " + localization.Text("sdl.ui.target_directions", "choose tile; . / Home selects self")});
                 } else {
                     frame.selected = static_cast<int>(selectedAction);
+                    bool sameTarget = !actions.empty();
+                    for (const auto& choice : actions) { sameTarget &= choice.target == actions.front().target; }
+                    if (sameTarget) { frame.title += " | "; frame.title += actions.front().target; }
                     for (const auto& choice : actions) {
                         String actionLabel = choice.label;
                         if (choice.request.kind == InteractionKind::Lock) { actionLabel = localization.Text("interaction.action.lock",choice.label); }
                         if (choice.request.kind == InteractionKind::Unlock) { actionLabel = localization.Text("interaction.action.unlock",choice.label); }
-                        String label = choice.target + ": " + actionLabel;
+                        String label = sameTarget ? actionLabel : choice.target + ": " + actionLabel;
                         frame.rows.push_back({eastl::move(label),choice.reason != ObjectUseReason::None});
                     }
                     if (selectedAction < actions.size() && actions[selectedAction].reason != ObjectUseReason::None) {
                         frame.details.push_back(InteractionReason(localization,actions[selectedAction].reason));
                     }
                 }
-                frame.footer = "Up/Down: choose | Enter: confirm | Escape: back / resume";
+                frame.footer = BindingHint(keys, InputContext::Menu, InputAction::Cancel) + " "
+                    + localization.Text("sdl.ui.back", "back");
+                if (modal.Active() == Screen::Actions) {
+                    frame.footer += " | " + BindingHint(keys, InputContext::Menu, InputAction::Accept);
+                    frame.footer += "\n" + BindingHint(keys, InputContext::Menu, InputAction::North) + "/"
+                        + BindingHint(keys, InputContext::Menu, InputAction::South) + " " + localization.Text("sdl.ui.choose", "choose");
+                }
             }
-            if (screen == Screen::Debug) {
+            if (modal.Active() == Screen::Debug) {
                 if (debugAi) {
                     frame.title = "AI inspector | Live resident map | Local session paused\nX " + NumberText(cursor.x)
                         + " Z " + NumberText(cursor.z) + " Y " + NumberText(cursor.y);
@@ -719,7 +746,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                     else { frame.rows.push_back({"Loading live resident AI capture..."}); }
                     frame.footer = "a: worldgen | Escape/F11: close\nGreen: candidates | Red: blocked | Yellow: chosen";
                     frame.footer += "\nBlue: origin | Purple: goal | Orange: backtracking";
-                    frame.footer += "\nArrows/hjkl: tile | Alt+Up/Down, >/<: Y\nHome/c: player | PgUp/PgDn: details";
+                    frame.footer += "\nArrows: tile | Alt+Up/Down, >/<: Y\nHome/c: player | PgUp/PgDn: details";
                 } else {
                     frame.title = "World generation | Seed " + UnsignedText(snapshot.seed) + " | Version " + UnsignedText(snapshot.generationVersion);
                     if (snapshot.generationVersion != world_generation_version) { frame.rows.push_back({"Preview unavailable for this generation version"}); }
@@ -732,19 +759,26 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                     }
                     frame.footer = "a: AI inspector | Escape/F11: close\n";
                     frame.footer += WorldgenDebugLegend(debugLayer);
-                    frame.footer += "\nArrows/hjkl: move | HJKL: region | Home: recenter | 1-5/Tab: layers | +/-: zoom | PgUp/PgDn: details";
+                    frame.footer += "\nArrows: move | Shift+arrows: region | Home: recenter | 1-5/Tab: layers | +/-: zoom | PgUp/PgDn: details";
                 }
             }
             if (!DrawFrame(platform.renderer, text, assets, mapValid ? &snapshot.view : nullptr,
                 content, display.c_str(), hints.c_str(), elapsedMilliseconds, mapValid ? &mapPacket : nullptr,
-                zoom, options.uiScale, {}, &playback, &shader, &frame)) { return SdlFailure(); }
+                zoom, options.uiScale, {}, &playback, &shader, &frame,
+                {&messageHistory, &store.Keys(), &localization})) { return SdlFailure(); }
+            if (options.smoke) {
+                smokeHealthDrawn |= mapValid && text.Width(62) > 0;
+                smokeExamineDrawn |= modal.Active() == Screen::Examine && frame.presentation == ScreenPresentation::Anchored && frame.cursor.has_value();
+                smokeActionsDrawn |= modal.Active() == Screen::Actions && frame.presentation == ScreenPresentation::Anchored && frame.selected >= 0;
+            }
             dirty = false;
             animationDeadline.reset();
             if (mapValid) {
                 int outputWidth = 0, outputHeight = 0;
                 if (!SDL_GetCurrentRenderOutputSize(platform.renderer, &outputWidth, &outputHeight)) { return SdlFailure(); }
                 const auto delay = VisibleAnimationDelay(mapPacket, assets.Definition(), elapsedMilliseconds,
-                    outputWidth, outputHeight, zoom, options.uiScale, &playback);
+                    outputWidth, outputHeight, zoom, options.uiScale, &playback,
+                    modal.Active() == Screen::Examine ? SDL_Point{cursor.x - snapshot.view.player_position.x, cursor.z - snapshot.view.player_position.z} : SDL_Point{});
                 if (delay) { animationDeadline = elapsedMilliseconds + *delay; }
             }
         }
@@ -756,7 +790,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             const String committed = heldKey.Text();
             handleEvent(held);
             if (!committed.empty() && !(repeated->mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI))
-                && screen == Screen::Options && optionsUi.EditingText() && !settingsId) {
+                && modal.Active() == Screen::Options && optionsUi.EditingText() && !settingsId) {
                 held.type = SDL_EVENT_TEXT_INPUT; held.text.text = committed.c_str(); handleEvent(held);
             }
         }
@@ -778,6 +812,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
     while (session.TryPopReply(finalReply)) {
         if (finalReply.result.storageError) { std::fputs("Session shutdown: world storage failed.\n", stderr); }
     }
+    if (options.smoke && smokeFailed) { std::fputs("SDL smoke did not render all UI states.\n", stderr); return 1; }
     if (options.smoke) { std::fputs("SDL smoke: ok\n", stdout); }
     return 0;
 }

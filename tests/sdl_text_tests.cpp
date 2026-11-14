@@ -24,10 +24,13 @@ TEST_CASE("SDL text supports UTF8 and reuses independent text slots", "[sdl][tex
     REQUIRE(text.Draw(0, "Настройки / Résumé", 0, 0, white, 400));
     const int originalHeight = text.Height(0);
     REQUIRE(originalHeight > 0);
+    const int originalWidth = text.Width(0);
+    CHECK(originalWidth > 0);
     REQUIRE(text.Draw(1, "Movement\nWait\nPick up", 0, 40, white));
     CHECK(text.Height(1) > originalHeight);
     REQUIRE(text.Draw(0, "Настройки / Résumé", 10, 10, white, 400));
     CHECK(text.Height(0) == originalHeight);
+    CHECK(text.Width(0) == originalWidth);
     REQUIRE(text.Draw(0, "A much longer line wraps onto several rows", 0, 0, white, 80));
     CHECK(text.Height(0) > originalHeight);
     CHECK_FALSE(text.Draw(text.slotCount, "Invalid slot", 0, 0, white));

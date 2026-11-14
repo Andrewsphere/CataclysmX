@@ -76,16 +76,16 @@ TEST_CASE("Worldgen debug modal renders metadata and navigates cached regional p
     CHECK(menu->OnEvent(ftxui::Event::ArrowRight));
     Has(menu, "Cursor: 258,-1");
     Has(menu, "Region: 1,-1");
-    Key(menu, 'j');
+    CHECK(menu->OnEvent(ftxui::Event::ArrowDown));
     Has(menu, "Cursor: 258,7");
     Has(menu, "Region: 1,0");
-    Key(menu, 'H');
-    Key(menu, 'K');
+    CHECK(menu->OnEvent(ftxui::Event::Special("\x1b[1;2D")));
+    CHECK(menu->OnEvent(ftxui::Event::Special("\x1b[1;2A")));
     Has(menu, "Cursor: 2,-249");
     CHECK(menu->OnEvent(ftxui::Event::Home));
     Has(menu, "Cursor: 250,-1");
-    Key(menu, 'J');
-    Key(menu, 'L');
+    CHECK(menu->OnEvent(ftxui::Event::Special("\x1b[1;2B")));
+    CHECK(menu->OnEvent(ftxui::Event::Special("\x1b[1;2C")));
     Has(menu, "Cursor: 506,255");
     Key(menu, 'c');
     Has(menu, "Cursor: 250,-1");
@@ -102,14 +102,14 @@ TEST_CASE("Worldgen debug modal renders metadata and navigates cached regional p
     Key(menu, '1');
     for (int i = 0; i < 5; ++i) { Key(menu, '+'); }
     Has(menu, "Scale: 1");
-    Key(menu, 'l');
+    CHECK(menu->OnEvent(ftxui::Event::ArrowRight));
     Has(menu, "Cursor: 251,-1");
     // A 256-cell map must still leave the controls visible at 80x24.
     Has(menu, "F11 / Escape / q: close");
     CHECK(Draw(menu, 140, 50).find("Cursor: 251,-1") != std::string::npos);
     for (int i = 0; i < 6; ++i) { Key(menu, '-'); }
     Has(menu, "Scale: 16");
-    Key(menu, 'k');
+    CHECK(menu->OnEvent(ftxui::Event::ArrowUp));
     Has(menu, "Cursor: 251,-17");
     CHECK(world.LoadedChunks().empty());
 }
@@ -119,11 +119,11 @@ TEST_CASE("Worldgen debug modal clamps each axis before generating edge regions"
     for (const int sign : {-1, 1}) {
         const TileCoord edge{sign * world_coordinate_limit, sign * world_coordinate_limit};
         auto menu = CreateWorldgenDebugMenu(world, edge, [] {});
-        Key(menu, sign > 0 ? 'L' : 'H');
-        Key(menu, sign > 0 ? 'J' : 'K');
+        CHECK(menu->OnEvent(sign > 0 ? ftxui::Event::Special("\x1b[1;2C") : ftxui::Event::Special("\x1b[1;2D")));
+        CHECK(menu->OnEvent(sign > 0 ? ftxui::Event::Special("\x1b[1;2B") : ftxui::Event::Special("\x1b[1;2A")));
         Has(menu, "Cursor: " + std::to_string(edge.x) + "," + std::to_string(edge.z));
-        Key(menu, sign > 0 ? 'h' : 'l');
-        Key(menu, sign > 0 ? 'k' : 'j');
+        CHECK(menu->OnEvent(sign > 0 ? ftxui::Event::ArrowLeft : ftxui::Event::ArrowRight));
+        CHECK(menu->OnEvent(sign > 0 ? ftxui::Event::ArrowUp : ftxui::Event::ArrowDown));
         Has(menu, "Cursor: " + std::to_string(edge.x - sign * 8) + "," + std::to_string(edge.z - sign * 8));
         CHECK(menu->OnEvent(ftxui::Event::Home));
         Has(menu, "Cursor: " + std::to_string(edge.x) + "," + std::to_string(edge.z));
@@ -144,11 +144,11 @@ TEST_CASE("Worldgen debug modal consumes gameplay events and never mutates the s
     auto menu = CreateWorldgenDebugMenu(server.GetWorld(), before.player_position, [&closed] { ++closed; });
     for (const char key : std::string("god.Si ")) { Key(menu, key); }
     CHECK(menu->OnEvent(ftxui::Event::Return));
-    Key(menu, 'L'); // Inspect an unexplored region as well.
+    CHECK(menu->OnEvent(ftxui::Event::Special("\x1b[1;2C"))); // Inspect an unexplored region as well.
     Key(menu, '5');
     Key(menu, '+');
     Key(menu, 'a');
-    Key(menu, 'l');
+    CHECK(menu->OnEvent(ftxui::Event::ArrowRight));
     Key(menu, '>');
     CHECK(menu->OnEvent(ftxui::Event::PageDown));
     Draw(menu);
@@ -201,7 +201,9 @@ TEST_CASE("Worldgen debug menu uses saved seed and refuses a regional preview fo
             Key(menu, 'a');
             Has(menu, "Generated preview unavailable");
             CHECK(Draw(menu).find("Layer: Roads") == std::string::npos);
-            for (const char key : std::string("12345+jL")) { Key(menu, key); }
+            for (const char key : std::string("12345+")) { Key(menu, key); }
+            CHECK(menu->OnEvent(ftxui::Event::ArrowDown));
+            CHECK(menu->OnEvent(ftxui::Event::Special("\x1b[1;2C")));
             Has(menu, "Generated preview unavailable");
         } else {
             Has(menu, "Layer: Roads");
@@ -226,7 +228,7 @@ TEST_CASE("AI debug inspector navigates three dimensions and captures resident s
     Has(menu, "Debug menu | AI inspector");
     Has(menu, "Cursor: " + std::to_string(position.x) + "," + std::to_string(position.z) + ",3");
     CHECK(menu->OnEvent(ftxui::Event::ArrowRight));
-    Key(menu, 'j');
+    CHECK(menu->OnEvent(ftxui::Event::ArrowDown));
     Key(menu, '>');
     Has(menu, "Cursor: " + std::to_string(position.x + 1) + "," + std::to_string(position.z + 1) + ",4");
     for (int i = 0; i < 30; ++i) { Key(menu, '>'); }
@@ -258,8 +260,8 @@ TEST_CASE("AI inspector displays the selected resident actor capture", "[termina
     const auto actorLabel = "Actor:" + std::to_string(capture.actor) + "(player)";
     CHECK(rendered.find(actorLabel) != std::string::npos);
     CHECK(rendered.find("Controller:none") != std::string::npos);
-    Key(menu, 'l');
-    Key(menu, 'h');
+    CHECK(menu->OnEvent(ftxui::Event::ArrowRight));
+    CHECK(menu->OnEvent(ftxui::Event::ArrowLeft));
     rendered = Draw(menu, 140, 50);
     std::erase(rendered, ' ');
     CHECK(rendered.find(actorLabel) != std::string::npos);
@@ -303,7 +305,7 @@ TEST_CASE("Worldgen debug menu uses configured bindings and localized presentati
     auto menu = CreateWorldgenDebugMenu(world, {1, 2}, [] {}, &localization, &keys);
     Has(menu, "Debug menu | World generation");
     Has(menu, "Cursor: 1,2");
-    Key(menu, 'h');
+    CHECK(menu->OnEvent(ftxui::Event::ArrowLeft));
     Has(menu, "Cursor: 1,2");
     Key(menu, 'W');
     Has(menu, "Cursor: -7,2");

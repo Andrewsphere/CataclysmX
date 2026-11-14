@@ -191,8 +191,7 @@ visible source cell may cover fog, preserving tree canopies without showing the
 hidden terrain or entities beneath transparent pixels. Hidden source cells never
 draw. All artwork remains clipped to the viewport and view extent. Animation redraw
 deadlines use the same rules and frame bounds, including overhang from an offscreen
-source cell and upright overhang across fog. Click interaction stays attached to
-the source cell.
+source cell and upright overhang across fog.
 
 ## Gen1 assets and preparation
 

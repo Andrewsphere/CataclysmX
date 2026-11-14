@@ -1,6 +1,6 @@
 # Sprite animation
 
-The SDL frontend supports ambient loops, click-toggled loops, and single blinks.
+The SDL animation API supports ambient loops, toggled loops, and single blinks.
 Presentation time is supplied explicitly in milliseconds since tileset activation;
 it never advances simulation time or consumes RNG. The engine has no animation
 state, timers, or callbacks.
@@ -90,13 +90,6 @@ item mapping, falling back to generic ground items when absent. Actor → items 
 object priority is preserved. Existing callers without item metadata retain
 generic artwork.
 
-`MapItemAt` uses render pixels, the displayed packet, its layout, and map clipping.
-`ActivateMapItem` converts SDL window coordinates through
-`SDL_RenderCoordinatesFromWindow`, accepts only left-button-down events, and
-returns an owned item/result pair for status feedback. The app blocks it while
-help, an interaction prompt, minimization, or unavailable map data owns input.
-The helper has no session access and cannot submit a command.
-
 `DrawFrame`, `VisibleAnimationDelay`, and `NextAnimationDelay` accept an optional
 playback controller. Drawing and deadlines use the same sampling operation;
 hidden, clipped, and unselected overlays create no animation deadlines. Expiration
@@ -108,9 +101,9 @@ animation wakeups; restoration samples the elapsed phase once.
 
 New demo worlds place ordinary 50 g / 100 ml bulbs on floor tiles near spawn:
 continuous at X/Z `(1,1)`, toggle at `(2,1)`, single blink at `(1,2)`.
-Left-click a visible bulb sprite to toggle or blink; the continuous bulb has no
-activation. Standing on it hides the item behind the actor, so step away to click.
-Pickup/drop uses the ordinary item commands. There is no emitted-light simulation,
+The continuous bulb animates automatically. Toggle and single-blink bulbs
+retain their artwork and playback metadata, but have no frontend activation
+control. Pickup/drop uses the ordinary item commands. There is no emitted-light simulation,
 energy use, gameplay action cost, or authoritative activation state.
 
 Bulbs are created after existing demo entities, preserving their persistent IDs.

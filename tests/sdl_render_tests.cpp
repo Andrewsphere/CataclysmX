@@ -30,22 +30,22 @@ TEST_CASE("SDL map hides cells and orders overlays", "[sdl][render]") {
     CHECK(sdl::MapAppearance(cell, 42, TestContent()).symbol == "&");
 }
 
-TEST_CASE("SDL map layout maps output pixels to cells", "[sdl][render]") {
+TEST_CASE("SDL map layout preserves native dimensions and centers the grid", "[sdl][render]") {
     const auto layout = sdl::MakeMapLayout(800, 600, 17, 17);
-    int column = -1, row = -1;
-    REQUIRE(sdl::MapCellAt(layout, layout.x + 3 * layout.cellSize, layout.y + 7 * layout.cellSize, column, row));
-    CHECK(column == 3);
-    CHECK(row == 7);
-    CHECK_FALSE(sdl::MapCellAt(layout, layout.x + layout.width, layout.y, column, row));
-    CHECK_FALSE(sdl::MapCellAt(layout, layout.x, layout.y - 1, column, row));
+    CHECK(layout.width == 544);
+    CHECK(layout.height == 544);
+    CHECK(layout.x + layout.width / 2 == 280);
+    CHECK(layout.y + layout.height / 2 == 310);
     const auto compact = sdl::MakeMapLayout(480, 360, 17, 17);
     CHECK(compact.cellSize == layout.cellSize);
     CHECK(compact.cellHeight == layout.cellHeight);
+    CHECK(compact.x + compact.width / 2 == 240);
+    CHECK(compact.y + compact.height / 2 == 104);
     const auto rectangular = sdl::MakeMapLayout(800, 600, 17, 17, 32, 64);
-    REQUIRE(sdl::MapCellAt(rectangular, rectangular.x + 3 * rectangular.cellSize,
-        rectangular.y + 7 * rectangular.cellHeight, column, row));
-    CHECK(column == 3); CHECK(row == 7);
-    CHECK(rectangular.cellHeight >= rectangular.cellSize * 2);
+    CHECK(rectangular.width == 544);
+    CHECK(rectangular.height == 1088);
+    CHECK(rectangular.x + rectangular.width / 2 == 280);
+    CHECK(rectangular.y + rectangular.height / 2 == 310);
     const auto scaledUi = sdl::MakeMapLayout(1600, 1200, 17, 17, 32, 64, 0, 2);
     CHECK(rectangular.cellSize == 32);
     CHECK(rectangular.cellHeight == 64);
@@ -68,6 +68,7 @@ TEST_CASE("SDL clipped map animations do not schedule redraws", "[sdl][render]")
     cell.terrainSprite = {TilesetMappingKind::Animation, 0};
     REQUIRE(sdl::VisibleAnimationDelay(packet, tileset, 0, 480, 360));
     CHECK_FALSE(sdl::VisibleAnimationDelay(packet, tileset, 0, 480, 360, 16));
+    CHECK(sdl::VisibleAnimationDelay(packet, tileset, 0, 480, 360, 16, 1, nullptr, {4, 0}).has_value());
     cell.visible = false;
     CHECK_FALSE(sdl::VisibleAnimationDelay(packet, tileset, 0, 480, 360));
 }
@@ -85,10 +86,8 @@ TEST_CASE("SDL zoom keeps the character centered instead of the map corner", "[s
                     cell.x, cell.y, zoom, uiScale);
                 CHECK(std::abs(layout.x + layout.width / 2 - centerX) <= 1);
                 CHECK(std::abs(layout.y + layout.height / 2 - centerY) <= 1);
-                int column = -1, row = -1;
-                REQUIRE(sdl::MapCellAt(layout, centerX, centerY, column, row));
-                CHECK(column == 8);
-                CHECK(row == 8);
+                CHECK(std::abs(layout.x + 8 * layout.cellSize + layout.cellSize / 2 - centerX) <= 1);
+                CHECK(std::abs(layout.y + 8 * layout.cellHeight + layout.cellHeight / 2 - centerY) <= 1);
             }
         }
     }
@@ -158,6 +157,19 @@ TEST_CASE("SDL software renderer draws visibility and missing glyph fallback", "
         CHECK(r == 12); CHECK(g == 16); CHECK(b == 20);
         REQUIRE(SDL_ReadSurfacePixel(surface, layout.x + layout.cellSize, layout.y, &r, &g, &b, &a));
         CHECK(r == 0); CHECK(g == 0); CHECK(b == 0);
+        MessageHistory history;
+        history.Add("First outcome."); history.Add("Second outcome.");
+        const auto keys = DefaultKeymap();
+        Localization localization; REQUIRE(localization.Load(CATACLYSMX_LOC_DIRECTORY, "en"));
+        REQUIRE(sdl::DrawFrame(renderer, text, assets, &view, *content, "", "", 0, nullptr,
+            0, 1.0f, {}, nullptr, nullptr, nullptr, {&history, &keys, &localization}));
+        CHECK(text.Height(3) > 0);
+        const int twoMessages = text.Height(4);
+        CHECK(twoMessages > 0);
+        history.SetCapacity(1);
+        REQUIRE(sdl::DrawFrame(renderer, text, assets, &view, *content, "", "", 0, nullptr,
+            0, 1.0f, {}, nullptr, nullptr, nullptr, {&history, &keys, &localization}));
+        CHECK(text.Height(4) < twoMessages);
         if (const char* path = std::getenv("CATACLYSMX_SDL_PREVIEW")) {
             Server server(TestContent());
             const auto preview = server.View();

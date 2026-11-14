@@ -111,10 +111,10 @@ Keymap DefaultKeymap() {
         map.push_back(eastl::move(binding));
     };
     for (auto context : {InputContext::Gameplay, InputContext::Interaction, InputContext::Menu, InputContext::Debug}) {
-        add(context, InputAction::West, {"Left", "h"});
-        add(context, InputAction::East, {"Right", "l"});
-        add(context, InputAction::North, {"Up", "k"});
-        add(context, InputAction::South, {"Down", "j"});
+        add(context, InputAction::West, {"Left"});
+        add(context, InputAction::East, {"Right"});
+        add(context, InputAction::North, {"Up"});
+        add(context, InputAction::South, {"Down"});
         add(context, InputAction::Cancel, {"Escape"});
     }
     const auto game = InputContext::Gameplay;
@@ -168,8 +168,10 @@ Keymap DefaultKeymap() {
     add(debug, InputAction::MoveDown, {"<"});
     map.back().keys.push_back({"Down", false, true});
     add(debug, InputAction::Debug, {"F11", "q"});
-    add(debug, InputAction::JumpWest, {"H"}); add(debug, InputAction::JumpEast, {"L"});
-    add(debug, InputAction::JumpNorth, {"K"}); add(debug, InputAction::JumpSouth, {"J"});
+    map.push_back({debug, InputAction::JumpWest, {{"Left", false, false, true}}});
+    map.push_back({debug, InputAction::JumpEast, {{"Right", false, false, true}}});
+    map.push_back({debug, InputAction::JumpNorth, {{"Up", false, false, true}}});
+    map.push_back({debug, InputAction::JumpSouth, {{"Down", false, false, true}}});
     add(debug, InputAction::Recenter, {"Home", "c"});
     add(debug, InputAction::Layer1, {"1"}); add(debug, InputAction::Layer2, {"2"});
     add(debug, InputAction::Layer3, {"3"}); add(debug, InputAction::Layer4, {"4"});
@@ -205,7 +207,9 @@ Keymap ResolveKeymap(const Keymap& global, const Keymap& world) {
             const bool introduced = binding.action == InputAction::Examine || binding.action == InputAction::Northwest
                 || binding.action == InputAction::Northeast || binding.action == InputAction::Southwest || binding.action == InputAction::Southeast
                 || (binding.action == InputAction::Interact && it->key == "e")
-                || ((binding.action == InputAction::MoveUp || binding.action == InputAction::MoveDown) && it->alt);
+                || ((binding.action == InputAction::MoveUp || binding.action == InputAction::MoveDown) && it->alt)
+                || ((binding.action == InputAction::JumpWest || binding.action == InputAction::JumpEast
+                    || binding.action == InputAction::JumpNorth || binding.action == InputAction::JumpSouth) && it->shift);
             bool claimed = false;
             if (introduced) {
                 for (const auto* layer : {&global,&world}) {

@@ -1,5 +1,6 @@
 #include "sdl/renderer.h"
 #include "sdl/screens.h"
+#include "sdl/health.h"
 
 #include "client/text.h"
 
@@ -17,15 +18,7 @@ bool Color(SDL_Renderer* renderer, RgbColor color) {
 
 SDL_Color TextColor(RgbColor color) { return {color.red, color.green, color.blue, 255}; }
 
-SDL_Rect MapClip(int width, int height, float uiScale) {
-    const int uiWidth = static_cast<int>(width / uiScale), uiHeight = static_cast<int>(height / uiScale);
-    const bool side = uiWidth >= 700;
-    const int panelX = side ? uiWidth - (uiWidth >= 900 ? 390 : 230) : 10;
-    const int panelY = side ? 36 : std::max(32, uiHeight - 200);
-    const int top = static_cast<int>(32 * uiScale);
-    return {0, top, side ? static_cast<int>((panelX - 10) * uiScale) : width,
-        side ? std::max(0, height - top) : std::max(0, static_cast<int>((panelY - 36) * uiScale))};
-}
+constexpr InputAction topActions[] = {InputAction::Help, InputAction::Settings, InputAction::Debug};
 
 struct SpriteGeometry {
     SDL_FPoint points[4];
@@ -124,54 +117,17 @@ bool DrawLayer(SDL_Renderer* renderer, const SdlAssets& assets, const TilesetMap
 
 MapLayout MakeMapLayout(int outputWidth, int outputHeight, int columns, int rows,
     int tileWidth, int tileHeight, int zoom, float uiScale) {
-    if (columns <= 0 || rows <= 0 || outputWidth <= 0 || outputHeight <= 0
-        || tileWidth <= 0 || tileHeight <= 0 || uiScale <= 0) { return {}; }
-    const bool side = outputWidth / uiScale >= 700;
-    const int panelWidth = static_cast<int>((outputWidth / uiScale >= 900 ? 400 : 240) * uiScale);
-    const int top = static_cast<int>(32 * uiScale);
-    const int availableWidth = side ? std::max(1, outputWidth - panelWidth) : outputWidth;
-    const int availableHeight = std::max(1, outputHeight - static_cast<int>((side ? 50 : 240) * uiScale));
-    // Native pack pixels times zoom; resizing never changes the tile scale.
-    const double scale = std::exp2(std::clamp(zoom, -8, 12) / 4.0);
-    const int cellWidth = std::max(1, static_cast<int>(tileWidth * scale));
-    const int cellHeight = std::max(1, static_cast<int>(tileHeight * scale));
-    const int width = columns * cellWidth;
-    const int height = rows * cellHeight;
-    // World views center the character. Allow negative origins so zoom crops
-    // around that center instead of pinning an oversized map to its corner.
-    return {availableWidth / 2 - width / 2, top + availableHeight / 2 - height / 2,
-        cellWidth, width, height, cellHeight};
-}
-
-bool MapCellAt(const MapLayout& layout, int x, int y, int& column, int& row) {
-    if (layout.cellSize <= 0 || layout.cellHeight <= 0 || x < layout.x || y < layout.y
-        || x >= layout.x + layout.width || y >= layout.y + layout.height) { return false; }
-    column = (x - layout.x) / layout.cellSize;
-    row = (y - layout.y) / layout.cellHeight;
-    return true;
-}
-
-eastl::optional<std::size_t> MapItemAt(const MapPacket& packet, const TilesetDefinition& tileset,
-    float x, float y, int outputWidth, int outputHeight, int zoom, float uiScale) {
-    const auto clip = MapClip(outputWidth, outputHeight, uiScale);
-    if (!(x >= clip.x && y >= clip.y && x < clip.x + clip.w && y < clip.y + clip.h)) { return {}; }
-    const auto layout = MakeMapLayout(outputWidth, outputHeight, packet.width, packet.height,
-        tileset.cellWidth, tileset.cellHeight, zoom, uiScale);
-    int column = 0, row = 0;
-    if (!MapCellAt(layout, static_cast<int>(x), static_cast<int>(y), column, row)) { return {}; }
-    const auto index = static_cast<std::size_t>(row) * packet.width + column;
-    if (index >= packet.cells.size()) { return {}; }
-    const auto& cell = packet.cells[index];
-    if (!cell.visible || !cell.hasOverlay || !cell.itemVisual.item) { return {}; }
-    return index;
+    return MakeGameplayLayout(outputWidth, outputHeight, columns, rows,
+        tileWidth, tileHeight, zoom, uiScale).map;
 }
 
 eastl::optional<std::uint64_t> VisibleAnimationDelay(const MapPacket& packet,
     const TilesetDefinition& tileset, std::uint64_t elapsedMilliseconds,
-    int outputWidth, int outputHeight, int zoom, float uiScale, const SpritePlaybackController* playback) {
-    const auto layout = MakeMapLayout(outputWidth, outputHeight, packet.width, packet.height,
-        tileset.cellWidth, tileset.cellHeight, zoom, uiScale);
-    const auto clip = ViewClip(layout, MapClip(outputWidth, outputHeight, uiScale));
+    int outputWidth, int outputHeight, int zoom, float uiScale, const SpritePlaybackController* playback, SDL_Point focusOffset) {
+    const auto gameplay = MakeGameplayLayout(outputWidth, outputHeight, packet.width, packet.height,
+        tileset.cellWidth, tileset.cellHeight, zoom, uiScale, focusOffset);
+    const auto& layout = gameplay.map;
+    const auto clip = ViewClip(layout, gameplay.mapViewport);
     eastl::optional<std::uint64_t> delay;
     const SpritePlaybackController ambient;
     const auto& controller = playback ? *playback : ambient;
@@ -209,16 +165,19 @@ TerminalAppearance MapAppearance(const ViewCell& cell, PersistentId playerId, co
 bool DrawFrame(SDL_Renderer* renderer, SdlText& text, const SdlAssets& assets, const WorldView* view,
     const ContentCatalog& content, const char* status, const char* /*hints*/,
     std::uint64_t elapsedMilliseconds, const MapPacket* packet, int zoom, float uiScale, UiPalette palette,
-    const SpritePlaybackController* playback, SpriteShader* shader, ScreenFrame* screen) {
+    const SpritePlaybackController* playback, SpriteShader* shader, ScreenFrame* screen, GameplayHud hud) {
     if (!SDL_IsMainThread()) { std::abort(); }
     int width = 0, height = 0;
     if (!SDL_GetCurrentRenderOutputSize(renderer, &width, &height)
         || !SDL_SetRenderScale(renderer, 1, 1) || !Color(renderer, palette.background)
         || !SDL_RenderClear(renderer)) { return false; }
-    const int uiWidth = static_cast<int>(width / uiScale), uiHeight = static_cast<int>(height / uiScale);
-    const bool side = uiWidth >= 700;
-    const int panelX = side ? uiWidth - (uiWidth >= 900 ? 390 : 230) : 10;
-    const int panelY = side ? 36 : std::max(32, uiHeight - 200);
+    const int uiWidth = static_cast<int>(width / uiScale);
+    const auto focus = screen && screen->visible && screen->followCursor && screen->cursor && view
+        ? SDL_Point{screen->cursor->x - view->player_position.x, screen->cursor->z - view->player_position.z} : SDL_Point{};
+    const auto gameplay = MakeGameplayLayout(width, height, view ? view->width : 1, view ? view->height : 1,
+        assets.Definition().cellWidth, assets.Definition().cellHeight, zoom, uiScale, focus);
+    int panelX = gameplay.hud.x, panelY = gameplay.hud.y;
+    int panelWidth = gameplay.hud.w;
     String infoText;
     const SpritePlaybackController ambient;
     const auto& controller = playback ? *playback : ambient;
@@ -226,13 +185,8 @@ bool DrawFrame(SDL_Renderer* renderer, SdlText& text, const SdlAssets& assets, c
         const auto& definition = assets.Definition();
         MapPacket immediate;
         if (!packet) { immediate = PrepareMapPacket(*view, content, definition, {}); packet = &immediate; }
-        auto layout = MakeMapLayout(width, height, packet->width, packet->height,
-            definition.cellWidth, definition.cellHeight, zoom, uiScale);
-        if (screen && screen->visible && screen->followCursor && screen->cursor) {
-            layout.x -= (screen->cursor->x - view->player_position.x) * layout.cellSize;
-            layout.y -= (screen->cursor->z - view->player_position.z) * layout.cellHeight;
-        }
-        const auto clip = ViewClip(layout, MapClip(width, height, uiScale));
+        const auto& layout = gameplay.map;
+        const auto clip = ViewClip(layout, gameplay.mapViewport);
         if (!SDL_SetRenderClipRect(renderer, &clip)) { return false; }
         for (int row = 0; row < packet->height; ++row) {
             for (int column = 0; column < packet->width; ++column) {
@@ -284,17 +238,96 @@ bool DrawFrame(SDL_Renderer* renderer, SdlText& text, const SdlAssets& assets, c
             static_cast<std::size_t>(view->inventory.size()), static_cast<unsigned long long>(view->carriedMassGrams),
             static_cast<unsigned long long>(view->carryCapacityGrams));
         infoText = info;
+        if (!gameplay.sideHud) {
+            std::snprintf(info, sizeof(info), "%s | T%llu\nX%d Z%d Y%d\n%zu items | %llu/%llug",
+                view->remainingTicks == 0 ? "Ready" : "Waiting",
+                static_cast<unsigned long long>(view->tick), view->player_position.x, view->player_position.z, view->player_position.y,
+                static_cast<std::size_t>(view->inventory.size()), static_cast<unsigned long long>(view->carriedMassGrams),
+                static_cast<unsigned long long>(view->carryCapacityGrams));
+            infoText = info;
+        }
     } else { infoText = "Loading tileset and session..."; }
-    if (!SDL_SetRenderScale(renderer, uiScale, uiScale)
-        || !text.Draw(0, "CATACLYSM X  /  LOCAL  |  F1: Help", 12, 6, TextColor(palette.hints))) { return false; }
-    const SDL_Rect panelClip{panelX, panelY, std::max(0, uiWidth - panelX), std::max(0, uiHeight - panelY)};
-    const int wrap = std::max(1, uiWidth - panelX - 10);
-    if (!SDL_SetRenderClipRect(renderer, &panelClip)
-        || !text.Draw(1, infoText.c_str(), panelX, panelY, TextColor(palette.text), wrap)) { return false; }
-    const int statusY = panelY + text.Height(1) + 8;
-    if (!text.Draw(2, status, panelX, statusY, TextColor(palette.text), wrap)) { return false; }
+    if (!SDL_SetRenderScale(renderer, uiScale, uiScale)) { return false; }
+    const SDL_Rect barClip = gameplay.topBar;
+    if (!SDL_SetRenderClipRect(renderer, &barClip)
+        || !text.Draw(0, "CataclysmX", -10000, -10000, TextColor(palette.hints))) { return false; }
+    const auto sessionLabel = hud.localization ? hud.localization->Text("sdl.ui.local", "Local") : String("Local");
+    if (!text.Draw(61, sessionLabel.c_str(), -10000, -10000, TextColor(palette.hints))) { return false; }
+    constexpr const char* defaultKeys[] = {"F1", "F2", "F11"};
+    constexpr const char* defaultLabels[] = {"Help", "Settings", "Debug"};
+    constexpr const char* labelKeys[] = {"game.ui.top_help", "game.ui.top_settings", "game.ui.top_debug"};
+    String labels[3];
+    int labelWidths[3]{};
+    for (int i = 0; i < 3; ++i) {
+        labels[i] = hud.keys ? BindingHint(*hud.keys, InputContext::Gameplay, topActions[i]) : defaultKeys[i];
+        labels[i] += ' ';
+        labels[i] += hud.localization ? hud.localization->Text(labelKeys[i]) : String(defaultLabels[i]);
+        if (!text.Draw(58 + i, labels[i].c_str(), -10000, -10000, TextColor(palette.text))) { return false; }
+        labelWidths[i] = text.Width(58 + i);
+    }
+    const auto bar = MakeTopBarLayout(uiWidth, text.Width(0), text.Width(61), labelWidths);
+    if (bar.showTitle && !text.Draw(0, "CataclysmX", 12, 5, TextColor(palette.hints))) { return false; }
+    int labelX = bar.showTitle ? 12 + text.Width(0) + 20 : 12;
+    const SDL_Rect keysClip{labelX, 0, std::max(0, uiWidth - text.Width(61) - 24 - labelX), gameplay.topBar.h};
+    if (!SDL_SetRenderClipRect(renderer, &keysClip)) { return false; }
+    for (int i = 0; i < bar.actionCount; ++i) {
+        if (i > 0) {
+            if (!SDL_SetRenderDrawColor(renderer, palette.hints.red, palette.hints.green, palette.hints.blue, 255)
+                || !SDL_RenderLine(renderer, float(labelX - 10), 10, float(labelX - 10), 18)) { return false; }
+        }
+        if (!text.Draw(58 + i, labels[i].c_str(), float(labelX), 5, TextColor(palette.text))) { return false; }
+        labelX += labelWidths[i] + 20;
+    }
+    if (!SDL_SetRenderClipRect(renderer, &barClip)
+        || !text.Draw(61, sessionLabel.c_str(), float(std::max(12, uiWidth - text.Width(61) - 12)), 5, TextColor(palette.hints))) { return false; }
+    int healthHeight = 0;
+    if (view) {
+        SDL_Rect health = gameplay.hud;
+        if (!gameplay.sideHud) { health.w = std::min(244, std::max(1, health.w / 2 - 16)); }
+        if (!DrawHealth(renderer, text, view->combat, health, healthHeight, hud.localization)) { return false; }
+        if (healthHeight > 0) {
+            if (gameplay.sideHud) { panelY += healthHeight + 12; }
+            else { panelX += health.w + 12; panelWidth -= health.w + 12; }
+        }
+    }
+    const SDL_Rect panelClip{panelX, panelY, std::max(0, panelWidth), std::max(0, gameplay.hud.y + gameplay.hud.h - panelY)};
+    const int wrap = std::max(1, panelWidth - 4);
+    const int panelBottom = panelClip.y + panelClip.h;
+    const int historyReserve = hud.history ? std::min(64, panelClip.h / 2) : 0;
+    const int statusLimit = panelBottom - historyReserve;
+    if (!text.Draw(7, "M", -10000, -10000, TextColor(palette.text))) { return false; }
+    const int lineHeight = std::max(1, text.Height(7));
+    const int infoHeight = std::max(0, statusLimit - panelY) / lineHeight * lineHeight;
+    const SDL_Rect infoClip{panelX, panelY, wrap, infoHeight};
+    if (!SDL_SetRenderClipRect(renderer, &infoClip)
+        || !text.Draw(1, infoText.c_str(), float(panelX), float(panelY), TextColor(palette.text), wrap)) { return false; }
+    int statusY = panelY + std::min(infoHeight, text.Height(1)) + 8;
+    if (status && *status) {
+        const int available = std::max(0, statusLimit - statusY) / lineHeight * lineHeight;
+        const SDL_Rect statusClip{panelX, statusY, wrap, available};
+        if (!SDL_SetRenderClipRect(renderer, &statusClip)
+            || !text.Draw(2, status, float(panelX), float(statusY), TextColor(palette.text), wrap)) { return false; }
+        statusY += std::min(available, text.Height(2)) + 8;
+    }
+    if (hud.history) {
+        statusY = std::min(statusY, statusLimit);
+        const auto heading = hud.localization ? hud.localization->Text("game.ui.message_history") : String("Message history");
+        if (!SDL_SetRenderClipRect(renderer, &panelClip)
+            || !text.Draw(3, heading.c_str(), float(panelX), float(statusY), TextColor(palette.hints), wrap)) { return false; }
+        statusY += text.Height(3) + 4;
+        String messages;
+        for (const auto& entry : hud.history->Entries()) {
+            if (!messages.empty()) { messages += '\n'; }
+            messages += entry;
+        }
+        const SDL_Rect historyClip{panelX, statusY, wrap, std::max(0, panelBottom - statusY)};
+        if (!SDL_SetRenderClipRect(renderer, &historyClip)
+            || !text.Draw(4, messages.c_str(), -10000, -10000, TextColor(palette.text), wrap)) { return false; }
+        const int y = statusY - std::max(0, text.Height(4) - historyClip.h);
+        if (!text.Draw(4, messages.c_str(), float(panelX), float(y), TextColor(palette.text), wrap)) { return false; }
+    }
     if (screen && !DrawScreen(renderer, text, *screen, width, height, view,
-        assets.Definition().cellWidth, assets.Definition().cellHeight, zoom, uiScale)) { return false; }
+        assets.Definition().cellWidth, assets.Definition().cellHeight, zoom, uiScale, &gameplay)) { return false; }
     return SDL_SetRenderClipRect(renderer, nullptr) && SDL_SetRenderScale(renderer, 1, 1) && SDL_RenderPresent(renderer);
 }
 

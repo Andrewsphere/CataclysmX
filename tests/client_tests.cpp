@@ -1,4 +1,5 @@
 #include "client/text.h"
+#include "client/message_history.h"
 #include "client/perception_style.h"
 #include "content_fixture.h"
 
@@ -13,6 +14,30 @@
 namespace {
 
 using namespace cataclysmx;
+
+TEST_CASE("Message history retains events in order and trims its configurable capacity", "[client][messages]") {
+    MessageHistory history;
+    history.Add("");
+    CHECK(history.Entries().empty());
+    for (int i = 0; i < 12; ++i) { history.Add(String(1, static_cast<char>('A' + i))); }
+    REQUIRE(history.Entries().size() == 10);
+    CHECK(history.Entries().front() == "C");
+    CHECK(history.Entries().back() == "L");
+    history.SetCapacity(2);
+    REQUIRE(history.Entries().size() == 2);
+    CHECK(history.Entries().front() == "K");
+    history.Add("L");
+    CHECK(history.Entries()[0] == "L");
+    CHECK(history.Entries()[1] == "L");
+    history.SetCapacity(1);
+    history.Add("Moved east.");
+    REQUIRE(history.Entries().size() == 1);
+    CHECK(history.Entries().back() == "Moved east.");
+    history.SetCapacity(100);
+    history.Add("You wait.");
+    CHECK(history.Entries().size() == 2);
+    CHECK(history.Entries().front() == "Moved east.");
+}
 
 ContentCatalog AppearanceContent() {
     const ContentSource source{"client.json5", R"({format_version:1,definitions:[

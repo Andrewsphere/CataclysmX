@@ -142,6 +142,7 @@ endif()
 cataclysmx_no_exceptions(cataclysmx_network)
 
 add_library(cataclysmx_client STATIC src/client/text.cpp src/client/text.h
+    src/client/message_history.cpp src/client/message_history.h
     src/client/tile_inspection.cpp src/client/tile_inspection.h
     src/client/combat_text.cpp src/client/combat_text.h
     src/client/perception_style.cpp src/client/perception_style.h
@@ -206,6 +207,9 @@ if(CATACLYSMX_BUILD_SDL)
         src/content/tileset_source.cpp src/content/tileset_source.h
         src/sdl/atlas_builder.cpp src/sdl/atlas_builder.h
         src/sdl/screens.cpp src/sdl/screens.h
+        src/sdl/layout.cpp src/sdl/layout.h
+        src/sdl/modal.cpp src/sdl/modal.h
+        src/sdl/health.cpp src/sdl/health.h
         src/sdl/input.cpp src/sdl/input.h
         src/sdl/channels.cpp src/sdl/channels.h
         src/sdl/session.cpp src/sdl/session.h
@@ -266,6 +270,7 @@ if(CATACLYSMX_BUILD_TESTS)
             tests/sdl_session_tests.cpp tests/sdl_render_tests.cpp tests/sdl_tileset_tests.cpp
             tests/sdl_asset_tests.cpp tests/sdl_text_tests.cpp tests/sdl_map_tests.cpp tests/sdl_animation_tests.cpp)
         target_sources(cataclysmx_tests PRIVATE tests/sdl_source_tileset_tests.cpp)
+        target_sources(cataclysmx_tests PRIVATE tests/sdl_ui_tests.cpp)
         target_sources(cataclysmx_tests PRIVATE tests/sdl_shader_tests.cpp tests/sdl_shading_integration_tests.cpp)
         target_link_libraries(cataclysmx_tests PRIVATE cataclysmx_sdl)
         add_test(NAME sdl_frontend_smoke COMMAND cataclysmx_sdl_game --smoke

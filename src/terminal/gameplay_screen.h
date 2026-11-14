@@ -1,6 +1,7 @@
 #pragma once
 
 #include "client/localization.h"
+#include "client/message_history.h"
 
 #include <ftxui/component/event.hpp>
 #include <ftxui/dom/elements.hpp>
@@ -25,6 +26,7 @@ private:
 struct GameplayPresentation {
     String session;
     String message;
+    const MessageHistory* history = nullptr;
     String pending;
     bool interacting = false;
     bool enhancedKeyboard = false;

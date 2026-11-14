@@ -434,7 +434,7 @@ responses and do not terminate the script. `quit` ends input processing.
 `inspect` is deliberately privileged and reports loaded/active/archive counts,
 entity IDs and actor counters for headless scenarios.
 
-The TUI uses arrows/hjkl to move, `.` to wait, `g` to pick up, `d` to drop,
+The TUI uses arrows to move, `.` to wait, `g` to pick up, `d` to drop,
 `o` then a direction to interact, and `q`/Escape to quit. Escape cancels a pending
 interaction first. `cataclysmx_game --render` prints a snapshot without terminal
 initialization. Both clients render the same value-only view through
@@ -445,8 +445,8 @@ During play, `r` toggles the rate cap, `p` toggles idle pause, and `[`/`]`
 halve/double the tick rate within `1..1,000,000`. The terminal supplies elapsed
 microseconds during its update loop; status shows rate, policy, speed, and delay.
 
-During play, F11 opens the terminal client's world-generation debug menu. Its
-arrows/hjkl cursor moves by scale; uppercase HJKL jump one region (256 tiles).
+During play, F11 opens the terminal client's world-generation debug menu.
+Arrows move its cursor by scale; Shift+arrows jump one region (256 tiles).
 Keys 1–5 or Tab/Shift+Tab select Roads, Parcels, Ownership, Biomes, or Terrain;
 plus/minus zoom by powers of two within 1–16. Home/c recenters on the menu-entry
 position, PageUp/PageDown browses details, and F11/Escape/q closes it. The view

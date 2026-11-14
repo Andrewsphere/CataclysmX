@@ -77,6 +77,64 @@ void Flexible(ftxui::Requirement& requirement) {
     requirement.flex_shrink_x = 1; requirement.flex_shrink_y = 1;
 }
 
+// Keep the newest rows visible when a small terminal cannot fit the history.
+class RecentMessages final : public ftxui::Node {
+public:
+    RecentMessages(ftxui::Element heading, ftxui::Elements rows)
+        : Node({std::move(heading)}) {
+        for (auto& row : rows) { children_.push_back(std::move(row)); }
+    }
+    void ComputeRequirement() override {
+        Node::ComputeRequirement(); Flexible(requirement_);
+    }
+    void SetBox(ftxui::Box box) override {
+        Node::SetBox(box);
+        auto row = box; row.y_max = row.y_min;
+        children_[0]->SetBox(row);
+        const int available = std::max(0, box.y_max - box.y_min);
+        first_ = std::max(1, static_cast<int>(children_.size()) - available);
+        for (int i = first_; i < static_cast<int>(children_.size()); ++i) {
+            row.y_min = box.y_max - static_cast<int>(children_.size()) + i + 1;
+            row.y_max = row.y_min;
+            children_[i]->SetBox(row);
+        }
+    }
+    void Render(ftxui::Screen& screen) override {
+        const auto previous = screen.stencil;
+        screen.stencil = ftxui::Box::Intersection(previous, box_);
+        if (!screen.stencil.IsEmpty()) {
+            children_[0]->Render(screen);
+            for (int i = first_; i < static_cast<int>(children_.size()); ++i) { children_[i]->Render(screen); }
+        }
+        screen.stencil = previous;
+    }
+private:
+    int first_ = 1;
+};
+
+class GameplayFrame final : public ftxui::Node {
+public:
+    GameplayFrame(ftxui::Element header, ftxui::Element body, ftxui::Element history, int rows)
+        : Node({std::move(header), ftxui::separatorLight(), std::move(body),
+            ftxui::separatorLight(), std::move(history)}), rows_(rows) {}
+    void ComputeRequirement() override { Node::ComputeRequirement(); Flexible(requirement_); }
+    void SetBox(ftxui::Box box) override {
+        Node::SetBox(box);
+        const int height = std::max(0, box.y_max - box.y_min + 1);
+        // Leave six body rows for compact status, the map heading, and a glyph.
+        const int historyHeight = std::min(rows_, std::max(1, std::min(height / 2, height - 9)));
+        auto part = box; part.y_max = part.y_min;
+        children_[0]->SetBox(part);
+        ++part.y_min; part.y_max = part.y_min; children_[1]->SetBox(part);
+        ++part.y_min; part.y_max = std::max(part.y_min - 1, box.y_max - historyHeight - 1);
+        children_[2]->SetBox(part);
+        part.y_min = part.y_max + 1; part.y_max = part.y_min; children_[3]->SetBox(part);
+        ++part.y_min; part.y_max = box.y_max; children_[4]->SetBox(part);
+    }
+private:
+    int rows_;
+};
+
 // Allocation-based layout keeps the first frame and synthetic test screens
 // consistent with the actual terminal; no physical screen query is needed.
 class MapViewport final : public ftxui::Node {
@@ -394,6 +452,7 @@ bool GameplayUi::Open(InputAction action) {
     feedback_.clear(); return true;
 }
 bool GameplayUi::IsOpen() const { return modal_ != Modal::None; }
+
 void GameplayUi::Close() { modal_ = Modal::None; feedback_.clear(); }
 bool GameplayUi::PausesLocal(eastl::optional<InputAction> action) const {
     return IsOpen() || action == InputAction::Inventory || action == InputAction::Players
@@ -473,11 +532,36 @@ ftxui::Element GameplayUi::Render(WorldView view, const ContentCatalog& content,
             presentation.viewRadius, t("game.ui.cropped"));
     auto body = std::make_shared<GameplayBody>(Panel(t(presentation.lan ? "game.ui.lan" : "game.ui.world"), world),
         Panel(t("game.ui.status"), ftxui::vbox(std::move(status))), Padded(ftxui::paragraph(Frontend(compact))));
-    auto background = ftxui::vbox({Padded(ftxui::hbox({Text(t("game.title")) | ftxui::bold,
-        ftxui::text("  ·  "), Text(presentation.session) | ftxui::xflex_shrink, ftxui::filler()})),
-        ftxui::separatorLight(), body | ftxui::flex, ftxui::separatorLight(),
-        Padded(Paragraph(presentation.interacting ? t("game.interact_direction") : presentation.message))
-            | ftxui::size(ftxui::HEIGHT, ftxui::LESS_THAN, 3)}) | ftxui::borderLight;
+    ftxui::Elements topBar{Text(t("game.title")) | ftxui::bold, ftxui::text(" · "),
+        Text(presentation.session) | ftxui::xflex_shrink, ftxui::filler()};
+    constexpr InputAction topActions[] = {InputAction::Help, InputAction::Settings, InputAction::Help, InputAction::Debug};
+    constexpr const char* topLabels[] = {"game.ui.top_help", "game.ui.top_settings", "game.ui.top_lan", "game.ui.top_debug"};
+    const auto topContext = presentation.interacting ? InputContext::Interaction : InputContext::Gameplay;
+    for (unsigned i = 0; i < 4; ++i) {
+        String key = "?";
+        if (i == 2) { key = "F9"; }
+        else {
+            for (const auto& binding : keys) {
+                if (binding.context == topContext && binding.action == topActions[i] && !binding.keys.empty()) {
+                    key = ChordName(binding.keys.front()); break;
+                }
+            }
+        }
+        String label = "[";
+        label += key;
+        label += ' '; label += t(topLabels[i]); label += ']';
+        topBar.push_back(Text(label) | ftxui::bold);
+        if (i != 3) { topBar.push_back(ftxui::text(" ")); }
+    }
+    ftxui::Elements messages;
+    if (presentation.history) {
+        for (const auto& entry : presentation.history->Entries()) { messages.push_back(Text(entry)); }
+    } else if (!presentation.message.empty()) { messages.push_back(Text(presentation.message)); }
+    if (presentation.interacting) { messages.push_back(Text(t("game.interact_direction")) | ftxui::bold); }
+    const int messageRows = static_cast<int>(messages.size()) + 1;
+    auto history = std::make_shared<RecentMessages>(Text(t("game.ui.message_history")) | ftxui::bold, std::move(messages));
+    auto background = std::make_shared<GameplayFrame>(Padded(ftxui::hbox(std::move(topBar))), body,
+        Padded(history), messageRows) | ftxui::borderLight;
     if (!IsOpen()) { return background; }
 
     ftxui::Elements rows;

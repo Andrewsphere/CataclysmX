@@ -77,14 +77,15 @@ Map cells use native tileset dimensions multiplied by 2^(zoomStep/4), bounded to
 1/4–8 times native size. Step zero means native pixel size. Window resizing changes
 the visible area instead of fitting the whole snapshot. Rectangular cells preserve
 their native aspect ratio. UI scale affects text/panels independently of map zoom.
-Map layout, sprite visibility, highlights, and mouse hit testing share this transform.
+Map layout, sprite visibility, and highlights share this transform.
 Gameplay centers on the player; Examine centers on its cursor.
 
 Assets preserve native pack metadata and sprite anchors. Asset preparation and
 image decoding are separated from main-thread SDL texture creation. Active assets
 remain alive while render packets use their mapping generation. Sprite playback
-is frontend presentation state; clicking an activation sprite does not submit a
-simulation command. Modal screens block map activation clicks.
+is frontend presentation state and does not submit simulation commands.
+Ambient animations run automatically; controlled playback remains available
+through the animation API without a frontend activation control.
 
 The Vulkan sprite shader supplies perception tinting for PNG artwork. Ground and
 upright passes preserve row ordering and overhangs. Text and glyph fallback use
@@ -93,13 +94,16 @@ redraws only for visible active animation. Minimized windows avoid rendering wor
 
 ## UI and settings
 
-ScreenFrame contains owned presentation values; DrawScreen lays out rows and
-details side by side on wide windows and stacked on compact windows. OptionsUi
+ScreenFrame contains owned presentation values; DrawScreen uses shared gameplay
+geometry for tile-anchored Interact/Examine windows and retains large layouts for
+Help, Options, and Debug. OptionsUi
 owns drafts, focus, numeric/language editors, and binding capture. No simulation
 entity pointers or third-party UI framework cross this boundary.
 
-The gameplay view shows status and a small F1 Help reminder. Binding lists live
-in F1. Modal screens may show their own contextual instructions.
+The gameplay view shows compact Help/Settings/Debug labels, Local session status,
+and a segmented health doll with limb values. ModalController owns modal input
+and lifecycle transitions. Full binding lists live in Help; windows show concise
+contextual instructions. See [SDL UI APIs and layout decisions](sdl_ui.md).
 
 Options has one Save and apply operation. It validates the selected scope's draft
 and stages language loading, requests authoritative application, then installs

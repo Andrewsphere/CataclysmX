@@ -2,7 +2,7 @@
 
 ## Controls and movement
 
-`x` opens Examine. The eight gameplay directions move its cursor; the camera follows within the
+`x` opens a small Examine window beside its highlighted tile. The eight gameplay directions move its cursor; the camera follows within the
 filtered snapshot. Alt+Up/Down and the existing layer bindings change its viewed
 Y level within world bounds without moving the player. `z`/`Z` zoom also works. Ctrl+Up/Down or PageUp/PageDown scroll the description.
 Escape resumes. Terrain and overlays use their independent projection depths.
@@ -11,7 +11,8 @@ Stored object contents require immediate access. Inspection neither teaches
 memory nor acquires chunks.
 
 `e` (or `o`) highlights visible doors and objects on the player's tile and eight
-neighboring tiles, always on the same Y level. A sole nearby target tile is
+neighboring tiles, always on the same Y level. Target selection appears beside
+the player; action choices appear beside the selected tile. A sole nearby target tile is
 selected automatically. A direction immediately opens that tile's actions; `.`
 or Home selects the player's tile. Exactly one available action executes
 immediately. Otherwise Up/Down selects an action and Enter executes it. Unavailable
@@ -34,7 +35,7 @@ cost, rather than diagonal locomotion cost.
 
 ## Debug and options
 
-F11 ports the terminal's world-generation preview: arrows/hjkl pan, HJKL jump a
+F11 ports the terminal's world-generation preview: arrows pan, Shift+arrows jump a
 region, Home/c recenter, 1–5 or Tab/Shift+Tab select the five layers, +/- zoom,
 and PageUp/PageDown scroll details. The surface preview excludes live entities
 and saved edits. Unsupported generation versions show an explicit warning.
@@ -42,7 +43,7 @@ and saved edits. Unsupported generation versions show an explicit warning.
 Within F11, `a` toggles between world generation and the **AI inspector / live
 resident map**. Entering AI mode resets the cursor to the player's actual X, Z,
 and Y, including when the surface worldgen preview had flattened Y to zero.
-Arrows/hjkl move one tile; Alt+Up/Down or `>`/`<` change Y within world bounds.
+Arrows move one tile; Alt+Up/Down or `>`/`<` change Y within world bounds.
 Home/c resets to the player; PageUp/PageDown scroll capture details. Escape or
 F11 resumes. Each new F11 opening starts with the world-generation preview.
 
@@ -64,8 +65,6 @@ compact layouts stack them. World overrides remain memory-only for temporary
 SDL worlds. Seed is a future-world default, never a live-world mutation.
 
 All these screens pause local simulation. Closing discards paused wall time.
-Existing map sprite activation clicks remain blocked while a screen owns input;
-these menus add no mouse controls.
 
 ## API decisions
 
@@ -117,12 +116,17 @@ widget library. See [settings](settings_api.md) for keybinding format v2 and
 
 Map zoom is a multiplier of native tileset dimensions: default 1x, steps of
 2^(step/4), bounded to 1/4x–8x. Resizing does not change tile scale. UI scale remains
-independent. The main view shows only status and an F1 Help reminder for controls.
+independent. The main view shows compact Help, Settings, and Debug shortcuts,
+Local session status, and an SDL-only health doll with labeled limb HP. Narrow
+windows omit lower-priority bar entries; all bindings remain in Help.
 
 All keyboard actions support holding through the central HeldKey controller,
 including screen commands and confirmations. Repeats start after 250 ms at the
 Keyboard repeat rate preference (default 10 Hz, range 1–60 Hz). Native repeat
 events are ignored; release/focus loss stops repeats, with no catch-up burst.
+Opening/closing a modal or switching interaction steps resets held repeat, so
+confirmation and cancellation do not leak into the next context. See
+[SDL UI behavior and APIs](sdl_ui.md).
 
 ## Demo door
 

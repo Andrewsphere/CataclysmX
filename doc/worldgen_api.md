@@ -78,7 +78,7 @@ an unavailable message because the current regional preview cannot reproduce
 the legacy generator. The menu does not load chunks, advance simulation, or
 mutate the world.
 
-Controls: arrows/hjkl move the cursor by the current scale; uppercase HJKL move
+Controls: arrows move the cursor by the current scale; Shift+arrows move
 by one 256-tile region. Keys 1–5 select Roads, Parcels, Ownership, Biomes, and
 Terrain; Tab and Shift+Tab cycle layers. **+** and **-** adjust scale between 1
 and 16 tiles per displayed cell by powers of two. Home or **c** recenters at the

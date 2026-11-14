@@ -7,7 +7,7 @@ Press `a` (or the configured Debug Inspect binding) to toggle the AI inspector,
 including for saves whose generation version does not support the preview. The
 two modes retain independent cursors and the world-generation layer and zoom.
 
-The AI cursor starts at the player's actual X/Z/Y position. Arrows or hjkl move
+The AI cursor starts at the player's actual X/Z/Y position. Arrows move
 one horizontal tile, Alt+Up/Down or `>`/`<` change elevation within world bounds,
 and Home/c returns to the opening position. Page Up/Down scroll the details.
 The map is a live resident-world capture, not player knowledge or a generated

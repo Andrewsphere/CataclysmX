@@ -3,7 +3,9 @@
 Gameplay uses Settings' light borders, one-column horizontal padding, bold
 headings and terminal-default interface colors. Terrain and entity glyphs keep
 their content colors. Inventory, Players, Controls and Quick actions are hidden until requested;
-ordinary gameplay has no shortcut footer.
+ordinary gameplay has no shortcut footer. The top bar exposes Help (F1),
+Settings (F2), LAN (F9), and Debug (F11) as keyboard shortcut labels. Their labels
+follow configured bindings. See [message history and top bar](message_history.md).
 
 ## Visual overview
 
@@ -61,7 +63,9 @@ the first rendered frame. An **80×24** terminal keeps the message visible:
 The map centers naturally when it fits. Otherwise its viewport follows the
 player, clamped to the supplied view edges, with a crop indicator. Cropping
 changes presentation only: it never requests a smaller simulation view or
-rescales a glyph. The latest message can occupy up to three lines.
+rescales a glyph. Message history retains the latest 10 messages by default,
+configurable under Interface settings. The newest rows remain visible when
+the terminal is small; history uses at most half the gameplay height.
 
 ## On-demand windows
 

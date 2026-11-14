@@ -198,7 +198,7 @@ TEST_CASE("Settings capture rejects conflicts preserves case and key inspection 
     Event(f.menu, ftxui::Event::Escape);
     CHECK(f.server.GetTick() == 0);
     Event(f.menu, ftxui::Event::Backspace); Key(f.menu, 'a');
-    CHECK(ResolveAction(f.store.Keys(), InputContext::Gameplay, {"h", false}) == InputAction::West);
+    CHECK(ResolveAction(f.store.Keys(), InputContext::Gameplay, {"Left", false}) == InputAction::West);
     Key(f.menu, 'u'); Key(f.menu, 'a');
     CHECK_FALSE(ResolveAction(f.store.Keys(), InputContext::Gameplay, {"h", false}));
     CHECK_FALSE(ResolveAction(f.store.Keys(), InputContext::Gameplay, {"Left", false}));
@@ -692,7 +692,7 @@ TEST_CASE("Settings editors retain modes drafts and focus across layout changes"
         CHECK(Plain(screen).find("Actions") != std::string::npos);
     }
     Key(f.menu, 'T'); // Accept a draft binding after the resizes.
-    CHECK(ResolveAction(f.store.Keys(), InputContext::Gameplay, {"h", false}) == InputAction::West);
+    CHECK(ResolveAction(f.store.Keys(), InputContext::Gameplay, {"Left", false}) == InputAction::West);
     Key(f.menu, 'i'); Key(f.menu, 'S'); // Inspect without replacing the draft.
     for (const int width : widths) {
         const auto screen = RenderSettings(f.menu, width, width < 100 ? 24 : 32);

@@ -175,7 +175,10 @@ TEST_CASE("Gameplay layout keeps map status and message visible without inventor
         CHECK(Find(screen, "@"));
         CHECK_FALSE(Find(screen, "Inventory"));
         CHECK_FALSE(Find(screen, "Hidden player"));
-        CHECK_FALSE(Find(screen, "F1"));
+        CHECK(Find(screen, "F1 Help"));
+        CHECK(Find(screen, "F2 Settings"));
+        CHECK(Find(screen, "F9 LAN"));
+        CHECK(Find(screen, "F11 Debug"));
         if (width >= 100) {
             const auto status = Find(screen, "Status"); REQUIRE(status);
             CHECK(status->x == width - 32);
@@ -186,6 +189,48 @@ TEST_CASE("Gameplay layout keeps map status and message visible without inventor
         CHECK(screen.PixelAt(title->x, title->y).foreground_color == ftxui::Color::Default);
         CHECK(screen.PixelAt(title->x, title->y).background_color == ftxui::Color::Default);
     }
+}
+
+TEST_CASE("Gameplay history keeps recent messages visible through resizing and interaction prompts", "[terminal][gameplay][messages]") {
+    Fixture f;
+    MessageHistory history;
+    f.presentation.history = &history;
+    for (int i = 0; i < 12; ++i) {
+        String message = "Outcome "; message += NumberText(i); history.Add({message.data(), message.size()});
+    }
+    auto screen = f.Draw(120, 40);
+    CHECK_FALSE(Find(screen, "Outcome 0"));
+    const auto first = Find(screen, "Outcome 2"); REQUIRE(first);
+    const auto last = Find(screen, "Outcome 11"); REQUIRE(last);
+    CHECK(last->y > first->y);
+    CHECK(last->y == 38);
+    for (const auto size : {Position{80, 24}, Position{40, 16}, Position{120, 40}}) {
+        screen = f.Draw(size.x, size.y);
+        CHECK(Find(screen, "Message history"));
+        CHECK(Find(screen, "Outcome 11"));
+        CHECK(Find(screen, "@"));
+    }
+    f.presentation.interacting = true;
+    screen = f.Draw(80, 24);
+    CHECK(Find(screen, "Outcome 11"));
+    CHECK(Find(screen, "Interact in which direction?"));
+    history.SetCapacity(2);
+    screen = f.Draw(80, 24);
+    CHECK_FALSE(Find(screen, "Outcome 9"));
+    CHECK(Find(screen, "Outcome 10"));
+}
+
+TEST_CASE("Gameplay top bar labels follow keyboard bindings in each input context", "[terminal][gameplay][input]") {
+    Fixture f;
+    f.keys = ResolveKeymap({{InputContext::Gameplay, InputAction::Settings, {{"O", true}}},
+        {InputContext::Interaction, InputAction::Settings, {{"T", true}}}}, {});
+    auto screen = f.Draw();
+    CHECK(Find(screen, "Ctrl+O Settings"));
+    CHECK_FALSE(Find(screen, "F2 Settings"));
+    f.presentation.interacting = true;
+    screen = f.Draw();
+    CHECK(Find(screen, "Ctrl+T Settings"));
+    CHECK_FALSE(Find(screen, "Ctrl+O Settings"));
 }
 
 TEST_CASE("Gameplay map crops around player preserves glyph colors and handles radius zero", "[terminal][gameplay][render]") {

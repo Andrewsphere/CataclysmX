@@ -12,12 +12,14 @@ enum class SettingsSource { BuiltIn, Global, World };
 enum class ResidencyMode { Square, Circle };
 enum class SettingsField {
     Language, ViewRadius, AutosaveInterval, ActiveRadius, ResidentRadius, Seed,
-    TicksPerSecond, RateLimited, PauseWhenIdle, ResidencyMode, ResidentRadiusTiles, KeyboardRepeatRate, Count
+    TicksPerSecond, RateLimited, PauseWhenIdle, ResidencyMode, ResidentRadiusTiles, KeyboardRepeatRate,
+    MessageHistorySize, Count
 };
 struct Settings {
     String language = "en";
     int viewRadius = 64;
     std::uint32_t keyboardRepeatRate = 10;
+    int messageHistorySize = 10;
     std::uint64_t autosaveInterval = 1000;
     int activeRadius = 1;
     int residentRadius = 5;
@@ -31,6 +33,7 @@ struct SettingsOverrides {
     eastl::optional<String> language;
     eastl::optional<int> viewRadius;
     eastl::optional<std::uint32_t> keyboardRepeatRate;
+    eastl::optional<int> messageHistorySize;
     eastl::optional<std::uint64_t> autosaveInterval;
     eastl::optional<int> activeRadius;
     eastl::optional<int> residentRadius;

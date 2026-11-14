@@ -14,6 +14,7 @@ int main(int argc, char** argv) {
         return 0;
     }
     auto screen = ftxui::ScreenInteractive::Fullscreen();
+    screen.TrackMouse(false);
     int x = 0;
     int y = 0;
     auto component = ftxui::Renderer([&] {

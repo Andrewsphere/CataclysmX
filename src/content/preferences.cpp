@@ -330,6 +330,7 @@ SettingsResult<void> SaveSettingsFile(const char* path, const SettingsOverrides&
         // Write integers directly, preserving the full uint64 range.
         switch (field) {
         case SettingsField::Language: AddString(document.value, settings, name.data(), View(resolved.language)); break;
+        case SettingsField::MessageHistorySize: yyjson_mut_obj_add_sint(document.value, settings, name.data(), resolved.messageHistorySize); break;
         case SettingsField::KeyboardRepeatRate: yyjson_mut_obj_add_uint(document.value, settings, name.data(), resolved.keyboardRepeatRate); break;
         case SettingsField::ViewRadius: yyjson_mut_obj_add_sint(document.value, settings, name.data(), resolved.viewRadius); break;
         case SettingsField::AutosaveInterval: yyjson_mut_obj_add_uint(document.value, settings, name.data(), resolved.autosaveInterval); break;

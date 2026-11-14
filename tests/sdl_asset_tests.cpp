@@ -1,5 +1,4 @@
 #include "sdl/renderer.h"
-#include "sdl/input.h"
 #include "content_fixture.h"
 #include "core/save_database.h"
 #include "network/wire.h"
@@ -425,54 +424,6 @@ TEST_CASE("SDL controlled sprites draw one blink and resume the base without new
     CHECK_FALSE(VisibleAnimationDelay(clipped, assets.Definition(), 200, 480, 360, 16, 1, &playback));
     clipped.cells.back().visible = false;
     CHECK_FALSE(VisibleAnimationDelay(clipped, assets.Definition(), 200, 480, 360, 0, 1, &playback));
-}
-
-TEST_CASE("SDL sprite clicks use render coordinates and respect modal and map clipping", "[sdl][input][animation]") {
-    RenderFixture render;
-    TilesetDefinition definition;
-    definition.cellWidth = definition.cellHeight = 32;
-    definition.animations.push_back({"blink", {{1, 10}, {0, 30}}, 30});
-    MapPacket packet;
-    packet.width = packet.height = 1;
-    packet.cells.resize(1);
-    auto& cell = packet.cells[0];
-    cell.visible = cell.hasOverlay = true;
-    cell.itemVisual = {77, TestItem("toggle_lightbulb")};
-    cell.overlaySprite = {TilesetMappingKind::Sprite, 0, SpriteActivationBinding{0, SpriteActivation::ToggleLoop}};
-    SpritePlaybackController playback;
-    for (float scale : {1.0f, 2.0f}) {
-        const auto layout = MakeMapLayout(800, 600, 1, 1, 32, 32, 0, scale);
-        SDL_MouseButtonEvent click{};
-        click.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
-        click.button = SDL_BUTTON_LEFT;
-        // Exercise SDL's coordinate conversion with a non-unit renderer transform.
-        REQUIRE(SDL_SetRenderScale(render.renderer, scale, scale));
-        REQUIRE(SDL_RenderCoordinatesToWindow(render.renderer, float(layout.x + layout.cellSize / 2),
-            float(layout.y + layout.cellHeight / 2), &click.x, &click.y));
-        CHECK_FALSE(ActivateMapItem(render.renderer, click, true, packet, definition, playback, 0, 0, scale));
-        CHECK_FALSE(playback.Sample(77, cell.overlaySprite, definition, 0).delayMilliseconds);
-        const auto started = ActivateMapItem(render.renderer, click, false, packet, definition, playback, 0, 0, scale);
-        REQUIRE(started);
-        CHECK(started->item == cell.itemVisual);
-        CHECK(started->activation == SpriteActivationResult::LoopStarted);
-        CHECK_FALSE(ActivateMapItem(render.renderer, click, true, packet, definition, playback, 10, 0, scale));
-        CHECK(playback.Sample(77, cell.overlaySprite, definition, 10).delayMilliseconds);
-        const auto stopped = ActivateMapItem(render.renderer, click, false, packet, definition, playback, 10, 0, scale);
-        REQUIRE(stopped);
-        CHECK(stopped->activation == SpriteActivationResult::Stopped);
-        click.button = SDL_BUTTON_RIGHT;
-        CHECK_FALSE(ActivateMapItem(render.renderer, click, false, packet, definition, playback, 0, 0, scale));
-        click.button = SDL_BUTTON_LEFT;
-        cell.visible = false;
-        CHECK_FALSE(ActivateMapItem(render.renderer, click, false, packet, definition, playback, 0, 0, scale));
-        cell.visible = true;
-        cell.hasOverlay = false;
-        CHECK_FALSE(ActivateMapItem(render.renderer, click, false, packet, definition, playback, 0, 0, scale));
-        cell.hasOverlay = true;
-        CHECK_FALSE(MapItemAt(packet, definition, 799, 599, 800, 600, 0, scale));
-        CHECK_FALSE(MapItemAt(packet, definition, -0.1f, 50, 800, 600, 0, scale));
-        CHECK_FALSE(MapItemAt(packet, definition, 10, 0, 800, 600, 0, scale));
-    }
 }
 
 TEST_CASE("SDL visual activation leaves replay snapshots saved RNG and content fingerprints unchanged", "[sdl][animation][save]") {

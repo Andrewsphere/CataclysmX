@@ -79,7 +79,7 @@ TEST_CASE("SDL options stage preferences and capture modifier bindings before ap
     REQUIRE(editor.Prepare(store,candidate,&diagnostics));
     CHECK(candidate.Effective().viewRadius == 12);
     ScreenFrame frame; editor.Present(store,localization,frame);
-    CHECK(frame.visible); CHECK(frame.full); CHECK_FALSE(frame.rows.empty());
+    CHECK(frame.visible); CHECK(frame.presentation == ScreenPresentation::Large); CHECK_FALSE(frame.rows.empty());
     CHECK(frame.title.find("Unapplied") != String::npos);
     // Move focus from List to Section, then select Keybindings.
     key("BackTab"); key("BackTab"); key("Right"); key("Enter"); key("Enter");
@@ -97,7 +97,7 @@ TEST_CASE("SDL overlay renders compact and wide layouts with scroll clamping", "
     SDL_Renderer* renderer = SDL_CreateSoftwareRenderer(surface); REQUIRE(renderer);
     {
         SdlText text(renderer); REQUIRE(text.Ready());
-        ScreenFrame frame; frame.visible = frame.full = true; frame.title = "Options"; frame.footer = "Escape closes";
+        ScreenFrame frame; frame.visible = true; frame.presentation = ScreenPresentation::Large; frame.title = "Options"; frame.footer = "Escape closes";
         for (int i = 0; i < 30; ++i) { frame.rows.push_back({"Setting value",i % 2 == 0}); }
         frame.details = {"Description", "Constraint", "Effect"}; frame.selected = 29; frame.scroll = 999;
         REQUIRE(DrawScreen(renderer,text,frame,1100,700,nullptr,32,32,0,1));

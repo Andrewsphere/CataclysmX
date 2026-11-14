@@ -71,4 +71,12 @@ int SdlText::Height(unsigned int slot) const {
     return height;
 }
 
+int SdlText::Width(unsigned int slot) const {
+    AssertMainThread();
+    if (!ready_ || slot >= slotCount) { std::abort(); }
+    int width = 0, height = 0;
+    if (!TTF_GetTextSize(slots_[slot].text, &width, &height)) { return 0; }
+    return width;
+}
+
 }

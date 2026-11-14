@@ -1,4 +1,5 @@
 #include "client/text.h"
+#include "client/message_history.h"
 #include "client/lan_profile.h"
 #include "core/server.h"
 #include "network/network.h"
@@ -119,21 +120,28 @@ int main(int argc, char** argv) {
     cataclysmx::network::LanDiscovery discovery(**runtime, *content);
     cataclysmx::client::LanProfile profile;
     bool profileUsable = true;
-    std::string message = Frontend(GameplayWelcome(localization, settings.Keys()));
+    MessageHistory messageHistory;
+    std::string message;
+    const auto SetMessage = [&](std::string value) {
+        message = std::move(value);
+        messageHistory.SetCapacity(settings.Effective().messageHistorySize);
+        messageHistory.Add({message.data(), message.size()});
+    };
+    SetMessage(Frontend(GameplayWelcome(localization, settings.Keys())));
     if (auto loaded = profile.Load(profilePath.c_str()); !loaded) {
         profileUsable = false;
-        message = "LAN profile cannot be loaded; use --profile with a valid file to join. Local play and hosting are available.";
+        SetMessage("LAN profile cannot be loaded; use --profile with a valid file to join. Local play and hosting are available.");
         std::fprintf(stderr, "LAN profile error=%d: %s\n", static_cast<int>(loaded.error()), profilePath.c_str());
     }
     std::string connectedAddress;
     std::uint16_t connectedPort = 0;
     std::uint64_t persistedToken = 0;
     auto Connect = [&](const std::string& endpoint, bool newCharacter) {
-        if (!profileUsable) { message = "Cannot join with an unreadable LAN profile: " + profilePath; return; }
-        if (host.IsOpen()) { message = "Close LAN hosting before joining another game."; return; }
+        if (!profileUsable) { SetMessage("Cannot join with an unreadable LAN profile: " + profilePath); return; }
+        if (host.IsOpen()) { SetMessage("Close LAN hosting before joining another game."); return; }
         std::string address;
         std::uint16_t remotePort;
-        if (!Endpoint(endpoint, address, remotePort, port)) { message = "Invalid address or port."; return; }
+        if (!Endpoint(endpoint, address, remotePort, port)) { SetMessage("Invalid address or port."); return; }
         const auto* saved = profile.Find(address.c_str(), remotePort);
         cataclysmx::network::ConnectionSettings connectionSettings;
         connectionSettings.address = address.c_str();
@@ -142,11 +150,11 @@ int main(int argc, char** argv) {
         connectionSettings.reconnectToken = newCharacter || !saved ? 0 : saved->token;
         guest.Disconnect();
         auto result = guest.Connect(connectionSettings);
-        if (!result) { message = std::string("Connect failed: ") + cataclysmx::network::NetworkErrorMessage(result.error()); return; }
+        if (!result) { SetMessage(std::string("Connect failed: ") + cataclysmx::network::NetworkErrorMessage(result.error())); return; }
         persistedToken = 0;
         connectedAddress = address;
         connectedPort = remotePort;
-        message = "Connecting to " + endpoint + "...";
+        SetMessage("Connecting to " + endpoint + "...");
     };
     if (openLan) {
         cataclysmx::network::HostSettings hostSettings;
@@ -158,15 +166,16 @@ int main(int argc, char** argv) {
     }
     if (!joinAddress.empty()) { Connect(joinAddress, false); }
     auto screen = ftxui::ScreenInteractive::Fullscreen();
+    screen.TrackMouse(false);
     TerminalKeyboard keyboard;
     bool interacting = false;
     bool debugOpen = false;
     bool lanOpen = browse;
     auto StartDiscovery = [&] {
         const auto opened = discovery.Open();
-        if (!opened) { message = std::string("LAN discovery unavailable: ") + cataclysmx::network::NetworkErrorMessage(opened.error()); return; }
+        if (!opened) { SetMessage(std::string("LAN discovery unavailable: ") + cataclysmx::network::NetworkErrorMessage(opened.error())); return; }
         if (auto refreshed = discovery.Refresh(); !refreshed) {
-            message = std::string("LAN refresh failed: ") + cataclysmx::network::NetworkErrorMessage(refreshed.error());
+            SetMessage(std::string("LAN refresh failed: ") + cataclysmx::network::NetworkErrorMessage(refreshed.error()));
         }
     };
     if (lanOpen) { StartDiscovery(); }
@@ -188,7 +197,7 @@ int main(int argc, char** argv) {
     auto SubmitCommand = [&](Command command) {
         if (guest.GetState() == cataclysmx::network::ConnectionState::Connecting
             || guest.GetState() == cataclysmx::network::ConnectionState::Joining) {
-            message = "Waiting for admission."; return false;
+            SetMessage("Waiting for admission."); return false;
         }
         bool accepted = false;
         const std::string actionDescription = [&] {
@@ -207,19 +216,19 @@ int main(int argc, char** argv) {
         }();
         if (guest.GetState() == cataclysmx::network::ConnectionState::Active) {
             const auto submitted = guest.Submit(command);
-            if (submitted) { accepted = true; pendingSequence = *submitted; pending = actionDescription + " #" + std::to_string(*submitted); message = "Sent; awaiting server receipt."; }
-            else { message = std::string("Input rejected: ") + cataclysmx::network::NetworkErrorMessage(submitted.error()); }
+            if (submitted) { accepted = true; pendingSequence = *submitted; pending = actionDescription + " #" + std::to_string(*submitted); SetMessage("Sent; awaiting server receipt."); }
+            else { SetMessage(std::string("Input rejected: ") + cataclysmx::network::NetworkErrorMessage(submitted.error())); }
         } else if (host.IsOpen()) {
             const auto submitted = host.QueueLocal(command);
-            if (submitted == 0) { message = "Local input buffer is full."; }
-            else { accepted = true; pendingSequence = submitted; pending = actionDescription + " #" + std::to_string(submitted); message = "Action pending."; }
+            if (submitted == 0) { SetMessage("Local input buffer is full."); }
+            else { accepted = true; pendingSequence = submitted; pending = actionDescription + " #" + std::to_string(submitted); SetMessage("Action pending."); }
         } else {
             const auto result = server.Send(command);
             accepted = result.advanced || result.outcome == Outcome::queued;
-            message = Frontend(localization.ResultText(result));
+            SetMessage(Frontend(localization.ResultText(result)));
             if (result.storageError) {
-                message = Frontend(localization.Text(result.advanced ? "game.autosave_failed" : "game.load_failed"))
-                    + " (error=" + std::to_string(static_cast<int>(*result.storageError)) + ")";
+                SetMessage(Frontend(localization.Text(result.advanced ? "game.autosave_failed" : "game.load_failed"))
+                    + " (error=" + std::to_string(static_cast<int>(*result.storageError)) + ")");
                 std::fprintf(stderr, "%s\n", message.c_str());
             }
         }
@@ -240,6 +249,8 @@ int main(int argc, char** argv) {
         if (host.IsOpen()) {
             presentation.session += ' '; presentation.session += UnsignedText(host.GetPort());
         }
+        messageHistory.SetCapacity(settings.Effective().messageHistorySize);
+        presentation.history = &messageHistory;
         presentation.message = message.c_str(); presentation.pending = pending.c_str();
         presentation.interacting = interacting; presentation.enhancedKeyboard = keyboard.Enhanced();
         if (lanOpen) {
@@ -287,7 +298,7 @@ int main(int argc, char** argv) {
             discoveryElapsed += delta;
             if (discoveryElapsed >= 2000000) {
                 if (auto refreshed = discovery.Refresh(); !refreshed) {
-                    message = std::string("LAN refresh failed: ") + cataclysmx::network::NetworkErrorMessage(refreshed.error());
+                    SetMessage(std::string("LAN refresh failed: ") + cataclysmx::network::NetworkErrorMessage(refreshed.error()));
                 }
                 discoveryElapsed = 0;
             }
@@ -303,33 +314,33 @@ int main(int argc, char** argv) {
             if (!saved || saved->token != token) {
                 auto updated = profile;
                 if (auto set = updated.Set({connectedAddress.c_str(), connectedPort, token, playerName.c_str()}); !set) {
-                    message = "Reconnect profile full or invalid (error=" + std::to_string(static_cast<int>(set.error())) + ")";
+                    SetMessage("Reconnect profile full or invalid (error=" + std::to_string(static_cast<int>(set.error())) + ")");
                     std::fprintf(stderr, "%s\n", message.c_str());
                     profileFailed = true;
                     guest.Disconnect();
                 } else if (auto savedFile = updated.Save(profilePath.c_str()); !savedFile) {
-                    message = "Reconnect profile write failed (error=" + std::to_string(static_cast<int>(savedFile.error())) + "): " + profilePath;
+                    SetMessage("Reconnect profile write failed (error=" + std::to_string(static_cast<int>(savedFile.error())) + "): " + profilePath);
                     std::fprintf(stderr, "%s\n", message.c_str());
                     profileFailed = true;
                     guest.Disconnect();
-                } else { profile = eastl::move(updated); message = "Reconnect identity saved; joining..."; }
+                } else { profile = eastl::move(updated); SetMessage("Reconnect identity saved; joining..."); }
             }
         }
         if (guest.GetState() == cataclysmx::network::ConnectionState::Active) {
             if (stateBefore != cataclysmx::network::ConnectionState::Active) {
-                message = "Joined LAN game as player #" + std::to_string(guest.View().playerId);
+                SetMessage("Joined LAN game as player #" + std::to_string(guest.View().playerId));
             }
         }
         if ((guest.GetState() == cataclysmx::network::ConnectionState::Rejected
             || guest.GetState() == cataclysmx::network::ConnectionState::Disconnected)
             && stateBefore != guest.GetState() && stateBefore != cataclysmx::network::ConnectionState::Disconnected
             && !profileFailed) {
-            message = std::string("LAN connection ended: ") + cataclysmx::network::NetworkErrorMessage(guest.GetError())
-                + "; local game resumed. Unknown token? F9 then X to start a new character.";
+            SetMessage(std::string("LAN connection ended: ") + cataclysmx::network::NetworkErrorMessage(guest.GetError())
+                + "; local game resumed. Unknown token? F9 then X to start a new character.");
             pending.clear();
         }
         for (const auto& result : guest.TakeResults()) {
-            message = "Receipt #" + std::to_string(result.sequence) + ": " + Frontend(localization.ResultText(result.result));
+            SetMessage("Receipt #" + std::to_string(result.sequence) + ": " + Frontend(localization.ResultText(result.result)));
             if (result.sequence == pendingSequence && result.result.outcome != cataclysmx::Outcome::queued) { pending.clear(); }
         }
         if (guest.GetState() != cataclysmx::network::ConnectionState::Active
@@ -339,16 +350,16 @@ int main(int argc, char** argv) {
                 const auto update = host.Pump(delta);
                 for (const auto& result : update.commandResults) {
                     if (result.player == server.GetHostPlayerId()) {
-                        message = Frontend(localization.ResultText(result.result));
+                        SetMessage(Frontend(localization.ResultText(result.result)));
                         if (result.sequence == pendingSequence && result.result.outcome != cataclysmx::Outcome::queued) { pending.clear(); }
                     }
                 }
                 if (update.storageError) {
-                    message = "Autosave/world load failed (error=" + std::to_string(static_cast<int>(*update.storageError)) + ")";
+                    SetMessage("Autosave/world load failed (error=" + std::to_string(static_cast<int>(*update.storageError)) + ")");
                     std::fprintf(stderr, "%s\n", message.c_str());
                 }
                 if (update.networkError) {
-                    message = std::string("LAN transport: ") + cataclysmx::network::NetworkErrorMessage(*update.networkError);
+                    SetMessage(std::string("LAN transport: ") + cataclysmx::network::NetworkErrorMessage(*update.networkError));
                     std::fprintf(stderr, "%s\n", message.c_str());
                 }
             }
@@ -378,12 +389,12 @@ int main(int argc, char** argv) {
             interacting = false; lastUpdate = now;
             settingsMenu = CreateSettingsMenu(settings, localization, server, keyboard, localizationDirectory.c_str(), [&] {
                 settingsOpen = false; lastUpdate = std::chrono::steady_clock::now();
-                message = Frontend(localization.Text(settings.Dirty(SettingsScope::Global) || settings.Dirty(SettingsScope::World)
-                    ? "settings.unsaved" : "settings.title"));
+                SetMessage(Frontend(localization.Text(settings.Dirty(SettingsScope::Global) || settings.Dirty(SettingsScope::World)
+                    ? "settings.unsaved" : "settings.title")));
             });
             settingsOpen = true; return true;
         }
-        if (event == ftxui::Event::F9) {
+        if (chord == KeyChord{"F9"}) {
             lanOpen = !lanOpen; editing = 0; interacting = false;
             if (lanOpen) { StartDiscovery(); discoveryElapsed = 0; }
             else { discovery.Close(); }
@@ -410,29 +421,29 @@ int main(int argc, char** argv) {
             }
             if (event == ftxui::Event::Character('R')) {
                 if (auto refreshed = discovery.Refresh(); !refreshed) {
-                    message = std::string("LAN refresh failed: ") + cataclysmx::network::NetworkErrorMessage(refreshed.error());
+                    SetMessage(std::string("LAN refresh failed: ") + cataclysmx::network::NetworkErrorMessage(refreshed.error()));
                 }
                 return true;
             }
             if (event == ftxui::Event::Character('O')) {
                 if (guest.GetState() == cataclysmx::network::ConnectionState::Active
                     || guest.GetState() == cataclysmx::network::ConnectionState::Connecting
-                    || guest.GetState() == cataclysmx::network::ConnectionState::Joining) { message = "Leave guest session first."; }
+                    || guest.GetState() == cataclysmx::network::ConnectionState::Joining) { SetMessage("Leave guest session first."); }
                 else { cataclysmx::network::HostSettings hostSettings; hostSettings.port = port; hostSettings.sessionName = playerName.c_str();
                     const auto result = host.Open(hostSettings);
-                    message = result ? "LAN open on port " + std::to_string(host.GetPort()) :
-                        std::string("Open failed: ") + cataclysmx::network::NetworkErrorMessage(result.error()); }
+                    SetMessage(result ? "LAN open on port " + std::to_string(host.GetPort()) :
+                        std::string("Open failed: ") + cataclysmx::network::NetworkErrorMessage(result.error())); }
                 return true;
             }
-            if (event == ftxui::Event::Character('C')) { host.Close(); message = "LAN closed; guests parked."; return true; }
-            if (event == ftxui::Event::Character('D')) { guest.Disconnect(); pending.clear(); message = "Left LAN session; local game resumed."; return true; }
+            if (event == ftxui::Event::Character('C')) { host.Close(); SetMessage("LAN closed; guests parked."); return true; }
+            if (event == ftxui::Event::Character('D')) { guest.Disconnect(); pending.clear(); SetMessage("Left LAN session; local game resumed."); return true; }
             if (event == ftxui::Event::Character('X')) { Connect(directAddress, true); return true; }
             if (event == ftxui::Event::Return) { Connect(directAddress, false); return true; }
             for (int i = 1; i <= 9; ++i) {
                 if (event == ftxui::Event::Character(static_cast<char>('0' + i))
                     && discovery.Sessions().size() >= static_cast<std::size_t>(i)) {
                     const auto& found = discovery.Sessions()[i - 1];
-                    if (!found.compatible) { message = "Incompatible content."; }
+                    if (!found.compatible) { SetMessage("Incompatible content."); }
                     else { directAddress = std::string(found.address.c_str()) + ":" + std::to_string(found.gamePort); Connect(directAddress, false); }
                     return true;
                 }
@@ -443,7 +454,7 @@ int main(int argc, char** argv) {
             if (guest.GetState() == cataclysmx::network::ConnectionState::Active
                 || guest.GetState() == cataclysmx::network::ConnectionState::Joining
                 || guest.GetState() == cataclysmx::network::ConnectionState::Connecting) {
-                message = "Worldgen debug view is available only in the local game."; return true;
+                SetMessage("Worldgen debug view is available only in the local game."); return true;
             }
             interacting = false; lastUpdate = now;
             const auto position = server.GetWorld().GetActor(server.GetPlayer())->position;
@@ -455,18 +466,18 @@ int main(int argc, char** argv) {
         if (action == InputAction::Cancel) { interacting = false; lastUpdate = now; return true; }
         if (action == InputAction::Save) {
             if (guest.GetState() == cataclysmx::network::ConnectionState::Active) {
-                message = "Only the host can save."; return true;
+                SetMessage("Only the host can save."); return true;
             }
             diagnostics.Clear();
-            if (!server.GetWorld().HasSave()) { message = Frontend(localization.Text("game.no_save")); }
+            if (!server.GetWorld().HasSave()) { SetMessage(Frontend(localization.Text("game.no_save"))); }
             else if (const auto saved = server.Save(&diagnostics); !saved) {
-                message = Frontend(localization.Text("game.save_failed")); message += ' '; message += Frontend(FormatDiagnostics(diagnostics));
-            } else { message = Frontend(localization.Text("game.saved")); }
+                SetMessage(Frontend(localization.Text("game.save_failed")) + " " + Frontend(FormatDiagnostics(diagnostics)));
+            } else { SetMessage(Frontend(localization.Text("game.saved"))); }
             lastUpdate = std::chrono::steady_clock::now(); return true;
         }
         if (action == InputAction::ToggleRate || action == InputAction::ToggleIdle || action == InputAction::RateDown || action == InputAction::RateUp) {
             if (guest.GetState() == cataclysmx::network::ConnectionState::Active) {
-                message = "Only the host controls pacing."; return true;
+                SetMessage("Only the host controls pacing."); return true;
             }
             auto pacing = server.GetPacing();
             if (action == InputAction::ToggleRate) { pacing.rateLimited = !pacing.rateLimited; }
@@ -479,7 +490,7 @@ int main(int argc, char** argv) {
             else { overrides.ticksPerSecond = pacing.ticksPerSecond; }
             if (!settings.SetOverrides(SettingsScope::World, eastl::move(overrides), settings.KeyOverrides(SettingsScope::World))) { std::abort(); }
             if (!server.SetPacing(pacing)) { std::abort(); }
-            lastUpdate = now; message = Frontend(localization.Text("settings.unsaved")); return true;
+            lastUpdate = now; SetMessage(Frontend(localization.Text("settings.unsaved"))); return true;
         }
         if (event == ftxui::Event::Custom || !action) { return true; }
         Command command;

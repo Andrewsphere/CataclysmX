@@ -97,7 +97,7 @@ public:
             constexpr eastl::string_view legends[] = {"debug.legend.roads", "debug.legend.parcels", "debug.legend.ownership", "debug.legend.biomes", "debug.legend.terrain"};
             lines.push_back(ftxui::paragraph(T(legends[static_cast<unsigned>(layer_)], WorldgenDebugLegend(layer_))));
             if (!keymap_) {
-                lines.push_back(ftxui::text("Arrows/hjkl move; HJKL jump 256; Home/c recenter"));
+                lines.push_back(ftxui::text("Arrows move; Shift+arrows jump 256; Home/c recenter"));
                 lines.push_back(ftxui::text("1-5/Tab layers; +/- zoom; PgUp/PgDn details"));
             } else { lines.push_back(ftxui::paragraph(Controls())); }
         }
@@ -193,7 +193,7 @@ private:
             ftxui::separator(), ftxui::vbox(std::move(details)) | ftxui::yframe | ftxui::flex}) | ftxui::flex);
         lines.push_back(ftxui::paragraph("Green eligible; red blocked; yellow chosen; blue decision origin; purple goal; orange backtracking"));
         lines.push_back(ftxui::paragraph(keymap_ ? AiControls() :
-            "Arrows/hjkl move; Alt+Up/Down or >/< change Y; Home/c recenter; PgUp/PgDn details"));
+            "Arrows move; Alt+Up/Down or >/< change Y; Home/c recenter; PgUp/PgDn details"));
         lines.push_back(ftxui::text(ToggleHint()));
         lines.push_back(ftxui::text(keymap_ ? Hint(InputAction::Debug) + " / Escape" : "F11 / Escape / q: close"));
         return ftxui::vbox(std::move(lines)) | ftxui::border;

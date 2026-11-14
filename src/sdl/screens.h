@@ -3,19 +3,22 @@
 #include "client/localization.h"
 #include "client/worldgen_debug.h"
 #include "sdl/text.h"
+#include "sdl/layout.h"
 
 namespace cataclysmx::sdl {
 struct ScreenRow {
     String text;
     bool unavailable = false;
 };
+enum class ScreenPresentation { Large, Anchored };
 struct ScreenFrame {
     bool visible = false;
-    bool full = false;
+    ScreenPresentation presentation = ScreenPresentation::Large;
     bool followCursor = false;
     String title;
     String footer;
     Vector<ScreenRow> rows;
+    Vector<int> rowHeights; // Reused popup measurement storage.
     Vector<String> details;
     int selected = -1;
     int scroll = 0;
@@ -26,7 +29,8 @@ struct ScreenFrame {
 };
 // Screen coordinates are logical UI pixels. Never retains the supplied frame.
 bool DrawScreen(SDL_Renderer* renderer, SdlText& text, ScreenFrame& frame,
-    int width, int height, const WorldView* view, int tileWidth, int tileHeight, int zoom, float uiScale);
+    int width, int height, const WorldView* view, int tileWidth, int tileHeight, int zoom, float uiScale,
+    const GameplayLayout* gameplay = nullptr);
 
 eastl::optional<std::size_t> SoleAvailableAction(const Vector<InteractionChoice>& actions);
 

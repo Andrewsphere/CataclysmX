@@ -65,4 +65,4 @@ navigation, focus visibility, resize preservation, and independent scrolling.
 Verify invalid numeric input, binding conflicts, language-load failure, session
 application failure, persistence failure/retry, temporary-world feedback, and
 per-scope draft preservation. Extend existing SDL tests and smoke coverage; add no
-tests for documentation tooling. Mouse interaction is outside this redesign.
+tests for documentation tooling.

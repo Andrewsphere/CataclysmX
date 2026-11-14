@@ -1,5 +1,15 @@
 # SDL tilesets and rendering
 
+The top bar shows Help (F1), Settings (F2), and Debug (F11) keyboard
+shortcut labels using the active bindings. The status panel shows the latest 10
+messages by default; Interface settings can change this count. See
+[message history and top bar](message_history.md) for the frontend APIs.
+
+The utility labels use measured inline spacing, with Local session status at
+the right. SDL's health doll and tile-anchored Interact/Examine windows share
+the map/HUD geometry described in [SDL UI APIs](sdl_ui.md). The terminal health
+display is unchanged.
+
 The SDL client implements startup native tileset selection, PNG atlases, looping
 and on-demand animations, worker-prepared map packets, and cached UTF-8 UI text. It keeps the
 existing session thread and deterministic engine contracts. [The architecture](sdl_client.md) documents implemented screen ownership and
@@ -28,14 +38,13 @@ supplies omitted PNG mappings; unsupported glyphs display `?`. A source pack wit
 no PNG mappings uses this fallback throughout.
 
 The default pack provides [lightbulb animations](sprite_animation.md).
-Left-click a visible toggle bulb to start/stop blinking, or a single-blink bulb
-to play one cycle when the selected pack supplies activation bindings. These
-controls consume no gameplay time and do not introduce simulated lighting.
+The continuous bulb animates automatically. Toggle and single-blink artwork
+retain their playback metadata, but have no frontend activation control.
 
 `--font <file>` selects an independent TrueType font; the default is bundled
 DejaVu Sans Mono with its redistribution license under `assets/fonts`.
 `--font-size 8-48` and `--ui-scale 1-4` change the UI independently of tile size.
-Press `z` to zoom in and `Z` (Shift+z) to zoom out; the mouse wheel does not zoom.
+Press `z` to zoom in and `Z` (Shift+z) to zoom out.
 Zoom multiplies native tileset size by `2^(step/4)`, bounded to 1/4x–8x.
 At step zero tiles retain native pixel size; resizing changes the visible area.
 Zoom stays centered on the character, or the Examine cursor, including when the
@@ -94,9 +103,7 @@ are supported, but complex-script shaping is limited.
   the API, null-shader test restriction, color rules and backend requirements.
 - `MakeMapLayout` returns snapped render-pixel geometry, retaining rectangular
   pack aspect ratios and centering the player-centered view even when zoomed.
-  Origins can be negative when the map exceeds the viewport. `MapCellAt` uses
-  that same geometry; callers must convert
-  window coordinates to render coordinates before hit testing on high-DPI displays.
+  Origins can be negative when the map exceeds the viewport.
 - `SdlText` owns a font, renderer text engine, and 64 screen text slots.
   `Draw` updates text/wrapping/color only when changed, and `Height` provides the
   wrapped layout size. All text and GPU calls stay on the SDL main thread.
