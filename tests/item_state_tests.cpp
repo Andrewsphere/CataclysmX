@@ -122,6 +122,46 @@ TEST_CASE("Capability state uses stable names and stores only mutable state", "[
     CHECK(*remapped.Find("charger")->GetUnsigned("remainder") == 99);
 }
 
+TEST_CASE("Multiple stores and behaviors preserve independent state across ownership moves", "[item-state]") {
+    const ContentSource source{"multi-state", R"({format_version:1,definitions:[
+        {type:'item',id:'device',name:'Device',mass_g:1,volume_ml:1,capabilities:[
+            {id:'p',type:'energy_store',capacity_energy:100,initial_energy:73,rechargeable:false},
+            {id:'q',type:'energy_store',capacity_energy:200,initial_energy:149,rechargeable:false},
+            {id:'x',type:'charger',power_source:'p',battery_class:'aa',energy_per_turn:3},
+            {id:'y',type:'charger',power_source:'q',battery_class:'aa',energy_per_turn:4}]}]})"};
+    auto catalog = LoadContent({&source, 1});
+    REQUIRE(catalog);
+    const auto& original = catalog->GetItem(catalog->FindItem("device"));
+    REQUIRE(original.energyStores.size() == 2);
+    REQUIRE(original.behaviors.size() == 2);
+    auto copy = original;
+    ItemDefinition definition = eastl::move(copy);
+    CHECK(definition == original);
+    copy = original;
+    definition = eastl::move(copy);
+    CHECK(definition == original);
+
+    auto state = MakeItemState(definition);
+    auto saved = Snapshot(definition, state);
+    REQUIRE(saved.Size() == 4);
+    CHECK(*saved.Find("p")->GetUnsigned("energy") == 73);
+    CHECK(*saved.Find("q")->GetUnsigned("energy") == 149);
+    saved.Find("p")->SetUnsigned("energy", 19);
+    saved.Find("q")->SetUnsigned("energy", 127);
+    saved.Find("x")->SetBoolean("enabled", true);
+    saved.Find("x")->SetUnsigned("remainder", 13);
+    saved.Find("y")->SetBoolean("enabled", true);
+    saved.Find("y")->SetUnsigned("remainder", 29);
+    const auto decoded = DecodeDataObject(EncodeDataObject(saved));
+    REQUIRE(decoded);
+    auto restored = ReadItemState(definition, *decoded);
+    REQUIRE(restored);
+    ItemRuntime moved(eastl::move(*restored));
+    CHECK(Snapshot(definition, moved) == saved);
+    state = eastl::move(moved);
+    CHECK(Snapshot(definition, state) == saved);
+}
+
 TEST_CASE("State validation rejects missing extra duplicate and mismatched entries", "[item-state]") {
     const auto definition = Device();
     auto state = Snapshot(definition, MakeItemState(definition));

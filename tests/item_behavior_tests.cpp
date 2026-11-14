@@ -72,7 +72,7 @@ public:
         : ItemBehavior(self), config_(eastl::move(config)), enabled_(enabled), remaining_(remaining),
           count_(count), note_(eastl::move(note)), history_(eastl::move(history)) {}
 
-    void QueryActions(const ItemReadContext&, ActorHandle, Vector<ItemActionInfo>& output) const override {
+    void QueryActions(const ItemReadContext&, ActorHandle, ItemActionList& output) const override {
         for (const auto& action : CounterSchema(config_).actions) {
             const auto reason = action.id == "start" && enabled_ ? AlreadyStarted() : ItemUseReason{};
             output.push_back({Capability(), action.id, action.argument,
@@ -541,6 +541,16 @@ TEST_CASE("Multiple virtual states on one item remain independent with sparse ac
     const auto presentation = world.DescribeItem(rig.actor, rig.device);
     CHECK(presentation.energy.size() == 1);
     CHECK(presentation.activities.size() == 4);
+    REQUIRE(presentation.actions.size() > 2);
+    auto presentationCopy = presentation;
+    ItemPresentation movedPresentation = eastl::move(presentationCopy);
+    CHECK(movedPresentation.energy == presentation.energy);
+    CHECK(movedPresentation.activities == presentation.activities);
+    CHECK(movedPresentation.actions == presentation.actions);
+    presentationCopy = presentation;
+    movedPresentation = eastl::move(presentationCopy);
+    CHECK(movedPresentation.activities == presentation.activities);
+    CHECK(movedPresentation.actions == presentation.actions);
     Localization localization;
     bool found = false;
     for (const auto& action : presentation.actions) {

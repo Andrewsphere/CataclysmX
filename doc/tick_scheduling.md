@@ -13,7 +13,7 @@ The simulation tick unit remains fixed: `ticks_per_turn == 100`.
 
 - `SetSettings(PacingSettings)` rejects a zero `ticksPerSecond` and leaves all
   state unchanged on rejection. `GetSettings()` returns the current value.
-- `Synchronize(const Vector<PlayerReadiness>&)` takes a complete live player
+- `Synchronize(eastl::span<const PlayerReadiness>)` borrows a complete live player
   snapshot. Each entry supplies an `ActorHandle`, persistent ID, positive speed,
   readiness, and whether a command is queued (including a future command).
   Call it after readiness, commands, or player membership changes, before
@@ -38,12 +38,19 @@ The simulation tick unit remains fixed: `ticks_per_turn == 100`.
   wait while another participant still has grace.
 - `ExpiredPlayers()` returns expired handles in persistent-ID order only when
   non-idle. Expiration remains visible until a subsequent snapshot removes it;
-  the caller owns command resolution. Handle value breaks equal-ID ties.
+  the caller owns command resolution. Handle value breaks equal-ID ties. The
+  returned `SmallVector<ActorHandle, 4>` keeps typical session results inline,
+  with overflow for larger standalone pacer inputs.
 - `Reset()` clears deadlines, advancement credit, and activity, retaining settings.
 
 The controller stores values rather than actor pointers and never dereferences
 handles. Snapshot collection and validation of live world membership belong to
 the caller.
+
+Deadlines also use four inline slots. The standalone pacer has no four-player
+limit: the server imposes its existing four-online-player policy and gathers
+readiness/round participants in checked `StaticList`s. Spans keep that bounded
+server storage independent of the pacer's more general input contract.
 
 ## Units and preserved budgets
 

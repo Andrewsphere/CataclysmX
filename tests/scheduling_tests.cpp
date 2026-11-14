@@ -757,8 +757,9 @@ TEST_CASE("A busy player keeps shared pacing active while a ready player reaches
     REQUIRE(world.ScheduleActorAction(busy, 250));
     TickPacer pacer;
     REQUIRE(pacer.SetSettings({100, true, true}));
-    pacer.Synchronize({{busy, world.GetActor(busy)->id, 100, false, false},
-        {ready, world.GetActor(ready)->id, 50, true, false}});
+    const PlayerReadiness players[] = {{busy, world.GetActor(busy)->id, 100, false, false},
+        {ready, world.GetActor(ready)->id, 50, true, false}};
+    pacer.Synchronize(players);
     CHECK_FALSE(pacer.IsIdle());
     Tick tick = 0;
     std::uint32_t rng = 0;
@@ -766,7 +767,7 @@ TEST_CASE("A busy player keeps shared pacing active while a ready player reaches
     pacer.ElapseMicroseconds(499'999);
     CHECK(pacer.ExpiredPlayers().empty());
     pacer.ElapseMicroseconds(1);
-    CHECK(pacer.ExpiredPlayers() == Vector<ActorHandle>{ready});
+    CHECK(pacer.ExpiredPlayers() == SmallVector<ActorHandle, 4>{ready});
     REQUIRE(world.ScheduleActorAction(ready)); // Controller supplies normal wait on expiry.
     const auto result = AdvanceUntilInput(world, tick, rng, pacer.AvailableTicks());
     pacer.ConsumeTicks(tick);

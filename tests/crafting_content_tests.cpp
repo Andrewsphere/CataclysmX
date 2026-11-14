@@ -269,7 +269,9 @@ TEST_CASE("Crafting bounded lists accept eight items four traits and canonicaliz
     String definitions;
     for (const char* id : {"a", "b", "c", "d", "e", "f", "g", "h", "i"}) {
         if (!definitions.empty()) { definitions += ','; }
-        definitions += Item(id);
+        definitions += Item(id, eastl::string_view(id) == "i"
+            ? "tool_traits:[{id:'td',tier:255},{id:'tc',tier:1},{id:'tb',tier:1},{id:'ta',tier:1}]"
+            : "");
     }
     for (const char* id : {"ta", "tb", "tc", "td", "te"}) {
         definitions += ",{type:'tool_trait',id:'";
@@ -297,6 +299,10 @@ TEST_CASE("Crafting bounded lists accept eight items four traits and canonicaliz
     CHECK(result.inputs[7].Retained());
     CHECK(result.inputs[7].Count() == 255);
     CHECK(result.toolTraits[0].trait == loaded->FindToolTrait("ta"));
+    const auto& itemTraits = loaded->GetItem(loaded->FindItem("i")).toolTraits;
+    REQUIRE(itemTraits.Size() == 4);
+    CHECK(itemTraits[0].trait == loaded->FindToolTrait("ta"));
+    CHECK(itemTraits[3].tier == 255);
     for (const auto& invalid : {recipe(inputs + ",{item:'i',count:1}", traits),
                                recipe(inputs, traits + ",{id:'te',tier:1}"),
                                recipe(inputs, "{id:'ta',tier:1},{id:'ta',tier:2}"),
@@ -309,11 +315,15 @@ TEST_CASE("Crafting bounded lists accept eight items four traits and canonicaliz
     const auto retained = recycler.find(",retained:true");
     REQUIRE(retained != String::npos);
     recycler.erase(retained, eastl::string_view(",retained:true").size());
-    const String eightReturns = recycler + "]}";
+    const String eightReturns = recycler + "],inputs:[" + inputs + "],tool_traits:[" + traits + "]}";
     const auto returns = Load(View(eightReturns));
     REQUIRE(returns.has_value());
     CHECK(returns->GetRecyclingRecipe({1}).returns.Size() == 8);
     CHECK(returns->GetRecyclingRecipe({1}).returns[0].item == returns->FindItem("a"));
+    REQUIRE(returns->GetRecyclingRecipe({1}).inputs.Size() == 8);
+    CHECK(returns->GetRecyclingRecipe({1}).inputs[7].Retained());
+    REQUIRE(returns->GetRecyclingRecipe({1}).toolTraits.Size() == 4);
+    CHECK(returns->GetRecyclingRecipe({1}).toolTraits[3].tier == 255);
     recycler += ",{item:'i',count:1}]}";
     Invalid(View(recycler));
 }

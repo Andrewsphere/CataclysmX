@@ -1,4 +1,5 @@
 #include "terminal/settings_menu.h"
+#include "core/static_list.h"
 
 #include <ftxui/component/component_base.hpp>
 #include <ftxui/component/event.hpp>
@@ -52,6 +53,7 @@ struct FieldPresentation {
     std::uint64_t minimum = 0;
     std::uint64_t maximum = 0;
 };
+using VisibleFieldList = StaticList<const FieldPresentation*, static_cast<std::size_t>(SettingsField::Count)>;
 constexpr FieldPresentation fields[] = {
     {SettingsField::Language, 0, EditorKind::Language},
     {SettingsField::ViewRadius, 0, EditorKind::Number, 0, playerSightRange},
@@ -216,9 +218,9 @@ public:
         const auto visibleBindings = VisibleBindings();
         auto& page = Page();
         const auto count = mode_ == EditorMode::Language ? languages_.size()
-            : Bindings() ? visibleBindings.size() : visibleFields.size();
+            : Bindings() ? visibleBindings.size() : visibleFields.Size();
         if (count == 0) { std::abort(); }
-        if (page.selected >= (Bindings() ? visibleBindings.size() : visibleFields.size())) { page.selected = 0; }
+        if (page.selected >= (Bindings() ? visibleBindings.size() : visibleFields.Size())) { page.selected = 0; }
         ftxui::Elements rows;
         if (mode_ == EditorMode::Language) {
             for (std::size_t i = 0; i < languages_.size(); ++i) {
@@ -314,7 +316,7 @@ public:
             } else if (focus_ == FocusArea::Category && sidebarVisible_) {
                 ChangeTab(*action == InputAction::North ? -1 : 1);
             } else if (focus_ == FocusArea::List) {
-                const auto count = Bindings() ? VisibleBindings().size() : VisibleFields().size();
+                const auto count = Bindings() ? VisibleBindings().size() : VisibleFields().Size();
                 Page().selected = *action == InputAction::North ? (Page().selected + count - 1) % count : (Page().selected + 1) % count;
                 Page().detailScroll = 0;
             }
@@ -372,9 +374,9 @@ private:
         for (const auto& key : binding.keys) { if (!LegacyKeyAvailable(key)) { return true; } }
         return false;
     }
-    Vector<const FieldPresentation*> VisibleFields() const {
-        Vector<const FieldPresentation*> result;
-        for (const auto& field : fields) { if (field.category == Category()) { result.push_back(&field); } }
+    VisibleFieldList VisibleFields() const {
+        VisibleFieldList result;
+        for (const auto& field : fields) { if (field.category == Category() && !result.PushBack(&field)) { std::abort(); } }
         return result;
     }
     Vector<InputBinding> VisibleBindings() const {
@@ -475,7 +477,7 @@ private:
     ftxui::Element DetailTitle(const String& title) const {
         return ftxui::paragraph(Frontend(title)) | ftxui::bold;
     }
-    ftxui::Element Details(const Vector<const FieldPresentation*>& visibleFields, const Vector<InputBinding>& visibleBindings) {
+    ftxui::Element Details(const VisibleFieldList& visibleFields, const Vector<InputBinding>& visibleBindings) {
         ftxui::Elements lines;
         if (mode_ == EditorMode::Inspect) {
             lines.push_back(ftxui::text(T("settings.ui.inspection_title")) | ftxui::bold);

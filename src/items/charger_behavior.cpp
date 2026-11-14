@@ -80,7 +80,7 @@ public:
         if (!link.source) { return NoPower(); }
         return {};
     }
-    void QueryActions(const ItemReadContext& context, ActorHandle actor, Vector<ItemActionInfo>& output) const override {
+    void QueryActions(const ItemReadContext& context, ActorHandle actor, ItemActionList& output) const override {
         const auto link = Link(context);
         const auto append = [&](const char* id, ItemUseReason reason) {
             for (const auto& action : schema_.actions) {

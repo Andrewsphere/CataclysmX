@@ -112,7 +112,7 @@ TEST_CASE("Coarse debug feature cells preserve exact crossings and feature prior
 
 TEST_CASE("Selected debug details identify stable owners buildings environment and contracts", "[client][worldgen-debug]") {
     const auto plan = GenerateRegionPlan(TestContent(), 73, {-2, 1});
-    REQUIRE_FALSE(plan.buildings.empty());
+    REQUIRE_FALSE(plan.buildings.Empty());
     const auto owners = BuildWorldgenDebugView(TestContent(), plan, WorldgenDebugLayer::Ownership, 1);
     for (const auto& building : plan.buildings) {
         const auto selection = building.entrance;

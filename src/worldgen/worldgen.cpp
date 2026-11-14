@@ -125,7 +125,7 @@ BoundaryCrossing Crossing(std::uint64_t seed, BorderAxis axis, int border, int a
 }
 void AddRoad(RegionPlan& plan, TileCoord a, TileCoord b) {
     Require(a.x == b.x || a.z == b.z);
-    plan.roads.push_back({a, b, 3});
+    Require(plan.roads.PushBack({a, b, 3}));
 }
 bool OnSegment(const RoadSegment& road, TileCoord p) {
     Require(road.width == 1 || road.width == 3);
@@ -193,10 +193,10 @@ void AddBuilding(const ContentCatalog& content, RegionPlan& plan, const ParcelPl
     const auto entry = Rotate(pattern.entrance, pattern.width, pattern.height, turns);
     const TileCoord entrance{x + entry.x, z + entry.z};
     const auto abandonmentSeed = Mix(random ^ 0xa54ff53a5f1d36f1ULL);
-    plan.buildings.push_back({parcel.owner, selected, static_cast<std::uint8_t>(turns),
+    Require(plan.buildings.PushBack({parcel.owner, selected, static_cast<std::uint8_t>(turns),
         {{x, z}, {x + width, z + height}}, entrance,
         {entrance, {entrance.x, parcel.streetZ}, 1}, abandonmentSeed,
-        abandonmentSeed % 4 != 0});
+        abandonmentSeed % 4 != 0}));
 }
 
 bool Accessible(const ContentCatalog& content, TerrainId terrain) {
@@ -340,11 +340,11 @@ RegionPlan GenerateRegionPlan(const ContentCatalog& content, std::uint64_t seed,
             const int left = x + 74 + column * 56;
             const int top = z + 74 + row * 56;
             for (int half = 0; half < 2; ++half) {
-                ParcelPlan parcel{{region, static_cast<std::uint32_t>(plan.parcels.size())},
+                ParcelPlan parcel{{region, static_cast<std::uint32_t>(plan.parcels.Size())},
                     {{left, top + half * 26}, {left + 53, top + (half == 0 ? 26 : 53)}},
                     half == 0 ? Frontage::North : Frontage::South,
                     z + 72 + (row + half) * 56};
-                plan.parcels.push_back(parcel);
+                Require(plan.parcels.PushBack(parcel));
                 AddBuilding(content, plan, parcel);
             }
         }

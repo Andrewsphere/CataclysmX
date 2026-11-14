@@ -1,9 +1,11 @@
 #pragma once
 
+#include "core/containers.h"
 #include "core/timing.h"
 #include "core/world.h"
 
 #include <EASTL/optional.h>
+#include <EASTL/span.h>
 
 namespace cataclysmx {
 
@@ -20,7 +22,7 @@ class TickPacer {
 public:
     bool SetSettings(PacingSettings settings);
     PacingSettings GetSettings() const;
-    void Synchronize(const Vector<PlayerReadiness>& players);
+    void Synchronize(eastl::span<const PlayerReadiness> players);
     bool IsIdle() const;
     void ElapseMicroseconds(std::uint64_t elapsed);
     Tick AvailableTicks() const;
@@ -28,7 +30,7 @@ public:
     eastl::optional<std::uint64_t> NextDeadlineMicroseconds() const;
     eastl::optional<std::uint64_t> NextUnexpiredDeadlineMicroseconds() const;
     std::uint64_t MicrosecondsUntilTicks(Tick ticks) const;
-    Vector<ActorHandle> ExpiredPlayers() const;
+    SmallVector<ActorHandle, 4> ExpiredPlayers() const;
     std::uint64_t GraceMicroseconds(ActorHandle actor) const;
     void RestartGrace(ActorHandle actor);
     void Reset();
@@ -42,7 +44,7 @@ private:
     };
 
     PacingSettings settings_{};
-    Vector<Deadline> deadlines_;
+    SmallVector<Deadline, 4> deadlines_;
     Tick creditedTicks_ = 0;
     std::uint32_t fractionalUnits_ = 0;
     bool hasActivity_ = false;

@@ -3,6 +3,7 @@
 #include "content_fixture.h"
 
 #include <catch2/catch_test_macros.hpp>
+#include <EASTL/utility.h>
 #include <enet/enet.h>
 
 #include <chrono>
@@ -288,7 +289,8 @@ TEST_CASE("Run encoded snapshots bound expansion and preserve repeated and varyi
     wire::Writer varied; REQUIRE(varied.View(view));
     CHECK(varied.bytes.size() > 32768); // Cannot collapse into a small uniform run.
     CHECK(varied.bytes.size() <= wire::maxPacket);
-    wire::Reader variedReader{{varied.bytes.data(), varied.bytes.size()}};
+    auto moved = eastl::move(varied);
+    wire::Reader variedReader{{moved.bytes.data(), moved.bytes.size()}};
     REQUIRE(variedReader.View(decoded)); CHECK(variedReader.Done());
     CHECK(decoded.cells == view.cells);
 

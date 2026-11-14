@@ -25,7 +25,7 @@ enum class Type : std::uint8_t {
 };
 
 struct Writer {
-    Vector<std::uint8_t> bytes;
+    SmallVector<std::uint8_t, 256> bytes;
     void U8(std::uint8_t v);
     void U16(std::uint16_t v);
     void U32(std::uint32_t v);

@@ -128,6 +128,34 @@ TEST_CASE("source clips mix separate PNGs and uniform sheet frames", "[sdl][tile
     CHECK(playback.Sample(7, rotated, *d, 30).mapping.transform == rotated.transform);
 }
 
+TEST_CASE("source animation frames and variants can exceed inline capacity", "[sdl][tileset][source]") {
+    auto d = Parse({{"tile/a.png", {}, 2, 2}, {"tile/b.png", {}, 2, 2},
+        {"tile/clip.meta", "{kind:'animation',frames:[{sprite:'tile.a',duration_ms:10},{sprite:'tile.a',duration_ms:10},{sprite:'tile.a',duration_ms:10},{sprite:'tile.a',duration_ms:10},{sprite:'tile.b',duration_ms:10}]}"},
+        {"tile/varied.meta", "{kind:'variants',alternatives:[{visual:'tile.a'},{visual:'tile.a'},{visual:'tile.b',weight:7}]}"}},
+        "terrain:{grass:{visual:'tile.varied'}}");
+    REQUIRE(d);
+    REQUIRE(d->animations[0].frames.size() == 5);
+    CHECK(d->sprites[SampleAnimation(d->animations[0], 40).spriteIndex].id == "tile.b");
+    const auto mapping = d->terrain[TestTerrain("grass").value];
+    const auto& group = d->visuals[mapping.index];
+    REQUIRE(group.alternatives.size() == 3);
+    CHECK(group.totalWeight == 9);
+    CHECK(d->sprites[group.alternatives[2].mapping.index].id == "tile.b");
+
+    String variants = "{kind:'variants',alternatives:[";
+    for (std::size_t i = 0; i < MaxTilesetEntries; ++i) {
+        if (i) { variants += ','; }
+        variants += "{visual:'tile.a'}";
+    }
+    variants += "]}";
+    auto maximum = Parse({{"tile/a.png", {}, 2, 2}, {"tile/varied.meta", variants}},
+        "terrain:{grass:{visual:'tile.varied'}}");
+    REQUIRE(maximum);
+    const auto maximumMapping = maximum->terrain[TestTerrain("grass").value];
+    CHECK(maximum->visuals[maximumMapping.index].alternatives.size() == MaxTilesetEntries);
+    CHECK(maximum->visuals[maximumMapping.index].totalWeight == MaxTilesetEntries);
+}
+
 TEST_CASE("source packs reject invalid metadata with local diagnostics", "[sdl][tileset][source]") {
     const Vector<SpriteSourceFile> badFiles[] = {
         {{"tile/Upper.png", {}, 2, 2}}, {{"tile/a.b.png", {}, 2, 2}}, {{"tile/../a.png", {}, 2, 2}},

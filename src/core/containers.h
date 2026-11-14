@@ -1,6 +1,7 @@
 #pragma once
 
 #include <EASTL/allocator_malloc.h>
+#include <EASTL/fixed_vector.h>
 #include <EASTL/string.h>
 #include <EASTL/vector.h>
 
@@ -31,6 +32,11 @@ public:
 
 template<class T>
 using Vector = eastl::vector<T, FatalAllocator>;
+
+// Inline capacity is a common-case optimization, never a cardinality limit.
+// EASTL fixed_vector moves elements individually, including overflow storage.
+template<class T, std::size_t inlineCapacity>
+using SmallVector = eastl::fixed_vector<T, inlineCapacity, true, FatalAllocator>;
 
 using String = eastl::basic_string<char, FatalAllocator>;
 

@@ -28,6 +28,13 @@ each split into two 53×26/27 parcels with north/south frontage. Parcel identity
 `(region, parcel ordinal)`; building owner identity uses the same pair. Hashes
 are deterministic local mixing, not globally unique IDs.
 
+Plan roads, parcels, and buildings use `StaticList` with capacities 18, 8, and 8.
+The current generator emits six streets and twelve connector segments, at most
+eight parcels, and at most one building per parcel. Checked appends make changes
+that violate those bounds fail fast. Use `Size`/`Empty`, indexing, or iteration
+to inspect the used records; inline storage avoids three growing heap buffers
+per plan without affecting generation order or version.
+
 Each of the four region edges derives its crossing from a canonical
 `BoundaryKey`: axis, geometric border coordinate (a multiple of 256), and the
 along-border region coordinate. Neighboring regions therefore independently

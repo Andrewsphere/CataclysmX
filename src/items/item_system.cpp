@@ -60,8 +60,8 @@ const ItemBehavior* ItemSystem::Behavior(ItemHandle item, ItemCapabilityId capab
     } }
     return nullptr;
 }
-Vector<ItemActionInfo> ItemSystem::QueryActions(ActorHandle actor, ItemHandle handle) const {
-    Vector<ItemActionInfo> result;
+ItemActionList ItemSystem::QueryActions(ActorHandle actor, ItemHandle handle) const {
+    ItemActionList result;
     const Item* item = world_.GetItem(handle);
     if (!item) { return result; }
     const ItemReadContext context(*this, handle);
@@ -69,7 +69,7 @@ Vector<ItemActionInfo> ItemSystem::QueryActions(ActorHandle actor, ItemHandle ha
     for (const auto& behavior : item->runtime_.behaviors_) {
         const auto* definition = ItemBehaviorConfig(itemDefinition, behavior->Capability());
         Require(definition != nullptr);
-        Vector<ItemActionInfo> emitted;
+        ItemActionList emitted;
         behavior->QueryActions(context, actor, emitted);
         for (auto& action : emitted) {
             const auto* declared = definition->FindAction(action.action);
@@ -327,7 +327,7 @@ void ItemSystem::Drain() {
         const auto change = changes_.front();
         changes_.erase(changes_.begin());
         // Capture recipients, then resolve each again after every callback/destruction.
-        Vector<ScheduledBehavior> recipients;
+        SmallVector<ScheduledBehavior, 4> recipients;
         ItemHandle handle = change.item;
         while (const auto* item = world_.GetItem(handle)) {
             for (const auto& behavior : item->runtime_.behaviors_) { recipients.push_back({handle, behavior->Capability()}); }

@@ -61,6 +61,8 @@ struct ItemActionInfo {
     ItemUseReason reason;
     bool operator==(const ItemActionInfo&) const = default;
 };
+using ItemActionList = SmallVector<ItemActionInfo, 2>;
+
 struct ItemUseRequest {
     ItemCapabilityId capability{};
     String action;
@@ -88,9 +90,9 @@ struct ItemBehaviorView {
     bool operator==(const ItemBehaviorView&) const = default;
 };
 struct ItemPresentation {
-    Vector<ItemEnergyView> energy;
-    Vector<ItemBehaviorView> activities;
-    Vector<ItemActionInfo> actions;
+    SmallVector<ItemEnergyView, 1> energy;
+    SmallVector<ItemBehaviorView, 1> activities;
+    ItemActionList actions;
 };
 struct ItemEnergyRef {
     ItemHandle item{};

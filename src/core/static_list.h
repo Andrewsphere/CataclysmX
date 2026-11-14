@@ -7,8 +7,8 @@
 
 namespace cataclysmx {
 
-// Small immutable-content lists: initialized trivial values, no allocator or
-// uninitialized-storage machinery. Capacity overflow is a loader error.
+// Small bounded lists: initialized trivial values, no allocator or
+// uninitialized-storage machinery. Callers must handle capacity overflow.
 template<class T, std::size_t capacity>
 class StaticList {
     static_assert(capacity > 0 && capacity <= 255);

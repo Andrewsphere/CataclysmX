@@ -2,6 +2,7 @@
 
 #include "client/localization.h"
 #include "client/worldgen_debug.h"
+#include "core/static_list.h"
 #include "sdl/text.h"
 #include "sdl/layout.h"
 
@@ -54,7 +55,8 @@ private:
     unsigned Index() const { return scope_ == SettingsScope::Global ? 0 : 1; }
     Settings Preview(const SettingsStore& store) const;
     Keymap PreviewKeys(const SettingsStore& store) const;
-    void Fields(Vector<SettingsField>& output) const;
+    using VisibleFieldList = StaticList<SettingsField, static_cast<std::size_t>(SettingsField::Count)>;
+    void Fields(VisibleFieldList& output) const;
     void Bindings(const SettingsStore& store, Keymap& output) const;
     void Begin(const SettingsStore& store, const char* directory, bool append);
     SettingsOverrides drafts_[2];

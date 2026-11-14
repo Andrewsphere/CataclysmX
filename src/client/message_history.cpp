@@ -18,6 +18,6 @@ void MessageHistory::Add(eastl::string_view message) {
     entries_.emplace_back(message.data(), message.size());
 }
 
-const Vector<String>& MessageHistory::Entries() const { return entries_; }
+eastl::span<const String> MessageHistory::Entries() const { return {entries_.data(), entries_.size()}; }
 
 }

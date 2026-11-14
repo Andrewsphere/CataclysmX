@@ -22,10 +22,11 @@ long messages are clipped horizontally. Interaction direction prompts appear
 after history without replacing it. SDL wraps text within its status panel
 and clips overflow from the top.
 
-`MessageHistory` in `client/message_history.h` owns an EASTL vector of strings.
+`MessageHistory` in `client/message_history.h` owns `SmallVector<String, 10>`:
+the default history fits inline, and larger configured histories spill.
 `Add` records an event, `SetCapacity` applies a validated setting, and `Entries`
-returns a borrowed const reference in chronological order. Callers must not
-retain references across mutations. The small bounded collection keeps
+returns `eastl::span<const String>` in chronological order. Callers must not
+retain the span or element references across mutations. The small bounded collection keeps
 ownership explicit and avoids allocating a copied list during rendering.
 
 The terminal borrows history through `GameplayPresentation::history`.

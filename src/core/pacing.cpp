@@ -42,8 +42,8 @@ bool TickPacer::SetSettings(PacingSettings settings) {
 
 PacingSettings TickPacer::GetSettings() const { return settings_; }
 
-void TickPacer::Synchronize(const Vector<PlayerReadiness>& players) {
-    Vector<Deadline> next;
+void TickPacer::Synchronize(eastl::span<const PlayerReadiness> players) {
+    SmallVector<Deadline, 4> next;
     next.reserve(players.size());
     hasActivity_ = false;
     for (const PlayerReadiness& player : players) {
@@ -140,8 +140,8 @@ std::uint64_t TickPacer::MicrosecondsUntilTicks(Tick ticks) const {
         DivideCeiling(residualUnits, rate));
 }
 
-Vector<ActorHandle> TickPacer::ExpiredPlayers() const {
-    Vector<ActorHandle> result;
+SmallVector<ActorHandle, 4> TickPacer::ExpiredPlayers() const {
+    SmallVector<ActorHandle, 4> result;
     if (IsIdle()) { return result; }
     for (const Deadline& deadline : deadlines_) {
         if (!deadline.hasCommand && deadline.remainingUnits == 0) { result.push_back(deadline.actor); }

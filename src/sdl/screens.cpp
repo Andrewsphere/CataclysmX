@@ -2,6 +2,7 @@
 #include "sdl/renderer.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <iterator>
 
 namespace cataclysmx::sdl {
@@ -13,6 +14,8 @@ constexpr SettingsField fields[] = {SettingsField::Language, SettingsField::View
     SettingsField::ResidencyMode, SettingsField::ResidentRadiusTiles, SettingsField::TicksPerSecond,
     SettingsField::RateLimited, SettingsField::PauseWhenIdle, SettingsField::AutosaveInterval};
 constexpr unsigned categories[] = {0,0,0,0,1,1,1,1,1,2,2,2,3};
+static_assert(std::size(fields) == static_cast<std::size_t>(SettingsField::Count));
+static_assert(std::size(categories) == std::size(fields));
 constexpr const char* categoryNames[] = {"interface", "world", "timing", "saving"};
 String Local(const Localization& loc, eastl::string_view prefix, eastl::string_view suffix) {
     String key(prefix.data(), prefix.size()); key.append(suffix.data(), suffix.size());
@@ -287,9 +290,9 @@ Settings OptionsUi::Preview(const SettingsStore& store) const {
 Keymap OptionsUi::PreviewKeys(const SettingsStore& store) const {
     return scope_ == SettingsScope::Global ? ResolveKeymap(keys_[0],{}) : ResolveKeymap(store.KeyOverrides(SettingsScope::Global),keys_[1]);
 }
-void OptionsUi::Fields(Vector<SettingsField>& output) const {
-    output.clear();
-    for (std::size_t i = 0; i < std::size(fields); ++i) { if (categories[i] == category_) { output.push_back(fields[i]); } }
+void OptionsUi::Fields(VisibleFieldList& output) const {
+    output = {};
+    for (std::size_t i = 0; i < std::size(fields); ++i) { if (categories[i] == category_ && !output.PushBack(fields[i])) { std::abort(); } }
 }
 void OptionsUi::Bindings(const SettingsStore& store, Keymap& output) const {
     output.clear();
@@ -297,8 +300,8 @@ void OptionsUi::Bindings(const SettingsStore& store, Keymap& output) const {
 }
 void OptionsUi::Begin(const SettingsStore& store, const char* directory, bool append) {
     if (bindings_) { append_ = append; mode_ = Mode::Capture; return; }
-    Vector<SettingsField> visible; Fields(visible);
-    if (selected_ >= visible.size()) { return; }
+    VisibleFieldList visible; Fields(visible);
+    if (selected_ >= visible.Size()) { return; }
     const auto field = visible[selected_];
     const auto preview = Preview(store);
     if (field == SettingsField::Seed && scope_ == SettingsScope::World) { return; }
@@ -345,7 +348,7 @@ OptionsEvent OptionsUi::Key(const KeyChord& chord, const SettingsStore& store, c
         if (chord.key == "Backspace" && !chord.ctrl) {
             if (!edit_.empty()) { edit_.pop_back(); } replace_ = false;
         } else if (chord.key == "Enter" && !chord.ctrl) {
-            Vector<SettingsField> visible; Fields(visible);
+            VisibleFieldList visible; Fields(visible);
             auto candidate = drafts_[Index()];
             const auto field = visible[selected_];
             if (field == SettingsField::ResidentRadius) { candidate.residentRadiusTiles.reset(); candidate.residencyMode.reset(); }
@@ -379,9 +382,9 @@ OptionsEvent OptionsUi::Key(const KeyChord& chord, const SettingsStore& store, c
         const bool down = *action == InputAction::South;
         if (focus_ == 4) { detailScroll_ = std::max(0,detailScroll_ + (down ? 1 : -1)); break; }
         if (focus_ == 2) { const unsigned count = bindings_ ? std::size(contexts) : std::size(categoryNames); category_ = (category_ + count + (down ? 1 : -1)) % count; selected_ = 0; break; }
-        Vector<SettingsField> visible; Keymap bindings;
+        VisibleFieldList visible; Keymap bindings;
         Fields(visible); Bindings(store,bindings);
-        const auto count = bindings_ ? bindings.size() : visible.size();
+        const auto count = bindings_ ? bindings.size() : visible.Size();
         if (count) { selected_ = (selected_ + count + (down ? 1 : -1)) % count; }
         detailScroll_ = 0; break;
     }
@@ -393,7 +396,7 @@ OptionsEvent OptionsUi::Key(const KeyChord& chord, const SettingsStore& store, c
     }
     case InputAction::Reset:
         if (bindings_) { Keymap visible; Bindings(store,visible); ResetBinding(keys_[Index()],visible[selected_].context,visible[selected_].action); }
-        else { Vector<SettingsField> visible; Fields(visible); if (visible[selected_] != SettingsField::Seed || scope_ != SettingsScope::World) { ResetOverride(drafts_[Index()],visible[selected_]); } }
+        else { VisibleFieldList visible; Fields(visible); if (visible[selected_] != SettingsField::Seed || scope_ != SettingsScope::World) { ResetOverride(drafts_[Index()],visible[selected_]); } }
         break;
     case InputAction::Inspect: mode_ = Mode::Inspect; feedback_ = loc.Text("settings.inspecting","Press a key to inspect"); break;
     case InputAction::Apply: return OptionsEvent::Save;
@@ -432,7 +435,7 @@ void OptionsUi::Present(const SettingsStore& store, const Localization& loc, Scr
         }
         if (selected_ < visible.size()) { frame.details.push_back(Local(loc,"settings.ui.action_help.",ActionName(visible[selected_].action))); }
     } else {
-        Vector<SettingsField> visible; Fields(visible);
+        VisibleFieldList visible; Fields(visible);
         for (auto field : visible) {
             String row = field == SettingsField::Seed && scope_ == SettingsScope::World
                 ? loc.Text("settings.ui.world_seed","World seed") : Local(loc,"settings.ui.label.",SettingName(field));
@@ -443,7 +446,7 @@ void OptionsUi::Present(const SettingsStore& store, const Localization& loc, Scr
                 || (field == SettingsField::ResidentRadiusTiles && preview.residencyMode == ResidencyMode::Square)) { row += " [inactive]"; }
             frame.rows.push_back({eastl::move(row),field == SettingsField::Seed && scope_ == SettingsScope::World});
         }
-        if (selected_ < visible.size()) {
+        if (selected_ < visible.Size()) {
             const auto name = SettingName(visible[selected_]);
             frame.details.push_back(Local(loc,"settings.ui.description.",name));
             frame.details.push_back(Local(loc,"settings.ui.constraint.",name));

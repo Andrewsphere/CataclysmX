@@ -28,7 +28,15 @@ Build a small, deterministic C++23 roguelike inspired by Cataclysm: Bright Night
 - Use a trailing underscore (camelCase_) for private and protected data members.
 - Do not use trailing underscores for public fields, including fields of simple value types and component structs.
 - Consider ankerl hashmaps/sets when designing memory layout if ordering is not required.
-- Be careful we allocations, do not design APIs that return disposable vectors.
+- Be careful with allocations; prefer reusable output storage over disposable heap vectors.
+
+### Container selection
+
+- Evaluate `StaticList`, then `SmallVector`, then `Vector`; consider element size, owner count, mutation, and move cost, not only the maximum count. Use `eastl::array` when every slot is always present.
+- `StaticList<T, N>` is for small trivially copyable records with a justified hard bound (1..255). It initializes and stores all N slots in every owner. Check `PushBack`: reject excess external data with a typed error, and fail fast on an internal bound violation. Do not infer hard limits from current sample content.
+- `SmallVector<T, N>` is our overflow-enabled EASTL `fixed_vector` with `FatalAllocator`. Choose N for common occupancy, often 1-2 for per-item lists; larger valid lists must still spill. Inline capacity is paid even by empty owners, and eliminating a container allocation does not eliminate allocations inside its elements.
+- The installed EASTL `fixed_vector` move constructor/assignment move elements individually even after heap overflow; they do not steal the buffer. Keep `Vector` for bulk buffers, cheap ownership transfers, or large reusable scratch where inline storage would add cost. Overflow can also reallocate on further growth.
+- Prefer `eastl::span<const T>` for borrowed read-only sequences when the concrete owning container is irrelevant. Preserve iteration order, existing content limits, and explicit serialization. See `doc/containers.md` for API reasoning.
 
 ## Architecture
 

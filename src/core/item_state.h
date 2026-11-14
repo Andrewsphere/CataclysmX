@@ -30,9 +30,9 @@ private:
     friend ItemRuntime MakeItemState(const ItemDefinition&);
     friend void WriteItemState(const ItemDefinition&, const ItemRuntime&, DataObject&);
     friend StateResult<ItemRuntime> ReadItemState(const ItemDefinition&, const DataObject&, Diagnostics*);
-    Vector<ItemEnergyState> energy_;
+    SmallVector<ItemEnergyState, 1> energy_;
     eastl::unique_ptr<CraftingJobState> crafting_;
-    Vector<eastl::unique_ptr<ItemBehavior>> behaviors_;
+    SmallVector<eastl::unique_ptr<ItemBehavior>, 1> behaviors_;
 };
 
 ItemRuntime MakeItemState(const ItemDefinition& definition);

@@ -4,6 +4,7 @@
 
 #include <EASTL/optional.h>
 #include <EASTL/sort.h>
+#include <EASTL/span.h>
 #include <EASTL/utility.h>
 #include <yyjson.h>
 
@@ -358,8 +359,8 @@ struct PendingToolTrait {
 
 struct PendingCrafting {
     CraftingRecipeDefinition definition;
-    Vector<PendingInput> inputs;
-    Vector<PendingTrait> traits;
+    SmallVector<PendingInput, 2> inputs;
+    SmallVector<PendingTrait, 1> traits;
     PendingOutput result;
     std::size_t inputOrder = 0;
     Context context;
@@ -370,14 +371,14 @@ struct PendingRecycling {
     String target;
     String generatedFrom;
     std::uint32_t efficiency = 0;
-    Vector<PendingInput> inputs;
-    Vector<PendingTrait> traits;
-    Vector<PendingOutput> returns;
+    SmallVector<PendingInput, 2> inputs;
+    SmallVector<PendingTrait, 1> traits;
+    SmallVector<PendingOutput, 2> returns;
     std::size_t inputOrder = 0;
     Context context;
 };
 
-bool ParseTraits(yyjson_val* array, Vector<PendingTrait>& output, const Context& context) {
+bool ParseTraits(yyjson_val* array, SmallVector<PendingTrait, 1>& output, const Context& context) {
     if (!array) { return true; }
     if (!yyjson_is_arr(array) || yyjson_arr_size(array) > maxRecipeTraits) {
         return context.Fail("expected an array of at most 4 tool traits");
@@ -400,7 +401,7 @@ bool ParseTraits(yyjson_val* array, Vector<PendingTrait>& output, const Context&
     return true;
 }
 
-bool ParseInputs(yyjson_val* array, Vector<PendingInput>& output, const Context& context, bool required) {
+bool ParseInputs(yyjson_val* array, SmallVector<PendingInput, 2>& output, const Context& context, bool required) {
     if (!array && !required) { return true; }
     if (!yyjson_is_arr(array) || yyjson_arr_size(array) > maxRecipeInputs) {
         return context.Fail("expected an array of at most 8 input item types including retained tools");
@@ -492,7 +493,7 @@ bool ParseCrafting(yyjson_val* object, PendingCrafting& pending) {
 
 struct PendingItem {
     ItemDefinition definition;
-    Vector<PendingTrait> traits;
+    SmallVector<PendingTrait, 1> traits;
     String powerStore;
     std::size_t inputOrder = 0;
     Context context;
@@ -1334,7 +1335,7 @@ std::size_t FindDefinition(const Vector<Definition>& definitions, eastl::string_
     return begin < definitions.size() && View(definitions[begin].id) == id ? begin + 1 : 0;
 }
 
-bool ResolveTraits(const Vector<PendingTrait>& pending, StaticList<TraitRequirement, maxRecipeTraits>& output,
+bool ResolveTraits(eastl::span<const PendingTrait> pending, StaticList<TraitRequirement, maxRecipeTraits>& output,
                    const ContentCatalog& catalog, const Context& context) {
     for (std::size_t i = 0; i < pending.size(); ++i) {
         const auto& trait = pending[i];
@@ -1373,7 +1374,7 @@ bool ResolveItem(const String& name, ItemTypeId& output, const ContentCatalog& c
     return false;
 }
 
-bool ResolveInputs(const Vector<PendingInput>& pending, StaticList<RecipeInput, maxRecipeInputs>& output,
+bool ResolveInputs(eastl::span<const PendingInput> pending, StaticList<RecipeInput, maxRecipeInputs>& output,
                    const ContentCatalog& catalog, const Context& context) {
     for (std::size_t i = 0; i < pending.size(); ++i) {
         const auto& input = pending[i];

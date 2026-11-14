@@ -50,7 +50,7 @@ public:
     DoorBehavior(ItemCapabilityId self, const DoorConfig& config, const ItemBehaviorSchema& schema,
         bool armed, Tick remaining, TileCoord target)
         : ItemBehavior(self), config_(config), schema_(schema), armed_(armed), remaining_(remaining), target_(target) {}
-    void QueryActions(const ItemReadContext& context, ActorHandle actor, Vector<ItemActionInfo>& output) const override {
+    void QueryActions(const ItemReadContext& context, ActorHandle actor, ItemActionList& output) const override {
         const auto& action = schema_.actions[armed_ ? 1 : 0];
         const auto reason = armed_ || Deployed(context, actor) ? ItemUseReason{} : NotDeployed();
         output.push_back({Capability(), action.id, action.argument,

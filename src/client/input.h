@@ -31,7 +31,7 @@ enum class InputAction {
 struct InputBinding {
     InputContext context = InputContext::Gameplay;
     InputAction action = InputAction::Wait;
-    Vector<KeyChord> keys;
+    SmallVector<KeyChord, 2> keys;
     bool operator==(const InputBinding&) const = default;
 };
 using Keymap = Vector<InputBinding>;

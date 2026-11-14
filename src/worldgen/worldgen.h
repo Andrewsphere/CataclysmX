@@ -1,11 +1,15 @@
 #pragma once
 
 #include "core/world.h"
+#include "core/static_list.h"
 
 namespace cataclysmx {
 
 inline constexpr int region_size = 256;
 inline constexpr std::uint32_t world_generation_version = 3;
+inline constexpr std::size_t maxRegionRoads = 18; // Six streets and four three-segment connectors.
+inline constexpr std::size_t maxRegionParcels = 8;
+inline constexpr std::size_t maxRegionBuildings = 8; // At most one per parcel.
 
 struct RegionCoord {
     int x = 0;
@@ -82,9 +86,9 @@ struct RegionPlan {
     TileCoord townCenter{};
     bool hasTown = false; // False when nominal town exceeds world bounds.
     eastl::array<BoundaryCrossing, 4> boundaries{}; // North, east, south, west.
-    Vector<RoadSegment> roads;
-    Vector<ParcelPlan> parcels; // Block row, block column, north/south half.
-    Vector<BuildingPlan> buildings; // Same order, omitting ineligible parcels.
+    StaticList<RoadSegment, maxRegionRoads> roads;
+    StaticList<ParcelPlan, maxRegionParcels> parcels; // Block row, block column, north/south half.
+    StaticList<BuildingPlan, maxRegionBuildings> buildings; // Same order, omitting ineligible parcels.
     bool operator==(const RegionPlan&) const = default;
 };
 

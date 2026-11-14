@@ -4,6 +4,7 @@
 #include "actors/movement.h"
 
 #include "core/simulation.h"
+#include "core/static_list.h"
 #include "core/perception.h"
 #include "core/lighting.h"
 #include "combat/combat_system.h"
@@ -21,6 +22,8 @@
 
 namespace cataclysmx {
 namespace {
+
+constexpr std::size_t maxOnlinePlayers = 4;
 
 void Require(bool condition) {
     if (!condition) {
@@ -759,16 +762,16 @@ CommandResult Server::Execute(ActorHandle handle, PlayerSlot& slot, Command comm
 }
 
 void Server::SynchronizePacing() {
-    Vector<PlayerReadiness> players;
+    StaticList<PlayerReadiness, maxOnlinePlayers> players;
     for (const PlayerSlot& slot : players_) {
         if (slot.state != PlayerConnectionState::Active) { continue; }
         const ActorHandle handle = PlayerActor(slot);
         const Actor* actor = world_.GetActor(handle);
         Require(actor && actor->player && !actor->parked && world_.IsActive(actor->position));
-        players.push_back({handle, slot.id, actor->speed,
-            Ready(world_, handle), slot.pending.has_value()});
+        Require(players.PushBack({handle, slot.id, actor->speed,
+            Ready(world_, handle), slot.pending.has_value()}));
     }
-    pacer_.Synchronize(players);
+    pacer_.Synchronize({players.begin(), players.Size()});
 }
 
 Server::PlayerSlot* Server::FindPlayer(PersistentId id) {
@@ -820,7 +823,7 @@ SessionResult<PlayerJoin> Server::JoinPlayer(eastl::string_view name,
     for (const PlayerSlot& slot : players_) {
         if (slot.state != PlayerConnectionState::Parked) { ++online; }
     }
-    if (online >= 4) { return eastl::unexpected(SessionError::Full); }
+    if (online >= maxOnlinePlayers) { return eastl::unexpected(SessionError::Full); }
     if (reconnectToken != 0) {
         for (PlayerSlot& slot : players_) {
             if (slot.token != reconnectToken) { continue; }
@@ -1032,8 +1035,8 @@ CommandResult Server::Submit(PersistentId id, PlayerInput input) {
     return {Outcome::queued, false, GetTick()};
 }
 
-bool Server::ResolveRound(SessionUpdate& result, const Vector<ActorHandle>& expired) {
-    Vector<PlayerSlot*> cohort;
+bool Server::ResolveRound(SessionUpdate& result, eastl::span<const ActorHandle> expired) {
+    StaticList<PlayerSlot*, maxOnlinePlayers> cohort;
     for (PlayerSlot& slot : players_) {
         if (slot.state != PlayerConnectionState::Active) { continue; }
         const Actor* actor = world_.GetActor(PlayerActor(slot));
@@ -1044,9 +1047,9 @@ bool Server::ResolveRound(SessionUpdate& result, const Vector<ActorHandle>& expi
             if (handle == PlayerActor(slot)) { timedOut = true; break; }
         }
         if (!slot.pending && !timedOut) { return false; }
-        cohort.push_back(&slot);
+        Require(cohort.PushBack(&slot));
     }
-    if (cohort.empty()) { return false; }
+    if (cohort.Empty()) { return false; }
     eastl::sort(cohort.begin(), cohort.end(), [](const PlayerSlot* a, const PlayerSlot* b) {
         return a->id < b->id;
     });

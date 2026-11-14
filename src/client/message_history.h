@@ -2,6 +2,7 @@
 
 #include "core/containers.h"
 
+#include <EASTL/span.h>
 #include <EASTL/string_view.h>
 
 namespace cataclysmx {
@@ -11,10 +12,10 @@ class MessageHistory {
 public:
     void SetCapacity(int capacity);
     void Add(eastl::string_view message);
-    const Vector<String>& Entries() const;
+    eastl::span<const String> Entries() const;
 private:
     int capacity_ = 10;
-    Vector<String> entries_;
+    SmallVector<String, 10> entries_;
 };
 
 }

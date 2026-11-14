@@ -74,7 +74,7 @@ private:
     bool useSelection_ = false;
     bool managingContents_ = false;
     PersistentId sourceItem_ = 0;
-    Vector<ItemActionInfo> itemActions_;
+    ItemActionList itemActions_;
     Vector<PersistentId> itemTargets_;
     std::size_t itemChoice_ = 0;
     Command itemCommand_;

@@ -13,7 +13,7 @@ public:
     ~ItemSystem();
     StateResult<void> Initialize(Item& item, const DataObject* archive, Diagnostics* diagnostics = nullptr);
     DataObject Capture(ItemHandle item) const;
-    Vector<ItemActionInfo> QueryActions(ActorHandle actor, ItemHandle item) const;
+    ItemActionList QueryActions(ActorHandle actor, ItemHandle item) const;
     ItemUseResult Use(ActorHandle actor, ItemHandle item, const ItemUseRequest& request);
     ItemPresentation Describe(ActorHandle actor, ItemHandle item) const;
     eastl::optional<ItemEnergyView> Energy(ItemHandle item, ItemCapabilityId store) const;

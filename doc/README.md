@@ -1,5 +1,8 @@
 # API documentation
 
+- [Sequence containers](containers.md): bounded lists, overflow-enabled small
+  vectors, bulk vectors, and inline-storage/move-cost tradeoffs.
+
 - [Graphics tool](graphics_tool.md): standard-library Python PNG operations,
   sprite editing, contact sheets, and bundled-artwork regeneration commands.
 

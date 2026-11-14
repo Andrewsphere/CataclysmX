@@ -5,6 +5,7 @@
 #include "core/pacing.h"
 
 #include <EASTL/optional.h>
+#include <EASTL/span.h>
 
 namespace cataclysmx {
 
@@ -136,9 +137,9 @@ struct InventoryEntry {
     std::uint32_t volumeMl = 0;
     std::uint32_t capacityVolumeMl = 0;
     std::uint64_t usedVolumeMl = 0;
-    Vector<ItemEnergyView> energy;
-    Vector<ItemBehaviorView> activities;
-    Vector<ItemActionInfo> actions;
+    SmallVector<ItemEnergyView, 1> energy;
+    SmallVector<ItemBehaviorView, 1> activities;
+    ItemActionList actions;
     bool operator==(const InventoryEntry&) const = default;
 };
 // Transport/presentation values contain persistent identities, never runtime handles.
@@ -270,7 +271,7 @@ private:
     void CommitPlayerBubble(PlayerSlot& slot);
     WorldResult<void> SetResidency(int activeRadius, int residentRadius,
         eastl::optional<CircleResidency> circle, Diagnostics* diagnostics);
-    bool ResolveRound(SessionUpdate& result, const Vector<ActorHandle>& expired);
+    bool ResolveRound(SessionUpdate& result, eastl::span<const ActorHandle> expired);
     void SynchronizePacing();
     eastl::optional<SaveError> Autosave();
     SessionState Checkpoint() const;

@@ -39,6 +39,20 @@ TEST_CASE("Message history retains events in order and trims its configurable ca
     CHECK(history.Entries().front() == "Moved east.");
 }
 
+TEST_CASE("Message history preserves order after exceeding inline capacity", "[client][messages]") {
+    MessageHistory history;
+    history.SetCapacity(12);
+    for (int i = 0; i < 15; ++i) { history.Add(String(1, static_cast<char>('A' + i))); }
+    REQUIRE(history.Entries().size() == 12);
+    for (int i = 0; i < 12; ++i) {
+        CHECK(history.Entries()[i] == String(1, static_cast<char>('D' + i)));
+    }
+    history.SetCapacity(5);
+    REQUIRE(history.Entries().size() == 5);
+    CHECK(history.Entries().front() == "K");
+    CHECK(history.Entries().back() == "O");
+}
+
 ContentCatalog AppearanceContent() {
     const ContentSource source{"client.json5", R"({format_version:1,definitions:[
         {type:'terrain',id:'base',name:'Base',movement:{passable:true},blocks_sight:false,

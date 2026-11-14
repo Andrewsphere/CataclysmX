@@ -52,12 +52,12 @@ enum class VisualGroupKind { Variants, Connections };
 struct VisualGroup {
     String id;
     VisualGroupKind kind = VisualGroupKind::Variants;
-    Vector<VisualAlternative> alternatives; // Variants, or exactly 16 connection masks.
+    SmallVector<VisualAlternative, 2> alternatives; // Variants, or exactly 16 connection masks.
     Vector<TerrainId> connectsTo;
     std::uint64_t totalWeight = 0;
 };
 struct AnimationFrame { std::uint32_t spriteIndex = 0; std::uint64_t endMilliseconds = 0; };
-struct AnimationClip { String id; Vector<AnimationFrame> frames; std::uint64_t totalMilliseconds = 0; };
+struct AnimationClip { String id; SmallVector<AnimationFrame, 4> frames; std::uint64_t totalMilliseconds = 0; };
 struct AnimationSample {
     std::uint32_t spriteIndex = 0;
     eastl::optional<std::uint64_t> delayMilliseconds;

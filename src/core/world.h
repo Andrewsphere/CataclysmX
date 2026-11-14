@@ -272,7 +272,7 @@ public:
     std::uint64_t GetCarriedMass(ActorHandle actor) const;
     std::uint64_t GetContainerUsedVolume(ItemHandle item) const;
     bool CanAccessItem(ActorHandle actor, ItemHandle item) const;
-    Vector<ItemActionInfo> QueryItemActions(ActorHandle actor, ItemHandle item) const;
+    ItemActionList QueryItemActions(ActorHandle actor, ItemHandle item) const;
     ItemUseResult UseItem(ActorHandle actor, ItemHandle item, const ItemUseRequest& request);
     WorldResult<void> SetItemEnergy(ItemHandle item, ItemCapabilityId capability, std::uint32_t energy);
     DataObject CaptureItemState(ItemHandle item) const;

@@ -55,12 +55,18 @@ descendants; destroying actors/objects drops their intact item trees.
 
 ```cpp
 bool World::CanAccessItem(ActorHandle actor, ItemHandle item) const;
-Vector<ItemActionInfo> World::QueryItemActions(ActorHandle actor, ItemHandle item) const;
+ItemActionList World::QueryItemActions(ActorHandle actor, ItemHandle item) const;
 ItemUseResult World::UseItem(ActorHandle actor, ItemHandle item,
     const ItemUseRequest& request);
 WorldResult<void> World::SetItemEnergy(ItemHandle item,
     ItemCapabilityId capability, std::uint32_t energy);
 ```
+
+`ItemActionList` is `SmallVector<ItemActionInfo, 2>`: two actions fit inline,
+and larger lists spill without changing the 64-action limit. Behavior query
+outputs and inventory projections share this type to avoid container conversions.
+Energy and activity projections keep one entry inline; additional capabilities
+remain valid. These small capacities avoid embedding the maximum in every item.
 
 Access requires a live, active, unparked actor and either its own nested
 inventory or a ground-rooted tree on its tile. Object contents and another

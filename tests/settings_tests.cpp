@@ -440,6 +440,27 @@ TEST_CASE("Keybinding files round trip sparse entries and reject unsupported mod
         "{format_version:1,bindings:[{context:'gameplay',action:'wait',keys:[{key:'ab'}]}]}"}) { CHECK_FALSE(ParseKeymap(text)); }
 }
 
+TEST_CASE("Keybindings retain overflow keys through persistence, copying and erasure", "[settings][input]") {
+    SettingsDirectory files;
+    const Keymap overrides{{InputContext::Gameplay, InputAction::Wait,
+        {{"v", false}, {"b", false}, {"n", false}, {"m", false}}}};
+    REQUIRE(SaveKeymapFile(files.File("many-keys.json5").c_str(), overrides));
+    const auto loaded = LoadKeymapFile(files.File("many-keys.json5").c_str());
+    REQUIRE(loaded);
+    REQUIRE(*loaded == overrides);
+    auto copy = *loaded;
+    REQUIRE(copy.front().keys.size() == 4);
+    copy.front().keys.erase(copy.front().keys.begin() + 1);
+    REQUIRE(copy.front().keys.size() == 3);
+    CHECK(loaded->front().keys.size() == 4);
+    const auto resolved = ResolveKeymap(copy, {});
+    REQUIRE(ValidateKeymap(resolved));
+    for (const char* key : {"v", "n", "m"}) {
+        CHECK(ResolveAction(resolved, InputContext::Gameplay, {key, false}) == InputAction::Wait);
+    }
+    CHECK_FALSE(ResolveAction(resolved, InputContext::Gameplay, {"b", false}));
+}
+
 TEST_CASE("Default navigation uses arrows and debug region jumps use Shift arrows", "[settings][input]") {
     const auto keys = DefaultKeymap();
     REQUIRE(ValidateKeymap(keys));

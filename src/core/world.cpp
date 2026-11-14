@@ -2293,7 +2293,7 @@ bool World::CanAccessItem(ActorHandle actorHandle, ItemHandle itemHandle) const 
         || (root.kind == LocationKind::ground && root.position == actor->position);
 }
 
-Vector<ItemActionInfo> World::QueryItemActions(ActorHandle actor, ItemHandle handle) const {
+ItemActionList World::QueryItemActions(ActorHandle actor, ItemHandle handle) const {
     return impl_->itemSystem.QueryActions(actor, handle);
 }
 

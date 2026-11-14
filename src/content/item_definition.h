@@ -47,10 +47,10 @@ struct ItemDefinition {
     String name;
     std::uint32_t massGrams = 0;
     std::uint32_t volumeMl = 0;
-    Vector<ItemCapabilityDefinition> capabilities; // Sorted by stable name.
+    SmallVector<ItemCapabilityDefinition, 2> capabilities; // Sorted by stable name.
     eastl::optional<ItemContainerDefinition> container;
-    Vector<ItemEnergyDefinition> energyStores;
-    Vector<ItemBehaviorBinding> behaviors;
+    SmallVector<ItemEnergyDefinition, 1> energyStores;
+    SmallVector<ItemBehaviorBinding, 1> behaviors;
     StaticList<TraitRequirement, maxRecipeTraits> toolTraits;
     ItemCapabilityId craftingPower{};
     std::uint32_t craftingEnergyPerWork = 0; // ratioScale units per base work.

@@ -57,7 +57,7 @@ public:
     virtual ~ItemBehavior();
     ItemCapabilityId Capability() const;
     virtual void QueryActions(const ItemReadContext& context, ActorHandle actor,
-        Vector<ItemActionInfo>& output) const = 0;
+        ItemActionList& output) const = 0;
     virtual ItemUseResult Use(ItemMutationContext& context, ActorHandle actor,
         const ItemUseRequest& request) = 0;
     virtual eastl::optional<Tick> NextEventIn(const ItemReadContext& context) const;
