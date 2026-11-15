@@ -21,7 +21,8 @@ int main(int argc, char** argv) {
             const eastl::string_view value(argv[++i]);
             if (value == "first-house") { options.scenario = NewGameScenario::FirstHouse; }
             else if (value == "demo") { options.scenario = NewGameScenario::Demo; }
-            else { std::fputs("Scenario must be demo or first-house\n", stderr); return 2; }
+            else if (value == "town") { options.scenario = NewGameScenario::Town; }
+            else { std::fputs("Scenario must be demo, first-house, or town\n", stderr); return 2; }
         }
         else if (argument == "--seed" && i + 1 < argc) {
             const eastl::string_view value(argv[++i]);
@@ -49,7 +50,7 @@ int main(int argc, char** argv) {
         else {
             std::fputs("Usage: cataclysmx_sdl_game [--content path] [--user-dir path] [--loc-dir path]\n"
                 "  [--tileset directory] [--font path] [--font-size 8-48] [--ui-scale 1-4] [--smoke]\n"
-                "  [--scenario demo|first-house] [--seed uint32] [--content-pack manifest]\n"
+                "  [--scenario demo|first-house|town] [--seed uint32] [--content-pack manifest]\n"
                 "--content loads a single definition file; it cannot be combined with --content-pack.\n", stderr);
             return 2;
         }
@@ -65,7 +66,8 @@ int main(int argc, char** argv) {
     }
     const auto content = contentPath ? LoadContentFile(contentPath, &diagnostics)
         : LoadContentPack(contentPack ? contentPack : options.scenario == NewGameScenario::FirstHouse
-            ? CATACLYSMX_CONTENT_PACK : CATACLYSMX_TERRAIN_FILE, &diagnostics);
+            ? CATACLYSMX_FIRST_HOUSE_PACK : options.scenario == NewGameScenario::Town
+                ? CATACLYSMX_CONTENT_PACK : CATACLYSMX_TERRAIN_FILE, &diagnostics);
     if (!content || !ValidateServerContent(*content, &diagnostics)) {
         std::fprintf(stderr, "Content: %s\n", FormatDiagnostics(diagnostics).c_str());
         return 1;

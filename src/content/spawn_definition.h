@@ -1,5 +1,6 @@
 #pragma once
 
+#include "actors/actor_types.h"
 #include "combat/combat_types.h"
 #include "content/ai_definition.h"
 #include "core/containers.h"
@@ -12,10 +13,6 @@ namespace cataclysmx {
 struct LootPoolId {
     std::uint32_t value = 0;
     bool operator==(const LootPoolId&) const = default;
-};
-struct MonsterTypeId {
-    std::uint32_t value = 0;
-    bool operator==(const MonsterTypeId&) const = default;
 };
 struct MonsterGroupId {
     std::uint32_t value = 0;
@@ -54,8 +51,8 @@ struct LootPoolDefinition {
     bool operator==(const LootPoolDefinition&) const = default;
 };
 
-// Spawn recipe only. The resulting ordinary actor owns its combat/controller
-// state; no definition ID or name needs to be added to each runtime actor.
+// Spawn defaults and shared presentation identity. Actors retain MonsterTypeId;
+// their mutable combat/controller state remains authoritative after creation.
 struct MonsterDefinition {
     String id;
     String name;

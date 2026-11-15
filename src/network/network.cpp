@@ -740,7 +740,7 @@ void LanClient::Pump(std::uint64_t elapsed) {
                 WorldView view;
                 bool valid = r.U64(nonce) && nonce == impl_->nonce_ && r.View(view) &&
                     r.Done() && view.playerId == impl_->player_ && wire::ValidItemDefinitions(view, impl_->content_) &&
-                    wire::ValidTerrainDefinitions(view, impl_->content_);
+                    wire::ValidTerrainDefinitions(view, impl_->content_) && wire::ValidMonsterDefinitions(view, impl_->content_);
                 if (!valid) {
                     impl_->ProtocolFailure();
                 } else {

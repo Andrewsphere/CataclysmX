@@ -156,7 +156,7 @@ eastl::optional<std::uint64_t> VisibleAnimationDelay(const MapPacket& packet,
 
 TerminalAppearance MapAppearance(const ViewCell& cell, PersistentId playerId, const ContentCatalog& content) {
     ViewCell display = cell;
-    if (cell.actor != 0 && cell.actor == playerId) { display.player = true; }
+    if (cell.actor != 0 && cell.actor == playerId) { display.player = true; display.monsterType = {}; }
     TerminalAppearance appearance = CellAppearance(display, content);
     if (cell.overlayVisibility == Visibility::Visible && cell.actor != 0 && cell.player && cell.actor != playerId) { appearance.symbol = "P"; }
     return appearance;

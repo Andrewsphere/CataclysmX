@@ -1,0 +1,87 @@
+{format_version:1, definitions:[
+  {type:'loot_pool', id:'loot_food', entries:[
+    {pool:'house_pantry',weight:4},{item:'dry_pasta',weight:3},{item:'rice_packet',weight:3},
+    {item:'cereal_box',weight:2},{item:'snack_packet',weight:3,count:{min:1,max:3}},
+  ]},
+  {type:'loot_pool', id:'loot_kitchen', entries:[
+    {pool:'house_kitchen',weight:3},{item:'frying_pan',weight:2},{item:'serving_spoon',weight:3},
+    {item:'dish_towel',weight:3},{item:'cooking_pot',weight:2},{item:'cooking_oil',weight:2},
+  ]},
+  {type:'loot_pool', id:'loot_cleaning', entries:[
+    {item:'soap',weight:4,count:{min:1,max:2}},{item:'detergent_box',weight:3},
+    {item:'scrub_brush',weight:3},{item:'plastic_bucket',weight:1},{pool:'house_linen',weight:2},
+  ]},
+  {type:'loot_pool', id:'loot_medical', entries:[
+    {item:'bandage',weight:5,count:{min:1,max:3}},{item:'gauze_roll',weight:4,count:{min:1,max:3}},
+    {item:'medical_gloves',weight:3},{item:'medical_scissors',weight:2},{item:'first_aid_pouch',weight:2},
+  ]},
+  {type:'loot_pool', id:'loot_tools', entries:[
+    {pool:'house_tools',weight:5},{item:'wrench',weight:3},{item:'pliers',weight:3},
+    {item:'utility_knife',weight:2},{item:'claw_hammer',weight:2},
+  ]},
+  {type:'loot_pool', id:'loot_hardware', entries:[
+    {pool:'house_workshop',weight:4},{item:'bolts',weight:4,count:{min:1,max:3}},
+    {item:'duct_tape',weight:3},{item:'wire_bundle',weight:3},{item:'wood_handle',weight:2},
+  ]},
+  {type:'loot_pool', id:'loot_electronics', entries:[
+    {item:'electrical_cord',weight:4},{item:'circuit_board',weight:4},
+    {item:'disposable_battery',weight:3,count:{min:1,max:4}},{item:'rechargeable_battery',weight:2},
+    {item:'field_charger',weight:1},
+  ]},
+  {type:'loot_pool', id:'loot_clothing', entries:[
+    {item:'work_shirt',weight:4},{item:'work_trousers',weight:4},{item:'apron',weight:2},
+    {item:'work_gloves',weight:3},{item:'sewing_kit',weight:1},
+  ]},
+  {type:'loot_pool', id:'loot_books', entries:[
+    {item:'paperback_book',weight:5,count:{min:1,max:2}},{item:'reference_book',weight:3},
+    {item:'notebook',weight:2},
+  ]},
+  {type:'loot_pool', id:'loot_office', entries:[
+    {item:'notebook',weight:4},{item:'pencil',weight:4,count:{min:1,max:4}},
+    {item:'paper_stack',weight:3},{pool:'loot_books',weight:2},{pool:'loot_electronics',weight:1},
+  ]},
+  {type:'loot_pool', id:'loot_fire_station', entries:[
+    {pool:'loot_tools',weight:4},{pool:'loot_medical',weight:3},{item:'rope_coil',weight:3},
+    {item:'work_gloves',weight:2},{item:'canteen',weight:2},
+  ]},
+  {type:'loot_pool', id:'loot_police_station', entries:[
+    {pool:'loot_office',weight:3},{pool:'loot_medical',weight:2},{item:'disposable_battery',weight:3,count:{min:1,max:3}},
+    {item:'work_gloves',weight:2},{item:'first_aid_pouch',weight:2},
+  ]},
+  {type:'loot_pool', id:'loot_auto_repair', entries:[
+    {pool:'loot_tools',weight:4},{pool:'loot_hardware',weight:4},{item:'parts_box',weight:2},
+    {item:'work_gloves',weight:2},{item:'electrical_cord',weight:2},
+  ]},
+  {type:'loot_pool', id:'loot_outdoors', entries:[
+    {item:'canteen',weight:4},{item:'rope_coil',weight:3},{item:'backpack',weight:2},
+    {item:'utility_knife',weight:2},{pool:'loot_food',weight:2},
+  ]},
+  {type:'loot_pool', id:'loot_warehouse', entries:[
+    {pool:'loot_hardware',weight:4},{item:'parts_box',weight:3},{item:'duct_tape',weight:3},
+    {item:'work_gloves',weight:2},{pool:'loot_food',weight:2},
+  ]},
+  {type:'loot_pool', id:'loot_school', entries:[
+    {pool:'loot_office',weight:4},{pool:'loot_books',weight:4},{item:'toy_blocks',weight:2},
+    {item:'snack_packet',weight:2,count:{min:1,max:2}},
+  ]},
+  {type:'loot_pool', id:'loot_laundry', entries:[
+    {pool:'loot_cleaning',weight:4},{pool:'loot_clothing',weight:4},{pool:'house_linen',weight:3},
+    {item:'sewing_kit',weight:2},
+  ]},
+  {type:'loot_pool', id:'loot_pantry', entries:[
+    {pool:'loot_food',weight:5},{item:'flour_bag',weight:3},{item:'cooking_oil',weight:2},
+    {item:'coffee_tin',weight:2},{item:'tea_box',weight:2},
+  ]},
+  {type:'loot_pool', id:'loot_utility', entries:[
+    {pool:'loot_tools',weight:3},{pool:'loot_cleaning',weight:3},{pool:'loot_electronics',weight:2},
+    {item:'duct_tape',weight:3},{item:'plastic_bottle',weight:2},
+  ]},
+  {type:'loot_pool', id:'loot_preparedness', entries:[
+    {pool:'loot_medical',weight:3},{pool:'loot_outdoors',weight:3},{pool:'loot_food',weight:3},
+    {item:'disposable_battery',weight:2,count:{min:1,max:4}},{item:'backpack',weight:1},
+  ]},
+  {type:'loot_pool', id:'loot_hobby', entries:[
+    {pool:'loot_books',weight:3},{item:'sewing_kit',weight:3},{item:'toy_blocks',weight:2},
+    {item:'notebook',weight:2},{pool:'loot_hardware',weight:2},
+  ]},
+]}

@@ -9,7 +9,7 @@
 
 namespace cataclysmx {
 
-enum class NewGameScenario { Demo, FirstHouse };
+enum class NewGameScenario { Demo, FirstHouse, Town };
 
 enum class CommandKind {
     wait, move, pick_up, drop, interact, use_item, store_item, attack, combat_style, interact_action,
@@ -128,6 +128,9 @@ struct ViewCell {
     Visibility overlayVisibility = Visibility::Unknown;
     LightBand terrainLight = LightBand::Dark; // Unknown/remembered contributions carry no current light.
     LightBand overlayLight = LightBand::Dark;
+    // Only a visible non-player actor may carry a nonzero catalog-local type.
+    // Unknown/remembered overlays never retain monster identity.
+    MonsterTypeId monsterType{};
     bool operator==(const ViewCell&) const = default;
 };
 struct InventoryEntry {
@@ -190,8 +193,9 @@ struct WorldView {
 class Server {
 public:
     explicit Server(const ContentCatalog& content, std::uint32_t seed = 42);
-    // FirstHouse requires successful FindFirstHouseStart validation at the
-    // application boundary. The existing constructor retains Demo behavior.
+    // FirstHouse/Town require successful FindFirstHouseStart/FindTownStart
+    // validation at the application boundary using the same catalog and seed.
+    // The existing constructor retains Demo behavior.
     Server(const ContentCatalog& content, std::uint32_t seed, NewGameScenario scenario);
     // While busy, retain one intent; the latest valid command replaces it.
     CommandResult Send(Command command);

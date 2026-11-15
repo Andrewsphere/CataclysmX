@@ -85,6 +85,7 @@ Start the furnished-house review with `--scenario first-house --seed 0` on
 headless, terminal, or SDL. Seed 13 is the second basement review candidate.
 See [first-house review](doc/first_house_review.md) for launch/smoke commands,
 storage, furniture movement, and current review limitations.
+Use `--scenario town --seed 0` to start in the populated town on any frontend.
 
 **F2** opens settings and keybindings. Preferences resolve from built-in defaults,
 global files, and sparse world overrides; saves within a world share its settings.
@@ -93,17 +94,20 @@ Player-facing terminal text comes from `data/loc/en.json5`. Ctrl bindings preser
 letter case when the terminal supports enhanced keyboard reporting; basic mode
 reports unavailable combinations. See [settings and localization](doc/settings_api.md).
 
-Default content is loaded through [`data/demo.json5`](data/demo.json5); the
-first-house scenario selects [`data/content.json5`](data/content.json5).
+The default `demo` scenario loads [`data/demo.json5`](data/demo.json5);
+`first-house` selects [`data/first_house.json5`](data/first_house.json5), and
+`town` selects [`data/content.json5`](data/content.json5), with 26 populated types.
 Terrain definitions include UTF-8
 symbols, named/RGB colors, appearance fallback, passability, sight blocking, and
 door transitions. All three frontends accept `--content <path>` for exactly one
 definition document or `--content-pack <path>` for a manifest, never both.
 Bundled default paths point into this source checkout. `--seed <uint32>` overrides
 the configured new-game seed for this invocation without editing preferences;
-headless/terminal reject it with `--load`. Load a house save with
-`--content-pack data/content.json5 --load <save>`; the save retains its seed and
-position without a persisted scenario setting.
+headless/terminal reject it with `--load`. Select the matching pack when loading:
+`--content-pack data/first_house.json5 --load <save>` for a first-house save or
+`--content-pack data/content.json5 --load <save>` for a town save. Alternatively,
+select the matching `--scenario` to choose its default pack. The save retains its
+seed and position without a persisted scenario setting.
 See [content format and APIs](doc/content_format.md). Save V6 stores terrain and
 item stable string IDs, nested ownership, and versioned item capability state;
 older save versions are rejected and migrations are not implemented yet.

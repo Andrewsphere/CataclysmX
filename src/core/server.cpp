@@ -433,9 +433,10 @@ Server::Server(const ContentCatalog& content, std::uint32_t seed)
 Server::Server(const ContentCatalog& content, std::uint32_t seed, NewGameScenario scenario)
     : world_(content, seed), rng_state_(seed) {
     Require(ValidateServerContent(content).has_value());
-    Require(scenario == NewGameScenario::Demo || scenario == NewGameScenario::FirstHouse);
-    if (scenario == NewGameScenario::FirstHouse) {
-        const auto start = FindFirstHouseStart(content, seed);
+    Require(scenario == NewGameScenario::Demo || scenario == NewGameScenario::FirstHouse || scenario == NewGameScenario::Town);
+    if (scenario != NewGameScenario::Demo) {
+        const auto start = scenario == NewGameScenario::FirstHouse
+            ? FindFirstHouseStart(content, seed) : FindTownStart(content, seed);
         Require(start.has_value());
         active_request_ = Take(world_.RequestChunks({BubbleCenter(start->playerPosition), active_radius_}, LoadMode::active));
         resident_request_ = RequestResident(world_, start->playerPosition, resident_radius_, circleResidency_);
@@ -1311,6 +1312,7 @@ WorldView Server::ViewForPlayerAtLayer(PersistentId id, int radius, int layerY) 
                                 // actually visible lower overlay. Nearest live wins.
                                 cell.actor = occupant ? occupant->id : 0;
                                 cell.player = occupant && occupant->player;
+                                cell.monsterType = occupant && !occupant->player ? occupant->monsterType : MonsterTypeId{};
                                 cell.ground_items = items;
                                 cell.object = object ? object->id : 0;
                                 cell.objectAppearance = object ? DescribeObject(*object) : ObjectAppearance{};

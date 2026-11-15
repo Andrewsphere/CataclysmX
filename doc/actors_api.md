@@ -8,6 +8,22 @@ public inspection fields and defaults. Players have no controller; non-players
 start with Wander. Destruction and move operations are defined out of line so the
 controller can remain forward-declared in the actor header.
 
+`Actor::monsterType` is a catalog-local `MonsterTypeId` (zero means untyped).
+`World::CreateMonster(type, position)` assigns it only after a valid spawn and
+initializes the definition's combat, speed and AI defaults. `CreateActor`, including
+players, remains untyped. Identity is independent of subsequent combat, speed or
+controller changes; names remain borrowed from the catalog rather than owned by
+each actor.
+
+Archives store an owned stable definition ID in `SavedActor::monsterType`, empty
+for untyped actors. Capture resolves the numeric ID to the definition's `id`;
+restore resolves it through `FindMonster` in the supplied catalog. Unknown
+nonempty IDs and typed players are invalid. Restore copies saved mutable state
+without invoking monster creation, so injuries, modified speed, controller state,
+inventory and relative deadlines survive unloading and disk reload. Stable strings
+allow catalog numbering to change without changing identity. See the optional
+v10 `monster_type` field in [save format](save_format.md).
+
 Each actor owns one private `eastl::unique_ptr<AiController> controller_`. Only
 `World` is its friend. Controller ownership and mutable access never escape through
 `World::GetActor`. This avoids the mutable-pointee loophole in const smart-pointer

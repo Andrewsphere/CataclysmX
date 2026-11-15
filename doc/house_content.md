@@ -139,9 +139,9 @@ connectivity solver.
 
 ## Integration
 
-The full `data/content.json5` manifest includes `data/objects/furniture.json5`,
+The curated `data/first_house.json5` and expanded `data/content.json5` manifests include `data/objects/furniture.json5`,
 `data/worldgen/loot/household.json5`, `data/monsters/cellar.json5` and
 `data/worldgen/buildings/furnished_house.json5`. The demo manifest uses the
 shared base and demo sources. See [content packs](content_pack.md) and the
-[implemented first-house design](first_house_design.md). Verification is pending
-coordinator checks.
+[implemented first-house design](first_house_design.md), and the
+[urban content guide](urban_content.md).

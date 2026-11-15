@@ -74,6 +74,10 @@
 - [Content format and catalog](content_format.md): JSON5 terrain and item definitions,
   capabilities, IDs, building patterns, appearance inheritance, and loading APIs.
 - [Content packs](content_pack.md): manifest loading and source organization.
+- [Urban content](urban_content.md): Town scenario, building roster, specialists,
+  resources and current generation limits.
+- [Urban resources](urban_resources.md): detailed furniture, loot, monsters and recipes.
+- [Urban content design](urban_content_design.md): implemented design and integration rationale.
 - [House content](house_content.md): furniture, loot, monsters and building schemas.
 - [First furnished house](first_house_design.md): implemented scenario, generation and design rationale.
 - [World generation](worldgen_api.md): deterministic region plans, boundary

@@ -299,9 +299,9 @@ TEST_CASE("Item decoder rejects malformed bounded fields before catalog lookup",
     REQUIRE(cursor.U32(number)); REQUIRE(cursor.U32(number));
     for (int i = 0; i < 3; ++i) REQUIRE(cursor.U8(byte));
     REQUIRE(cursor.U16(shortValue));
-    // This single-cell snapshot has one u16 run length before its 36-byte payload.
+    // This single-cell snapshot has one u16 run length before its 40-byte payload.
     REQUIRE(cursor.U16(shortValue)); REQUIRE(shortValue == 1);
-    for (int i = 0; i < 36; ++i) REQUIRE(cursor.U8(byte));
+    for (int i = 0; i < 40; ++i) REQUIRE(cursor.U8(byte));
     const auto countOffset = cursor.offset;
     REQUIRE(cursor.U16(shortValue));
     REQUIRE(cursor.U64(wide)); REQUIRE(cursor.U32(number)); REQUIRE(cursor.U32(number));

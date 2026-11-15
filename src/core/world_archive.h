@@ -23,6 +23,9 @@ struct SavedActor {
     // Source aggregates get a complete neutral/simple default, independent of player.
     // Runtime capture and legacy migration explicitly supply creation/runtime state.
     DataObject combat = CaptureCombatState(MakeCombatState(false));
+    // Stable MonsterDefinition::id, empty for untyped actors; never a catalog index.
+    // Restore identity without reapplying the definition's spawn defaults.
+    String monsterType;
 };
 
 struct SavedObject {

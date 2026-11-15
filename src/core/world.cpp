@@ -177,6 +177,8 @@ bool ValidateArchive(const ContentCatalog& content, const Archive& saved,
     };
     Vector<TileCoord> positions;
     for (const SavedActor& actor : saved.actors) {
+        if (!actor.monsterType.empty()
+            && (actor.player || !content.FindMonster(actor.monsterType).value)) { return false; }
         const auto controller = ReadAiController(actor.controller);
         if (!controller || (actor.player && *controller)) { return false; }
         if (!ValidateAiControllerContent(actor.controller, content)) { return false; }
@@ -1055,7 +1057,8 @@ public:
     void RetainWarm(Archive&& archive) {
         ForgetWarm(archive.position);
         // Recursive DataObject allocations are opaque. Keep only snapshots
-        // without controller envelopes or typed behavior payloads.
+        // without actors (including their owned identity strings and controller
+        // envelopes) or typed behavior payloads.
         if (archive.items.capacity() != 0 || !archive.actors.empty()
             || eastl::any_of(archive.objects.begin(), archive.objects.end(),
                 [](const SavedObject& object) { return object.type.value != 0; })) { return; }
@@ -1251,7 +1254,8 @@ public:
             Require(actor != nullptr);
             saved.actors.push_back({actor->id, actor->position, actor->player, actor->turns,
                 actor->speed, actor->actionDeadline.Remaining(tick), actor->parked, actor->carryCapacityGrams, actor->light,
-                CaptureAiController(actor->controller_.get()), CaptureCombatState(actor->combat)});
+                CaptureAiController(actor->controller_.get()), CaptureCombatState(actor->combat),
+                actor->monsterType.value ? content.GetMonster(actor->monsterType).id : String{}});
             for (ItemHandle item : actor->inventory) {
                 pending.push_back(item);
             }
@@ -1316,6 +1320,8 @@ public:
         value.tiles = saved.tiles;
         for (const SavedActor& actor : saved.actors) {
             Actor restored(actor.id, actor.position, actor.player);
+            restored.monsterType = actor.monsterType.empty() ? MonsterTypeId{} : content.FindMonster(actor.monsterType);
+            Require(actor.monsterType.empty() || (!actor.player && restored.monsterType.value));
             restored.turns = actor.turns;
             restored.speed = actor.speed;
             restored.actionDeadline.Set(tick, actor.remainingTicks);
@@ -2211,6 +2217,7 @@ WorldResult<ActorHandle> World::CreateMonster(MonsterTypeId type, TileCoord posi
     actor->combat.accuracy = static_cast<std::uint8_t>(definition->accuracy / 100);
     actor->speed = definition->speed;
     actor->controller_ = MakeSightedAiController(profile->id);
+    actor->monsterType = type;
     impl_->RefreshSchedule(*actor);
     return created;
 }
@@ -3472,6 +3479,8 @@ bool World::CheckInvariants() const {
         const Actor& value = entry.second.get();
         const ActorHandle handle{entry.first.raw};
         if (state.FindActor(value.id) != handle) { return false; }
+        if (value.monsterType.value
+            && (value.player || !state.content.TryGetMonster(value.monsterType))) { return false; }
         const auto controller = ReadAiController(CaptureAiController(value.controller_.get()));
         if (!controller || (value.player && value.controller_)) { return false; }
         if (!ValidateAiControllerContent(CaptureAiController(value.controller_.get()), state.content)) { return false; }

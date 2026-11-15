@@ -1,0 +1,17 @@
+{format_version:1, objects:[
+  {id:'store_shelf', name:'store shelf', behavior:'none', kind:'generic', movable:true, blocks_movement:true, capacity_volume_ml:100000},
+  {id:'store_counter', name:'store counter', behavior:'none', kind:'table', movable:false, blocks_movement:true, capacity_volume_ml:100000},
+  {id:'refrigerator', name:'refrigerator', behavior:'none', kind:'generic', movable:false, blocks_movement:true, blocks_sight:true, capacity_volume_ml:100000},
+  {id:'metal_locker', name:'metal locker', behavior:'none', kind:'generic', movable:true, blocks_movement:true, blocks_sight:true, capacity_volume_ml:100000},
+  {id:'office_desk', name:'office desk', behavior:'none', kind:'table', movable:true, blocks_movement:true, capacity_volume_ml:100000},
+  {id:'office_chair', name:'office chair', behavior:'none', kind:'chair', movable:true, blocks_movement:true},
+  {id:'bookcase', name:'bookcase', behavior:'none', kind:'generic', movable:true, blocks_movement:true, capacity_volume_ml:100000},
+  {id:'examination_bed', name:'examination bed', behavior:'none', kind:'generic', movable:true, blocks_movement:true},
+  {id:'school_desk', name:'school desk', behavior:'none', kind:'table', movable:true, blocks_movement:true, capacity_volume_ml:100000},
+  {id:'restaurant_table', name:'restaurant table', behavior:'none', kind:'table', movable:true, blocks_movement:true, capacity_volume_ml:100000},
+  {id:'washing_machine', name:'washing machine', behavior:'none', kind:'generic', movable:true, blocks_movement:true, capacity_volume_ml:100000},
+  {id:'industrial_workbench', name:'industrial workbench', behavior:'none', kind:'table', movable:true, blocks_movement:true, capacity_volume_ml:100000},
+  {id:'warehouse_crate', name:'warehouse crate', behavior:'none', kind:'generic', movable:true, blocks_movement:true, capacity_volume_ml:100000},
+  {id:'utility_cabinet', name:'utility cabinet', behavior:'none', kind:'generic', movable:true, blocks_movement:true, capacity_volume_ml:100000},
+  {id:'display_rack', name:'display rack', behavior:'none', kind:'generic', movable:true, blocks_movement:true, capacity_volume_ml:100000},
+], definitions:[]}

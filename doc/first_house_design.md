@@ -26,7 +26,9 @@ Snapshots, including empty ones, prevent population from respawning after reload
 See [world generation](worldgen_api.md) and [World archives](world_api.md#generation-archives-and-brief-implementation-notes).
 
 Generation version is **4**; legacy generation versions remain supported. The
-save format is not bumped for this slice. The network protocol is `0x43584e0e`.
+save format is not bumped for this slice. This milestone introduced network
+protocol `0x43584e0e`; the later [specialist identity increment](urban_content_design.md)
+uses `0x43584e0f`.
 Placement keys are transient generation identities, not persistent entity IDs.
 Reproducibility depends on the same seed, generation version and content; runtime
 entity IDs depend on materialization history.

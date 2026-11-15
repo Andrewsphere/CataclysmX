@@ -24,10 +24,12 @@ Tile TerrainAt(const ContentCatalog& content, const RegionPlan& plan, TileCoord 
     return tiles[static_cast<std::size_t>(TileIndex(position))];
 }
 
+bool HasPopulation(const PatternPopulation& population) {
+    return !population.furniture.empty() || !population.loot.empty() || !population.monsters.empty();
 }
 
-ContentResult<FirstHouseStart> FindFirstHouseStart(const ContentCatalog& content,
-    std::uint32_t seed, Diagnostics* diagnostics) {
+ContentResult<BuildingStart> FindStart(const ContentCatalog& content,
+    std::uint32_t seed, bool houseOnly, Diagnostics* diagnostics) {
     if (auto valid = ValidateWorldgenContent(content, diagnostics); !valid) {
         return eastl::unexpected(valid.error());
     }
@@ -40,11 +42,16 @@ ContentResult<FirstHouseStart> FindFirstHouseStart(const ContentCatalog& content
     // choosing the nearest entrance, rather than stopping at the first region.
     constexpr RegionCoord regions[] = {{0, 0}, {-1, 0}, {0, -1}, {0, 1}, {1, 0},
         {-1, -1}, {-1, 1}, {1, -1}, {1, 1}};
-    if (house.value != 0) {
+    if (!houseOnly || house.value != 0) {
         for (const auto region : regions) {
             const auto plan = GenerateRegionPlan(content, seed, region);
             for (const auto& building : plan.buildings) {
-                if (building.pattern != house) { continue; }
+                if (houseOnly && building.pattern != house) { continue; }
+                const auto& pattern = content.GetBuildingPattern(building.pattern);
+                if (!houseOnly && !HasPopulation(pattern.population)
+                    && (!building.basementVariant || !HasPopulation(pattern.basements[building.basementVariant - 1].population))) {
+                    continue;
+                }
                 const auto entrance = building.entrance;
                 const int step = building.driveway.last.z < entrance.z ? -1 : 1;
                 const TileCoord outside{entrance.x, entrance.z + step, entrance.y};
@@ -70,11 +77,25 @@ ContentResult<FirstHouseStart> FindFirstHouseStart(const ContentCatalog& content
     }
     if (!found) {
         if (diagnostics) {
-            diagnostics->Add("First-house scenario: no suitable furnished_house entrance in the origin 3x3 regions");
+            diagnostics->Add(houseOnly
+                ? "First-house scenario: no suitable furnished_house entrance in the origin 3x3 regions"
+                : "Town scenario: no suitable populated building entrance in the origin 3x3 regions");
         }
         return eastl::unexpected(ContentError::InvalidData);
     }
     return best;
+}
+
+}
+
+ContentResult<FirstHouseStart> FindFirstHouseStart(const ContentCatalog& content,
+    std::uint32_t seed, Diagnostics* diagnostics) {
+    return FindStart(content, seed, true, diagnostics);
+}
+
+ContentResult<BuildingStart> FindTownStart(const ContentCatalog& content,
+    std::uint32_t seed, Diagnostics* diagnostics) {
+    return FindStart(content, seed, false, diagnostics);
 }
 
 }

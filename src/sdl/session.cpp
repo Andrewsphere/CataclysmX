@@ -18,7 +18,8 @@ void Session::Notify() { if (wake_) { wake_(userdata_); } }
 
 void Session::Run(const ContentCatalog& content, std::uint64_t generation, SessionOptions options) {
     if (!ValidateServerContent(content)
-        || (options.scenario == NewGameScenario::FirstHouse && !FindFirstHouseStart(content, options.settings.seed))) {
+        || (options.scenario == NewGameScenario::FirstHouse && !FindFirstHouseStart(content, options.settings.seed))
+        || (options.scenario == NewGameScenario::Town && !FindTownStart(content, options.settings.seed))) {
         channels_.PublishReply({ReplyKind::StartupFailed, generation, 0, {}, StartupError::InvalidContent});
         Notify();
         channels_.Stop();

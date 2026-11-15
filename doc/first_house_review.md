@@ -35,7 +35,7 @@ House smoke is a startup/render check, not a walkthrough or basement acceptance 
 ## Content, seed, and saves
 
 Demo is the default scenario and loads `LoadContentPack(CATACLYSMX_TERRAIN_FILE)`.
-First-house selects `CATACLYSMX_CONTENT_PACK`. Explicit `--content` always calls
+First-house selects `CATACLYSMX_FIRST_HOUSE_PACK` (`data/first_house.json5`). Explicit `--content` always calls
 `LoadContentFile`; `--content-pack` always calls `LoadContentPack`. Supplying both
 is a usage error. An explicit content path takes precedence over scenario defaults.
 
@@ -47,7 +47,7 @@ silently change. Their later save/load operations retain the existing semantics.
 
 ```powershell
 ./out/build/win-msvc-debug/cataclysmx_game.exe --scenario first-house --seed 0 --save house.db
-./out/build/win-msvc-debug/cataclysmx_game.exe --content-pack data/content.json5 --load house.db
+./out/build/win-msvc-debug/cataclysmx_game.exe --content-pack data/first_house.json5 --load house.db
 ```
 
 The same save/load flags work in headless. SDL retains its existing in-memory
@@ -93,9 +93,9 @@ and applies the seed override there; the worker validates the scenario and owns
 the resulting Server. These are startup-only values: no world entity, snapshot,
 wire, or saved-state layout is enlarged.
 
-Build integration defines `CATACLYSMX_CONTENT_PACK` as the absolute
-`data/content.json5` path for the three executables and SDL session tests, and points
-existing `CATACLYSMX_TERRAIN_FILE` at `data/demo.json5`. The scenario and pack
+Build integration defines `CATACLYSMX_FIRST_HOUSE_PACK` for the curated
+`data/first_house.json5` and `CATACLYSMX_CONTENT_PACK` for expanded
+`data/content.json5`, and points `CATACLYSMX_TERRAIN_FILE` at `data/demo.json5`. The scenario and pack
 implementations are linked through the existing engine/content targets.
 
 Verification includes Debug and SDL builds, 844/844 Debug tests with the two

@@ -102,7 +102,7 @@ TileCoord Position(const BuildingPattern& pattern, const BuildingPlan& building,
 
 TEST_CASE("Bundled first-house Server starts at the scenario result and traverses both basements", "[house][server][scenario]") {
     Diagnostics diagnostics;
-    auto loaded = LoadContentPack(CATACLYSMX_CONTENT_PACK, &diagnostics);
+    auto loaded = LoadContentPack(CATACLYSMX_FIRST_HOUSE_PACK, &diagnostics);
     INFO(FormatDiagnostics(diagnostics).c_str());
     REQUIRE(loaded);
     const auto& content = *loaded;

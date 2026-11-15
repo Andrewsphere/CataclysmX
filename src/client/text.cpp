@@ -1,5 +1,6 @@
 #include "client/text.h"
 #include "client/perception_style.h"
+#include "client/tile_inspection.h"
 
 #include <charconv>
 #include <cstdlib>
@@ -90,6 +91,14 @@ String render_text(const WorldView& view, const ContentCatalog& content) {
     for (const auto& item : view.inventory) { stateful |= !item.energy.empty() || !item.activities.empty(); }
     for (const auto& item : view.groundItems) { stateful |= !item.energy.empty() || !item.activities.empty(); }
     if (stateful) { result += ItemDetails(view, content); }
+    // Keep the established map/Inventory boundary for snapshot consumers.
+    for (const auto& cell : view.cells) {
+        if (cell.player) { continue; }
+        const auto typeName = VisibleActorName(content, cell);
+        if (typeName.empty()) { continue; }
+        result += "Visible: "; result.append(typeName.data(), typeName.size());
+        result += " #"; append_number(result, cell.actor); result += '\n';
+    }
     return result;
 }
 

@@ -164,6 +164,7 @@ cataclysmx_no_exceptions(cataclysmx_client)
 add_executable(cataclysmx_headless src/headless/main.cpp src/headless/lan.cpp src/headless/lan.h)
 target_compile_definitions(cataclysmx_headless PRIVATE
     CATACLYSMX_TERRAIN_FILE="${CMAKE_CURRENT_SOURCE_DIR}/data/demo.json5"
+    CATACLYSMX_FIRST_HOUSE_PACK="${CMAKE_CURRENT_SOURCE_DIR}/data/first_house.json5"
     CATACLYSMX_CONTENT_PACK="${CMAKE_CURRENT_SOURCE_DIR}/data/content.json5")
 target_link_libraries(cataclysmx_headless PRIVATE cataclysmx_client cataclysmx_network Threads::Threads)
 cataclysmx_no_exceptions(cataclysmx_headless)
@@ -191,6 +192,7 @@ if(CATACLYSMX_BUILD_TERMINAL)
     add_executable(cataclysmx_game src/terminal/main.cpp)
     target_compile_definitions(cataclysmx_game PRIVATE
         CATACLYSMX_TERRAIN_FILE="${CMAKE_CURRENT_SOURCE_DIR}/data/demo.json5"
+        CATACLYSMX_FIRST_HOUSE_PACK="${CMAKE_CURRENT_SOURCE_DIR}/data/first_house.json5"
         CATACLYSMX_CONTENT_PACK="${CMAKE_CURRENT_SOURCE_DIR}/data/content.json5")
     target_compile_definitions(cataclysmx_game PRIVATE CATACLYSMX_LOC_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/data/loc")
     target_link_libraries(cataclysmx_game PRIVATE cataclysmx_client cataclysmx_network cataclysmx_terminal ftxui::component Threads::Threads)
@@ -243,6 +245,7 @@ if(CATACLYSMX_BUILD_SDL)
     add_executable(cataclysmx_sdl_game src/sdl/main.cpp)
     target_compile_definitions(cataclysmx_sdl_game PRIVATE
         CATACLYSMX_TERRAIN_FILE="${CMAKE_CURRENT_SOURCE_DIR}/data/demo.json5"
+        CATACLYSMX_FIRST_HOUSE_PACK="${CMAKE_CURRENT_SOURCE_DIR}/data/first_house.json5"
         CATACLYSMX_CONTENT_PACK="${CMAKE_CURRENT_SOURCE_DIR}/data/content.json5"
         CATACLYSMX_LOC_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/data/loc")
     target_link_libraries(cataclysmx_sdl_game PRIVATE cataclysmx_sdl)
@@ -281,8 +284,11 @@ if(CATACLYSMX_BUILD_TESTS)
         tests/house_world_tests.cpp tests/house_crafting_tests.cpp tests/house_worldgen_tests.cpp
         tests/house_spatial_tests.cpp tests/house_network_tests.cpp tests/house_save_tests.cpp
         tests/house_server_tests.cpp)
+    target_sources(cataclysmx_tests PRIVATE tests/monster_identity_tests.cpp tests/monster_network_tests.cpp
+        tests/monster_presentation_tests.cpp tests/urban_content_tests.cpp tests/town_scenario_tests.cpp)
     target_compile_definitions(cataclysmx_tests PRIVATE
         CATACLYSMX_TERRAIN_FILE="${CMAKE_CURRENT_SOURCE_DIR}/data/demo.json5"
+        CATACLYSMX_FIRST_HOUSE_PACK="${CMAKE_CURRENT_SOURCE_DIR}/data/first_house.json5"
         CATACLYSMX_CONTENT_PACK="${CMAKE_CURRENT_SOURCE_DIR}/data/content.json5")
     target_compile_definitions(cataclysmx_tests PRIVATE CATACLYSMX_LOC_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/data/loc")
     target_link_libraries(cataclysmx_tests PRIVATE cataclysmx_client cataclysmx_network Catch2::Catch2WithMain unofficial::sqlite3::sqlite3 Threads::Threads)
@@ -300,6 +306,7 @@ if(CATACLYSMX_BUILD_TESTS)
             TIMEOUT 20 PASS_REGULAR_EXPRESSION "SDL smoke: ok")
     endif()
     if(CATACLYSMX_BUILD_TERMINAL)
+        target_compile_definitions(cataclysmx_tests PRIVATE CATACLYSMX_MONSTER_PRESENTATION_TERMINAL)
         target_sources(cataclysmx_tests PRIVATE tests/terminal_render_tests.cpp tests/terminal_debug_menu_tests.cpp
             tests/terminal_input_tests.cpp tests/terminal_settings_tests.cpp tests/terminal_gameplay_tests.cpp
             tests/item_ui_tests.cpp)

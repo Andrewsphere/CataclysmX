@@ -12,10 +12,16 @@ later source. Errors in the manifest carry its path and field/index; errors in
 definitions carry their source path. `LoadContentFile` continues to load one
 definition document, not a manifest.
 
-`data/demo.json5` loads the shared legacy definitions from `terrain/`, `items/`,
-`crafting/`, `monsters/`, `objects/` and `worldgen/buildings/`. `data/content.json5`
-lists those same sources and adds the first furnished house, its furniture, loot,
-monster and crafting data under the corresponding directories.
+| Manifest | Purpose and sources |
+| --- | --- |
+| `data/demo.json5` | Shared legacy definitions from `terrain/`, `items/`, `crafting/`, `monsters/`, `objects/`, and `worldgen/buildings/`. |
+| `data/first_house.json5` | Curated FirstHouse pack: demo sources plus household items, crafting, furniture, loot, cellar monsters, and furnished house. |
+| `data/content.json5` | Expanded Town pack: the same shared sources plus urban resources, specialists, and 25 additional populated buildings. |
+
+The manifests reference shared definition files; they do not duplicate those
+definitions within a loaded pack. See [urban content](urban_content.md) for the
+complete roster and scenario guide.
+
 The house has two equally weighted cellar layouts. The workshop variant has a
 30% chance of a zombie away from the stairs. Movable lamps light both surface
 rooms and each cellar without blocking movement.

@@ -27,6 +27,14 @@ void ItemLines(const World& world, ItemHandle handle, unsigned depth, Vector<Str
     for (auto child : item->contents) { ItemLines(world, child, depth + 1, output); }
 }
 }
+eastl::string_view VisibleActorName(const ContentCatalog& content, const ViewCell& cell) {
+    if (cell.overlayVisibility != Visibility::Visible || cell.actor == 0) { return {}; }
+    if (cell.player) { return "Player"; }
+    if (const auto* definition = content.TryGetMonster(cell.monsterType)) {
+        return {definition->name.data(), definition->name.size()};
+    }
+    return "Creature";
+}
 void DescribeTile(const World& world, const WorldView& view, TileCoord cursor, Vector<String>& output) {
     const int x = cursor.x - view.origin.x, z = cursor.z - view.origin.z;
     if (cursor.y != view.origin.y || x < 0 || z < 0 || x >= view.width || z >= view.height) {
@@ -57,7 +65,9 @@ void DescribeTile(const World& world, const WorldView& view, TileCoord cursor, V
     if (cell.actor) {
         const auto* actor = world.GetActor(world.FindActor(cell.actor));
         if (actor && actor->position == position) {
-            String name = actor->player ? "Player #" : "Creature #";
+            const auto typeName = VisibleActorName(world.GetContent(), cell);
+            String name(typeName.data(), typeName.size());
+            name += " #";
             name += UnsignedText(actor->id); name += " | Speed "; name += UnsignedText(actor->speed);
             output.push_back(eastl::move(name));
             output.push_back(CombatStatusText(world.Combat().Describe(world.FindActor(cell.actor))));

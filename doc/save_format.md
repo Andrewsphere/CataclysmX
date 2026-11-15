@@ -72,7 +72,16 @@ The root object has exactly `tiles`, `actors`, `objects`, and `ground_items`:
   "speed": positive-uint32, "remaining_ticks": decimal-string,
   "carry_capacity_g": decimal-string, "light": {"intensity": integer, "range": integer},
   "controller": {"type": string, "state": structured-value}, "combat": structured-value }`.
-  Carry capacity preserves the full uint64 range.
+  Carry capacity preserves the full uint64 range. The only optional actor field
+  in v10 is `monster_type`: a stable `MonsterDefinition::id` string, never a runtime
+  catalog index. Absent or empty string means untyped; writers emit it only when
+  nonempty. Present nonstrings, unknown nonempty IDs, embedded NULs, duplicate
+  fields and nonempty types on players are invalid. Resolution validates identity
+  without reapplying spawn defaults: saved injuries, speed, controller, inventory
+  and deadlines remain authoritative. Existing v10 saves without this field load
+  as untyped. Metadata remains 10 and no SQL schema migration is required. Older
+  executables reject saves containing the new field through their strict actor
+  allowlist; this compatibility is new-reader/old-save only.
   Controller envelopes have exactly `type` and `state`. Stable controller names
   are `none` (empty object state), `wander` and `melee` (exact `{ "version": 1 }` state,
   with an unsigned version). Players, including parked players, require `none`;
@@ -193,6 +202,8 @@ See [combat API](combat_api.md) and [DataObject encoding](data_object.md).
 
 Versions 7, 8 and 9 have the same SQL tables and memory encoding as v10. All
 three lack actor `combat`; decoding synthesizes `MakeCombatState(player)` defaults.
+All three also lack `monster_type` and decode as untyped; their strict field sets
+reject that field even when empty. Identity is never inferred from AI or statistics.
 Versions 7 and 8 additionally have actor
 records lack `controller`; object records lack `type` and `state`. Decoding
 synthesizes default player `none` / NPC `wander` envelopes and generic objects
@@ -223,6 +234,7 @@ durable version, permitting legacy reads and retry on the same connection.
 
 RAM archive fields are appended for source aggregate compatibility:
 `SavedActor::controller` is an owned `DataObject` envelope;
+`SavedActor::monsterType` is an owned stable definition ID string (empty untyped);
 `SavedObject::type` and `state` are an `ObjectTypeId` and owned `DataObject`.
 An empty object controller in a source-constructed archive is a compatibility
 sentinel: validation/encoding normalizes it to the player/NPC default via the
@@ -328,9 +340,10 @@ Oldest values are evicted first. The byte budget includes allocated map value
 capacity (including keys and unused slots), index storage, a conservative bound
 for segment pointers, ordered-key capacity and actor/object allocation capacities.
 Item allocations, including reserved-but-empty item storage, are excluded by
-rejecting those snapshots from the warm cache. Actor controller and object state
-now also own `DataObject` storage; cache budgeting must account for their dynamic
-allocations or exclude snapshots carrying them. Eviction falls back to validated
+rejecting those snapshots from the warm cache. All actor-containing snapshots are
+also excluded, covering their owned monster identity strings, controllers and
+combat trees without estimating recursive allocations. Typed objects are excluded
+for the same reason: their state owns `DataObject` storage. Eviction falls back to validated
 disk loading and does not change persistent identity or saved values.
 
 `Capture` produces trusted immutable RAM values from invariant-preserving world

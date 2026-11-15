@@ -341,6 +341,10 @@ bool EmptyController(const DataObject& controller) {
 SaveResult<void> ValidateEntityState(const ContentCatalog& content, const ChunkArchive& chunk,
     Diagnostics* diagnostics) {
     for (const auto& actor : chunk.actors) {
+        if (!actor.monsterType.empty()
+            && (actor.player || !content.FindMonster(actor.monsterType).value)) {
+            return Failure(SaveError::InvalidData, "Unknown monster type or typed player actor", diagnostics);
+        }
         const auto combat = ReadCombatState(actor.combat, diagnostics);
         if (!combat) {
             return eastl::unexpected(combat.error() == StateError::UnsupportedVersion
@@ -863,6 +867,7 @@ String EncodeChunk(const ContentCatalog& content, const ChunkArchive& chunk) {
         writer.Counter(value, "id", actor.id);
         writer.Position(value, actor.position);
         writer.Boolean(value, "player", actor.player);
+        if (!actor.monsterType.empty()) { writer.Text(value, "monster_type", actor.monsterType.c_str()); }
         writer.Boolean(value, "parked", actor.parked);
         writer.Counter(value, "turns", actor.turns);
         writer.Integer(value, "speed", actor.speed);
@@ -1060,7 +1065,9 @@ SaveResult<ChunkArchive> DecodeChunk(const ContentCatalog& content, const char* 
             ? Fields(value, {"id", "position", "player", "parked", "turns", "inventory", "speed", "remaining_ticks", "carry_capacity_g", "light"})
             : formatVersion == 9
                 ? Fields(value, {"id", "position", "player", "parked", "turns", "inventory", "speed", "remaining_ticks", "carry_capacity_g", "light", "controller"})
-                : Fields(value, {"id", "position", "player", "parked", "turns", "inventory", "speed", "remaining_ticks", "carry_capacity_g", "light", "controller", "combat"});
+                : Get(value, "monster_type")
+                    ? Fields(value, {"id", "position", "player", "parked", "turns", "inventory", "speed", "remaining_ticks", "carry_capacity_g", "light", "controller", "combat", "monster_type"})
+                    : Fields(value, {"id", "position", "player", "parked", "turns", "inventory", "speed", "remaining_ticks", "carry_capacity_g", "light", "controller", "combat"});
         if (!fields
             || !Light(Get(value, "light"), actor.light)
             || !Counter(Get(value, "carry_capacity_g"), actor.carryCapacityGrams)
@@ -1073,6 +1080,18 @@ SaveResult<ChunkArchive> DecodeChunk(const ContentCatalog& content, const char* 
         }
         actor.player = yyjson_get_bool(Get(value, "player"));
         actor.parked = yyjson_get_bool(Get(value, "parked"));
+        if (formatVersion == 10) {
+            if (auto* type = Get(value, "monster_type")) {
+                if (!yyjson_is_str(type)) {
+                    return Failure(SaveError::InvalidData, "Actor monster_type must be a stable string", diagnostics);
+                }
+                actor.monsterType.assign(yyjson_get_str(type), yyjson_get_len(type));
+                if (!actor.monsterType.empty()
+                    && (actor.player || !content.FindMonster(actor.monsterType).value)) {
+                    return Failure(SaveError::InvalidData, "Unknown monster type or typed player actor", diagnostics);
+                }
+            }
+        }
         if (formatVersion < 10) { actor.combat = CaptureCombatState(MakeCombatState(actor.player)); }
         else {
             auto combat = DecodeValue(Get(value, "combat"));

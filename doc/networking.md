@@ -66,9 +66,9 @@ assigning an actor. Joining has a five-second
 explicit-elapsed timeout. The server does not use wall time or RNG for gameplay;
 network-only tokens and discovery identifiers use OS entropy.
 
-## World, item and combat protocol (version 14, `0x43584e0e`)
+## World, item and combat protocol (version 15, `0x43584e0f`)
 
-Version 14 is wire-incompatible with earlier versions and supports maps up to
+Version 15 is wire-incompatible with earlier versions and supports maps up to
 129×129 cells with lossless run-length encoding. Coordinates encode signed
 32-bit X/Z/Y. Commands append signed `dy` after their item arguments; movement,
 and directional item use accept six axial directions. Movement also accepts the
@@ -112,7 +112,7 @@ must check encoding failures before sending. Invalid receipt encoding reports
 ### Lighting and memory cell record
 
 The view header remains 87 bytes through its u16 **expanded** cell count. The
-row-major map is encoded as `(u16 run length, 36-byte cell payload)` records until
+row-major map is encoded as `(u16 run length, 40-byte cell payload)` records until
 that count is reached. Runs repeat identical cell values and may cross row
 boundaries. Zero runs and runs exceeding the remaining count are invalid. Every
 expanded position is validated, including coordinate bounds; repeated values do
@@ -130,6 +130,7 @@ explicit. Offsets below are relative to the payload, after the run length:
 | 31, 32 | terrain depth, overlay depth | two u8s |
 | 33 | overlay visibility | same visibility enum |
 | 34, 35 | terrain light, overlay light | u8: Dark=0, Dim=1, Ordinary=2, Bright=3 |
+| 36 | monster type | u32 catalog-local MonsterTypeId; zero means untyped |
 
 `playerLight` is appended after the player-status list as the same light-band u8.
 It is followed by the player's `CombatView`: body kind, style and action (u8),
@@ -156,13 +157,24 @@ Non-Unknown channels must refer to in-world columns even when the projection bou
 extend beyond the world. Terrain IDs are checked against the admitted catalog at
 the client boundary for both Visible and Remembered terrain, before publication.
 All enum values, state booleans and depth bounds are checked on decode; the encoder
-also rejects noncanonical states. A uniform 129×129 map uses one 38-byte run;
-the worst case of distinct adjacent cells uses 632,358 bytes before header,
+also rejects noncanonical states. A uniform 129×129 map uses one 42-byte run;
+the worst case of distinct adjacent cells uses 698,922 bytes before header,
 items and player statuses. The 1 MiB packet limit still applies. Compressing
 repeated unknown/empty tiles avoids filling ENet's reliable window with redundant
 snapshot data during admission and delaying the first command opportunity.
 `wire::ValidTerrainDefinitions(view, content)` performs the catalog-dependent
-terrain check after structural decoding, alongside `ValidItemDefinitions`.
+terrain check after structural decoding, alongside `ValidItemDefinitions` and
+`ValidMonsterDefinitions`. The latter resolves every nonzero monster type against
+the admitted catalog before a LAN snapshot is acknowledged or published. Structural
+validation permits a nonzero type only on a Visible overlay with a nonzero actor
+ID and a false player flag. Hidden, remembered, empty and player cells carry zero;
+visible untyped creatures remain valid. Projection copies the selected visible
+actor's type at its overlay depth, including downward views, without consulting
+hidden actors or adding identity to terrain/object memory. RLE compares the type
+as part of the complete cell, so adjacent different types never share a run.
+Numeric types are session-local; the matching-content handshake and canonical
+catalog ordering keep them meaningful. Monster names and recipes remain covered
+by the content fingerprint; save identities use stable definition strings.
 
 The content fingerprint includes terrain light intensity and range, in addition
 to appearance, movement, support and stair connectivity, so differing emitters

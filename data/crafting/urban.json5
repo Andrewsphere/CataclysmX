@@ -1,0 +1,17 @@
+{format_version:1, definitions:[
+  {type:'recipe', id:'carve_wood_handle', name:'Carve a wooden handle',
+   inputs:[{item:'wood_plank',count:1}], tool_traits:[{id:'house_cutting',tier:1}],
+   result:{item:'wood_handle',count:1}, work:150},
+  {type:'recipe', id:'salvage_wire_bundle', name:'Salvage a bundle of wire',
+   inputs:[{item:'electrical_cord',count:1}], tool_traits:[{id:'house_cutting',tier:1}],
+   result:{item:'wire_bundle',count:1}, work:100},
+  {type:'recipe', id:'make_scrap_knife', name:'Make a scrap knife',
+   inputs:[{item:'wood_handle',count:1},{item:'wire_bundle',count:1},{item:'scrap',count:1}],
+   result:{item:'scrap_knife',count:1}, work:200},
+  {type:'recycling_recipe', id:'cut_up_work_shirt', name:'Cut up a work shirt',
+   target:'work_shirt', tool_traits:[{id:'house_cutting',tier:1}],
+   returns:[{item:'clean_rag',count:3}], work:100},
+  {type:'recycling_recipe', id:'cut_up_work_trousers', name:'Cut up work trousers',
+   target:'work_trousers', tool_traits:[{id:'house_cutting',tier:1}],
+   returns:[{item:'clean_rag',count:4}], work:120},
+]}

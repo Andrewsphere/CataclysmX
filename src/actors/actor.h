@@ -1,5 +1,6 @@
 #pragma once
 
+#include "actors/actor_types.h"
 #include "core/containers.h"
 #include "core/light_types.h"
 #include "core/timing.h"
@@ -34,6 +35,8 @@ public:
     LightEmission light{};
     CombatState combat;
     CombatFeedback combatFeedback;
+    // Assigned by CreateMonster; zero for players and legacy/untyped actors.
+    MonsterTypeId monsterType{};
 
 private:
     friend class World;

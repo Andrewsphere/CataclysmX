@@ -74,6 +74,8 @@ bool ValidCell(const ViewCell& cell, const WorldView& view, std::size_t index) {
     const bool terrain = cell.terrainVisibility != Visibility::Unknown;
     const bool overlay = cell.overlayVisibility != Visibility::Unknown;
     const bool object = cell.objectAppearance.kind != ObjectKind::None;
+    if (cell.monsterType.value &&
+        (!cell.actor || cell.player || cell.overlayVisibility != Visibility::Visible)) return false;
     if (!terrain && (cell.tile != Tile{} || cell.terrainDepth || cell.terrainLight != LightBand::Dark)) return false;
     if (cell.terrainVisibility == Visibility::Remembered &&
         (cell.tile.damage || cell.terrainLight != LightBand::Dark)) return false;
@@ -276,6 +278,13 @@ bool ValidTerrainDefinitions(const WorldView& view, const ContentCatalog& conten
     return true;
 }
 
+bool ValidMonsterDefinitions(const WorldView& view, const ContentCatalog& content) {
+    for (const auto& cell : view.cells) {
+        if (cell.monsterType.value && !content.TryGetMonster(cell.monsterType)) return false;
+    }
+    return true;
+}
+
 bool ValidItemDefinitions(const WorldView& view, const ContentCatalog& content) {
     if (!ValidLists(view) || !ValidCraftingJobs(view.craftingJobs)) return false;
     for (const auto& job : view.craftingJobs) {
@@ -416,6 +425,7 @@ bool Writer::View(const WorldView& v) {
         U8(static_cast<std::uint8_t>(c.terrainDepth)); U8(static_cast<std::uint8_t>(c.overlayDepth));
         U8(static_cast<std::uint8_t>(c.overlayVisibility));
         U8(static_cast<std::uint8_t>(c.terrainLight)); U8(static_cast<std::uint8_t>(c.overlayLight));
+        U32(c.monsterType.value);
         i += run;
     }
     if (!WriteEntries(*this, v.inventory) || !WriteEntries(*this, v.groundItems)) return false;
@@ -520,7 +530,7 @@ bool Reader::View(WorldView& v) {
             !U8(player) || player > 1 || !U32(c.ground_items) || !U64(c.object) ||
             !U8(kind) || !U8(facing) || !U8(active) || active > 1 || !U8(broken) || broken > 1 ||
             !U8(terrainDepth) || !U8(overlayDepth) || !U8(overlayVisibility) ||
-            !U8(terrainLight) || !U8(overlayLight)) return false;
+            !U8(terrainLight) || !U8(overlayLight) || !U32(c.monsterType.value)) return false;
         c.player = player;
         c.objectAppearance = {static_cast<ObjectKind>(kind), static_cast<ObjectFacing>(facing), active != 0, broken != 0};
         c.terrainDepth = terrainDepth; c.overlayDepth = overlayDepth;

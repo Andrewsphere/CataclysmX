@@ -621,7 +621,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
         if (smokeFailed) { std::fprintf(stderr,"SDL smoke step %u: %s\n",smokeStep,message.c_str()); return 1; }
         if (options.smoke && snapshot.paused && (modal.Active() == Screen::Examine || modal.Active() == Screen::Targets || modal.Active() == Screen::Actions)
             && snapshot.view.tick != smokeModalTick) { std::fputs("SDL modal advanced simulation.\n", stderr); return 1; }
-        if (options.smoke && options.scenario == NewGameScenario::FirstHouse
+        if (options.smoke && options.scenario != NewGameScenario::Demo
             && started && snapshot.view.playerId && assetState == AssetState::Ready && mapValid && smokeHealthDrawn) {
             running = false;
         }

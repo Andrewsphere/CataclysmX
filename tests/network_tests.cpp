@@ -111,7 +111,7 @@ bool Poll(LanHost& host, LanClient& a, LanClient& b, Predicate predicate) {
 }
 
 TEST_CASE("Current protocol preserves signed six-axis commands and authoritative shapes", "[network][codec][3d]") {
-    CHECK(wire::protocol == 0x43584e0e);
+    CHECK(wire::protocol == 0x43584e0f);
     for (const auto kind : {CommandKind::move, CommandKind::interact}) {
         for (const TileCoord direction : {TileCoord{1, 0, 0}, {-1, 0, 0}, {0, 1, 0},
             {0, -1, 0}, {0, 0, 1}, {0, 0, -1}, {0, 0, 0}, {1, 0, 1}, {0, 1, -1}, {0, 0, INT_MIN}}) {
@@ -287,6 +287,8 @@ TEST_CASE("Run encoded snapshots bound expansion and preserve repeated and varyi
         cell.overlayDepth = static_cast<unsigned>(i % 2); cell.overlayLight = LightBand::Dim;
     }
     wire::Writer varied; REQUIRE(varied.View(view));
+    // Protocol 15 worst-case cell runs use 698922 bytes, excluding metadata.
+    CHECK(varied.bytes.size() == compact.bytes.size() + (129 * 129 - 1) * 42);
     CHECK(varied.bytes.size() > 32768); // Cannot collapse into a small uniform run.
     CHECK(varied.bytes.size() <= wire::maxPacket);
     auto moved = eastl::move(varied);
@@ -360,7 +362,7 @@ TEST_CASE("Snapshot codecs reject invalid elevation, source depths and visible b
     auto invalid = baseline;
     wire::Writer writer; REQUIRE(writer.View(baseline));
     // Protocol-nine header ends at byte 87, followed by the u16 run length
-    // and the run's 36-byte cell payload. This fixture contains one cell.
+    // and the run's 40-byte cell payload. This fixture contains one cell.
     constexpr std::size_t originY = 8, playerY = 22, firstCell = 89;
     constexpr std::size_t terrainDepth = firstCell + 31, overlayDepth = firstCell + 32;
     std::size_t offset = 0;
@@ -523,7 +525,7 @@ TEST_CASE("Hidden cells are default and projection origins may extend past horiz
     // one unknown cell from the final run into the first run (4,1,4 -> 5,1,3).
     view.cells[4] = view.cells[5]; view.cells[5] = {};
     wire::Writer centered; REQUIRE(centered.View(view));
-    constexpr std::size_t firstRun = 87, runRecordSize = 38;
+    constexpr std::size_t firstRun = 87, runRecordSize = 42;
     REQUIRE(centered.bytes[firstRun + 1] == 4);
     REQUIRE(centered.bytes[firstRun + runRecordSize + 1] == 1);
     REQUIRE(centered.bytes[firstRun + 2 * runRecordSize + 1] == 4);

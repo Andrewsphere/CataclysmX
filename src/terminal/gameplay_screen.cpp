@@ -2,6 +2,7 @@
 
 #include "client/text.h"
 #include "client/combat_text.h"
+#include "client/tile_inspection.h"
 #include "terminal/keyboard.h"
 
 #include <ftxui/dom/node.hpp>
@@ -528,6 +529,20 @@ ftxui::Element GameplayUi::Render(WorldView view, const ContentCatalog& content,
     compact += " | "; compact += t("game.ui.light"); compact += ' '; compact += light;
     if (!combatStatus.empty()) { compact += '\n'; compact += combatStatus; }
     if (!combatFeedback.empty()) { compact += '\n'; compact += combatFeedback; }
+    String visibleActors;
+    for (const auto& cell : view.cells) {
+        if (cell.player) { continue; }
+        const auto typeName = VisibleActorName(content, cell);
+        if (typeName.empty()) { continue; }
+        if (!visibleActors.empty()) { visibleActors += ", "; }
+        visibleActors.append(typeName.data(), typeName.size());
+        visibleActors += " #"; visibleActors += UnsignedText(cell.actor);
+    }
+    if (!visibleActors.empty()) {
+        visibleActors.insert(0, "Visible: ");
+        status.insert(status.begin() + 1, Paragraph(visibleActors));
+        compact += '\n'; compact += visibleActors;
+    }
     if (!presentation.lan && !mapCache_) { mapCache_ = std::make_shared<TerminalMapCache>(); }
     auto world = presentation.lan ? presentation.lan
         : std::make_shared<MapViewport>(view, std::move(view.cells), content, mapCache_,

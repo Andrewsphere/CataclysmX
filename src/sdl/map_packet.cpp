@@ -32,6 +32,8 @@ MapPacket PrepareMapPacket(const WorldView& view, const ContentCatalog& content,
         prepared.overlayShading = MakePerceptionTransform(cell.overlayVisibility, cell.overlayLight, cell.overlayDepth);
         ViewCell terrain = cell;
         terrain.actor = 0;
+        terrain.player = false;
+        terrain.monsterType = {};
         terrain.ground_items = 0;
         terrain.object = 0;
         terrain.objectAppearance = {};
@@ -48,7 +50,7 @@ MapPacket PrepareMapPacket(const WorldView& view, const ContentCatalog& content,
             ViewCell display = cell;
             GenericSprite kind;
             if (liveOverlay && cell.actor != 0) {
-                if (cell.actor == view.playerId) { display.player = true; kind = GenericSprite::Player; }
+                if (cell.actor == view.playerId) { display.player = true; display.monsterType = {}; kind = GenericSprite::Player; }
                 else if (cell.player) { kind = GenericSprite::OtherPlayer; }
                 else { kind = GenericSprite::Npc; }
             } else if (liveOverlay && cell.ground_items != 0) { kind = GenericSprite::GroundItems; }

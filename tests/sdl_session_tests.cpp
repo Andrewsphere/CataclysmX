@@ -350,7 +350,7 @@ TEST_CASE("First-house session rejects a demo-only catalog before construction",
 }
 
 TEST_CASE("First-house session publishes the selected seed and planned start", "[sdl][session][house]") {
-    const auto content = LoadContentPack(CATACLYSMX_CONTENT_PACK);
+    const auto content = LoadContentPack(CATACLYSMX_FIRST_HOUSE_PACK);
     REQUIRE(content);
     for (const std::uint32_t seed : {0U, 13U}) {
         const auto start = FindFirstHouseStart(*content, seed);
