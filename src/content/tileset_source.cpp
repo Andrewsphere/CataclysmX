@@ -219,7 +219,7 @@ ContentResult<TilesetDefinition> ParseSourceTileset(eastl::string_view manifest,
     auto* root = yyjson_doc_get_root(document.value);
     auto version = ValidateVersion(root, diagnostics, context);
     if (!version) { return eastl::unexpected(version.error()); }
-    if (!Object(root, {"format_version", "id", "name", "cell_width", "cell_height", "source_directories", "terrain", "items", "generic"})) { return invalid(); }
+    if (!Object(root, {"format_version", "id", "name", "cell_width", "cell_height", "source_directories", "terrain", "items", "generic", "monsters"})) { return invalid(); }
     TilesetDefinition d;
     if (!Text(yyjson_obj_get(root, "id"), d.id) || !Segment(d.id) || !Text(yyjson_obj_get(root, "name"), d.name)
         || !UInt(yyjson_obj_get(root, "cell_width"), d.cellWidth, true) || !UInt(yyjson_obj_get(root, "cell_height"), d.cellHeight, true)
@@ -374,19 +374,29 @@ ContentResult<TilesetDefinition> ParseSourceTileset(eastl::string_view manifest,
     }
     context = "tileset.json5";
     d.terrain.resize(content.TerrainCount() + 1); d.items.resize(content.ItemCount() + 1);
+    d.monsters.resize(content.MonsterCount() + 1);
     d.terrainGround.resize(content.TerrainCount() + 1);
-    const char* categories[] = {"terrain", "items", "generic"};
+    const char* categories[] = {"terrain", "items", "generic", "monsters"};
     const char* generic[] = {"player", "other_player", "npc", "ground_items", "object_enabled", "object_disabled"};
-    for (unsigned category = 0; category < 3; ++category) {
+    for (unsigned category = 0; category < 4; ++category) {
         auto* mappings = yyjson_obj_get(root, categories[category]); if (!mappings) { continue; }
         if (!Object(mappings, {}, true)) { return invalid(); }
         size_t i, n; yyjson_val *key, *value;
         yyjson_obj_foreach(mappings, i, n, key, value) {
+            TilesetMapping unused;
             TilesetMapping* mapping = nullptr;
             if (category == 0) { const auto id = content.FindTerrain(View(key)); if (id.value) { mapping = &d.terrain[id.value]; } }
             else if (category == 1) { const auto id = content.FindItem(View(key)); if (id.value) { mapping = &d.items[id.value]; } }
+            else if (category == 3) {
+                const auto id = content.FindMonster(View(key));
+                auto* optional = yyjson_obj_get(value, "optional");
+                if (optional && !yyjson_is_bool(optional)) { return invalid(); }
+                if (id.value) { mapping = &d.monsters[id.value]; }
+                else if (optional && yyjson_get_bool(optional)) { mapping = &unused; }
+            }
             else { for (unsigned j = 0; j < 6; ++j) { if (View(key) == generic[j]) { mapping = &d.generic[j]; } } }
             if (!mapping || !Object(value, category == 0 ? std::initializer_list<eastl::string_view>{"visual", "activation", "ground"}
+                : category == 3 ? std::initializer_list<eastl::string_view>{"visual", "activation", "optional"}
                 : std::initializer_list<eastl::string_view>{"visual", "activation"})) { return invalid(); }
             auto* visual = yyjson_obj_get(value, "visual");
             if (!Reference(visual, d, *mapping, true)) {

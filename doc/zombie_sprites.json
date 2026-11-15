@@ -1,0 +1,390 @@
+{
+  "source_batch": "C:\\ComfyUI\\ComfyUI\\output\\CataclysmX\\sprite_variations\\final_blood_batch",
+  "pixel_processing": "Lossless RGBA re-encoding removes ComfyUI metadata; pixels and alpha unchanged.",
+  "sprites": [
+    {
+      "source": "sheet_01_r1c1_00001_.png",
+      "sprite": "cashier",
+      "monster": "zombie_cashier",
+      "description": "Former grocery cashier, tangled dark hair, faded green shop vest over a cream shirt, charcoal trousers and brown shoes; sickly grey-green skin, rotting cheek, cracked bloody lip and blood-stained torn vest."
+    },
+    {
+      "source": "sheet_01_r1c2_00001_.png",
+      "sprite": "librarian",
+      "monster": "zombie_librarian",
+      "description": "Former elderly librarian, wispy white hair, cracked spectacles, burgundy cardigan and grey skirt over dark leggings; waxy yellow-grey skin, bruised eye sockets, a small bloody cheek scratch and ragged sleeves."
+    },
+    {
+      "source": "sheet_01_r1c3_00001_.png",
+      "sprite": "postal_carrier",
+      "monster": "zombie_postal_carrier",
+      "description": "Former postal carrier, blue cap, faded blue jacket, slate trousers and ankle boots; sickly blue-grey skin, mottled neck decay, a bloodied wrist and ripped jacket hem."
+    },
+    {
+      "source": "sheet_01_r1c4_00001_.png",
+      "sprite": "chef",
+      "monster": "zombie_cook",
+      "description": "Former chef, collapsed white chef cap, dirty cream jacket, dark check trousers and black clogs; pallid sallow skin, decayed mouth, small blood stains across the collar and frayed cuffs."
+    },
+    {
+      "source": "sheet_01_r2c1_00001_.png",
+      "sprite": "mechanic",
+      "monster": "zombie_mechanic",
+      "description": "Former car mechanic, short greasy hair, navy coveralls with one sleeve torn, brown work boots; unhealthy olive-grey skin, rotten ear, a dried bloody bite mark on a forearm and ragged trouser knees."
+    },
+    {
+      "source": "sheet_01_r2c2_00001_.png",
+      "sprite": "gardener",
+      "monster": "zombie_outdoors_worker",
+      "description": "Former gardener, crushed straw hat, moss-green overalls over a tan shirt and muddy boots; sickly ochre-grey skin, localized mossy decay, blood on a torn shoulder and frayed hems."
+    },
+    {
+      "source": "sheet_01_r2c3_00001_.png",
+      "sprite": "bus_driver",
+      "monster": "zombie_driver",
+      "description": "Former bus driver, peaked dark cap, dusty teal uniform jacket and black trousers; pale greenish skin, sunken dark eyes, bloody cracked lips, patchy facial decay and ripped cuffs."
+    },
+    {
+      "source": "sheet_01_r2c4_00001_.png",
+      "sprite": "office_clerk",
+      "monster": "zombie_office_worker",
+      "description": "Former office clerk, messy bob haircut, torn grey suit jacket over a pale pink shirt, dark trousers; sickly grey skin, bruised jaw, a small bloody temple wound and ragged jacket elbows."
+    },
+    {
+      "source": "sheet_01_r3c1_00001_.png",
+      "sprite": "delivery_courier",
+      "monster": "zombie_courier",
+      "description": "Former delivery courier, orange rain jacket, faded jeans, worn trainers and a small belt pouch; sickly pale green skin, rotting nose, dried blood on a torn collar and frayed jeans."
+    },
+    {
+      "source": "sheet_01_r3c2_00001_.png",
+      "sprite": "janitor",
+      "monster": "zombie_janitor",
+      "description": "Former janitor, receding hair, dull turquoise work shirt and grey trousers with rubber shoes; unhealthy yellow-green skin, mottled facial rot, a bloody hand scrape and torn shirt tails."
+    },
+    {
+      "source": "sheet_01_r3c3_00001_.png",
+      "sprite": "school_caretaker",
+      "monster": "zombie_janitor",
+      "description": "Former school caretaker, thick grey moustache, brown vest over a mustard shirt and dark trousers; ashen sickly skin, decayed jaw, a bloodied neck scratch and ripped vest lining."
+    },
+    {
+      "source": "sheet_01_r3c4_00001_.png",
+      "sprite": "taxi_driver",
+      "monster": "zombie_driver",
+      "description": "Former taxi driver, wool flat cap, cracked brown jacket, olive trousers and loafers; sickly grey-brown skin, one decayed cheek, dried blood below the mouth and torn lapels."
+    },
+    {
+      "source": "sheet_01_r4c1_00001_.png",
+      "sprite": "painter",
+      "monster": "zombie_construction_worker",
+      "description": "Former painter, paint-spotted cream coveralls over a faded red shirt and dark shoes; sickly grey-blue skin, dark bruising, a small bloody ear wound and ragged sleeves."
+    },
+    {
+      "source": "sheet_01_r4c2_00001_.png",
+      "sprite": "hotel_cleaner",
+      "monster": "zombie_cleaner",
+      "description": "Former hotel cleaner, pale blue uniform dress over black leggings, scuffed shoes; unhealthy green-grey skin, rotten lips, dark-red blood spots on the collar and a torn skirt hem."
+    },
+    {
+      "source": "sheet_01_r4c3_00001_.png",
+      "sprite": "factory_packer",
+      "monster": "zombie_warehouse_worker",
+      "description": "Former factory packer, cropped hair, rust-colored work jacket and faded blue trousers; sickly pallid skin, mottled forehead decay, blood on a ripped shoulder and frayed cuffs."
+    },
+    {
+      "source": "sheet_01_r4c4_00001_.png",
+      "sprite": "bicycle_messenger",
+      "monster": "zombie_courier",
+      "description": "Former bicycle messenger, dented red helmet, ripped plum windbreaker and grey shorts over dark leggings; sickly grey-green skin, sunken eyes, a bloody chin scrape and decayed forearm."
+    },
+    {
+      "source": "sheet_02_r1c1_00001_.png",
+      "sprite": "firefighter",
+      "monster": "zombie_firefighter",
+      "description": "Former firefighter, scuffed yellow helmet, dirty tan turnout coat with dull pale bands and black boots; sickly soot-grey skin, localized charred decay, a small bloodied cheek wound and torn coat sleeves."
+    },
+    {
+      "source": "sheet_02_r1c2_00001_.png",
+      "sprite": "nurse",
+      "monster": "zombie_nurse",
+      "description": "Former nurse, tangled tied-back hair, faded mint scrubs and white shoes; sickly blue-white skin, mottled rot on the face, dried blood across a ripped scrub collar."
+    },
+    {
+      "source": "sheet_02_r1c3_00001_.png",
+      "sprite": "police_officer",
+      "monster": "zombie_police",
+      "description": "Former police officer, cracked navy cap, navy uniform with an empty belt and dark boots; unhealthy grey-green skin, rotten mouth, a bloody ear and torn knees and sleeves; unarmed."
+    },
+    {
+      "source": "sheet_02_r1c4_00001_.png",
+      "sprite": "paramedic",
+      "monster": "zombie_paramedic",
+      "description": "Former paramedic, muted red rescue jacket with grey reflective bands, navy trousers and black boots; waxy yellow-grey skin, bruised eye, dried blood on a torn shoulder and decayed fingers."
+    },
+    {
+      "source": "sheet_02_r2c1_00001_.png",
+      "sprite": "construction_worker",
+      "monster": "zombie_construction_worker",
+      "description": "Former construction worker, dented orange hardhat, yellow safety vest over a grey shirt and brown work trousers; sickly olive-grey skin, rotting cheek, bloody cracked lips and shredded vest hem."
+    },
+    {
+      "source": "sheet_02_r2c2_00001_.png",
+      "sprite": "sewer_technician",
+      "monster": "zombie_maintenance_worker",
+      "description": "Former sewer technician, dark green waterproof coveralls with a folded hood and rubber boots; sickly yellow-green skin, blackened facial decay, a bloody forehead scrape and torn cuffs."
+    },
+    {
+      "source": "sheet_02_r2c3_00001_.png",
+      "sprite": "dockworker",
+      "monster": "zombie_warehouse_worker",
+      "description": "Former dockworker, navy knit cap, worn mustard cable-knit sweater and slate trousers; sickly frost-pale skin, mottled neck rot, a bloodied wrist and ragged sweater elbows."
+    },
+    {
+      "source": "sheet_02_r2c4_00001_.png",
+      "sprite": "security_guard",
+      "monster": "zombie_security_guard",
+      "description": "Former security guard, short dark hair, dusty purple-grey uniform shirt and black trousers; unhealthy ashen skin, rotten nose, a bloody bite mark on the arm and ripped shirt tails; unarmed."
+    },
+    {
+      "source": "sheet_02_r3c1_00001_.png",
+      "sprite": "road_worker",
+      "monster": "zombie_construction_worker",
+      "description": "Former road worker, orange vest over a blue jacket, grey trousers and heavy boots; sickly grey-green skin, sunken eyes, a decayed jaw, dried blood on a torn vest."
+    },
+    {
+      "source": "sheet_02_r3c2_00001_.png",
+      "sprite": "laboratory_technician",
+      "monster": "zombie_laboratory_technician",
+      "description": "Former laboratory technician, broken spectacles, torn pale lab coat over teal clothes and dark shoes; sickly pale blue skin, patchy facial rot, a small bloody temple wound and frayed coat hem."
+    },
+    {
+      "source": "sheet_02_r3c3_00001_.png",
+      "sprite": "power_line_worker",
+      "monster": "zombie_maintenance_worker",
+      "description": "Former power-line worker, white hardhat, faded brown insulated jacket and olive trousers; sickly yellow-grey skin, localized scorched decay, dark-red blood stains on a ripped sleeve."
+    },
+    {
+      "source": "sheet_02_r3c4_00001_.png",
+      "sprite": "coastguard",
+      "monster": "zombie_sailor",
+      "description": "Former coastguard, crushed orange cap, muted blue waterproof jacket and dark trousers; sickly salt-grey skin, decayed lips, a bloody hand scrape and torn jacket seams."
+    },
+    {
+      "source": "sheet_02_r4c1_00001_.png",
+      "sprite": "miner",
+      "monster": "zombie_miner",
+      "description": "Former miner, dirty yellow helmet with an unlit lamp, charcoal jacket and brown trousers; unhealthy coal-grey skin, rotting ear, dried blood on a ripped collar and ragged trousers."
+    },
+    {
+      "source": "sheet_02_r4c2_00001_.png",
+      "sprite": "postal_security_worker",
+      "monster": "zombie_security_guard",
+      "description": "Former postal security worker, faded green peaked cap, beige uniform jacket and brown trousers; sickly pale olive skin, bruised face, a small bloody cheek wound and torn lapels; unarmed."
+    },
+    {
+      "source": "sheet_02_r4c3_00001_.png",
+      "sprite": "park_ranger",
+      "monster": "zombie_outdoors_worker",
+      "description": "Former park ranger, crushed tan brimmed hat, moss-green jacket and dark boots; sickly grey-green skin, decayed neck, bloody cracked lips and torn cuffs and knees."
+    },
+    {
+      "source": "sheet_02_r4c4_00001_.png",
+      "sprite": "rail_conductor",
+      "monster": "zombie_driver",
+      "description": "Former rail conductor, navy peaked cap, maroon waistcoat over a cream shirt and dark trousers; sickly grey-yellow skin, dark facial rot, a bloodied ear and a ripped waistcoat."
+    },
+    {
+      "source": "sheet_03_r1c1_00001_.png",
+      "sprite": "fungal_gardener",
+      "monster": "zombie_outdoors_worker",
+      "description": "Fungal gardener zombie, ivory shelf mushrooms on one shoulder, torn olive overalls; sickly blue-grey skin, patchy fungal decay and small blood stains around a split cheek."
+    },
+    {
+      "source": "sheet_03_r1c2_00001_.png",
+      "sprite": "marsh_fisherman",
+      "monster": "zombie_outdoors_worker",
+      "description": "Marsh fisherman zombie, collapsed brown fishing cap, ripped green waders and tan shirt; sickly yellow-green skin, waterlogged mottled decay, bloody cracked lips and ragged cuffs."
+    },
+    {
+      "source": "sheet_03_r1c3_00001_.png",
+      "sprite": "frostbitten_sleeper",
+      "monster": "zombie_homeless",
+      "description": "Frostbitten street sleeper zombie, navy beanie, ragged burgundy coat and layered grey trousers; sickly icy white-grey skin, blackened patches of decay and dark-red blood at a scraped temple."
+    },
+    {
+      "source": "sheet_03_r1c4_00001_.png",
+      "sprite": "burned_welder",
+      "monster": "zombie_mechanic",
+      "description": "Burned welder zombie, raised broken welding visor, torn brown leather apron over charcoal workwear; sickly ash-grey skin, localized scorched decay and a blood-stained ripped collar."
+    },
+    {
+      "source": "sheet_03_r2c1_00001_.png",
+      "sprite": "irradiated_maintenance",
+      "monster": "zombie_maintenance_worker",
+      "description": "Irradiated maintenance zombie, split faded yellow protective suit with hood down and black boots; sickly chalk-green skin, dark mottled decay, a small bloody mouth wound and ragged suit seams."
+    },
+    {
+      "source": "sheet_03_r2c2_00001_.png",
+      "sprite": "salt_weathered_sailor",
+      "monster": "zombie_sailor",
+      "description": "Salt-weathered sailor zombie, tangled grey beard, torn navy striped shirt and olive trousers; unhealthy green-blue skin, decayed cheek, a bloody forearm scratch and frayed hems."
+    },
+    {
+      "source": "sheet_03_r2c3_00001_.png",
+      "sprite": "desert_traveler",
+      "monster": "zombie_traveler",
+      "description": "Dust-caked desert traveler zombie, shredded tan headscarf, rusty orange jacket and brown trousers; sickly ochre-grey skin, dry patchy rot and blood on a split lip and torn sleeve."
+    },
+    {
+      "source": "sheet_03_r2c4_00001_.png",
+      "sprite": "mossy_groundskeeper",
+      "monster": "zombie_outdoors_worker",
+      "description": "Moss-covered groundskeeper zombie, small dull-green moss patches on the scalp, ripped beige work coat; sickly green-grey skin, localized moldy decay and dried blood on the neck and collar."
+    },
+    {
+      "source": "sheet_03_r3c1_00001_.png",
+      "sprite": "kitchen_porter",
+      "monster": "zombie_cook",
+      "description": "Soot-covered kitchen porter zombie, greasy dark hair, torn pale apron over a muted blue shirt; sickly yellow-grey skin, dark decayed fingertips, bloody cracked lips and frayed trousers."
+    },
+    {
+      "source": "sheet_03_r3c2_00001_.png",
+      "sprite": "flood_survivor",
+      "monster": "zombie_shopper",
+      "description": "Flood survivor zombie, matted pale hair, ragged purple raincoat and slate shorts over dark leggings; sickly blue-white skin, waterlogged decay, a small bloodied ear and torn hems."
+    },
+    {
+      "source": "sheet_03_r3c3_00001_.png",
+      "sprite": "moldy_storage_worker",
+      "monster": "zombie_warehouse_worker",
+      "description": "Moldy storage worker zombie, collapsed brown cap, ripped teal warehouse jacket and tan trousers; sickly mottled pale-green skin, mold-darkened cheek and blood spots on a torn shoulder."
+    },
+    {
+      "source": "sheet_03_r3c4_00001_.png",
+      "sprite": "farm_worker",
+      "monster": "zombie_outdoors_worker",
+      "description": "Sun-bleached farm zombie, tangled straw-colored hair, torn faded red overalls and cream undershirt; unhealthy waxy yellow skin, dried localized rot and a bloodied hand and collar."
+    },
+    {
+      "source": "sheet_03_r4c1_00001_.png",
+      "sprite": "quarry_worker",
+      "monster": "zombie_construction_worker",
+      "description": "Quarry dust zombie, grey cloth cap, ripped ochre work shirt and slate trousers; sickly chalk-grey skin, cracked decayed jaw and small dark-red blood stains on the sleeves."
+    },
+    {
+      "source": "sheet_03_r4c2_00001_.png",
+      "sprite": "cold_storage_worker",
+      "monster": "zombie_warehouse_worker",
+      "description": "Cold-storage worker zombie, white knit cap, torn faded teal padded jacket and grey boots; sickly blue-grey skin, frost-darkened decay and a bloody temple scratch."
+    },
+    {
+      "source": "sheet_03_r4c3_00001_.png",
+      "sprite": "compost_worker",
+      "monster": "zombie_outdoors_worker",
+      "description": "Compost worker zombie, tangled brown hair, tattered dark green smock and rust trousers; sickly olive-yellow skin, localized fungal facial decay and blood on the mouth and torn cuffs."
+    },
+    {
+      "source": "sheet_03_r4c4_00001_.png",
+      "sprite": "salvage_worker",
+      "monster": "zombie_mechanic",
+      "description": "Rust-stained salvage zombie, bent grey helmet, ripped dull-orange vest and patched olive trousers; sickly brown-grey skin, mottled facial rot and a small bloodied cheek wound."
+    },
+    {
+      "source": "sheet_04_r1c1_00001_.png",
+      "sprite": "wedding_guest",
+      "monster": "zombie_shopper",
+      "description": "Former wedding guest zombie, crushed burgundy bow tie, ripped cream suit jacket and charcoal trousers; sickly pale grey-green skin, sunken eyes, rotting lips and blood on the torn lapel."
+    },
+    {
+      "source": "sheet_04_r1c2_00001_.png",
+      "sprite": "tennis_player",
+      "monster": "zombie_athlete",
+      "description": "Former tennis player zombie, dirty white visor, torn pale blue polo and navy shorts; sickly yellow-grey skin, decayed cheek, a bloody knee scrape and frayed sleeve edges."
+    },
+    {
+      "source": "sheet_04_r1c3_00001_.png",
+      "sprite": "rock_musician",
+      "monster": "zombie_musician",
+      "description": "Former rock musician zombie, messy black hair, torn plum band jacket over a grey shirt and black trousers; sickly blue-grey skin, mottled rot and a small bloody mouth wound."
+    },
+    {
+      "source": "sheet_04_r1c4_00001_.png",
+      "sprite": "grandmother",
+      "monster": "zombie_shopper",
+      "description": "Former grandmother zombie, tangled silver bun, ragged olive cardigan over a burgundy dress; unhealthy waxy grey skin, bruised eye sockets, decayed jaw and dark-red blood on torn cuffs."
+    },
+    {
+      "source": "sheet_04_r2c1_00001_.png",
+      "sprite": "butcher",
+      "monster": "zombie_butcher",
+      "description": "Former butcher zombie, striped blue shirt, ripped cream apron and brown boots, empty hands; sickly green-grey skin, rotten cheek, small bloody neck scratch and stained torn apron."
+    },
+    {
+      "source": "sheet_04_r2c2_00001_.png",
+      "sprite": "fisherman",
+      "monster": "zombie_outdoors_worker",
+      "description": "Former fisherman zombie, orange knit cap, torn navy sweater and faded green trousers; sickly salt-pale skin, decayed ear, blood at the cracked lips and ragged elbows."
+    },
+    {
+      "source": "sheet_04_r2c3_00001_.png",
+      "sprite": "carnival_attendant",
+      "monster": "zombie_carnival_attendant",
+      "description": "Former carnival attendant zombie, crushed mustard cap, ripped faded-red waistcoat and grey trousers; sickly yellow-green skin, sunken dark eyes, localized rot and dried blood on a torn collar."
+    },
+    {
+      "source": "sheet_04_r2c4_00001_.png",
+      "sprite": "fitness_trainer",
+      "monster": "zombie_athlete",
+      "description": "Former fitness trainer zombie, dark headband, ripped muted teal tracksuit and grey trainers; sickly ashen skin, rotten jaw, a bloody forearm scratch and ragged knee fabric."
+    },
+    {
+      "source": "sheet_04_r3c1_00001_.png",
+      "sprite": "university_professor",
+      "monster": "zombie_professor",
+      "description": "Former university professor zombie, sparse white hair, torn brown tweed jacket with olive elbow patches; sickly grey-yellow skin, decayed cheek and blood at a split lip and frayed collar."
+    },
+    {
+      "source": "sheet_04_r3c2_00001_.png",
+      "sprite": "mannequin_dresser",
+      "monster": "zombie_shopper",
+      "description": "Former shop mannequin dresser zombie, asymmetrical dark hair, shredded navy coat over a mustard blouse; sickly blue-green skin, mottled facial rot, bloody knuckles and torn hems."
+    },
+    {
+      "source": "sheet_04_r3c3_00001_.png",
+      "sprite": "baker",
+      "monster": "zombie_cook",
+      "description": "Former baker zombie, collapsed cream cap, torn burgundy apron over a tan shirt and grey trousers; sickly flour-pale skin, a decayed nose and small blood stains on ripped cuffs."
+    },
+    {
+      "source": "sheet_04_r3c4_00001_.png",
+      "sprite": "refuse_collector",
+      "monster": "zombie_refuse_collector",
+      "description": "Former refuse collector zombie, faded orange knit cap, ripped dark green high-visibility coat and rubber boots; sickly olive-grey skin, mottled neck rot, bloody cracked lips and torn coat seams."
+    },
+    {
+      "source": "sheet_04_r4c1_00001_.png",
+      "sprite": "train_commuter",
+      "monster": "zombie_commuter",
+      "description": "Former train commuter zombie, loosened blue tie, torn pale shirt under a charcoal vest and brown trousers; unhealthy pale yellow skin, sunken eyes, rotting cheek and a bloody temple scrape."
+    },
+    {
+      "source": "sheet_04_r4c2_00001_.png",
+      "sprite": "laundromat_worker",
+      "monster": "zombie_cleaner",
+      "description": "Former laundromat worker zombie, messy grey hair, ripped lilac smock over a green shirt and slate trousers; sickly pallid grey skin, patchy facial decay and dried blood on the torn smock."
+    },
+    {
+      "source": "sheet_04_r4c3_00001_.png",
+      "sprite": "winter_jogger",
+      "monster": "zombie_athlete",
+      "description": "Former winter jogger zombie, faded red knit cap, ripped ochre sports jacket and navy leggings; sickly frosted blue-grey skin, blackened cheek decay and a small bloody neck wound."
+    },
+    {
+      "source": "sheet_04_r4c4_00001_.png",
+      "sprite": "antique_dealer",
+      "monster": "zombie_antique_dealer",
+      "description": "Former antique dealer zombie, broken spectacles, torn teal velvet jacket and dusty brown trousers; sickly waxy green-grey skin, decayed jaw, blood at a cracked lip and frayed sleeves."
+    }
+  ]
+}

@@ -112,6 +112,57 @@ TEST_CASE("source packs sort package IDs and deterministically pack frames with 
     CHECK_FALSE(Parse(excessive)); // Padded CPU atlas pages exceed 64 MiB.
 }
 
+TEST_CASE("Gen1 zombie batch loads and resolves every authored monster appearance", "[sdl][tileset][source][monster-sprites]") {
+    Diagnostics diagnostics;
+    auto content = LoadContentPack(CATACLYSMX_CONTENT_PACK, &diagnostics);
+    INFO(FormatDiagnostics(diagnostics).c_str());
+    REQUIRE(content);
+    const auto path = fs::path(CATACLYSMX_CONTENT_PACK).parent_path().parent_path()
+        / "assets/tiles/gen1_32x32/tileset.json5";
+    auto tileset = LoadTilesetFile(path.string().c_str(), *content, &diagnostics);
+    INFO(FormatDiagnostics(diagnostics).c_str());
+    REQUIRE(tileset);
+    Vector<bool> used(tileset->sprites.size(), false);
+    unsigned mapped = 0;
+    for (const auto& mapping : tileset->monsters) {
+        if (mapping.kind == TilesetMappingKind::Missing) { continue; }
+        ++mapped;
+        if (mapping.kind == TilesetMappingKind::Visual) {
+            const auto& group = tileset->visuals[mapping.index];
+            REQUIRE(group.kind == VisualGroupKind::Variants);
+            for (const auto& alternative : group.alternatives) {
+                REQUIRE(alternative.mapping.kind == TilesetMappingKind::Sprite);
+                used[alternative.mapping.index] = true;
+            }
+        } else {
+            REQUIRE(mapping.kind == TilesetMappingKind::Sprite);
+            used[mapping.index] = true;
+        }
+    }
+    CHECK(mapped == 34);
+    unsigned appearances = 0;
+    for (std::size_t i = 0; i < used.size(); ++i) {
+        if (!used[i]) { continue; }
+        ++appearances;
+        CHECK(tileset->sprites[i].width == 32);
+        CHECK(tileset->sprites[i].height == 32);
+        CHECK(tileset->sprites[i].layer == SpriteLayer::Upright);
+    }
+    CHECK(appearances == 64);
+    CHECK(tileset->monsters[content->FindMonster("zombie_doctor").value].kind == TilesetMappingKind::Missing);
+    Vector<SDL_Surface*> pages;
+    const auto built = BuildSourceAtlases(path.parent_path().string().c_str(), *tileset, pages, {});
+    for (auto* page : pages) { SDL_DestroySurface(page); }
+    REQUIRE(built);
+    for (const auto* pack : {CATACLYSMX_TERRAIN_FILE, CATACLYSMX_FIRST_HOUSE_PACK}) {
+        auto subset = LoadContentPack(pack, &diagnostics);
+        REQUIRE(subset);
+        auto subsetTileset = LoadTilesetFile(path.string().c_str(), *subset, &diagnostics);
+        INFO(FormatDiagnostics(diagnostics).c_str());
+        REQUIRE(subsetTileset);
+    }
+}
+
 TEST_CASE("source clips mix separate PNGs and uniform sheet frames", "[sdl][tileset][source]") {
     Vector<SpriteSourceFile> files{
         {"sprite/off.png", {}, 2, 2}, {"sprite/sheet.png", "{frame_width:2,frame_height:2}", 4, 2},
@@ -126,6 +177,39 @@ TEST_CASE("source clips mix separate PNGs and uniform sheet frames", "[sdl][tile
     SpritePlaybackController playback; REQUIRE(playback.Activate(7, rotated, *d, 0) == SpriteActivationResult::LoopStarted);
     CHECK(playback.Sample(7, rotated, *d, 0).mapping.transform == rotated.transform);
     CHECK(playback.Sample(7, rotated, *d, 30).mapping.transform == rotated.transform);
+}
+
+TEST_CASE("source monster mappings validate content IDs and support variants", "[sdl][tileset][source][monster-sprites]") {
+    const Vector<SpriteSourceFile> files{
+        {"sprite/zombie.png", {}, 32, 32},
+        {"sprite/varied.meta", "{kind:'variants',alternatives:[{visual:'sprite.zombie'},{visual:'sprite.zombie',flip_x:true}]}"}
+    };
+    auto content = LoadContentPack(CATACLYSMX_CONTENT_PACK);
+    REQUIRE(content);
+    const auto type = content->FindMonster("cellar_zombie");
+    const auto parse = [&](const char* mappings) {
+        return ParseSourceTileset(Manifest(mappings), {files.data(), files.size()}, *content);
+    };
+    REQUIRE(type.value != 0);
+    auto parsed = parse("monsters:{cellar_zombie:{visual:'sprite.varied'}}");
+    REQUIRE(parsed);
+    REQUIRE(parsed->monsters.size() == content->MonsterCount() + 1);
+    const auto mapping = parsed->monsters[type.value];
+    CHECK(mapping.kind == TilesetMappingKind::Visual);
+    CHECK(ResolveVisual(*parsed, mapping, 0, 0, 0, 42) == ResolveVisual(*parsed, mapping, 9, 8, 7, 42));
+    CHECK_FALSE(parse("monsters:{unknown_zombie:{visual:'sprite.zombie'}}"));
+    CHECK(parse("monsters:{unknown_zombie:{visual:'sprite.zombie',optional:true}}"));
+    CHECK_FALSE(parse("monsters:{unknown_zombie:{visual:'sprite.missing',optional:true}}"));
+    CHECK_FALSE(parse("monsters:{unknown_zombie:{visual:'sprite.zombie',optional:false}}"));
+    CHECK_FALSE(parse("monsters:{cellar_zombie:{visual:'sprite.zombie',optional:1}}"));
+    CHECK_FALSE(parse("monsters:{cellar_zombie:{visual:'sprite.missing'}}"));
+    CHECK_FALSE(parse("monsters:{cellar_zombie:{visual:'sprite.zombie',ground:'sprite.zombie'}}"));
+    auto connected = ConnectedSources();
+    CHECK_FALSE(ParseSourceTileset(Manifest("monsters:{cellar_zombie:{visual:'tile.road.connected'}}"),
+        {connected.data(), connected.size()}, *content));
+    auto omitted = parse("");
+    REQUIRE(omitted);
+    CHECK(omitted->monsters[type.value].kind == TilesetMappingKind::Missing);
 }
 
 TEST_CASE("source animation frames and variants can exceed inline capacity", "[sdl][tileset][source]") {

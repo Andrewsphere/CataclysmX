@@ -1,0 +1,4 @@
+{kind: 'variants', alternatives: [
+  {visual: 'sprite.character.zombie.janitor'},
+  {visual: 'sprite.character.zombie.school_caretaker'},
+]}

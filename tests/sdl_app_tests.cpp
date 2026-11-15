@@ -64,6 +64,42 @@ TEST_CASE("SDL examine uses filtered memories and reveals no live hidden content
     REQUIRE(lines.size() == 1); CHECK(lines.front() == "Outside current view");
 }
 
+TEST_CASE("SDL examine separates present categories and keeps item contents together", "[sdl][perception]") {
+    using namespace cataclysmx;
+    Server server(TestContent());
+    auto& world = server.GetWorld();
+    const auto position = server.View().player_position;
+    Vector<String> lines;
+    DescribeTile(world, server.View(), position, lines);
+    REQUIRE_FALSE(lines.empty());
+    CHECK_FALSE(lines.front().empty());
+    CHECK_FALSE(lines.back().empty());
+    int separators = 0;
+    for (const auto& line : lines) { separators += line.empty(); }
+    CHECK(separators == 2); // Terrain, player, and the starting backpack.
+    REQUIRE(lines.size() >= 2);
+    CHECK(lines[lines.size() - 2].find("backpack") != String::npos);
+    CHECK(lines.back().find("  bandage") == 0); // Contained items stay with their parent.
+
+    REQUIRE(world.CreateItem(TestContent().FindItem("bandage"), ItemLocation::Ground(position)));
+    REQUIRE(world.CreateItem(TestContent().FindItem("bandage"), ItemLocation::Ground(position)));
+    lines.clear();
+    DescribeTile(world, server.View(), position, lines);
+    separators = 0;
+    for (std::size_t i = 0; i < lines.size(); ++i) {
+        if (lines[i].empty()) {
+            ++separators;
+            REQUIRE(i > 0);
+            REQUIRE(i + 1 < lines.size());
+            CHECK_FALSE(lines[i - 1].empty());
+            CHECK_FALSE(lines[i + 1].empty());
+        }
+    }
+    CHECK(separators == 2); // Both ground items form one category.
+    CHECK(lines[lines.size() - 2].find("bandage") != String::npos);
+    CHECK(lines.back().find("bandage") != String::npos);
+}
+
 TEST_CASE("SDL options stage preferences and capture modifier bindings before apply", "[sdl][settings]") {
     using namespace cataclysmx;
     using namespace cataclysmx::sdl;

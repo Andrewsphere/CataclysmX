@@ -50,6 +50,11 @@ single long description remains readable. Action lists keep the selected row
 visible; refusal text gets a separate region, or joins the selected row in tight
 layouts. PageUp/PageDown and Ctrl+Up/Down also scroll longer refusal details.
 `ScreenFrame::rowHeights` reuses measurement storage across redraws.
+Read-only anchored rows use empty text as a compact, muted horizontal separator.
+`DescribeTile` supplies these boundaries between terrain, actors, objects with
+their stored contents, and ground items. Boundaries come from the inspected
+categories rather than matching names or translated text; absent categories add
+no separators. Text and separators share the same measured scrolling region.
 
 ## Modal ownership
 

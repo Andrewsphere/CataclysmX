@@ -433,7 +433,45 @@ Server::Server(const ContentCatalog& content, std::uint32_t seed)
 Server::Server(const ContentCatalog& content, std::uint32_t seed, NewGameScenario scenario)
     : world_(content, seed), rng_state_(seed) {
     Require(ValidateServerContent(content).has_value());
-    Require(scenario == NewGameScenario::Demo || scenario == NewGameScenario::FirstHouse || scenario == NewGameScenario::Town);
+    Require(scenario == NewGameScenario::Demo || scenario == NewGameScenario::FirstHouse
+        || scenario == NewGameScenario::Town || scenario == NewGameScenario::ZombieShowcase);
+    if (scenario == NewGameScenario::ZombieShowcase) {
+        Vector<MonsterTypeId> exhibits;
+        for (std::uint32_t value = 1; value <= content.MonsterCount(); ++value) {
+            if (content.GetMonster({value}).faction == CombatFaction::Undead) { exhibits.push_back({value}); }
+        }
+        eastl::sort(exhibits.begin(), exhibits.end(), [&content](MonsterTypeId left, MonsterTypeId right) {
+            return content.GetMonster(left).id < content.GetMonster(right).id;
+        });
+        int side = 1;
+        while (static_cast<std::size_t>(side * side) < exhibits.size()) { ++side; }
+        const int edge = side * 3 / 2 + 2;
+        const TileCoord playerPosition{0, -edge + 1};
+        active_radius_ = eastl::max(active_radius_, edge / chunk_size + 1);
+        resident_radius_ = eastl::max(resident_radius_, active_radius_);
+        active_request_ = Take(world_.RequestChunks({{0, 0}, active_radius_}, LoadMode::active));
+        resident_request_ = RequestResident(world_, playerPosition, resident_radius_, circleResidency_);
+        Require(world_.ReconcileChunks().has_value());
+        for (int z = -edge; z <= edge; ++z) {
+            for (int x = -edge; x <= edge; ++x) {
+                const bool border = x == -edge || x == edge || z == -edge || z == edge;
+                Require(world_.SetTile({x, z}, {content.FindTerrain(border ? "wall" : "floor"), 0}).has_value());
+            }
+        }
+        player_ = Take(world_.CreateActor(playerPosition, true));
+        players_.push_back({world_.GetActor(player_)->id, "Host", 0, playerPosition, PlayerConnectionState::Active});
+        const auto backpack = Take(world_.CreateItem(content.FindItem("backpack"), ItemLocation::Carried(player_)));
+        Take(world_.CreateItem(content.FindItem("bandage"), ItemLocation::Inside(backpack)));
+        for (std::size_t index = 0; index < exhibits.size(); ++index) {
+            const TileCoord position{static_cast<int>(index % side) * 3 - (side - 1) * 3 / 2,
+                static_cast<int>(index / side) * 3 - (side - 1) * 3 / 2};
+            const auto actor = Take(world_.CreateMonster(exhibits[index], position));
+            Require(world_.SetActorController(actor, AiControllerKind::None).has_value());
+        }
+        world_.UpdatePlayerObservations();
+        SynchronizePacing();
+        return;
+    }
     if (scenario != NewGameScenario::Demo) {
         const auto start = scenario == NewGameScenario::FirstHouse
             ? FindFirstHouseStart(content, seed) : FindTownStart(content, seed);

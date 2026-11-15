@@ -6,3 +6,4 @@
 .idea/**
 /cataclysmx-lan-profile.txt
 /cataclysmx-lan-profile.txt.tmp*
+__pycache__

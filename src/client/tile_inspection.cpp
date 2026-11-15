@@ -55,7 +55,10 @@ void DescribeTile(const World& world, const WorldView& view, TileCoord cursor, V
         }
     } else { output.push_back("Unknown terrain"); }
     if (cell.overlayVisibility == Visibility::Remembered) {
-        if (cell.objectAppearance.kind != ObjectKind::None) { output.push_back(String(ObjectName(cell.objectAppearance.kind)) + " [remembered]"); }
+        if (cell.objectAppearance.kind != ObjectKind::None) {
+            output.push_back({});
+            output.push_back(String(ObjectName(cell.objectAppearance.kind)) + " [remembered]");
+        }
         return;
     }
     if (cell.overlayVisibility != Visibility::Visible) { return; }
@@ -69,6 +72,7 @@ void DescribeTile(const World& world, const WorldView& view, TileCoord cursor, V
             String name(typeName.data(), typeName.size());
             name += " #";
             name += UnsignedText(actor->id); name += " | Speed "; name += UnsignedText(actor->speed);
+            output.push_back({});
             output.push_back(eastl::move(name));
             output.push_back(CombatStatusText(world.Combat().Describe(world.FindActor(cell.actor))));
         }
@@ -76,6 +80,7 @@ void DescribeTile(const World& world, const WorldView& view, TileCoord cursor, V
     const auto objectHandle = world.ObjectAt(position);
     const auto* object = world.GetObject(objectHandle);
     if (object && cell.object == object->id) {
+        output.push_back({});
         output.push_back(object->type.value ? world.GetContent().GetObject(object->type).name : String(ObjectName(object->kind)));
         output.push_back(object->enabled ? "Enabled" : "Disabled");
         if (object->broken) { output.push_back("Broken"); }
@@ -92,6 +97,11 @@ void DescribeTile(const World& world, const WorldView& view, TileCoord cursor, V
             for (auto item : object->contents) { ItemLines(world, item, 1, output); }
         }
     }
-    for (auto item : world.ItemsAt(position)) { ItemLines(world, item, 0, output); }
+    bool firstGroundItem = true;
+    for (auto item : world.ItemsAt(position)) {
+        if (!world.GetItem(item)) { continue; }
+        if (firstGroundItem) { output.push_back({}); firstGroundItem = false; }
+        ItemLines(world, item, 0, output);
+    }
 }
 }

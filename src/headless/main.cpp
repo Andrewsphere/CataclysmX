@@ -339,7 +339,8 @@ int main(int argc, char** argv) {
             if (value == "first-house") { scenario = NewGameScenario::FirstHouse; }
             else if (value == "demo") { scenario = NewGameScenario::Demo; }
             else if (value == "town") { scenario = NewGameScenario::Town; }
-            else { std::fputs("Scenario must be demo, first-house, or town\n", stderr); return 2; }
+            else if (value == "zombie-showcase") { scenario = NewGameScenario::ZombieShowcase; }
+            else { std::fputs("Scenario must be demo, first-house, town, or zombie-showcase\n", stderr); return 2; }
         } else if (argument == "--seed" && i + 1 < argc) {
             std::uint32_t seed = 0;
             if (!Number(eastl::string_view(argv[++i]), seed)) { return 2; }
@@ -350,7 +351,7 @@ int main(int argc, char** argv) {
         } else if (argument == "--world-dir" && i + 1 < argc) { configuration.worldDirectory = argv[++i]; configuration.enabled = true;
         } else {
             std::fputs("Usage: cataclysmx_headless [--content path] [--user-dir path] [--world-dir path] [--save path | --load path] [--script | --host | --join address[:port] | --discover] [--port n] [--discovery-port n] [--discovery-address address] [--name name] [--profile path] [--new-character] [--run-for ms] [--command 'move e'] | --probe | --fail-log\nMovement: move n/s/e/w, move down or move < (downstairs), move up or move > (upstairs).\nCombat: attack [persistentId], style balanced|aggressive|defensive.\n", stderr);
-            std::fputs("Content: --content <single definition file> | --content-pack <manifest>. New game: --scenario demo|first-house|town --seed <uint32>.\nCrafting (local --script): recipes, crafting, craft ID, recycle ITEM_ID, resume-craft JOB_ID, pause-craft JOB_ID, cancel-craft JOB_ID.\n", stderr);
+            std::fputs("Content: --content <single definition file> | --content-pack <manifest>. New game: --scenario demo|first-house|town|zombie-showcase --seed <uint32>.\nCrafting (local --script): recipes, crafting, craft ID, recycle ITEM_ID, resume-craft JOB_ID, pause-craft JOB_ID, cancel-craft JOB_ID.\n", stderr);
             return 2;
         }
     }
@@ -373,7 +374,8 @@ int main(int argc, char** argv) {
     // Scripted save loads also retain a reference to this main-stack catalog.
     const auto content = contentPath ? LoadContentFile(contentPath, &diagnostics)
         : LoadContentPack(contentPack ? contentPack : scenario == NewGameScenario::FirstHouse
-            ? CATACLYSMX_FIRST_HOUSE_PACK : scenario == NewGameScenario::Town
+            ? CATACLYSMX_FIRST_HOUSE_PACK : scenario == NewGameScenario::ZombieShowcase
+                ? CATACLYSMX_ZOMBIE_SHOWCASE_PACK : scenario == NewGameScenario::Town
                 ? CATACLYSMX_CONTENT_PACK : CATACLYSMX_TERRAIN_FILE, &diagnostics);
     if (!content) {
         std::fprintf(stderr, "Content load failed (error=%d): %s\n", static_cast<int>(content.error()),

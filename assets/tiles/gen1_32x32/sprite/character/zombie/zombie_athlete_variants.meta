@@ -1,0 +1,5 @@
+{kind: 'variants', alternatives: [
+  {visual: 'sprite.character.zombie.tennis_player'},
+  {visual: 'sprite.character.zombie.fitness_trainer'},
+  {visual: 'sprite.character.zombie.winter_jogger'},
+]}

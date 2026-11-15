@@ -22,7 +22,8 @@ int main(int argc, char** argv) {
             if (value == "first-house") { options.scenario = NewGameScenario::FirstHouse; }
             else if (value == "demo") { options.scenario = NewGameScenario::Demo; }
             else if (value == "town") { options.scenario = NewGameScenario::Town; }
-            else { std::fputs("Scenario must be demo, first-house, or town\n", stderr); return 2; }
+            else if (value == "zombie-showcase") { options.scenario = NewGameScenario::ZombieShowcase; }
+            else { std::fputs("Scenario must be demo, first-house, town, or zombie-showcase\n", stderr); return 2; }
         }
         else if (argument == "--seed" && i + 1 < argc) {
             const eastl::string_view value(argv[++i]);
@@ -50,7 +51,7 @@ int main(int argc, char** argv) {
         else {
             std::fputs("Usage: cataclysmx_sdl_game [--content path] [--user-dir path] [--loc-dir path]\n"
                 "  [--tileset directory] [--font path] [--font-size 8-48] [--ui-scale 1-4] [--smoke]\n"
-                "  [--scenario demo|first-house|town] [--seed uint32] [--content-pack manifest]\n"
+                "  [--scenario demo|first-house|town|zombie-showcase] [--seed uint32] [--content-pack manifest]\n"
                 "--content loads a single definition file; it cannot be combined with --content-pack.\n", stderr);
             return 2;
         }
@@ -66,7 +67,8 @@ int main(int argc, char** argv) {
     }
     const auto content = contentPath ? LoadContentFile(contentPath, &diagnostics)
         : LoadContentPack(contentPack ? contentPack : options.scenario == NewGameScenario::FirstHouse
-            ? CATACLYSMX_FIRST_HOUSE_PACK : options.scenario == NewGameScenario::Town
+            ? CATACLYSMX_FIRST_HOUSE_PACK : options.scenario == NewGameScenario::ZombieShowcase
+                ? CATACLYSMX_ZOMBIE_SHOWCASE_PACK : options.scenario == NewGameScenario::Town
                 ? CATACLYSMX_CONTENT_PACK : CATACLYSMX_TERRAIN_FILE, &diagnostics);
     if (!content || !ValidateServerContent(*content, &diagnostics)) {
         std::fprintf(stderr, "Content: %s\n", FormatDiagnostics(diagnostics).c_str());

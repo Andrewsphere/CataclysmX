@@ -175,6 +175,45 @@ TEST_CASE("SDL contextual panels scroll long text and keep the world visible", "
     }
 }
 
+TEST_CASE("SDL examine separators stay subtle and scroll with wrapped text", "[sdl][ui][render]") {
+    for (const auto size : {SDL_Point{480, 360}, SDL_Point{800, 600}, SDL_Point{1600, 1200}}) {
+        Display display(size.x, size.y); REQUIRE(display.renderer);
+        SdlText text(display.renderer); REQUIRE(text.Ready());
+        Server server(TestContent()); const auto view = server.View();
+        ScreenFrame frame; frame.visible = true; frame.presentation = ScreenPresentation::Anchored;
+        frame.title = "Examine"; frame.footer = "Escape close"; frame.cursor = view.player_position;
+        String description;
+        for (int i = 0; i < 60; ++i) { description += "Wrapped item description. "; }
+        frame.rows = {{"Passable"}, {""}, {description}};
+        const float scale = size.x == 1600 ? 2.0f : 1.0f;
+        const auto separatorPixels = [&] {
+            int count = 0;
+            for (int y = 0; y < size.y; ++y) {
+                for (int x = 0; x < size.x; x += 4) {
+                    Uint8 r = 0, g = 0, b = 0, a = 0;
+                    REQUIRE(SDL_ReadSurfacePixel(display.surface, x, y, &r, &g, &b, &a));
+                    count += r == 48 && g == 62 && b == 68;
+                }
+            }
+            return count;
+        };
+        REQUIRE(SDL_SetRenderDrawColor(display.renderer, 0, 0, 0, 255));
+        REQUIRE(SDL_RenderClear(display.renderer));
+        REQUIRE(DrawScreen(display.renderer, text, frame, size.x, size.y, &view, 32, 32, 0, scale));
+        REQUIRE(SDL_RenderPresent(display.renderer));
+        CHECK(separatorPixels() > 20);
+        CHECK(frame.rowHeights[1] == 8);
+        CHECK(frame.rowHeights[2] > frame.rowHeights[0]);
+        frame.scroll = 999;
+        REQUIRE(SDL_SetRenderDrawColor(display.renderer, 0, 0, 0, 255));
+        REQUIRE(SDL_RenderClear(display.renderer));
+        REQUIRE(DrawScreen(display.renderer, text, frame, size.x, size.y, &view, 32, 32, 0, scale));
+        REQUIRE(SDL_RenderPresent(display.renderer));
+        CHECK(frame.scroll > 0); CHECK(frame.scroll < 999);
+        CHECK(separatorPixels() == 0);
+    }
+}
+
 TEST_CASE("SDL anchored windows wait for nonempty body text", "[sdl][ui][render]") {
     Display display(480, 360); REQUIRE(display.renderer);
     SdlText text(display.renderer); REQUIRE(text.Ready());

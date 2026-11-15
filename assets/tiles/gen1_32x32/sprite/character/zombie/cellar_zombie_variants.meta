@@ -1,0 +1,9 @@
+{kind: 'variants', alternatives: [
+  {visual: 'sprite.character.zombie.flood_survivor'},
+  {visual: 'sprite.character.zombie.wedding_guest'},
+  {visual: 'sprite.character.zombie.grandmother'},
+  {visual: 'sprite.character.zombie.mannequin_dresser'},
+  {visual: 'sprite.character.zombie.frostbitten_sleeper'},
+  {visual: 'sprite.character.zombie.desert_traveler'},
+  {visual: 'sprite.character.zombie.train_commuter'},
+]}

@@ -58,6 +58,12 @@ MapPacket PrepareMapPacket(const WorldView& view, const ContentCatalog& content,
             prepared.overlay = CellAppearance(display, content);
             if (liveOverlay && cell.actor != 0 && cell.player && cell.actor != view.playerId) { prepared.overlay.symbol = "P"; }
             prepared.overlaySprite = tileset.generic[static_cast<unsigned>(kind)];
+            if (liveOverlay && kind == GenericSprite::Npc) {
+                const auto type = cell.monsterType.value;
+                if (type != 0 && type < tileset.monsters.size() && tileset.monsters[type].kind != TilesetMappingKind::Missing) {
+                    prepared.overlaySprite = tileset.monsters[type];
+                }
+            }
             if (liveOverlay && kind == GenericSprite::GroundItems && !items.empty()) {
                 prepared.itemVisual = items[packet.cells.size()];
                 const auto type = prepared.itemVisual.type.value;

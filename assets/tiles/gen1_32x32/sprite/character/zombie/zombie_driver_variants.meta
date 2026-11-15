@@ -1,0 +1,5 @@
+{kind: 'variants', alternatives: [
+  {visual: 'sprite.character.zombie.bus_driver'},
+  {visual: 'sprite.character.zombie.taxi_driver'},
+  {visual: 'sprite.character.zombie.rail_conductor'},
+]}

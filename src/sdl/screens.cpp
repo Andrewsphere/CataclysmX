@@ -56,8 +56,13 @@ bool DrawAnchored(SDL_Renderer* renderer, SdlText& text, ScreenFrame& frame,
     int contentHeight = 0;
     frame.rowHeights.resize(frame.rows.size());
     for (std::size_t i = 0; i < frame.rows.size(); ++i) {
-        if (!text.Draw(7, frame.rows[i].text.c_str(), -10000, -10000, normal, std::max(1, wrap - 14))) { return false; }
-        frame.rowHeights[i] = std::max(lineHeight, text.Height(7)) + 4;
+        if (frame.selected < 0 && frame.rows[i].text.empty()) {
+            frame.rowHeights[i] = 8;
+        } else {
+            if (!text.Draw(7, frame.rows[i].text.c_str(), -10000, -10000, normal,
+                frame.selected < 0 ? wrap : std::max(1, wrap - 14))) { return false; }
+            frame.rowHeights[i] = std::max(lineHeight, text.Height(7)) + (frame.selected < 0 ? 0 : 4);
+        }
         contentHeight += frame.rowHeights[i];
     }
     String details;
@@ -90,14 +95,22 @@ bool DrawAnchored(SDL_Renderer* renderer, SdlText& text, ScreenFrame& frame,
         || !text.Draw(8, frame.title.c_str(), float(panel.x + 8), float(panel.y + 5), selected, wrap)) { return false; }
     const int size = static_cast<int>(frame.rows.size());
     if (frame.selected < 0) {
-        String content;
-        for (const auto& row : frame.rows) { if (!content.empty()) { content += '\n'; } content += row.text; }
-        if (!details.empty()) { content += '\n'; content += details; }
-        if (!text.Draw(6, content.c_str(), -10000, -10000, normal, wrap)) { return false; }
-        const int maxScroll = std::max(0, (text.Height(6) - bodyClip.h + lineHeight - 1) / lineHeight);
+        const int maxScroll = std::max(0, (contentHeight - bodyClip.h + lineHeight - 1) / lineHeight);
         frame.scroll = std::clamp(frame.scroll, 0, maxScroll);
-        if (!SDL_SetRenderClipRect(renderer, &bodyClip)
-            || !text.Draw(6, content.c_str(), float(bodyClip.x), float(bodyY - frame.scroll * lineHeight), normal, wrap)) { return false; }
+        if (!SDL_SetRenderClipRect(renderer, &bodyClip)) { return false; }
+        int y = bodyY - frame.scroll * lineHeight;
+        for (int i = 0; i < size; ++i) {
+            if (y < bodyClip.y + bodyClip.h && y + frame.rowHeights[i] > bodyClip.y) {
+                if (frame.rows[i].text.empty()) {
+                    if (!SDL_SetRenderDrawColor(renderer, 48, 62, 68, 255)
+                        || !SDL_RenderLine(renderer, float(bodyClip.x), float(y + 4),
+                            float(bodyClip.x + bodyClip.w - 1), float(y + 4))) { return false; }
+                } else if (!text.Draw(10 + i % 48, frame.rows[i].text.c_str(),
+                    float(bodyClip.x), float(y), normal, wrap)) { return false; }
+            }
+            y += frame.rowHeights[i];
+        }
+        if (!details.empty() && !text.Draw(6, details.c_str(), float(bodyClip.x), float(y + 4), dim, wrap)) { return false; }
     } else {
         const bool inlineDetails = !details.empty() && bodyClip.h < lineHeight * 2 + 8;
         const int detailHeight = details.empty() || inlineDetails ? 0 : std::min(text.Height(6), std::max(lineHeight, bodyClip.h / 3));

@@ -165,6 +165,7 @@ add_executable(cataclysmx_headless src/headless/main.cpp src/headless/lan.cpp sr
 target_compile_definitions(cataclysmx_headless PRIVATE
     CATACLYSMX_TERRAIN_FILE="${CMAKE_CURRENT_SOURCE_DIR}/data/demo.json5"
     CATACLYSMX_FIRST_HOUSE_PACK="${CMAKE_CURRENT_SOURCE_DIR}/data/first_house.json5"
+    CATACLYSMX_ZOMBIE_SHOWCASE_PACK="${CMAKE_CURRENT_SOURCE_DIR}/data/zombie_showcase.json5"
     CATACLYSMX_CONTENT_PACK="${CMAKE_CURRENT_SOURCE_DIR}/data/content.json5")
 target_link_libraries(cataclysmx_headless PRIVATE cataclysmx_client cataclysmx_network Threads::Threads)
 cataclysmx_no_exceptions(cataclysmx_headless)
@@ -193,6 +194,7 @@ if(CATACLYSMX_BUILD_TERMINAL)
     target_compile_definitions(cataclysmx_game PRIVATE
         CATACLYSMX_TERRAIN_FILE="${CMAKE_CURRENT_SOURCE_DIR}/data/demo.json5"
         CATACLYSMX_FIRST_HOUSE_PACK="${CMAKE_CURRENT_SOURCE_DIR}/data/first_house.json5"
+        CATACLYSMX_ZOMBIE_SHOWCASE_PACK="${CMAKE_CURRENT_SOURCE_DIR}/data/zombie_showcase.json5"
         CATACLYSMX_CONTENT_PACK="${CMAKE_CURRENT_SOURCE_DIR}/data/content.json5")
     target_compile_definitions(cataclysmx_game PRIVATE CATACLYSMX_LOC_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/data/loc")
     target_link_libraries(cataclysmx_game PRIVATE cataclysmx_client cataclysmx_network cataclysmx_terminal ftxui::component Threads::Threads)
@@ -246,6 +248,7 @@ if(CATACLYSMX_BUILD_SDL)
     target_compile_definitions(cataclysmx_sdl_game PRIVATE
         CATACLYSMX_TERRAIN_FILE="${CMAKE_CURRENT_SOURCE_DIR}/data/demo.json5"
         CATACLYSMX_FIRST_HOUSE_PACK="${CMAKE_CURRENT_SOURCE_DIR}/data/first_house.json5"
+        CATACLYSMX_ZOMBIE_SHOWCASE_PACK="${CMAKE_CURRENT_SOURCE_DIR}/data/zombie_showcase.json5"
         CATACLYSMX_CONTENT_PACK="${CMAKE_CURRENT_SOURCE_DIR}/data/content.json5"
         CATACLYSMX_LOC_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/data/loc")
     target_link_libraries(cataclysmx_sdl_game PRIVATE cataclysmx_sdl)
@@ -286,10 +289,11 @@ if(CATACLYSMX_BUILD_TESTS)
         tests/house_spatial_tests.cpp tests/house_network_tests.cpp tests/house_save_tests.cpp
         tests/house_server_tests.cpp)
     target_sources(cataclysmx_tests PRIVATE tests/monster_identity_tests.cpp tests/monster_network_tests.cpp
-        tests/monster_presentation_tests.cpp tests/urban_content_tests.cpp tests/town_scenario_tests.cpp)
+        tests/monster_presentation_tests.cpp tests/urban_content_tests.cpp tests/town_scenario_tests.cpp tests/zombie_showcase_tests.cpp)
     target_compile_definitions(cataclysmx_tests PRIVATE
         CATACLYSMX_TERRAIN_FILE="${CMAKE_CURRENT_SOURCE_DIR}/data/demo.json5"
         CATACLYSMX_FIRST_HOUSE_PACK="${CMAKE_CURRENT_SOURCE_DIR}/data/first_house.json5"
+        CATACLYSMX_ZOMBIE_SHOWCASE_PACK="${CMAKE_CURRENT_SOURCE_DIR}/data/zombie_showcase.json5"
         CATACLYSMX_CONTENT_PACK="${CMAKE_CURRENT_SOURCE_DIR}/data/content.json5")
     target_compile_definitions(cataclysmx_tests PRIVATE CATACLYSMX_LOC_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/data/loc")
     target_link_libraries(cataclysmx_tests PRIVATE cataclysmx_client cataclysmx_network Catch2::Catch2WithMain unofficial::sqlite3::sqlite3 Threads::Threads)

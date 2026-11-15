@@ -52,7 +52,21 @@ so artists can edit unrelated assets without sharing one large manifest.
 }
 ```
 
-Terrain/item keys are existing content IDs. Generic keys are `player`,
+Terrain/item keys are existing content IDs. The optional `monsters` object maps
+existing monster content IDs to visuals with the same syntax as `items`.
+Monster mappings accept static sprites, animations and variant sets, but no
+terrain connections or ground underlays. `TilesetDefinition::monsters` is indexed
+by `MonsterTypeId::value`, matching the terrain/item lookup shape and avoiding
+name lookups during map preparation. Visible non-player actors select their
+type's mapping; missing, zero and out-of-range types retain `generic.npc`.
+Player artwork and hidden-actor visibility rules take priority. Variants use
+persistent actor identity, so moving does not change an actor's appearance.
+Monster mappings may set `optional: true` to permit a missing content type when
+one pack serves multiple scenarios. Visual references and all other fields are
+still validated; without this flag an unknown monster ID is an error. Gen1 uses
+this flag because demo and first-house content omit town specialists.
+
+Generic keys are `player`,
 `other_player`, `npc`, `ground_items`, `object_enabled`, and `object_disabled`. Omitted mappings retain glyph fallback. Graphics names do not become
 content IDs or affect content fingerprints. Activation references an animation
 definition and supports `toggle_loop` and `once`, with existing playback semantics.

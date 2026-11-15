@@ -1,0 +1,4 @@
+{kind: 'variants', alternatives: [
+  {visual: 'sprite.character.zombie.coastguard'},
+  {visual: 'sprite.character.zombie.salt_weathered_sailor'},
+]}

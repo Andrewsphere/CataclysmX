@@ -1,0 +1,4 @@
+{kind: 'variants', alternatives: [
+  {visual: 'sprite.character.zombie.security_guard'},
+  {visual: 'sprite.character.zombie.postal_security_worker'},
+]}

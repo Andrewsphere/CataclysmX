@@ -9,7 +9,7 @@
 
 namespace cataclysmx {
 
-enum class NewGameScenario { Demo, FirstHouse, Town };
+enum class NewGameScenario { Demo, FirstHouse, Town, ZombieShowcase };
 
 enum class CommandKind {
     wait, move, pick_up, drop, interact, use_item, store_item, attack, combat_style, interact_action,

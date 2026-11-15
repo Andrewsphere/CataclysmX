@@ -1,0 +1,5 @@
+{kind: 'variants', alternatives: [
+  {visual: 'sprite.character.zombie.sewer_technician'},
+  {visual: 'sprite.character.zombie.power_line_worker'},
+  {visual: 'sprite.character.zombie.irradiated_maintenance'},
+]}

@@ -37,6 +37,46 @@ TEST_CASE("map packet preserves overlay priority and hides unseen cells", "[sdl]
     view.cells[0].actor = 0;
     packet = PrepareMapPacket(view,content,tileset,id); CHECK(packet.cells[0].overlay.symbol == "!");
 }
+TEST_CASE("monster artwork follows visible monster type with generic and player fallbacks", "[sdl][map][monster-sprites]") {
+    auto loaded = LoadContentPack(CATACLYSMX_CONTENT_PACK);
+    REQUIRE(loaded);
+    const auto& content = *loaded;
+    const auto type = content.FindMonster("cellar_zombie");
+    REQUIRE(type.value != 0);
+    TilesetDefinition tileset;
+    tileset.monsters.resize(content.MonsterCount() + 1);
+    tileset.monsters[type.value] = {TilesetMappingKind::Sprite, 7};
+    tileset.generic[static_cast<unsigned>(GenericSprite::Npc)] = {TilesetMappingKind::Sprite, 8};
+    tileset.generic[static_cast<unsigned>(GenericSprite::Player)] = {TilesetMappingKind::Sprite, 9};
+    tileset.generic[static_cast<unsigned>(GenericSprite::OtherPlayer)] = {TilesetMappingKind::Sprite, 10};
+    WorldView view;
+    view.width = view.height = 1; view.playerId = 1; view.cells.resize(1);
+    auto& cell = view.cells[0];
+    cell.terrainVisibility = cell.overlayVisibility = Visibility::Visible;
+    cell.tile.terrain = content.FindTerrain("floor");
+    cell.actor = 42; cell.monsterType = type;
+    CHECK(PrepareMapPacket(view, content, tileset, {}).cells[0].overlaySprite.index == 7);
+    cell.player = true;
+    CHECK(PrepareMapPacket(view, content, tileset, {}).cells[0].overlaySprite.index == 10);
+    cell.actor = view.playerId;
+    CHECK(PrepareMapPacket(view, content, tileset, {}).cells[0].overlaySprite.index == 9);
+    cell.actor = 42; cell.player = false;
+    for (const MonsterTypeId missing : {MonsterTypeId{}, MonsterTypeId{UINT32_MAX}}) {
+        cell.monsterType = missing;
+        CHECK(PrepareMapPacket(view, content, tileset, {}).cells[0].overlaySprite.index == 8);
+    }
+    cell.monsterType = type;
+    tileset.monsters[type.value] = {};
+    CHECK(PrepareMapPacket(view, content, tileset, {}).cells[0].overlaySprite.index == 8);
+    tileset.monsters[type.value] = {TilesetMappingKind::Sprite, 7};
+    for (const auto visibility : {Visibility::Unknown, Visibility::Remembered}) {
+        cell.overlayVisibility = visibility;
+        const auto packet = PrepareMapPacket(view, content, tileset, {});
+        CHECK_FALSE(packet.cells[0].hasOverlay);
+        CHECK(packet.cells[0].overlaySprite.kind == TilesetMappingKind::Missing);
+    }
+}
+
 TEST_CASE("map packets keep terrain and overlay perception independent", "[sdl][map][perception]") {
     const auto content = Catalog();
     TilesetDefinition tileset;

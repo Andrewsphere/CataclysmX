@@ -1,0 +1,6 @@
+{kind: 'variants', alternatives: [
+  {visual: 'sprite.character.zombie.factory_packer'},
+  {visual: 'sprite.character.zombie.dockworker'},
+  {visual: 'sprite.character.zombie.moldy_storage_worker'},
+  {visual: 'sprite.character.zombie.cold_storage_worker'},
+]}

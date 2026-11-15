@@ -1,0 +1,5 @@
+{kind: 'variants', alternatives: [
+  {visual: 'sprite.character.zombie.chef'},
+  {visual: 'sprite.character.zombie.kitchen_porter'},
+  {visual: 'sprite.character.zombie.baker'},
+]}

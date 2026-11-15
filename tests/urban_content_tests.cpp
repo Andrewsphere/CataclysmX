@@ -511,6 +511,63 @@ TEST_CASE("Urban professional groups favor distinct specialists and generate the
     CHECK(sawNurse);
 }
 
+TEST_CASE("Imported zombie roles belong to suitable groups and spawn in generated towns",
+    "[content][urban-content][monsters][worldgen][zombie-spawns]") {
+    const auto& content = UrbanContent();
+    struct Role { eastl::string_view monster, group; };
+    constexpr Role roles[] = {
+        {"zombie_cashier", "monsters_shoppers"},
+        {"zombie_librarian", "monsters_school"},
+        {"zombie_postal_carrier", "monsters_residential"},
+        {"zombie_driver", "monsters_residential"},
+        {"zombie_courier", "monsters_office"},
+        {"zombie_janitor", "monsters_school"},
+        {"zombie_cleaner", "monsters_residential"},
+        {"zombie_paramedic", "monsters_medical"},
+        {"zombie_maintenance_worker", "monsters_workshop"},
+        {"zombie_security_guard", "monsters_police_station"},
+        {"zombie_laboratory_technician", "monsters_medical"},
+        {"zombie_sailor", "monsters_warehouse"},
+        {"zombie_miner", "monsters_workshop"},
+        {"zombie_homeless", "monsters_outdoors"},
+        {"zombie_traveler", "monsters_outdoors"},
+        {"zombie_athlete", "monsters_outdoors"},
+        {"zombie_musician", "monsters_residential"},
+        {"zombie_butcher", "monsters_restaurant"},
+        {"zombie_carnival_attendant", "monsters_outdoors"},
+        {"zombie_professor", "monsters_school"},
+        {"zombie_refuse_collector", "monsters_outdoors"},
+        {"zombie_commuter", "monsters_residential"},
+        {"zombie_antique_dealer", "monsters_shoppers"},
+    };
+    Vector<bool> seen(content.MonsterCount() + 1, false);
+    ChunkPlacements scratch;
+    for (std::uint64_t seed = 0; seed < 256; ++seed) {
+        const auto plan = GenerateRegionPlan(content, seed, {1, -1});
+        for (const auto chunk : PopulationChunks(plan)) {
+            GenerateChunkPlacements(content, seed, plan, chunk, scratch);
+            for (const auto& monster : scratch.monsters) { seen[monster.type.value] = true; }
+        }
+    }
+    for (const auto& role : roles) {
+        INFO("monster=" << role.monster.data() << ", group=" << role.group.data());
+        const auto type = content.FindMonster(role.monster);
+        REQUIRE(type.value != 0);
+        const auto group = content.FindMonsterGroup(role.group);
+        REQUIRE(group.value != 0);
+        bool member = false;
+        for (const auto& entry : content.GetMonsterGroup(group).entries) {
+            if (entry.monster == type && entry.weight > 0) { member = true; }
+        }
+        CHECK(member);
+        CHECK(seen[type.value]);
+        const auto& definition = content.GetMonster(type);
+        CHECK(definition.speed == 100);
+        CHECK(definition.attackDamage == 10);
+        CHECK(definition.accuracy == 9000);
+    }
+}
+
 template<class T> T Take(WorldResult<T> result) { REQUIRE(result); return eastl::move(*result); }
 
 TEST_CASE("Generation five preserves dense lots civic plots and footprint roofs",

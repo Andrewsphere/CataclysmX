@@ -1,0 +1,10 @@
+{kind: 'variants', alternatives: [
+  {visual: 'sprite.character.zombie.gardener'},
+  {visual: 'sprite.character.zombie.park_ranger'},
+  {visual: 'sprite.character.zombie.fungal_gardener'},
+  {visual: 'sprite.character.zombie.marsh_fisherman'},
+  {visual: 'sprite.character.zombie.mossy_groundskeeper'},
+  {visual: 'sprite.character.zombie.farm_worker'},
+  {visual: 'sprite.character.zombie.compost_worker'},
+  {visual: 'sprite.character.zombie.fisherman'},
+]}

@@ -1,0 +1,6 @@
+{kind: 'variants', alternatives: [
+  {visual: 'sprite.character.zombie.painter'},
+  {visual: 'sprite.character.zombie.construction_worker'},
+  {visual: 'sprite.character.zombie.road_worker'},
+  {visual: 'sprite.character.zombie.quarry_worker'},
+]}

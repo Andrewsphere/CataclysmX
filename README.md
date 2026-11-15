@@ -98,6 +98,16 @@ Player-facing terminal text comes from `data/loc/en.json5`. Ctrl bindings preser
 letter case when the terminal supports enhanced keyboard reporting; basic mode
 reports unavailable combinations. See [settings and localization](doc/settings_api.md).
 
+Use `--scenario zombie-showcase` for a quiet inspection gallery: all 64 Gen1
+zombie sprite appearances, the cellar zombie, and the doctor using fallback art. Zombies stay still
+and do not attack. Walk between exhibits and inspect them to see the gameplay
+type and sprite name. All three frontends accept the scenario; SDL shows the
+sprites. See [the showcase guide](doc/zombie_showcase.md) for pack and save details.
+
+```powershell
+./out/build/win-msvc-sdl/cataclysmx_sdl_game.exe --scenario zombie-showcase
+```
+
 The default `demo` scenario loads [`data/demo.json5`](data/demo.json5);
 `first-house` selects [`data/first_house.json5`](data/first_house.json5), and
 `town` selects [`data/content.json5`](data/content.json5), with 32 populated building

@@ -71,7 +71,7 @@ struct TilesetDefinition {
     Vector<AnimationClip> animations;
     Vector<VisualGroup> visuals;
     Vector<TilesetSourceImage> sourceImages;
-    Vector<TilesetMapping> terrain, items;
+    Vector<TilesetMapping> terrain, items, monsters;
     Vector<TilesetMapping> terrainGround; // Optional static ground beneath upright terrain.
     TilesetMapping generic[static_cast<unsigned>(GenericSprite::Count)]{};
 };
