@@ -2,10 +2,10 @@
 
 ## Scope and decisions
 
-**Implemented.** The expanded pack has 26 populated building types including
-furnished_house, plus three legacy patterns, with themed furniture, loot,
-inhabitants, and selected basement variants. It retains the existing eight-parcel
-region planner. See [urban content](urban_content.md) for the current guide and
+**Implemented.** The original generation-4 milestone added 26 populated building
+types to the eight-parcel planner. The generation-5 follow-up adds dense lots,
+31 populated building layouts and two civic outdoor sites, larger landmarks and
+multi-storey variants. See [urban content](urban_content.md) for the current guide and
 [urban resources](urban_resources.md) for definition details. The following
 sections retain the design rationale and integration contract.
 
@@ -88,12 +88,12 @@ monster name and recipe fingerprint coverage should be retained.
 ## Buildings, FirstHouse, and Town
 
 Use separate root manifests. `data/first_house.json5` preserves exactly the old
-full manifest source list; `data/content.json5` contains 26 populated building
-patterns and three legacy patterns.
+full manifest source list; `data/content.json5` now contains 31 populated building
+layouts, two civic outdoor sites and three legacy patterns.
 Both manifests reference shared definition files without duplicating definitions.
 The curated manifest retains furnished_house weight 1000 and its existing
-competitors so FirstHouse remains the same seed-based preview, apart from the
-approved wall correction. Expanded pattern weights are approximately 500-1500
+competitors. Generation 5 changes new-game parcel placement and basement draws;
+the [review guide](first_house_review.md) records current starts. Expanded pattern weights are approximately 500-1800
 each, with furnished_house staying at 1000 (weights are relative, not ratios).
 Do not edit shared house weight solely for the expanded pack.
 

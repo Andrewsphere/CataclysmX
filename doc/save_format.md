@@ -168,10 +168,12 @@ state. See [entity scheduling](entity_scheduling.md) for suspension and arithmet
 IDs must be unique across all chunks and less than `next_id`; entity positions,
 ownership, chunks and session player identity/position are validated. Generic
 `World` saves allow session player ID zero; `Server` requires a nonzero player.
-`generation_version` accepts 1 and 2 (legacy) and 3 (current); other values fail with
-`SaveError::UnsupportedVersion`. New worlds use generation version 3. Versions 1
-and 2 retain their prior surface generation; nonsurface slices use the layered
-terrain rules. The SQL/JSON save schema is version 10; strict v7/v8/v9 saves are also
+`generation_version` accepts 1..5; other values fail with
+`SaveError::UnsupportedVersion`. New worlds use generation version 5 (dense lots,
+civic outdoor sites and footprint-aware single-storey roofs). Saved versions 1..4
+retain their recorded generation algorithm; version 4 includes authored layers
+and population. Generation remains dependent on the supplied immutable content.
+The SQL/JSON save schema is version 10; strict v7/v8/v9 saves are also
 accepted as described below. Save formats v1 through v6 and all other schema
 versions are rejected. In particular, v2 command-count ticks are not silently reinterpreted as
 simulation ticks. Content's own format version is independent of both versions.

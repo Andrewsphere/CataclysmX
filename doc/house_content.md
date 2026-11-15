@@ -79,6 +79,24 @@ surface at Y=0. Width and height are inferred from 1..64 equal-width printable
 ASCII rows, each 1..64 characters. Existing `weight` defaults to 1 (1..1000000).
 The optional fields below extend `building_pattern` definitions:
 
+Palette values may be terrain ID strings or `{terrain:'floor', object:'cabinet',
+facing:'east'}` objects. `terrain` is required; `object` and its `facing` are
+optional. A glyph paints its terrain and places one object on the same tile on
+the surface, any explicit layer, or the selected basement. Facing defaults north
+and rotates with the building. All references, including unused glyphs, resolve
+across sources. Furniture loot can target these objects by coordinate.
+
+This is authoring shorthand: the loader expands glyph objects into ordinary
+`PatternFurniture` records, so runtime placement, saving, and collision rules
+remain shared. Explicit furniture comes first, then surface glyphs in row-major
+order, then explicit layers in authored order (each row-major). Each basement
+expands its own glyphs after its explicit furniture. Overlapping glyph/explicit
+objects are errors, rather than overrides; blocking the entrance is also rejected.
+
+Optional `site` is `building` (default), `landmark`, `park`, or `square`. Generation
+version 5 matches it to the lot class; large landmark plots and outdoor civic
+sites have dedicated slots. Park/square patterns do not receive implicit roofs.
+
 ```json5
 {
  type:'building_pattern', id:'furnished_house',
@@ -133,7 +151,9 @@ Arithmetic is bounded before accumulation and output is never truncated.
 
 Surface and Y=-1 stairs must match at every X/Z for every basement variant (or an
 explicit Y=-1 layer). Stair tiles cannot contain furniture, loot, or monster
-markers. Legacy surface-only patterns retain their existing behavior. General
+markers. Every upstairs stair must match at least one adjacent authored landing
+at the same X/Z (up, down, or both). Occupied bundled floors connect all the way
+to the ground; their final roofs have no stair. Legacy surface-only patterns retain their existing behavior. General
 building connectivity is specific to the authored sample rather than a generic
 connectivity solver.
 

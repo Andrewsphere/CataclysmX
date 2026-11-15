@@ -172,6 +172,60 @@ TEST_CASE("Spawn catalog IDs sort lexically while weighted entries keep authored
     CHECK(other->GetMonsterGroup({2}) == loaded->GetMonsterGroup({2}));
 }
 
+TEST_CASE("Building palette characters expand terrain and oriented furniture on every authored layer", "[content][house-content][palette]") {
+    const auto definitions = WithRecipes(R"({type:'building_pattern',id:'mapped',site:'landmark',
+        rows:['....','.C.>','....'],entrance:{x:0,z:0},
+        palette:{'.':'floor','>':'stair','C':{terrain:'floor',object:'cabinet',facing:'west'}},
+        furniture:[{x:0,z:2,y:0,object:'cabinet'}],
+        loot:[{x:1,z:1,y:0,pool:'supplies',destination:'furniture'}],
+        layers:[{y:1,rows:['....','..C>','....']}],
+        basements:[{id:'cellar',rows:['....','C..>','....']}]})");
+    const auto loaded = Load(View(definitions));
+    REQUIRE(loaded);
+    const auto& pattern = loaded->GetBuildingPattern({1});
+    CHECK(pattern.site == BuildingSite::Landmark);
+    CHECK(pattern.tiles[5] == loaded->FindTerrain("floor"));
+    REQUIRE(pattern.population.furniture.size() == 3);
+    CHECK(pattern.population.furniture[0].position == TileCoord{0, 2, 0});
+    CHECK(pattern.population.furniture[1].position == TileCoord{1, 1, 0});
+    CHECK(pattern.population.furniture[2].position == TileCoord{2, 1, 1});
+    CHECK(pattern.population.furniture[2].facing == ObjectFacing::West);
+    REQUIRE(pattern.basements[0].population.furniture.size() == 1);
+    CHECK(pattern.basements[0].population.furniture[0].position == TileCoord{0, 1, -1});
+    CHECK(pattern.basements[0].population.furniture[0].type == loaded->FindObject("cabinet"));
+}
+
+TEST_CASE("Building object palettes reject malformed references unsupported tiles and overlaps", "[content][house-content][palette]") {
+    for (const auto entry : {"{}", "{object:'cabinet'}", "{terrain:'floor',object:'missing'}",
+        "{terrain:'floor',facing:'north'}", "{terrain:'floor',object:'cabinet',facing:'up'}",
+        "{terrain:'floor',object:'cabinet',extra:0}", "{terrain:'floor',terrain:'wall'}",
+        "{terrain:'wall',object:'cabinet'}", "{terrain:'air',object:'cabinet'}",
+        "{terrain:'stair',object:'cabinet'}"}) {
+        INFO(entry);
+        String definition = "{type:'building_pattern',id:'mapped',rows:['.C'],entrance:{x:0,z:0},palette:{'.':'floor','C':";
+        definition += entry;
+        definition += "}}";
+        Invalid(View(definition));
+    }
+    Invalid(R"({type:'building_pattern',id:'mapped',rows:['.C'],entrance:{x:0,z:0},
+        palette:{'.':'floor','C':{terrain:'floor',object:'cabinet'}},
+        furniture:[{x:1,z:0,y:0,object:'cabinet'}]})");
+    Invalid(R"({type:'building_pattern',id:'mapped',rows:['C.'],entrance:{x:0,z:0},
+        palette:{'.':'floor','C':{terrain:'floor',object:'cabinet'}}})");
+    Invalid(R"({type:'building_pattern',id:'mapped',rows:['.'],entrance:{x:0,z:0},
+        palette:{'.':'floor','C':{terrain:'floor',object:'missing'}}})");
+    Invalid(R"({type:'building_pattern',id:'mapped',site:'unknown',rows:['.'],
+        entrance:{x:0,z:0},palette:{'.':'floor'}})");
+}
+
+TEST_CASE("Upper floor stairs require an adjacent authored landing", "[content][house-content][vertical]") {
+    Invalid(R"({type:'building_pattern',id:'mapped',rows:['..'],entrance:{x:0,z:0},
+        palette:{'.':'floor','>':'stair'},layers:[{y:1,rows:['.>']}]})");
+    CHECK(Load(R"({type:'building_pattern',id:'mapped',rows:['.>'],entrance:{x:0,z:0},
+        palette:{'.':'floor','>':'stair'},layers:[{y:1,rows:['.>']},{y:2,rows:['.>']},
+        {y:3,rows:['..']}]})").has_value());
+}
+
 TEST_CASE("Loot graph rejects cycles unknown references and ambiguous strict schemas", "[content][house-content]") {
     const eastl::string_view invalid[] = {
         "{type:'loot_pool',id:'pool',entries:[]}",

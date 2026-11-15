@@ -1214,8 +1214,7 @@ public:
     }
 
     void Generate(Chunk& value) {
-        Require(generationVersion == 1 || generationVersion == 2 || generationVersion == 3
-            || generationVersion == world_generation_version);
+        Require(generationVersion >= 1 && generationVersion <= world_generation_version);
         // Version 3 retains version 2's surface raster. Older worlds acquire
         // the layered extension only outside their original surface layer.
         if (generationVersion != 1 || value.position.y != 0) {
@@ -1772,12 +1771,12 @@ SaveResult<void> World::ReconcileChunks(Diagnostics* diagnostics) {
     // New actors start ready (zero deadline); typed objects keep the legacy
     // timer suspended and machine/item work uses relative durations. Population
     // therefore needs no nonzero absolute deadline, even at maximum tick.
-    if (impl_->generationVersion == 4) {
+    if (impl_->generationVersion >= 4) {
         Vector<TileCoord> placedFurniture;
         for (ChunkCoord position : newChunks) {
             const auto region = RegionOf({position.x * chunk_size, position.z * chunk_size});
             if (!impl_->generationPlan || impl_->generationPlan->region != region) {
-                impl_->generationPlan = GenerateRegionPlan(impl_->content, impl_->seed, region, 4);
+                impl_->generationPlan = GenerateRegionPlan(impl_->content, impl_->seed, region, impl_->generationVersion);
             }
             auto& placements = impl_->generationPlacements;
             GenerateChunkPlacements(impl_->content, impl_->seed, *impl_->generationPlan, position, placements);
@@ -1855,10 +1854,8 @@ SaveResult<SessionState> World::LoadSave(const char* path, Diagnostics* diagnost
         if (diagnostics) { diagnostics->Add("Loading world save"); }
         return eastl::unexpected(snapshot.error());
     }
-    const bool supported = snapshot->generationVersion == 1
-        || snapshot->generationVersion == 2
-        || snapshot->generationVersion == 3
-        || snapshot->generationVersion == world_generation_version;
+    const bool supported = snapshot->generationVersion >= 1
+        && snapshot->generationVersion <= world_generation_version;
     if (!supported || snapshot->nextId == 0) {
         const SaveError error = !supported
             ? SaveError::UnsupportedVersion : SaveError::InvalidData;

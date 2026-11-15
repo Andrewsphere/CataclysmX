@@ -82,6 +82,8 @@ TEST_CASE("Town query selects a usable populated entrance near origin", "[town][
         INFO("starting pattern=" << pattern.id.c_str());
         CHECK(building->entrance == start->entrance);
         CHECK(Populated(pattern, *building));
+        CHECK(pattern.site != BuildingSite::Park);
+        CHECK(pattern.site != BuildingSite::Square);
         CHECK_FALSE(Contains(building->bounds, start->playerPosition));
         CHECK(IsRoad(plan, start->playerPosition));
         CHECK(start->playerPosition.x == start->entrance.x);
@@ -106,6 +108,8 @@ TEST_CASE("Town query selects a usable populated entrance near origin", "[town][
             for (int z = -1; z <= 1; ++z) {
                 const auto candidate = GenerateRegionPlan(content, seed, {x, z});
                 for (const auto& other : candidate.buildings) {
+                    const auto site = content.GetBuildingPattern(other.pattern).site;
+                    if (site == BuildingSite::Park || site == BuildingSite::Square) { continue; }
                     if (!Populated(content.GetBuildingPattern(other.pattern), other)) { continue; }
                     const TileCoord outside{other.entrance.x, other.entrance.z
                         + (other.driveway.last.z < other.entrance.z ? -1 : 1), other.entrance.y};
@@ -193,10 +197,10 @@ TEST_CASE("Town rejects demo content without a populated pattern", "[town][scena
     CHECK_FALSE(diagnostics.Empty());
 }
 
-TEST_CASE("Curated first house retains its review seed starts", "[town][scenario][house]") {
+TEST_CASE("Curated first house has reproducible generation five review starts", "[town][scenario][house]") {
     const auto content = LoadPack(CATACLYSMX_FIRST_HOUSE_PACK);
     struct Review { std::uint32_t seed; TileCoord position; };
-    for (const auto review : {Review{0, {84, 75}}, Review{13, {94, -75}}}) {
+    for (const auto review : {Review{0, {79, -74}}, Review{13, {78, -74}}}) {
         INFO("seed=" << review.seed << " starting pattern=furnished_house");
         const auto start = FindFirstHouseStart(content, review.seed);
         REQUIRE(start);

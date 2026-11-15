@@ -1,4 +1,7 @@
 {format_version:1, objects:[
+  {id:'park_bench', name:'park bench', behavior:'none', kind:'chair', movable:false, blocks_movement:true, capacity_volume_ml:20000},
+  {id:'planter', name:'flower planter', behavior:'none', kind:'generic', movable:false, blocks_movement:true},
+  {id:'square_fountain', name:'dry stone fountain', behavior:'none', kind:'generic', movable:false, blocks_movement:true},
   {id:'store_shelf', name:'store shelf', behavior:'none', kind:'generic', movable:true, blocks_movement:true, capacity_volume_ml:100000},
   {id:'store_counter', name:'store counter', behavior:'none', kind:'table', movable:false, blocks_movement:true, capacity_volume_ml:100000},
   {id:'refrigerator', name:'refrigerator', behavior:'none', kind:'generic', movable:false, blocks_movement:true, blocks_sight:true, capacity_volume_ml:100000},

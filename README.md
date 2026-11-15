@@ -96,7 +96,10 @@ reports unavailable combinations. See [settings and localization](doc/settings_a
 
 The default `demo` scenario loads [`data/demo.json5`](data/demo.json5);
 `first-house` selects [`data/first_house.json5`](data/first_house.json5), and
-`town` selects [`data/content.json5`](data/content.json5), with 26 populated types.
+`town` selects [`data/content.json5`](data/content.json5), with 31 populated building
+layouts, parks and squares, larger civic landmarks and two-/three-floor variants.
+New generation-5 towns contain 17 buildings plus two civic outdoor sites, with
+paved sidewalks and shared rear alleys. See [urban content](doc/urban_content.md).
 Terrain definitions include UTF-8
 symbols, named/RGB colors, appearance fallback, passability, sight blocking, and
 door transitions. All three frontends accept `--content <path>` for exactly one

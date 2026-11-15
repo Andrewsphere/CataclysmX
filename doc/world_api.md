@@ -413,11 +413,13 @@ RNG. Regions are 256×256 tiles; their plans provide roads, parcels, and eligibl
 pattern buildings as well as integer environment samples. Terrain-only catalogs
 are supported: they produce no buildings and use the documented terrain
 fallbacks. The central `[-32, 32]` square on both tile axes remains floor.
-Generation version 4 also emits deterministic furniture, loot and monster
+Generation versions 4/5 also emit deterministic furniture, loot and monster
 placements. World materializes them for chunks without snapshots, using persistent
 IDs; earlier generation versions have no such population. Existing snapshots,
 including empty ones, prevent respawning. The server separately constructs the
-demo scene or selects the first-house start; see [first house](first_house_design.md).
+demo scene or selects a FirstHouse/Town start; see [first house](first_house_design.md)
+and [urban content](urban_content.md). New worlds use generation 5's dense lots;
+loaded worlds retain their saved generation algorithm.
 
 Unloading captures tiles (including damage), entity values/counters and complete
 item ownership trees as values linked by persistent IDs, then retires runtime

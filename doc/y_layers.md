@@ -85,10 +85,17 @@ preserving floors and matched stair endpoints. Legacy plans exclude those patter
 and generate no population. See [world generation API](worldgen_api.md) for version
 dispatch, local deterministic streams and chunk-owned placements.
 
+Generation 5 keeps authored layer/population semantics, adds dense town lots and
+civic sites, and masks implicit single-storey roofs to the indoor footprint.
+Grass, trees, road and pavement in an irregular pattern stay open above; parks
+and squares receive no implicit roof. Multi-storey layouts author their occupied
+floors, matched stair landings and final roof, with air cells over courtyards and
+setbacks. See [urban content](urban_content.md) for the two-/three-floor roster.
+
 Y-layer support was originally introduced in save/protocol version 6. The current
-save schema is version 7 and stores Y, lighting sources, skylight, semantic object
-appearance, and per-player observations; versions 1–6 are rejected and migrations
-are not implemented. The current LAN protocol is version 9 (`0x43584e09`),
+save schema is version 10 and stores Y, lighting sources, skylight, semantic object
+appearance, and per-player observations; versions 1–6 are rejected and versions
+7–9 have explicit compatibility handling. The current LAN protocol is version 15 (`0x43584e0f`),
 incompatible with earlier versions. It carries Y, vertical command `dy`, view depth,
 independent terrain/overlay visibility, and light bands. Content format version
 remains 1. See [lighting, perception, and player memory](perception.md),

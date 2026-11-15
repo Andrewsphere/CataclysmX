@@ -165,6 +165,7 @@ std::uint64_t ContentFingerprint(const ContentCatalog& content) {
         const auto& p = content.GetBuildingPattern({static_cast<std::uint32_t>(i + 1)});
         HashString(hash, p.id); HashNumber(hash, p.width); HashNumber(hash, p.height);
         HashNumber(hash, p.entrance.x); HashNumber(hash, p.entrance.z); HashNumber(hash, p.weight);
+        HashNumber(hash, static_cast<std::uint8_t>(p.site));
         HashNumber(hash, p.tiles.size()); for (TerrainId t : p.tiles) HashNumber(hash, t.value);
         HashNumber(hash, p.layers.size());
         for (const auto& layer : p.layers) { HashLayer(hash, layer); }

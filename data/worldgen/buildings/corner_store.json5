@@ -1,0 +1,28 @@
+{format_version:1, definitions:[{
+  type:'building_pattern', id:'corner_store', weight:1300,
+  // Small stepped footprint and rear stockroom, with an outdoor side approach.
+  rows:[
+    '###############',
+    '#s.s.s.#c....r#',
+    '#......#......#',
+    '#..l...+..l...#',
+    '#......#......#',
+    '#.......#######',
+    '#.......#gggggg',
+    '#.c.....#gggggg',
+    '#.......+::::::',
+    '#..l....#gggggg',
+    '#.......#gggggg',
+    '####+####gggggg',
+  ],
+  palette:{'#':'wall','.':'floor','+':'closed_door',g:'grass',':':'pavement',
+    s:{terrain:'floor',object:'store_shelf'},c:{terrain:'floor',object:'store_counter'},
+    r:{terrain:'floor',object:'refrigerator'},l:{terrain:'floor',object:'cellar_lamp'}},
+  entrance:{x:4,z:11},
+  loot:[
+    {x:1,z:1,y:0,pool:'loot_food',rolls:3,destination:'furniture'},
+    {x:3,z:1,y:0,pool:'loot_cleaning',rolls:2,destination:'furniture'},
+    {x:13,z:1,y:0,pool:'loot_food',rolls:3,destination:'furniture'},
+  ],
+  monsters:[{x:4,z:4,y:0,group:'monsters_shoppers',chance:7000}],
+}]}

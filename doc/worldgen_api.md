@@ -23,14 +23,22 @@ invariants, not recoverable gameplay errors.
 temperature, and woodland values in `[0,1000]`, plus meadow/woodland classification.
 It does not consume RNG state. A region plan contains roads, parcels, buildings,
 boundary crossings, and stable feature ownership. Town geometry is 112×112;
-where the complete town fits, three streets on each axis form four blocks,
-each split into two 53×26/27 parcels with north/south frontage. Parcel identity is the pair
+where the complete town fits, three streets on each axis form four blocks.
+Generation 5 splits each block into two 53×25 frontage strips, separated by a
+three-tile paved rear alley. Strips alternate two and three lots (26/27 or
+17/18 tiles wide), with one-tile building setbacks. A seed-selected strip is
+reserved whole for a landmark when that site class exists in content. Separate
+strips reserve a park and a square lot. The bundled pack therefore supplies 17
+buildings plus two civic outdoor sites per complete town; catalogs without those
+site classes use ordinary lots instead. Versions 2..4 retain eight 53×26/27
+parcels with two-tile setbacks. Parcel identity is the pair
 `(region, parcel ordinal)`; building owner identity uses the same pair. Hashes
 are deterministic local mixing, not globally unique IDs.
 
-Plan roads, parcels, and buildings use `StaticList` with capacities 18, 8, and 8.
-The current generator emits six streets and twelve connector segments, at most
-eight parcels, and at most one building per parcel. Checked appends make changes
+Plan roads, parcels, and buildings use `StaticList` with capacities 18, 24, and 24.
+The geometric bound is four blocks × two strips × at most three lots; it is not
+inferred from the number of content definitions. The generator emits six streets
+and twelve connector segments, and at most one site per lot. Checked appends make changes
 that violate those bounds fail fast. Use `Size`/`Empty`, indexing, or iteration
 to inspect the used records; inline storage avoids three growing heap buffers
 per plan without affecting generation order or version.
@@ -57,38 +65,52 @@ crops that buffer to the requested chunk. It never reads adjacent live chunks,
 so chunk load order cannot change the result. No-fit parcels simply have no
 building plan.
 
-`GenerateRegionPlan(content, seed, region, version)` accepts versions 2, 3, and 4;
-the three-argument overload selects `world_generation_version` (4). The plan
+`GenerateRegionPlan(content, seed, region, version)` accepts versions 2..5;
+the three-argument overload selects `world_generation_version` (5). The plan
 records its version. Versions 2/3 retain the exact legacy weighted-selection,
 placement and abandonment algorithm, excluding every pattern with authored
 layers, basements or population. Adding such patterns therefore does not alter
 legacy candidate weights. Existing legacy definitions must still be present and
 unchanged to reproduce their old terrain.
 
-Version 4 protects authored extended patterns from abandonment decoration. It
+Versions 4/5 protect authored extended patterns from abandonment decoration. Each
 selects one weighted basement per building and records its 1-based local index
 in `BuildingPlan::basementVariant` (zero means none). Chunk materialization never
 reselects this choice.
 
+Version 5 adds `ParcelPlan::site`, matched against `BuildingPattern::site`
+(`BuildingSite::Building`, `Landmark`, `Park`, or `Square`). A small closed enum
+keeps eligibility explicit and prevents a tiny house from consuming a civic plot.
+Weights still choose among fitting patterns within that class. This uses the
+existing feature ownership and population pipeline for parks as well as buildings,
+so benches, loot and inhabitants have ordinary chunk ownership and persistence.
+No separate park entity system or planner cache is needed. All unoccupied ground
+inside the town is pavement (floor fallback), with authored lawns and gardens
+inside outdoor patterns. Roads retain their distinct road role and connected
+driveways; paving is pedestrian space, not additional `IsRoad` centerlines.
+
 `GenerateChunk` lays out row-major tiles (`z * 16 + x`). Versions 2/3
 preserve the legacy surface at Y=0, use solid rock below it and air above it,
-with rectangular building roofs at Y=1. Version 4 overlays each pattern's explicit
+with rectangular building roofs at Y=1. Versions 4/5 overlay each pattern's explicit
 layers and selected basement at their authored Y, using exactly the same X/Z
 rotation as the surface and entrance. An explicit Y=1 layer replaces the roof;
-without one, the rectangle roof fallback remains. Partial edge-chunk slots
+without one, version 4 retains its rectangle roof fallback. Version 5 masks that
+fallback by surface terrain: grass, tree, road, pavement and open space remain
+air, and park/square sites receive no implicit roof. Multi-floor content authors
+the final roof explicitly, using air for courtyards and setbacks. Partial edge-chunk slots
 outside valid world bounds are undamaged wall. `ValidateWorldgenContent` returns
 `ContentResult<void>` and optional diagnostics for missing `floor`/`wall` or
-impassable `floor`, `grass`, `road`, or `rubble`. Applications validate before
+impassable `floor`, `grass`, `road`, `rubble`, or `pavement`. Applications validate before
 generation; bypassing validation with invalid content is an invariant failure.
-Optional `grass`, `tree`, `road`, and
-`rubble` terrain fall back respectively to floor, wall, floor, and floor. The
+Optional `grass`, `tree`, `road`, `rubble`, and `pavement` terrain fall back
+respectively to floor, wall, floor, floor, and floor. The
 legacy demo square `[-32,32] × [-32,32]` remains floor and is masked from road
 queries; no town or building intersects it.
 
 ## Pure population and deterministic streams
 
 `GenerateChunkPlacements(content, seed, plan, chunk, output)` clears the three
-output vectors while retaining capacity. Versions 1..3 emit nothing. Version 4
+output vectors while retaining capacity. Versions 1..3 emit nothing. Versions 4/5
 returns furniture, expanded item leaves and monsters, cropped by each transformed
 position's chunk (including Y). Feature order follows the plan; each list visits
 common population before the selected basement, then authored marker order and
@@ -140,7 +162,10 @@ optional diagnostics. There is no unbounded search or terrain mutation.
 regenerates that plan when moving to another region; the pure generator itself
 has no cache. Cache identity includes seed, region, version and immutable catalog.
 Generation metadata 1 retains its World-owned surface generator; 2/3 use the
-explicit legacy regional path; 4 adds authored layers and population. Generation
+explicit legacy regional path; 4 adds authored layers and population; 5 adds dense
+lots and civic outdoor sites. Saved versions 1..4 continue using their recorded
+algorithm, while new worlds use 5. Reproduction still requires the same content.
+Generation
 version is separate from save schema (10). Generated tiles become ordinary world chunk tiles
 and are thereafter saved as terrain IDs/damage.
 

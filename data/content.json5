@@ -19,4 +19,8 @@
   'worldgen/buildings/school.json5', 'worldgen/buildings/library.json5',
   'worldgen/buildings/auto_repair.json5', 'worldgen/buildings/warehouse.json5',
   'worldgen/buildings/workshop.json5',
+  'worldgen/buildings/hospital.json5',
+  'worldgen/buildings/park.json5', 'worldgen/buildings/square.json5',
+  'worldgen/buildings/courtyard_house.json5', 'worldgen/buildings/tall_row_house.json5',
+  'worldgen/buildings/office_annex.json5', 'worldgen/buildings/corner_store.json5',
 ]}

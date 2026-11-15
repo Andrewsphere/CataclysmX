@@ -155,6 +155,7 @@ TEST_CASE("House fingerprints include layers common population and basement vari
     auto& pattern = const_cast<BuildingPattern&>(content.GetBuildingPattern(content.FindBuildingPattern("house")));
     const auto floor = content.FindTerrain("floor");
     const auto wall = content.FindTerrain("wall");
+    CheckField(content, pattern.site, BuildingSite::Landmark);
     CheckField(content, pattern.layers, Vector<PatternLayer>{{1, {floor}}});
     pattern.layers.push_back({1, {floor}});
     CheckField(content, pattern.layers[0].y, 2);

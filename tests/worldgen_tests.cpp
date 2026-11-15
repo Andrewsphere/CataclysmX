@@ -297,7 +297,7 @@ TEST_CASE("Generation content validates passable roles and supports terrain-only
 }
 
 TEST_CASE("Generation version three preserves version two surface terrain and damage output", "[worldgen][determinism]") {
-    REQUIRE(world_generation_version == 4);
+    REQUIRE(world_generation_version == 5);
     // Environmental seam, rotated divided house, and abandoned cross-chunk long house.
     const ChunkCoord chunks[] = {{-17, 20}, {-16, 20}, {5, 4}, {9, 7}, {10, 7}};
     const std::uint32_t expected[] = {2483476373U, 3666744973U, 2506376988U, 2959312743U, 518236207U};
@@ -377,8 +377,8 @@ TEST_CASE("Region plans fit their full and clipped geometry bounds", "[worldgen]
     const auto full = GenerateRegionPlan(TestContent(), 73, {-2, 1});
     REQUIRE(full.hasTown);
     CHECK(full.roads.Size() == 18);
-    CHECK(full.parcels.Size() == 8);
-    REQUIRE(full.buildings.Size() == 8);
+    CHECK(full.parcels.Size() == 20);
+    REQUIRE(full.buildings.Size() == 20);
     for (std::size_t i = 0; i < full.parcels.Size(); ++i) {
         CHECK(full.parcels[i].owner.parcel == i);
         CHECK(full.buildings[i].owner == full.parcels[i].owner);

@@ -25,7 +25,7 @@ ContentResult<FirstHouseStart> FindFirstHouseStart(const ContentCatalog& content
     std::uint32_t seed, Diagnostics* diagnostics = nullptr);
 
 // Pure query over all nine origin-neighborhood region plans, independent of any
-// named pattern. Eligible buildings have authored population in their common
+// named pattern. Parks and squares are excluded. Eligible buildings have authored population in their common
 // pattern or selected basement (furniture, loot, or monster markers).
 // Select the usable entrance nearest horizontal origin by squared distance;
 // ties: entrance x,z, owner region x,z, parcel. playerPosition is the adjacent

@@ -65,6 +65,11 @@
       appearance: {symbol: '.', foreground: 'dark_gray'},
     },
     {
+      type: 'terrain', id: 'pavement', name: 'paved sidewalk',
+      movement: {passable: true}, blocks_sight: false, looks_like: 'floor',
+      appearance: {symbol: ':', foreground: 'light_gray'},
+    },
+    {
       type: 'terrain', id: 'rubble', name: 'rubble',
       movement: {passable: true}, blocks_sight: false,
       appearance: {symbol: ':', foreground: 'light_gray'},

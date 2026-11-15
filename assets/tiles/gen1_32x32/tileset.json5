@@ -9,6 +9,7 @@
     lockable_open_door: {visual: 'tile.world.door.open'}, locked_door: {visual: 'tile.world.door.closed'},
     grass: {visual: 'tile.world.grass.varied'}, tree: {visual: 'sprite.world.tree.tall', ground: 'tile.world.grass.meadow'},
     road: {visual: 'tile.world.road.asphalt'}, rubble: {visual: 'tile.world.rubble'},
+    pavement: {visual: 'tile.world.floor'},
     stairs: {visual: 'tile.world.stairs'}, air: {visual: 'tile.world.air'},
   },
   items: {

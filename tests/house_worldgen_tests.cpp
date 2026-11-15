@@ -196,8 +196,8 @@ TEST_CASE("Explicit legacy plans exclude layered and populated patterns without 
     const auto onlyNew = Catalog();
     CHECK(GenerateRegionPlan(onlyNew, 42, {0, 0}, 3).buildings.Empty());
     const auto current = GenerateRegionPlan(onlyNew, 42, {0, 0});
-    CHECK(current.generationVersion == 4);
-    CHECK(current == GenerateRegionPlan(onlyNew, 42, {0, 0}, 4));
+    CHECK(current.generationVersion == world_generation_version);
+    CHECK(current == GenerateRegionPlan(onlyNew, 42, {0, 0}, world_generation_version));
     CHECK_FALSE(current.buildings.Empty());
 }
 
@@ -205,8 +205,8 @@ TEST_CASE("House layers and once-selected basements rotate together with roof fa
           "[worldgen][house][vertical]") {
     const auto golden = Catalog();
     // Pins the string/domain/version seed contract independently of chunk draws.
-    const auto workshop = GenerateRegionPlan(golden, 0, {0, 0});
-    const auto storage = GenerateRegionPlan(golden, 2, {0, 0});
+    const auto workshop = GenerateRegionPlan(golden, 0, {0, 0}, 4);
+    const auto storage = GenerateRegionPlan(golden, 2, {0, 0}, 4);
     REQUIRE_FALSE(workshop.buildings.Empty());
     REQUIRE_FALSE(storage.buildings.Empty());
     CHECK(workshop.buildings[0].basementVariant == 2);
@@ -217,9 +217,9 @@ TEST_CASE("House layers and once-selected basements rotate together with roof fa
         for (const bool roof : {false, true}) {
             const auto content = Catalog(entrance, roof);
             for (std::uint64_t seed = 0; seed < 4; ++seed) {
-                const auto plan = GenerateRegionPlan(content, seed, {-1, 0});
+                const auto plan = GenerateRegionPlan(content, seed, {-1, 0}, 4);
                 REQUIRE(plan.buildings.Size() == 8);
-                CHECK(plan == GenerateRegionPlan(content, seed, {-1, 0}));
+                CHECK(plan == GenerateRegionPlan(content, seed, {-1, 0}, 4));
                 for (const auto& building : plan.buildings) {
                     const auto& pattern = content.GetBuildingPattern(building.pattern);
                     REQUIRE(building.basementVariant >= 1);

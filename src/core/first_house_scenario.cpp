@@ -48,6 +48,7 @@ ContentResult<BuildingStart> FindStart(const ContentCatalog& content,
             for (const auto& building : plan.buildings) {
                 if (houseOnly && building.pattern != house) { continue; }
                 const auto& pattern = content.GetBuildingPattern(building.pattern);
+                if (pattern.site == BuildingSite::Park || pattern.site == BuildingSite::Square) { continue; }
                 if (!houseOnly && !HasPopulation(pattern.population)
                     && (!building.basementVariant || !HasPopulation(pattern.basements[building.basementVariant - 1].population))) {
                     continue;

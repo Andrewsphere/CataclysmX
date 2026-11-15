@@ -1,14 +1,19 @@
 # Urban content and Town
 
-The expanded `data/content.json5` pack supplies **26 populated building types**
-and the three legacy surface-only patterns `compact_house`, `divided_house`, and
-`long_house`. Each populated type has authored furniture and loot; themed monster
-markers and basement variants appear where authored. The existing region planner
-chooses eligible patterns by relative weight for its eight parcels. This adds
-variety to that planner, rather than introducing a large-city generator: a single
-region cannot contain 20 distinct buildings, and no town is guaranteed to contain
-20 types. Selection and population depend on seed, coordinates, generation version,
-and content; chance-based markers need not produce an item or monster every time.
+The expanded `data/content.json5` pack supplies **31 populated building layouts,
+a neighborhood park and a civic square**, plus the three legacy surface-only
+patterns `compact_house`, `divided_house`, and `long_house` (36 patterns total).
+Generation **5** creates **17 buildings plus a park and square** in each complete
+town with this pack, replacing the former eight-building layout. Lots have
+one-tile setbacks, paved sidewalks and shared rear alleys. A full-width civic
+plot holds a hospital, police station or fire station, selected by relative weight.
+Authored gardens, trees, benches, planters and a dry fountain give the outdoor
+sites a distinct purpose. Wilderness outside the town retains its biome terrain.
+
+Selection and population depend on seed, coordinates, generation version and
+content; a particular town need not contain every building type. Existing saves
+retain their recorded generation algorithm. Start a new Town to see the new lot
+layout; generation-5 FirstHouse review positions also differ from generation 4.
 
 ## Try it
 
@@ -23,8 +28,8 @@ Town uses the expanded pack and starts outside a qualifying populated building.
 The start query considers nine nearby region plans and chooses a usable entrance
 near the origin; eligibility requires authored population in the building or its
 selected basement, not a successful random loot or monster roll. The curated
-FirstHouse scenario uses `data/first_house.json5`, retaining the existing review
-seeds; see [first-house review](first_house_review.md). Both packs reference shared
+FirstHouse scenario uses `data/first_house.json5`; see the updated
+[first-house review](first_house_review.md) for current seed positions. Both packs reference shared
 definition files without duplicating definitions. Pack selection and explicit
 overrides are described in [content packs](content_pack.md).
 
@@ -37,6 +42,52 @@ overrides are described in [content packs](content_pack.md).
 | Retail | grocery store, convenience store, pharmacy, hardware store, bookstore, clothing store, electronics store, sporting goods store |
 | Public and professional | office, clinic, fire station, police station, school, library |
 | Industrial | auto repair, warehouse, workshop |
+| New shape/height variants | courtyard house, tall row house, office annex, corner store |
+| New landmark and outdoor sites | hospital, neighborhood park, civic square |
+
+## Footprints and upper floors
+
+The courtyard house has two wings around an open garden; the office annex and
+corner store have stepped/L-shaped footprints. Internal divisions include narrow
+stair halls, connected wards, crew dormitories and an attic studio. Each new
+layout is a separately weighted pattern, so variants share the normal generation
+and population system rather than requiring a second random-layout mechanism.
+
+| Layout | Footprint | Occupied above-ground floors |
+| --- | --- | ---: |
+| Hospital | 40×23 | 3 |
+| Police station | 32×21 | 3 |
+| Fire station | 34×19 | 2 |
+| Courtyard house | 16×15 | 2 |
+| Tall row house | 14×13 | 3 |
+| Office annex | 20×17 | 2 |
+
+Ground is Y=0; upper occupied floors are Y=1 and, for three-storey buildings,
+Y=2. Matching stairs connect them using the existing `>`/`<` controls. Upper
+floors contain furniture, supplies and themed inhabitants. Roofs are explicit
+layers above the last occupied floor; courtyards and recessed wings remain open
+air. Single-storey implicit roofs follow the indoor footprint, and parks/squares
+remain entirely open to the sky.
+
+## Character-based furniture
+
+Palette glyphs can place both terrain and an object:
+
+```json5
+rows: ['#####', '#B..#', '##+##'],
+palette: {
+  '#': 'wall', '.': 'floor', '+': 'closed_door',
+  B: {terrain: 'floor', object: 'bookcase', facing: 'south'},
+},
+entrance: {x: 2, z: 2},
+```
+
+The same palette works on upper layers and basement variants. Explicit furniture
+arrays remain useful for special placements; overlaps are rejected. Loot can
+target a glyph-placed container by its coordinate. See [house content](house_content.md)
+for expansion order, strict validation and the `site` placement class.
+
+## Basements
 
 Five of the six residential types have basements: furnished house has storage or
 workshop; duplex has shared laundry/utility or hobby/pantry; row house has
@@ -96,16 +147,20 @@ recipe semantics.
 
 ## Validation coverage
 
-The seven urban content tests are designed to validate the expanded catalog and
-populations, the furnished-house divider, cardinal connectivity and basement stair
-access, parcel eligibility and sampled variety, deterministic rotated placement,
-specialist matching at sites, and crafting a usable cutting tool. These checks
-sample generation rather than guaranteeing a particular town's composition.
+Coverage includes all authored floors and basement variants, furniture approaches,
+matched stairs, class/size eligibility, all 33 populated site patterns appearing
+in a bounded generation sample, rotation and chunk-order independence, specialist
+populations and crafting. Live World checks climb and descend all six multi-floor
+layouts and unload/reload their upstairs occupants and furniture. Save tests
+verify that generation-4 and generation-5 checkpoints retain their planner and
+generate missing chunks with the recorded version.
 
-Debug and SDL builds succeeded. The broad Debug run passed 869 of 871 selected
-tests; its two integration failures were fixed and passed a four-test focused
-rerun. The two previously documented demo/diagonal-AI failures were excluded.
-All 42 selected SDL/session/monster tests passed. Town SDL startup/render smoke
-passed for seeds 42 and 13, and the curated FirstHouse smoke passed for seed 13.
-A headless Town walkthrough also entered a store and displayed the visible
-shopper zombie's name with world invariants intact.
+Debug and SDL builds succeeded. The broad Debug run passed 876/877 selected tests;
+the remaining debug-menu expectation still named generation 4, was updated
+for generation 5, and passed a 4/4 focused rerun alongside the density/roof,
+multi-floor streaming and saved-generation tests. The two known baseline failures
+(`Server creates the deterministic demo and advances only successful commands`
+and `headless_streaming_script`) were excluded. All 34 selected SDL/session/tileset tests passed. Town SDL startup/render
+smoke passed for seeds 42 and 13, and FirstHouse smoke passed for seed 13.
+Headless Town seed 42 reported intact world invariants, and FirstHouse seed 0
+opened its door and descended to the cellar through normal movement commands.

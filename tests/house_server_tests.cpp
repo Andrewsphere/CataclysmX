@@ -110,9 +110,9 @@ TEST_CASE("Bundled first-house Server starts at the scenario result and traverse
     const auto& pattern = content.GetBuildingPattern(content.FindBuildingPattern("furnished_house"));
     REQUIRE(pattern.basements.size() == 2);
     eastl::array<bool, 2> visited{};
-    // Review seeds: workshop and storage respectively. No combat or particular
-    // monster chance roll is needed to exercise the matched stairs.
-    for (const std::uint32_t seed : {0u, 13u}) {
+    // Sample a bounded seed range until both variants have been walked. Changes
+    // to the generation version may change which seed selects each cellar.
+    for (std::uint32_t seed = 0; seed < 16 && !(visited[0] && visited[1]); ++seed) {
         const auto start = Take(FindFirstHouseStart(content, seed));
         const auto plan = GenerateRegionPlan(content, seed, RegionOf(start.entrance));
         BuildingPlan building;

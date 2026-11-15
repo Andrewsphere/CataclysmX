@@ -16,7 +16,7 @@ definition document, not a manifest.
 | --- | --- |
 | `data/demo.json5` | Shared legacy definitions from `terrain/`, `items/`, `crafting/`, `monsters/`, `objects/`, and `worldgen/buildings/`. |
 | `data/first_house.json5` | Curated FirstHouse pack: demo sources plus household items, crafting, furniture, loot, cellar monsters, and furnished house. |
-| `data/content.json5` | Expanded Town pack: the same shared sources plus urban resources, specialists, and 25 additional populated buildings. |
+| `data/content.json5` | Expanded Town pack: shared sources plus urban resources, specialists, 31 populated building layouts, a park and a square, and three legacy patterns. |
 
 The manifests reference shared definition files; they do not duplicate those
 definitions within a loaded pack. See [urban content](urban_content.md) for the

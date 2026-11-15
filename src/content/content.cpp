@@ -299,6 +299,9 @@ struct PaletteEntry {
     char glyph = 0;
     String terrain;
     TerrainId resolved;
+    String object;
+    ObjectTypeId resolvedObject;
+    ObjectFacing facing = ObjectFacing::North;
 };
 
 struct PendingPattern {
@@ -1025,6 +1028,17 @@ bool ReadPosition(yyjson_val* object, TileCoord& position, int width, int height
     return true;
 }
 
+bool ReadFacing(yyjson_val* value, ObjectFacing& facing, const Context& context) {
+    if (!yyjson_is_str(value)) { return context.Fail("expected a facing name"); }
+    const auto name = JsonString(value);
+    if (name == "north") { facing = ObjectFacing::North; }
+    else if (name == "east") { facing = ObjectFacing::East; }
+    else if (name == "south") { facing = ObjectFacing::South; }
+    else if (name == "west") { facing = ObjectFacing::West; }
+    else { return context.Fail("unknown facing"); }
+    return true;
+}
+
 bool ParsePopulation(yyjson_val* object, PendingPattern::Population& pending, int width, int height,
                      bool basement, const Context& context) {
     for (const char* field : {"furniture", "loot", "monsters"}) {
@@ -1045,13 +1059,7 @@ bool ParsePopulation(yyjson_val* object, PendingPattern::Population& pending, in
                 if (!CheckObject(value, {"x", "z", "y", "object", "facing"}, child)
                     || !ReadId(yyjson_obj_get(value, "object"), reference, child.Child("object"))) { return false; }
                 if (auto* facing = yyjson_obj_get(value, "facing")) {
-                    if (!yyjson_is_str(facing)) { return child.Child("facing").Fail("expected a facing name"); }
-                    const auto name = JsonString(facing);
-                    if (name == "north") { entry.facing = ObjectFacing::North; }
-                    else if (name == "east") { entry.facing = ObjectFacing::East; }
-                    else if (name == "south") { entry.facing = ObjectFacing::South; }
-                    else if (name == "west") { entry.facing = ObjectFacing::West; }
-                    else { return child.Child("facing").Fail("unknown facing"); }
+                    if (!ReadFacing(facing, entry.facing, child.Child("facing"))) { return false; }
                 }
                 pending.definition.furniture.push_back(entry);
                 pending.objects.push_back(eastl::move(reference));
@@ -1154,7 +1162,7 @@ bool ParsePattern(yyjson_val* object, PendingPattern& pattern) {
     const auto& context = pattern.context;
     auto& definition = pattern.definition;
     if (!CheckObject(object, {"type", "id", "rows", "palette", "entrance", "weight", "layers",
-                              "furniture", "loot", "monsters", "basements"}, context)
+                              "furniture", "loot", "monsters", "basements", "site"}, context)
         || !ReadId(yyjson_obj_get(object, "id"), definition.id, context.Child("id"))) { return false; }
     auto* rows = yyjson_obj_get(object, "rows");
     const auto rowsContext = context.Child("rows");
@@ -1193,7 +1201,17 @@ bool ParsePattern(yyjson_val* object, PendingPattern& pattern) {
         }
         PaletteEntry entry;
         entry.glyph = glyph[0];
-        if (!ReadId(value, entry.terrain, entryContext)) { return false; }
+        if (yyjson_is_obj(value)) {
+            if (!CheckObject(value, {"terrain", "object", "facing"}, entryContext)
+                || !ReadId(yyjson_obj_get(value, "terrain"), entry.terrain, entryContext.Child("terrain"))) { return false; }
+            if (auto* objectId = yyjson_obj_get(value, "object")) {
+                if (!ReadId(objectId, entry.object, entryContext.Child("object"))) { return false; }
+            }
+            if (auto* facing = yyjson_obj_get(value, "facing")) {
+                if (entry.object.empty()) { return entryContext.Child("facing").Fail("facing requires an object"); }
+                if (!ReadFacing(facing, entry.facing, entryContext.Child("facing"))) { return false; }
+            }
+        } else if (!ReadId(value, entry.terrain, entryContext)) { return false; }
         pattern.palette.push_back(eastl::move(entry));
     }
     auto* entrance = yyjson_obj_get(object, "entrance");
@@ -1211,6 +1229,15 @@ bool ParsePattern(yyjson_val* object, PendingPattern& pattern) {
     }
     if (auto* weight = yyjson_obj_get(object, "weight")) {
         if (!ReadBoundedInteger(weight, 1, 1000000, definition.weight, context.Child("weight"))) { return false; }
+    }
+    if (auto* site = yyjson_obj_get(object, "site")) {
+        if (!yyjson_is_str(site)) { return context.Child("site").Fail("expected a site name"); }
+        const auto name = JsonString(site);
+        if (name == "building") { definition.site = BuildingSite::Building; }
+        else if (name == "landmark") { definition.site = BuildingSite::Landmark; }
+        else if (name == "park") { definition.site = BuildingSite::Park; }
+        else if (name == "square") { definition.site = BuildingSite::Square; }
+        else { return context.Child("site").Fail("unknown site"); }
     }
     return ParsePatternExtensions(object, pattern);
 }
@@ -1543,6 +1570,12 @@ bool Resolve(Vector<PendingTerrain>& pending) {
 
 bool ResolvePattern(PendingPattern& pattern, const ContentCatalog& catalog) {
     for (auto& entry : pattern.palette) {
+        if (!entry.object.empty()) {
+            entry.resolvedObject = catalog.FindObject(View(entry.object));
+            if (!entry.resolvedObject.value) {
+                return pattern.context.Child("palette").Child({&entry.glyph, 1}).Child("object").Fail("unknown object reference");
+            }
+        }
         entry.resolved = catalog.FindTerrain(View(entry.terrain));
         if (entry.resolved == TerrainId{}) {
             if (pattern.context.diagnostics) {
@@ -1897,6 +1930,22 @@ bool ResolveLayerRows(const Vector<String>& rows, const PendingPattern& pending,
     return true;
 }
 
+void ExpandPaletteFurniture(const Vector<String>& rows, const PendingPattern& pending,
+                            int y, PatternPopulation& population) {
+    for (std::size_t z = 0; z < rows.size(); ++z) {
+        for (std::size_t x = 0; x < rows[z].size(); ++x) {
+            for (const auto& entry : pending.palette) {
+                if (entry.glyph != rows[z][x]) { continue; }
+                if (entry.resolvedObject.value) {
+                    population.furniture.push_back({{static_cast<int>(x), static_cast<int>(z), y},
+                        entry.resolvedObject, entry.facing});
+                }
+                break;
+            }
+        }
+    }
+}
+
 const TerrainDefinition* PopulationTerrain(const BuildingPattern& pattern, const BasementVariant* basement,
                                           TileCoord position, const ContentCatalog& catalog) {
     const Vector<TerrainId>* tiles = nullptr;
@@ -1932,6 +1981,10 @@ bool ValidatePopulation(const BuildingPattern& pattern, const BasementVariant* b
     for (std::size_t i = 0; i < furniture.size(); ++i) {
         const auto& entry = *furniture[i];
         if (!validTile(entry.position)) { return context.Child("furniture").Fail("furniture requires authored passable floor without stairs"); }
+        if (entry.position == TileCoord{pattern.entrance.x, pattern.entrance.z, 0}
+            && catalog.GetObject(entry.type).blocksMovement) {
+            return context.Child("furniture").Fail("blocking furniture occupies the entrance");
+        }
         for (std::size_t j = 0; j < i; ++j) {
             if (furniture[j]->position == entry.position) { return context.Child("furniture").Fail("overlapping furniture markers"); }
         }
@@ -1988,6 +2041,21 @@ bool ValidatePopulation(const BuildingPattern& pattern, const BasementVariant* b
             }
         }
     }
+    // An upstairs stair needs a matching adjacent landing; an intermediate floor
+    // may connect down, up, or both. Roofs need not contain stairs.
+    for (const auto& layer : pattern.layers) {
+        if (layer.y <= 0) { continue; }
+        for (int z = 0; z < pattern.height; ++z) {
+            for (int x = 0; x < pattern.width; ++x) {
+                if (!catalog.GetTerrain(layer.tiles[static_cast<std::size_t>(z * pattern.width + x)]).stairs) { continue; }
+                const auto* below = PopulationTerrain(pattern, basement, {x, z, layer.y - 1}, catalog);
+                const auto* above = PopulationTerrain(pattern, basement, {x, z, layer.y + 1}, catalog);
+                if ((!below || !below->stairs) && (!above || !above->stairs)) {
+                    return context.Child("layers").Fail("upstairs stairs require a matching adjacent landing");
+                }
+            }
+        }
+    }
     return true;
 }
 
@@ -1995,11 +2063,13 @@ bool ResolvePatternExtensions(PendingPattern& pending, const ContentCatalog& cat
     auto& pattern = pending.definition;
     if (!ResolvePopulation(pending.population, catalog, pending.context)) { return false; }
     pattern.population = eastl::move(pending.population.definition);
+    ExpandPaletteFurniture(pending.rows, pending, 0, pattern.population);
     for (std::size_t i = 0; i < pending.layers.size(); ++i) {
         const auto context = ArrayElement(pending.context.Child("layers"), i);
         PatternLayer layer;
         layer.y = pending.layers[i].y;
         if (!ResolveLayerRows(pending.layers[i].rows, pending, layer.tiles, context.Child("rows"))) { return false; }
+        ExpandPaletteFurniture(pending.layers[i].rows, pending, layer.y, pattern.population);
         pattern.layers.push_back(eastl::move(layer));
     }
     for (std::size_t i = 0; i < pending.basements.size(); ++i) {
@@ -2011,6 +2081,7 @@ bool ResolvePatternExtensions(PendingPattern& pending, const ContentCatalog& cat
         if (!ResolveLayerRows(source.rows, pending, basement.layer.tiles, context.Child("rows"))
             || !ResolvePopulation(source.population, catalog, context)) { return false; }
         basement.population = eastl::move(source.population.definition);
+        ExpandPaletteFurniture(source.rows, pending, -1, basement.population);
         pattern.basements.push_back(eastl::move(basement));
     }
     if (pattern.basements.empty()) { return ValidatePopulation(pattern, nullptr, catalog, bounds, pending.context); }

@@ -15,7 +15,9 @@ constexpr eastl::string_view populatedIds[] = {
     "diner", "restaurant", "laundromat", "office", "grocery_store", "convenience_store",
     "pharmacy", "hardware_store", "bookstore", "clothing_store", "electronics_store",
     "sporting_goods_store", "clinic", "fire_station", "police_station", "school",
-    "library", "auto_repair", "warehouse", "workshop"
+    "library", "auto_repair", "warehouse", "workshop", "hospital",
+    "courtyard_house", "tall_row_house", "office_annex", "corner_store",
+    "neighborhood_park", "civic_square"
 };
 constexpr PatternPoint cardinal[] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
 
@@ -166,7 +168,7 @@ Vector<ChunkCoord> PopulationChunks(const RegionPlan& plan) {
     for (const auto& building : plan.buildings) {
         const auto first = ChunkOf(building.bounds.min);
         const auto last = ChunkOf({building.bounds.max.x - 1, building.bounds.max.z - 1});
-        for (int y = -1; y <= 0; ++y) {
+        for (int y = -1; y <= 3; ++y) {
             for (int z = first.z; z <= last.z; ++z) {
                 for (int x = first.x; x <= last.x; ++x) {
                     const ChunkCoord chunk{x, z, y};
@@ -189,10 +191,10 @@ const PatternPopulation& Population(const BuildingPattern& pattern, const Buildi
     return pattern.basements[key.basementVariant - 1].population;
 }
 
-TEST_CASE("Expanded urban manifest loads all 26 explicitly populated building types",
+TEST_CASE("Expanded urban manifest loads all 33 populated building and civic site patterns",
     "[content][urban-content][manifest]") {
     const auto& content = UrbanContent();
-    CHECK(content.BuildingPatternCount() == 29); // 26 populated patterns plus three legacy demos.
+    CHECK(content.BuildingPatternCount() == 36); // 33 populated sites plus three legacy demos.
     for (const auto id : populatedIds) {
         INFO("building=" << id.data());
         const auto patternId = content.FindBuildingPattern(id);
@@ -232,13 +234,38 @@ TEST_CASE("Furnished house rooms connect only through the intended internal open
     CHECK_FALSE(Flood(house, closed, left)[Index(house, right)]);
 }
 
-TEST_CASE("Every urban surface and every basement variant has cardinal floor and furniture access",
+TEST_CASE("Every urban surface upper floor and basement variant has cardinal floor and furniture access",
     "[content][urban-content][layout][reachability]") {
     const auto& content = UrbanContent();
     for (const auto id : populatedIds) {
         const auto& pattern = content.GetBuildingPattern(content.FindBuildingPattern(id));
         INFO("building=" << pattern.id.c_str() << " variant=surface");
         CheckAccess(content, pattern, pattern.tiles, 0, pattern.entrance, nullptr);
+        for (const auto& layer : pattern.layers) {
+            if (layer.y <= 0) { continue; }
+            bool found = false;
+            PatternPoint source{};
+            for (int z = 0; z < pattern.height; ++z) {
+                for (int x = 0; x < pattern.width; ++x) {
+                    if (!content.GetTerrain(layer.tiles[Index(pattern, {x, z})]).stairs) { continue; }
+                    const Vector<TerrainId>* below = layer.y == 1 ? &pattern.tiles : nullptr;
+                    for (const auto& other : pattern.layers) {
+                        if (other.y == layer.y - 1) { below = &other.tiles; }
+                    }
+                    REQUIRE(below);
+                    CHECK(content.GetTerrain((*below)[Index(pattern, {x, z})]).stairs);
+                    if (!found) { source = {x, z}; found = true; }
+                }
+            }
+            // Explicit roofs have no stair and no population. Occupied floors
+            // must be connected to the floor below, not just locally walkable.
+            if (found) { CheckAccess(content, pattern, layer.tiles, layer.y, source, nullptr); }
+            else {
+                for (const auto& marker : pattern.population.furniture) { CHECK(marker.position.y != layer.y); }
+                for (const auto& marker : pattern.population.loot) { CHECK(marker.position.y != layer.y); }
+                for (const auto& marker : pattern.population.monsters) { CHECK(marker.position.y != layer.y); }
+            }
+        }
         for (const auto& basement : pattern.basements) {
             INFO("building=" << pattern.id.c_str() << " variant=" << basement.id.c_str());
             PatternPoint source{};
@@ -258,7 +285,7 @@ TEST_CASE("Every urban surface and every basement variant has cardinal floor and
     }
 }
 
-TEST_CASE("Urban patterns fit current parcel frontages and bounded generation includes all 26 types",
+TEST_CASE("Urban patterns fit their lot classes and bounded generation includes every authored site",
     "[content][urban-content][worldgen][eligibility]") {
     const auto& content = UrbanContent();
     const auto example = GenerateRegionPlan(content, 0, {1, -1});
@@ -270,16 +297,13 @@ TEST_CASE("Urban patterns fit current parcel frontages and bounded generation in
         const int width = sideEntrance ? pattern.height : pattern.width;
         const int height = sideEntrance ? pattern.width : pattern.height;
         // North/south frontages differ by a half-turn, hence have identical dimensions.
-        bool north = false, south = false;
+        bool fits = false;
         for (const auto& parcel : example.parcels) {
-            INFO("parcel=" << parcel.owner.parcel << " frontage=" << static_cast<int>(parcel.frontage));
-            CHECK(width <= parcel.bounds.max.x - parcel.bounds.min.x - 4);
-            CHECK(height <= parcel.bounds.max.z - parcel.bounds.min.z - 4);
-            north |= parcel.frontage == Frontage::North;
-            south |= parcel.frontage == Frontage::South;
+            if (parcel.site != pattern.site) { continue; }
+            fits |= width <= parcel.bounds.max.x - parcel.bounds.min.x - 2
+                && height <= parcel.bounds.max.z - parcel.bounds.min.z - 2;
         }
-        CHECK(north);
-        CHECK(south);
+        CHECK(fits);
     }
     Vector<std::uint8_t> seen(content.BuildingPatternCount() + 1, 0);
     unsigned diverseRegions = 0, regionCount = 0;
@@ -296,10 +320,11 @@ TEST_CASE("Urban patterns fit current parcel frontages and bounded generation in
                 const auto* parcel = ParcelAt(plan, building.entrance);
                 REQUIRE(parcel);
                 CHECK(building.owner == parcel->owner);
-                CHECK(building.bounds.min.x >= parcel->bounds.min.x + 2);
-                CHECK(building.bounds.min.z >= parcel->bounds.min.z + 2);
-                CHECK(building.bounds.max.x <= parcel->bounds.max.x - 2);
-                CHECK(building.bounds.max.z <= parcel->bounds.max.z - 2);
+                CHECK(content.GetBuildingPattern(building.pattern).site == parcel->site);
+                CHECK(building.bounds.min.x >= parcel->bounds.min.x + 1);
+                CHECK(building.bounds.min.z >= parcel->bounds.min.z + 1);
+                CHECK(building.bounds.max.x <= parcel->bounds.max.x - 1);
+                CHECK(building.bounds.max.z <= parcel->bounds.max.z - 1);
             }
             diverseRegions += distinct > 1;
             ++regionCount;
@@ -474,6 +499,150 @@ TEST_CASE("Urban professional groups favor distinct specialists and generate the
 }
 
 template<class T> T Take(WorldResult<T> result) { REQUIRE(result); return eastl::move(*result); }
+
+TEST_CASE("Dense towns double building occupancy and reserve parks squares and large civic plots",
+    "[worldgen][urban-content][density]") {
+    const auto& content = UrbanContent();
+    bool checkedSteppedRoof = false, checkedCourtyard = false;
+    for (std::uint64_t seed = 0; seed < 8; ++seed) {
+        const auto plan = GenerateRegionPlan(content, seed, {-1, 1});
+        const auto legacy = GenerateRegionPlan(content, seed, {-1, 1}, 4);
+        CHECK(legacy.parcels.Size() == 8);
+        unsigned buildings = 0, landmarks = 0, parks = 0, squares = 0;
+        for (const auto& building : plan.buildings) {
+            const auto& pattern = content.GetBuildingPattern(building.pattern);
+            buildings += pattern.site == BuildingSite::Building || pattern.site == BuildingSite::Landmark;
+            landmarks += pattern.site == BuildingSite::Landmark;
+            parks += pattern.site == BuildingSite::Park;
+            squares += pattern.site == BuildingSite::Square;
+            if (pattern.site == BuildingSite::Landmark) {
+                CHECK(pattern.width >= 32);
+                CHECK(pattern.width * pattern.height >= 600);
+            }
+            const auto checkTile = [&](TileCoord local, const char* terrain) {
+                const auto position = RotatedPosition(pattern, building, local);
+                const auto tiles = GenerateChunk(content, seed, plan, ChunkOf(position));
+                CHECK(tiles[TileIndex(position)].terrain == content.FindTerrain(terrain));
+            };
+            if (pattern.id == "corner_store") {
+                checkTile({12, 8, 0}, "pavement");
+                checkTile({12, 8, 1}, "air"); // No phantom roof over the side approach.
+                checkTile({3, 8, 1}, "floor");
+                checkedSteppedRoof = true;
+            }
+            if (pattern.id == "courtyard_house") {
+                checkTile({8, 10, 1}, "air");
+                checkTile({8, 10, 2}, "air"); // Garden remains open above both floors.
+                checkTile({3, 8, 2}, "floor");
+                checkedCourtyard = true;
+            }
+        }
+        CHECK(buildings >= 16);
+        CHECK(landmarks == 1);
+        CHECK(parks == 1);
+        CHECK(squares == 1);
+        CHECK(plan.buildings.Size() == plan.parcels.Size());
+        // Every gap between sites is a supported paved sidewalk or access road.
+        const auto first = ChunkOf(plan.townBounds.min);
+        const auto last = ChunkOf(plan.townBounds.max);
+        for (int z = first.z; z <= last.z; ++z) {
+            for (int x = first.x; x <= last.x; ++x) {
+                const auto tiles = GenerateChunk(content, seed, plan, {x, z});
+                const auto above = GenerateChunk(content, seed, plan, {x, z, 1});
+                for (int i = 0; i < chunk_size * chunk_size; ++i) {
+                    const TileCoord p{x * chunk_size + i % chunk_size, z * chunk_size + i / chunk_size};
+                    if (!Contains(plan.townBounds, p)) { continue; }
+                    const auto* site = BuildingAt(plan, p);
+                    if (!site) {
+                        CHECK(tiles[i].terrain == content.FindTerrain(IsRoad(plan, p) ? "road" : "pavement"));
+                    } else {
+                        const auto kind = content.GetBuildingPattern(site->pattern).site;
+                        if (kind == BuildingSite::Park || kind == BuildingSite::Square) {
+                            CHECK(above[i].terrain == content.FindTerrain("air"));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    CHECK(checkedSteppedRoof);
+    CHECK(checkedCourtyard);
+}
+
+TEST_CASE("Authored multi-storey buildings allow real stair travel and retain upstairs population on reload",
+    "[worldgen][urban-content][vertical][world]") {
+    const auto& content = UrbanContent();
+    for (const auto name : {"hospital", "police_station", "fire_station", "courtyard_house",
+                            "tall_row_house", "office_annex"}) {
+        INFO(name);
+        const auto id = content.FindBuildingPattern(name);
+        const auto& pattern = content.GetBuildingPattern(id);
+        BuildingPlan building;
+        std::uint32_t seed = 0;
+        bool found = false;
+        for (; seed < 64 && !found; ++seed) {
+            const auto plan = GenerateRegionPlan(content, seed, {-1, 1});
+            for (const auto& candidate : plan.buildings) {
+                if (candidate.pattern == id) { building = candidate; found = true; break; }
+            }
+        }
+        REQUIRE(found);
+        --seed;
+        PatternPoint stairs{};
+        found = false;
+        for (int z = 0; z < pattern.height; ++z) {
+            for (int x = 0; x < pattern.width; ++x) {
+                if (content.GetTerrain(pattern.tiles[Index(pattern, {x, z})]).stairs) {
+                    stairs = {x, z}; found = true;
+                }
+            }
+        }
+        REQUIRE(found);
+        const auto start = RotatedPosition(pattern, building, {stairs.x, stairs.z, 0});
+        World world(content, seed);
+        const auto request = Take(world.RequestChunks({ChunkOf(start), 2}, LoadMode::active));
+        REQUIRE(world.ReconcileChunks());
+        CHECK(world.GetGenerationVersion() == 5);
+        const auto actor = Take(world.CreateActor(start, true));
+        int floors = 1;
+        for (int y = 1; y <= 2; ++y) {
+            const TileCoord landing{start.x, start.z, y};
+            if (!content.GetTerrain(world.GetTile(landing)->terrain).stairs) { break; }
+            REQUIRE(world.TryActorStep(actor, {0, 0, 1}));
+            CHECK(world.GetActor(actor)->position == landing);
+            ++floors;
+        }
+        CHECK(floors >= 2);
+        if (pattern.site == BuildingSite::Landmark && pattern.id != "fire_station") { CHECK(floors == 3); }
+        TileCoord furniturePosition{};
+        found = false;
+        for (const auto& marker : pattern.population.furniture) {
+            if (marker.position.y != floors - 1) { continue; }
+            furniturePosition = RotatedPosition(pattern, building, marker.position);
+            found = true;
+            break;
+        }
+        REQUIRE(found);
+        const auto object = world.ObjectAt(furniturePosition);
+        REQUIRE(object.value);
+        const auto objectId = world.GetObject(object)->id;
+        const auto actorId = world.GetActor(actor)->id;
+        const auto destination = world.GetActor(actor)->position;
+        REQUIRE(world.ReleaseRequest(request));
+        REQUIRE(world.ReconcileChunks());
+        CHECK_FALSE(world.GetActor(actor));
+        CHECK_FALSE(world.GetObject(object));
+        Take(world.RequestChunks({ChunkOf(start), 2}, LoadMode::active));
+        REQUIRE(world.ReconcileChunks());
+        const auto restored = world.FindActor(actorId);
+        REQUIRE(world.GetActor(restored));
+        CHECK(world.GetActor(restored)->position == destination);
+        CHECK(world.ObjectAt(furniturePosition) == world.FindObject(objectId));
+        for (int y = floors - 1; y > 0; --y) { REQUIRE(world.TryActorStep(restored, {0, 0, -1})); }
+        CHECK(world.GetActor(restored)->position == start);
+        REQUIRE(world.CheckInvariants());
+    }
+}
 
 TEST_CASE("Urban resource recipe crafts a usable cutting tool from its authored ingredients",
     "[content][urban-content][items][crafting]") {

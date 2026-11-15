@@ -796,6 +796,52 @@ ChunkArchive ActorChunk(ChunkCoord position, PersistentId id) {
     return chunk;
 }
 
+TEST_CASE("Saved generation four and five worlds keep their planner and populate missing chunks",
+          "[world][save][worldgen][house]") {
+    auto content = Take(LoadContentPack(CATACLYSMX_FIRST_HOUSE_PACK));
+    for (const std::uint32_t version : {4u, 5u}) {
+        INFO("generation=" << version);
+        SaveDirectory files;
+        const auto plan = GenerateRegionPlan(content, 0, {1, 1}, version);
+        CHECK(plan.parcels.Size() == (version == 4 ? 8 : 20));
+        TileCoord position{};
+        bool found = false;
+        ChunkPlacements expected;
+        for (const auto& building : plan.buildings) {
+            if (building.pattern != content.FindBuildingPattern("furnished_house")) { continue; }
+            position = building.bounds.min;
+            GenerateChunkPlacements(content, 0, plan, ChunkOf(position), expected);
+            if (!expected.furniture.empty()) { found = true; break; }
+        }
+        REQUIRE(found);
+        {
+            SaveDatabase database(content);
+            REQUIRE(database.Create(files.database.c_str()));
+            REQUIRE(database.Begin());
+            SaveSnapshot snapshot;
+            snapshot.seed = 0;
+            snapshot.generationVersion = version;
+            REQUIRE(database.WriteSnapshot(snapshot));
+            REQUIRE(database.Commit());
+        }
+        {
+            World world(content, 999);
+            const auto session = Take(world.LoadSave(files.database.c_str()));
+            CHECK(world.GetGenerationVersion() == version);
+            Load(world, ChunkOf(position));
+            CHECK(world.GetChunk(ChunkOf(position))->tiles == GenerateChunk(content, 0, plan, ChunkOf(position)));
+            for (const auto& marker : expected.furniture) {
+                const auto object = world.ObjectAt(marker.position);
+                REQUIRE(world.GetObject(object));
+                CHECK(world.GetObject(object)->type == marker.type);
+            }
+            REQUIRE(world.Save(session));
+        }
+        SaveDatabase database(content);
+        CHECK(Take(database.Open(files.database.c_str())).generationVersion == version);
+    }
+}
+
 // Generic objects have no dynamic behavior state and remain warm-cache eligible.
 ChunkArchive WarmObjectChunk(ChunkCoord position, PersistentId id) {
     ChunkArchive chunk{};

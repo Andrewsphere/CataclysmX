@@ -65,7 +65,7 @@ int Noise(std::uint64_t seed, TileCoord p, int scale, std::uint64_t domain) {
 }
 
 ContentResult<void> ValidatePalette(const ContentCatalog& content, Diagnostics* diagnostics, bool requireAir) {
-    for (const char* name : {"floor", "wall", "grass", "road", "rubble", "air", "stairs"}) {
+    for (const char* name : {"floor", "wall", "grass", "road", "rubble", "pavement", "air", "stairs"}) {
         const auto role = eastl::string_view(name);
         const auto* terrain = content.TryGetTerrain(content.FindTerrain(name));
         const bool required = role == "floor" || role == "wall" || (role == "air" && requireAir);
@@ -100,6 +100,7 @@ struct Palette {
     TerrainId tree;
     TerrainId road;
     TerrainId rubble;
+    TerrainId pavement;
 };
 Palette GetPalette(const ContentCatalog& content) {
     Require(ValidatePalette(content, nullptr, false).has_value());
@@ -111,10 +112,12 @@ Palette GetPalette(const ContentCatalog& content) {
     p.tree = content.FindTerrain("tree");
     p.road = content.FindTerrain("road");
     p.rubble = content.FindTerrain("rubble");
+    p.pavement = content.FindTerrain("pavement");
     if (!p.grass.value) { p.grass = p.floor; }
     if (!p.tree.value) { p.tree = p.wall; }
     if (!p.road.value) { p.road = p.floor; }
     if (!p.rubble.value) { p.rubble = p.floor; }
+    if (!p.pavement.value) { p.pavement = p.floor; }
     return p;
 }
 
@@ -159,12 +162,12 @@ int Turns(const BuildingPattern& pattern, Frontage frontage) {
     Require(frontage == Frontage::North || frontage == Frontage::South);
     return ((frontage == Frontage::North ? 0 : 2) - EntranceSide(pattern) + 4) % 4;
 }
-bool Fits(const BuildingPattern& pattern, const ParcelPlan& parcel) {
+bool Fits(const BuildingPattern& pattern, const ParcelPlan& parcel, int setback) {
     const int turns = Turns(pattern, parcel.frontage);
     const int width = turns % 2 ? pattern.height : pattern.width;
     const int height = turns % 2 ? pattern.width : pattern.height;
-    return width <= parcel.bounds.max.x - parcel.bounds.min.x - 4
-        && height <= parcel.bounds.max.z - parcel.bounds.min.z - 4;
+    return width <= parcel.bounds.max.x - parcel.bounds.min.x - 2 * setback
+        && height <= parcel.bounds.max.z - parcel.bounds.min.z - 2 * setback;
 }
 bool Extended(const BuildingPattern& pattern) {
     return !pattern.layers.empty() || !pattern.basements.empty()
@@ -225,10 +228,16 @@ std::size_t WeightedIndex(const Entries& entries, GenerationRandom& random) {
     std::abort();
 }
 void AddBuilding(const ContentCatalog& content, RegionPlan& plan, const ParcelPlan& parcel) {
+    const int setback = plan.generationVersion >= 5 ? 1 : 2;
+    const auto eligible = [&](const BuildingPattern& pattern) {
+        return Fits(pattern, parcel, setback)
+            && (plan.generationVersion >= 4 || !Extended(pattern))
+            && (plan.generationVersion < 5 || pattern.site == parcel.site);
+    };
     std::uint64_t total = 0;
     for (std::size_t i = 1; i <= content.BuildingPatternCount(); ++i) {
         const auto& pattern = content.GetBuildingPattern({static_cast<std::uint32_t>(i)});
-        if (Fits(pattern, parcel) && (plan.generationVersion >= 4 || !Extended(pattern))) {
+        if (eligible(pattern)) {
             total += pattern.weight;
         }
     }
@@ -238,7 +247,7 @@ void AddBuilding(const ContentCatalog& content, RegionPlan& plan, const ParcelPl
     BuildingPatternId selected{};
     for (std::size_t i = 1; i <= content.BuildingPatternCount(); ++i) {
         const auto& pattern = content.GetBuildingPattern({static_cast<std::uint32_t>(i)});
-        if (!Fits(pattern, parcel) || (plan.generationVersion <= 3 && Extended(pattern))) { continue; }
+        if (!eligible(pattern)) { continue; }
         if (choice < pattern.weight) { selected = {static_cast<std::uint32_t>(i)}; break; }
         choice -= pattern.weight;
     }
@@ -247,10 +256,10 @@ void AddBuilding(const ContentCatalog& content, RegionPlan& plan, const ParcelPl
     const int turns = Turns(pattern, parcel.frontage);
     const int width = turns % 2 ? pattern.height : pattern.width;
     const int height = turns % 2 ? pattern.width : pattern.height;
-    const int slack = parcel.bounds.max.x - parcel.bounds.min.x - width - 4;
-    const int x = parcel.bounds.min.x + 2 + static_cast<int>(Mix(random) % (slack + 1));
-    const int z = parcel.frontage == Frontage::North ? parcel.bounds.min.z + 2
-        : parcel.bounds.max.z - height - 2;
+    const int slack = parcel.bounds.max.x - parcel.bounds.min.x - width - 2 * setback;
+    const int x = parcel.bounds.min.x + setback + static_cast<int>(Mix(random) % (slack + 1));
+    const int z = parcel.frontage == Frontage::North ? parcel.bounds.min.z + setback
+        : parcel.bounds.max.z - height - setback;
     const auto entry = Rotate(pattern.entrance, pattern.width, pattern.height, turns);
     const TileCoord entrance{x + entry.x, z + entry.z};
     const auto abandonmentSeed = Mix(random ^ 0xa54ff53a5f1d36f1ULL);
@@ -265,6 +274,45 @@ void AddBuilding(const ContentCatalog& content, RegionPlan& plan, const ParcelPl
         {entrance, {entrance.x, parcel.streetZ}, 1}, abandonmentSeed,
         abandonmentSeed % 4 != 0 && !(plan.generationVersion >= 4 && Extended(pattern)),
         basementVariant}));
+}
+
+bool HasSite(const ContentCatalog& content, BuildingSite site) {
+    for (std::size_t i = 1; i <= content.BuildingPatternCount(); ++i) {
+        if (content.GetBuildingPattern({static_cast<std::uint32_t>(i)}).site == site) { return true; }
+    }
+    return false;
+}
+
+void AddDenseParcels(const ContentCatalog& content, RegionPlan& plan, int x, int z) {
+    const int civicStrip = static_cast<int>(Hash(plan.seed, plan.region.x, plan.region.z, 0x6369766963ULL) % 8);
+    const bool landmarks = HasSite(content, BuildingSite::Landmark);
+    const bool parks = HasSite(content, BuildingSite::Park);
+    const bool squares = HasSite(content, BuildingSite::Square);
+    for (int row = 0; row < 2; ++row) {
+        for (int column = 0; column < 2; ++column) {
+            const int left = x + 74 + column * 56;
+            const int top = z + 74 + row * 56;
+            for (int half = 0; half < 2; ++half) {
+                const int strip = (row * 2 + column) * 2 + half;
+                const bool landmark = landmarks && strip == civicStrip;
+                // Alternate wide and narrow shop/house frontages; a three-tile
+                // shared rear alley separates the two 25-tile-deep strips.
+                const int count = landmark ? 1 : 2 + (strip + civicStrip) % 2;
+                for (int lot = 0; lot < count; ++lot) {
+                    BuildingSite site = landmark ? BuildingSite::Landmark : BuildingSite::Building;
+                    if (lot == 0 && parks && strip == (civicStrip + 2) % 8) { site = BuildingSite::Park; }
+                    if (lot == 0 && squares && strip == (civicStrip + 5) % 8) { site = BuildingSite::Square; }
+                    ParcelPlan parcel{{plan.region, static_cast<std::uint32_t>(plan.parcels.Size())},
+                        {{left + 53 * lot / count, top + half * 28},
+                         {left + 53 * (lot + 1) / count, top + half * 28 + 25}},
+                        half == 0 ? Frontage::North : Frontage::South,
+                        z + 72 + (row + half) * 56, site};
+                    Require(plan.parcels.PushBack(parcel));
+                    AddBuilding(content, plan, parcel);
+                }
+            }
+        }
+    }
 }
 
 bool Accessible(const ContentCatalog& content, TerrainId terrain) {
@@ -503,6 +551,10 @@ RegionPlan GenerateRegionPlan(const ContentCatalog& content, std::uint64_t seed,
     AddRoad(plan, {x + 56, z + 128}, {x + 72, z + 128});
 
     if (!plan.hasTown) { return plan; }
+    if (generationVersion >= 5) {
+        AddDenseParcels(content, plan, x, z);
+        return plan;
+    }
     for (int row = 0; row < 2; ++row) {
         for (int column = 0; column < 2; ++column) {
             const int left = x + 74 + column * 56;
@@ -588,7 +640,7 @@ eastl::array<Tile, chunk_size * chunk_size> GenerateChunk(
             if (!Inside(plan.bounds, p)) { continue; }
             if (chunk.y < 0) { continue; }
             if (chunk.y > 0) {
-                tile.terrain = chunk.y == 1 && BuildingAt(plan, p) ? palette.floor : air;
+                tile.terrain = plan.generationVersion <= 4 && chunk.y == 1 && BuildingAt(plan, p) ? palette.floor : air;
                 continue;
             }
             if (Demo(p)) { tile.terrain = palette.floor; continue; }
@@ -598,6 +650,9 @@ eastl::array<Tile, chunk_size * chunk_size> GenerateChunk(
                 ? palette.tree : palette.grass;
             // Keep parcels usable: no trees in yards, access or building sites.
             if (ParcelAt(plan, p)) { tile.terrain = palette.grass; }
+            if (plan.generationVersion >= 5 && plan.hasTown && Inside(plan.townBounds, p)) {
+                tile.terrain = palette.pavement;
+            }
             if (IsRoad(plan, p)) { tile.terrain = palette.road; }
         }
     }
@@ -617,6 +672,12 @@ eastl::array<Tile, chunk_size * chunk_size> GenerateChunk(
                 if (basement.layer.y == chunk.y) { source = &basement.layer.tiles; }
             }
         }
+        // Unauthored single-storey roofs follow indoor surface tiles, leaving
+        // gardens and civic outdoor sites open to the sky. Taller buildings
+        // explicitly author their upper floors and roof (including setbacks).
+        const bool roof = !source && chunk.y == 1 && plan.generationVersion >= 5
+            && pattern.site != BuildingSite::Park && pattern.site != BuildingSite::Square;
+        if (roof) { source = &pattern.tiles; }
         if (!source) { continue; }
         const auto complete = MaterializeBuilding(content, palette, building, *source,
             chunk.y == 0 && (plan.generationVersion <= 3 || !Extended(pattern)));
@@ -627,9 +688,15 @@ eastl::array<Tile, chunk_size * chunk_size> GenerateChunk(
                 if (!Inside(plan.bounds, p) || (chunk.y == 0 && Demo(p))) { continue; }
                 // Driveway geometry includes the entrance; IsRoad excludes it.
                 // Street centerlines never enter a building's setback footprint.
-                tiles[static_cast<std::size_t>((pz - z) * chunk_size + px - x)] =
-                    complete[static_cast<std::size_t>((pz - building.bounds.min.z) * width
-                        + px - building.bounds.min.x)];
+                auto tile = complete[static_cast<std::size_t>((pz - building.bounds.min.z) * width
+                    + px - building.bounds.min.x)];
+                if (roof) {
+                    const bool outdoors = tile.terrain == content.FindTerrain("grass")
+                        || tile.terrain == content.FindTerrain("tree") || tile.terrain == content.FindTerrain("road")
+                        || tile.terrain == content.FindTerrain("pavement") || content.GetTerrain(tile.terrain).openSpace;
+                    tile = {outdoors ? air : palette.floor, 0};
+                }
+                tiles[static_cast<std::size_t>((pz - z) * chunk_size + px - x)] = tile;
             }
         }
     }

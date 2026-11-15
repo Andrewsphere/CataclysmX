@@ -6,10 +6,10 @@
 namespace cataclysmx {
 
 inline constexpr int region_size = 256;
-inline constexpr std::uint32_t world_generation_version = 4;
+inline constexpr std::uint32_t world_generation_version = 5;
 inline constexpr std::size_t maxRegionRoads = 18; // Six streets and four three-segment connectors.
-inline constexpr std::size_t maxRegionParcels = 8;
-inline constexpr std::size_t maxRegionBuildings = 8; // At most one per parcel.
+inline constexpr std::size_t maxRegionParcels = 24; // Four blocks, two strips, up to three lots.
+inline constexpr std::size_t maxRegionBuildings = maxRegionParcels; // One site per lot.
 
 struct RegionCoord {
     int x = 0;
@@ -65,6 +65,7 @@ struct ParcelPlan {
     TileRect bounds{};
     Frontage frontage = Frontage::North;
     int streetZ = 0;
+    BuildingSite site = BuildingSite::Building;
     bool operator==(const ParcelPlan&) const = default;
 };
 struct BuildingPlan {
@@ -88,7 +89,7 @@ struct RegionPlan {
     bool hasTown = false; // False when nominal town exceeds world bounds.
     eastl::array<BoundaryCrossing, 4> boundaries{}; // North, east, south, west.
     StaticList<RoadSegment, maxRegionRoads> roads;
-    StaticList<ParcelPlan, maxRegionParcels> parcels; // Block row, block column, north/south half.
+    StaticList<ParcelPlan, maxRegionParcels> parcels; // Block row, column, north/south strip, lot.
     StaticList<BuildingPlan, maxRegionBuildings> buildings; // Same order, omitting ineligible parcels.
     std::uint32_t generationVersion = world_generation_version;
     bool operator==(const RegionPlan&) const = default;
@@ -141,7 +142,7 @@ struct ChunkPlacements {
 RegionCoord RegionOf(TileCoord position);
 // Recoverable application/content boundary; diagnostic strings are optional.
 // Validates a 3D World catalog: floor/wall/air are required. Air must be
-// openSpace; floor and any grass/road/rubble must be passable floor support.
+// openSpace; floor and any grass/road/rubble/pavement must be passable floor support.
 // Stairs are optional; if present the 'stairs' role must have stairs=true.
 ContentResult<void> ValidateWorldgenContent(const ContentCatalog& content,
                                           Diagnostics* diagnostics = nullptr);
@@ -149,18 +150,19 @@ ContentResult<void> ValidateWorldgenContent(const ContentCatalog& content,
 EnvironmentSample SampleEnvironment(std::uint64_t seed, TileCoord position);
 RegionPlan GenerateRegionPlan(const ContentCatalog& content, std::uint64_t seed,
                               RegionCoord region);
-// Explicit legacy/current selection: accepts 2, 3, 4. The three-argument call
+// Explicit legacy/current selection: accepts 2..5. The three-argument call
 // selects world_generation_version; version 1 surface generation stays in World.
 RegionPlan GenerateRegionPlan(const ContentCatalog& content, std::uint64_t seed,
                               RegionCoord region, std::uint32_t generationVersion);
 // Row-major z*16+x. Invalid slots of partial edge chunks are undamaged wall.
 // Surface-only calls permit legacy catalogs without air. Upper-layer generation
 // requires the 'air' openSpace role; missing/invalid roles are invariant failures.
-// Base Y<0 is solid wall; Y>0 is air, except Y=1 has floor roofs covering each
-// building's rectangular footprint. Version 4 overlays authored layers and its
-// once-selected basement. Versions 2/3 retain their legacy terrain paths.
+// Base Y<0 is solid wall; Y>0 is air. Versions 2..4 have rectangular Y=1 roofs;
+// version 5 leaves civic outdoor sites and surface grass/tree/road/pavement open.
+// Versions 4/5 overlay authored layers and a once-selected basement. Taller
+// buildings explicitly author their floors and roof; air cells allow setbacks.
 // Required floor/wall terrain absence is an invariant failure. Optional grass,
-// tree, road, rubble fall back to floor, wall, floor, floor respectively.
+// tree, road, rubble, pavement fall back to floor, wall, floor, floor, floor.
 // At Y=0 the inclusive legacy demo square [-32,32] x [-32,32] is always floor;
 // IsRoad masks it too. No towns or buildings intersect that square.
 eastl::array<Tile, chunk_size * chunk_size> GenerateChunk(
@@ -183,8 +185,10 @@ const BuildingPlan* BuildingAt(const RegionPlan& plan, TileCoord position);
 
 // Design: canonical border keys make neighbors independent; hashes are local
 // unsigned integer mixing, never globally unique feature IDs. Fixed rectilinear
-// routes reserve perpendicular border approaches and avoid town parcels. Eight
-// 53x26/27 parcels have north/south frontage and two-tile minimum setbacks.
+// routes reserve perpendicular border approaches and avoid town parcels. Versions
+// 2..4 use eight 53x26/27 parcels and two-tile setbacks. Version 5 subdivides
+// 53x25 strips into 2/3 lots with one-tile setbacks, reserving civic sites when
+// present in content. Three-tile rear alleys and gaps between sites are paved.
 // Weighted fitting templates rotate from any entrance side (corner preference:
 // north, east, south, west). No cache, entities, persistence, or neighbor loads.
 // Generation is deterministic for the same catalog and world_generation_version.

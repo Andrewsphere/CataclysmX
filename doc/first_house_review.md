@@ -9,12 +9,17 @@
 ```
 
 For headless review, enter `view`, `inspect`, then `quit`. `inspect` reports actor
-positions and world invariants. Verified review seeds (coordinates are X,Z,Y):
+positions and world invariants. Generation 5 review seeds (coordinates are X,Z,Y):
 
 | Seed | Cellar | Player start | Entrance direction |
 | --- | --- | --- | --- |
-| 0 | Workshop, with a chance of a zombie | `(84,75,0)` | South |
-| 13 | Household storage | `(94,-75,0)` | North |
+| 0 | Household storage | `(79,-74,0)` | North |
+| 13 | Household storage | `(78,-74,0)` | North |
+
+The dense-town generation increment changes new-game starts and basement draws.
+Earlier generation-4 review positions were `(84,75,0)` and `(94,-75,0)`; existing
+saves retain their generation version. Both cellar variants remain covered by
+the bounded-seed server walkthrough test.
 
 Walk toward the entrance twice: the first action opens the door, the second
 enters. One more step in the same direction reaches the stairs; `<` descends.

@@ -78,6 +78,8 @@ struct BasementVariant {
     bool operator==(const BasementVariant&) const = default;
 };
 
+enum class BuildingSite : std::uint8_t { Building, Landmark, Park, Square };
+
 struct BuildingPattern {
     String id;
     int width = 0;
@@ -85,6 +87,7 @@ struct BuildingPattern {
     Vector<TerrainId> tiles; // Row-major: z * width + x; all terrain references are resolved.
     PatternPoint entrance;
     std::uint32_t weight = 1;
+    BuildingSite site = BuildingSite::Building; // Placement class for dense town lots.
     Vector<PatternLayer> layers; // Unique nonzero Y; no -1 if basements supply it.
     PatternPopulation population;
     Vector<BasementVariant> basements;

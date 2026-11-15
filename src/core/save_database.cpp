@@ -5,6 +5,7 @@
 #include "content/content.h"
 #include "actors/ai_controller.h"
 #include "objects/object_behavior.h"
+#include "worldgen/worldgen.h"
 
 #include <EASTL/algorithm.h>
 #include <EASTL/sort.h>
@@ -786,7 +787,7 @@ SaveResult<SaveSnapshot> DecodeSnapshot(const char* text, std::size_t length,
         || !Counter(Get(root, "next_id"), snapshot.nextId)) {
         return Failure(SaveError::InvalidData, "Invalid world_state fields", diagnostics);
     }
-    if (snapshot.generationVersion < 1 || snapshot.generationVersion > 4) {
+    if (snapshot.generationVersion < 1 || snapshot.generationVersion > world_generation_version) {
         return Failure(SaveError::UnsupportedVersion, "Unsupported generation version", diagnostics);
     }
     auto* session = Get(root, "session");
@@ -1777,7 +1778,7 @@ SaveResult<void> SaveDatabase::WriteChunk(const ChunkArchive& chunk, Diagnostics
 SaveResult<void> SaveDatabase::WriteSnapshot(const SaveSnapshot& snapshot, Diagnostics* diagnostics) {
     if (!impl_) { return Failure(SaveError::NotOpen, "Database is not open", diagnostics); }
     if (!impl_->transaction) { return Failure(SaveError::InvalidState, "No active transaction", diagnostics); }
-    const bool supported = snapshot.generationVersion >= 1 && snapshot.generationVersion <= 4;
+    const bool supported = snapshot.generationVersion >= 1 && snapshot.generationVersion <= world_generation_version;
     if (!supported || !ValidSnapshot(snapshot) || !ValidMemories(content_, snapshot, diagnostics)) {
         impl_->Rollback();
         return Failure(!supported ? SaveError::UnsupportedVersion : SaveError::InvalidData,
