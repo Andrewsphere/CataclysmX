@@ -393,7 +393,7 @@ memory are O(total saved data).
 #include "core/server.h"
 #include "content/content.h"
 
-auto content = cataclysmx::LoadContentFile("data/terrain.json5");
+auto content = cataclysmx::LoadContentPack("data/demo.json5");
 if (!content || !cataclysmx::ValidateServerContent(*content)) { return; }
 cataclysmx::Server server(*content, 42);
 auto created = server.CreateSave("run.sqlite"); // first save; refuses existing path

@@ -72,6 +72,34 @@ void HashData(std::uint64_t& hash, const DataObject& data) {
     }
 }
 
+void HashPosition(std::uint64_t& hash, TileCoord position) {
+    HashNumber(hash, position.x); HashNumber(hash, position.z); HashNumber(hash, position.y);
+}
+
+void HashLayer(std::uint64_t& hash, const PatternLayer& layer) {
+    HashNumber(hash, layer.y); HashNumber(hash, layer.tiles.size());
+    for (TerrainId terrain : layer.tiles) { HashNumber(hash, terrain.value); }
+}
+
+void HashPopulation(std::uint64_t& hash, const PatternPopulation& population) {
+    HashNumber(hash, population.furniture.size());
+    for (const auto& furniture : population.furniture) {
+        HashPosition(hash, furniture.position); HashNumber(hash, furniture.type.value);
+        HashNumber(hash, static_cast<std::uint64_t>(furniture.facing));
+    }
+    HashNumber(hash, population.loot.size());
+    for (const auto& loot : population.loot) {
+        HashPosition(hash, loot.position); HashNumber(hash, loot.pool.value);
+        HashNumber(hash, loot.chance); HashNumber(hash, loot.rolls);
+        HashNumber(hash, static_cast<std::uint64_t>(loot.destination));
+    }
+    HashNumber(hash, population.monsters.size());
+    for (const auto& monster : population.monsters) {
+        HashPosition(hash, monster.position); HashNumber(hash, monster.group.value);
+        HashNumber(hash, monster.chance);
+    }
+}
+
 bool Send(ENetPeer* peer, enet_uint8 channel, const wire::Writer& message) {
     if (message.bytes.size() > wire::maxPacket || peer->state != ENET_PEER_STATE_CONNECTED) return false;
     ENetPacket* packet = enet_packet_create(message.bytes.data(), message.bytes.size(), ENET_PACKET_FLAG_RELIABLE);
@@ -138,6 +166,14 @@ std::uint64_t ContentFingerprint(const ContentCatalog& content) {
         HashString(hash, p.id); HashNumber(hash, p.width); HashNumber(hash, p.height);
         HashNumber(hash, p.entrance.x); HashNumber(hash, p.entrance.z); HashNumber(hash, p.weight);
         HashNumber(hash, p.tiles.size()); for (TerrainId t : p.tiles) HashNumber(hash, t.value);
+        HashNumber(hash, p.layers.size());
+        for (const auto& layer : p.layers) { HashLayer(hash, layer); }
+        HashPopulation(hash, p.population);
+        HashNumber(hash, p.basements.size());
+        for (const auto& basement : p.basements) {
+            HashString(hash, basement.id); HashNumber(hash, basement.weight);
+            HashLayer(hash, basement.layer); HashPopulation(hash, basement.population);
+        }
     }
     HashNumber(hash, content.ItemCount());
     for (std::size_t i = 0; i < content.ItemCount(); ++i) {
@@ -171,6 +207,12 @@ std::uint64_t ContentFingerprint(const ContentCatalog& content) {
         for (std::size_t i = 0; i < content.ObjectCount(); ++i) {
             const auto& object = content.GetObject({static_cast<std::uint32_t>(i + 1)});
             HashString(hash, object.id); HashString(hash, object.name);
+            HashNumber(hash, object.capacityVolumeMl.has_value());
+            if (object.capacityVolumeMl) { HashNumber(hash, *object.capacityVolumeMl); }
+            HashNumber(hash, static_cast<std::uint64_t>(object.kind));
+            HashNumber(hash, object.blocksMovement); HashNumber(hash, object.blocksSight);
+            HashNumber(hash, object.movable);
+            HashNumber(hash, object.light.intensity); HashNumber(hash, object.light.range);
             HashNumber(hash, static_cast<std::uint64_t>(object.behavior));
             switch (object.behavior) {
             case ObjectBehaviorKind::None:
@@ -212,6 +254,43 @@ std::uint64_t ContentFingerprint(const ContentCatalog& content) {
             HashNumber(hash, output.item.value); HashNumber(hash, output.count);
         }
         HashNumber(hash, recipe.work);
+    }
+    // Catalog IDs are assigned lexically after all sources have been loaded.
+    // Preserve authored entry order: weighted draws and placement keys use it.
+    HashNumber(hash, content.LootPoolCount());
+    for (std::size_t i = 0; i < content.LootPoolCount(); ++i) {
+        const auto& pool = content.GetLootPool({static_cast<std::uint32_t>(i + 1)});
+        HashString(hash, pool.id); HashNumber(hash, pool.entries.size());
+        for (const auto& entry : pool.entries) {
+            HashNumber(hash, static_cast<std::uint64_t>(entry.kind));
+            HashNumber(hash, entry.item.value); HashNumber(hash, entry.pool.value);
+            HashNumber(hash, entry.weight); HashNumber(hash, entry.count.min); HashNumber(hash, entry.count.max);
+        }
+    }
+    HashNumber(hash, content.MonsterCount());
+    for (std::size_t i = 0; i < content.MonsterCount(); ++i) {
+        const auto& monster = content.GetMonster({static_cast<std::uint32_t>(i + 1)});
+        HashString(hash, monster.id); HashString(hash, monster.name);
+        HashNumber(hash, monster.aiProfile.value); HashNumber(hash, static_cast<std::uint64_t>(monster.body));
+        HashNumber(hash, static_cast<std::uint64_t>(monster.faction)); HashNumber(hash, monster.speed);
+        HashNumber(hash, monster.attackDamage); HashNumber(hash, monster.accuracy);
+    }
+    HashNumber(hash, content.MonsterGroupCount());
+    for (std::size_t i = 0; i < content.MonsterGroupCount(); ++i) {
+        const auto& group = content.GetMonsterGroup({static_cast<std::uint32_t>(i + 1)});
+        HashString(hash, group.id); HashNumber(hash, group.entries.size());
+        for (const auto& entry : group.entries) {
+            HashNumber(hash, entry.monster.value); HashNumber(hash, entry.weight);
+        }
+    }
+    HashNumber(hash, content.AiProfileCount());
+    for (std::size_t i = 0; i < content.AiProfileCount(); ++i) {
+        const auto& profile = content.GetAiProfile({static_cast<std::uint32_t>(i + 1)});
+        HashString(hash, profile.id); HashNumber(hash, profile.sightRange);
+        HashNumber(hash, profile.dimRange); HashNumber(hash, profile.darkRange);
+        HashNumber(hash, profile.scanIntervalTicks); HashNumber(hash, profile.memoryTicks);
+        HashNumber(hash, profile.searchTicks); HashNumber(hash, profile.candidateBudget);
+        HashNumber(hash, profile.bucketBudget); HashNumber(hash, profile.switchAdvantage);
     }
     return hash;
 }

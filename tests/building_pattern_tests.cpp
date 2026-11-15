@@ -276,8 +276,8 @@ TEST_CASE("Bundled building patterns are enclosed with south-facing closed door 
     const auto separator = path.find_last_of("/\\");
     REQUIRE(separator != String::npos);
     path.resize(separator);
-    path += "/../data/terrain.json5";
-    const auto catalog = Take(LoadContentFile(path.c_str()));
+    path += "/../data/demo.json5";
+    const auto catalog = Take(LoadContentPack(path.c_str()));
     REQUIRE(catalog.BuildingPatternCount() == 3);
     CHECK(catalog.FindBuildingPattern("compact_house") == BuildingPatternId{1});
     CHECK(catalog.FindBuildingPattern("divided_house") == BuildingPatternId{2});

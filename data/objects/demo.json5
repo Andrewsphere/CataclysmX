@@ -1,0 +1,14 @@
+{
+  format_version: 1,
+  objects: [
+    {
+      id: 'scrap_press', name: 'scrap press', behavior: 'crafting_machine',
+      machine: {
+        input: 'scrap', input_count: 3,
+        output: 'metal_pipe', output_count: 1,
+        duration_ticks: 300, energy_capacity: 3000, energy_per_tick: 2,
+      },
+    },
+  ],
+  definitions: [],
+}

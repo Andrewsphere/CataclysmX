@@ -64,12 +64,13 @@ not ownership or lifetime guarantees.
   destination returns `chunk_unavailable`; an out-of-bounds tile returns
   `invalid_position`. Queries and mutations do not implicitly load chunks.
 
-Passability comes from each terrain definition (in bundled content, floor and
-open doors are passable; walls and closed doors are not). Actor creation
-and movement reject impassable or actor-occupied destinations. World-level
+Passability combines terrain and movement-blocking object definitions (in bundled
+content, floor and open doors are passable; walls and closed doors are not).
+`BlocksMovement` and `BlocksSight` combine terrain and object properties and treat
+invalid or nonresident tiles as blocking; they do not include actor occupancy or
+floor support. Actor creation and movement reject blocked or actor-occupied destinations. World-level
 `MoveActor` accepts any valid loaded destination, without enforcing adjacency
-or spending a turn. Interactive objects have a separate occupancy index and do
-not themselves block actors.
+or spending a turn. Blocking objects cannot overlap unparked actors.
 
 ## Parked players
 
@@ -378,6 +379,15 @@ distance at most one. Cross-layer interaction is rejected even through open spac
 or matched stairs. Success reports a positive base cost without
 scheduling the actor; refusals report zero cost and preserve state.
 
+Object definitions can specify finite storage, collision, sight blocking,
+movability, appearance kind and initial light. Enabled state gates object emission.
+`GetObjectUsedVolume` and `CanAccessObjectStorage` expose volume and immediate
+storage reach. `MoveObject` administratively relocates an object to supported,
+passable terrain; `QueryObjectMove` and `TryMoveObject` query and atomically commit
+gameplay push/pull without scheduling the actor. Legacy administrative object
+creation permits fixtures on wall or air terrain; generated placements and moves
+require support. See [objects API](objects_api.md) for details.
+
 World implements callback-scoped `ObjectMutationContext` transactions. Starting
 a job preflights sufficient direct-inventory leaf inputs, then consumes the
 lowest persistent IDs. Nested items and nonempty containers are ineligible.
@@ -403,8 +413,11 @@ RNG. Regions are 256×256 tiles; their plans provide roads, parcels, and eligibl
 pattern buildings as well as integer environment samples. Terrain-only catalogs
 are supported: they produce no buildings and use the documented terrain
 fallbacks. The central `[-32, 32]` square on both tile axes remains floor.
-Generation creates no actors, items or objects and consumes no persistent IDs.
-The server separately constructs the demo scene.
+Generation version 4 also emits deterministic furniture, loot and monster
+placements. World materializes them for chunks without snapshots, using persistent
+IDs; earlier generation versions have no such population. Existing snapshots,
+including empty ones, prevent respawning. The server separately constructs the
+demo scene or selects the first-house start; see [first house](first_house_design.md).
 
 Unloading captures tiles (including damage), entity values/counters and complete
 item ownership trees as values linked by persistent IDs, then retires runtime

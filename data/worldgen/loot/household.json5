@@ -1,0 +1,26 @@
+{format_version:1, definitions:[
+  {type:'loot_pool', id:'house_kitchen', entries:[{item:'kitchen_knife',weight:1,count:{min:1,max:1}}]},
+  {type:'loot_pool', id:'house_pantry', entries:[{item:'canned_food',weight:1,count:{min:1,max:2}}]},
+  {type:'loot_pool', id:'house_bathroom', entries:[
+    {item:'soap',weight:5}, {item:'bandage',weight:3,count:{min:1,max:3}},
+    {pool:'house_household_supplies',weight:1},
+  ]},
+  {type:'loot_pool', id:'house_linen', entries:[{item:'clean_rag',weight:1,count:{min:1,max:2}}]},
+  {type:'loot_pool', id:'house_household_supplies', entries:[
+    {item:'glass_bottle',weight:4}, {item:'clean_rag',weight:4,count:{min:1,max:3}},
+    {item:'cooking_pot',weight:2}, {item:'disposable_battery',weight:1,count:{min:1,max:2}},
+  ]},
+  {type:'loot_pool', id:'house_storage', entries:[
+    {pool:'house_household_supplies',weight:6},
+    {item:'wood_plank',weight:3,count:{min:2,max:4}},
+    {item:'backpack',weight:1},
+  ]},
+  {type:'loot_pool', id:'house_tools', entries:[
+    {item:'screwdriver',weight:5}, {item:'hand_saw',weight:3}, {item:'field_charger',weight:1},
+  ]},
+  {type:'loot_pool', id:'house_hammer', entries:[{item:'claw_hammer',weight:1}]},
+  {type:'loot_pool', id:'house_workshop', entries:[
+    {pool:'house_tools',weight:4}, {item:'nails',weight:4,count:{min:2,max:5}},
+    {item:'scrap',weight:2,count:{min:2,max:4}},
+  ]},
+]}

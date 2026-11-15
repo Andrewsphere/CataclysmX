@@ -6,7 +6,7 @@
 namespace cataclysmx {
 
 inline constexpr int region_size = 256;
-inline constexpr std::uint32_t world_generation_version = 3;
+inline constexpr std::uint32_t world_generation_version = 4;
 inline constexpr std::size_t maxRegionRoads = 18; // Six streets and four three-segment connectors.
 inline constexpr std::size_t maxRegionParcels = 8;
 inline constexpr std::size_t maxRegionBuildings = 8; // At most one per parcel.
@@ -76,6 +76,7 @@ struct BuildingPlan {
     RoadSegment driveway{}; // Width one, entrance through street centerline.
     std::uint64_t abandonmentSeed = 0;
     bool abandoned = false;
+    std::uint32_t basementVariant = 0; // 0 none; otherwise 1-based local index.
     bool operator==(const BuildingPlan&) const = default;
 };
 struct RegionPlan {
@@ -89,7 +90,46 @@ struct RegionPlan {
     StaticList<RoadSegment, maxRegionRoads> roads;
     StaticList<ParcelPlan, maxRegionParcels> parcels; // Block row, block column, north/south half.
     StaticList<BuildingPlan, maxRegionBuildings> buildings; // Same order, omitting ineligible parcels.
+    std::uint32_t generationVersion = world_generation_version;
     bool operator==(const RegionPlan&) const = default;
+};
+
+enum class GenerationPlacementKind : std::uint8_t { Furniture, Loot, Monster };
+// Transient identity scoped to a seed/catalog/version. Never a PersistentId,
+// runtime handle or saved marker; hashes of these tuples need not be unique.
+struct GenerationKey {
+    FeatureOwner owner{};
+    std::uint32_t basementVariant = 0; // 0 common population.
+    GenerationPlacementKind kind = GenerationPlacementKind::Furniture;
+    std::uint32_t placement = 0; // Index within the authored population array.
+    std::uint32_t ordinal = 0; // Loot leaf order; furniture/monster always zero.
+    bool operator==(const GenerationKey&) const = default;
+};
+struct GeneratedFurniture {
+    GenerationKey key{};
+    TileCoord position{};
+    ObjectTypeId type{};
+    ObjectFacing facing = ObjectFacing::North;
+    bool operator==(const GeneratedFurniture&) const = default;
+};
+struct GeneratedItem {
+    GenerationKey key{};
+    TileCoord position{};
+    ItemTypeId type{};
+    LootDestination destination = LootDestination::Ground;
+    bool operator==(const GeneratedItem&) const = default;
+};
+struct GeneratedMonster {
+    GenerationKey key{};
+    TileCoord position{};
+    MonsterTypeId type{};
+    bool operator==(const GeneratedMonster&) const = default;
+};
+struct ChunkPlacements {
+    Vector<GeneratedFurniture> furniture;
+    Vector<GeneratedItem> items;
+    Vector<GeneratedMonster> monsters;
+    bool operator==(const ChunkPlacements&) const = default;
 };
 
 // Invalid public coordinates abort, including INT_MIN/INT_MAX, before arithmetic.
@@ -109,11 +149,16 @@ ContentResult<void> ValidateWorldgenContent(const ContentCatalog& content,
 EnvironmentSample SampleEnvironment(std::uint64_t seed, TileCoord position);
 RegionPlan GenerateRegionPlan(const ContentCatalog& content, std::uint64_t seed,
                               RegionCoord region);
+// Explicit legacy/current selection: accepts 2, 3, 4. The three-argument call
+// selects world_generation_version; version 1 surface generation stays in World.
+RegionPlan GenerateRegionPlan(const ContentCatalog& content, std::uint64_t seed,
+                              RegionCoord region, std::uint32_t generationVersion);
 // Row-major z*16+x. Invalid slots of partial edge chunks are undamaged wall.
 // Surface-only calls permit legacy catalogs without air. Upper-layer generation
 // requires the 'air' openSpace role; missing/invalid roles are invariant failures.
-// Y<0 is solid wall; Y>0 is air, except Y=1 has floor roofs covering each
-// building's rectangular plan footprint (including abandoned buildings).
+// Base Y<0 is solid wall; Y>0 is air, except Y=1 has floor roofs covering each
+// building's rectangular footprint. Version 4 overlays authored layers and its
+// once-selected basement. Versions 2/3 retain their legacy terrain paths.
 // Required floor/wall terrain absence is an invariant failure. Optional grass,
 // tree, road, rubble fall back to floor, wall, floor, floor respectively.
 // At Y=0 the inclusive legacy demo square [-32,32] x [-32,32] is always floor;
@@ -121,6 +166,12 @@ RegionPlan GenerateRegionPlan(const ContentCatalog& content, std::uint64_t seed,
 eastl::array<Tile, chunk_size * chunk_size> GenerateChunk(
     const ContentCatalog& content, std::uint64_t seed, const RegionPlan& plan,
     ChunkCoord chunk);
+
+// Pure, chunk-owned placements in canonical feature/authored/leaf order. Clears
+// all outputs while retaining capacity. Versions 2/3 emit nothing. Choices use
+// local generation streams, never World RNG, handles or persistent entity IDs.
+void GenerateChunkPlacements(const ContentCatalog& content, std::uint64_t seed,
+    const RegionPlan& plan, ChunkCoord chunk, ChunkPlacements& output);
 
 // Queries are horizontal footprint queries, ignoring Y. Require valid world
 // positions; return false/null outside plan bounds.

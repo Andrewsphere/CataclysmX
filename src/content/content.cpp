@@ -305,6 +305,19 @@ struct PendingPattern {
     BuildingPattern definition;
     Vector<String> rows;
     Vector<PaletteEntry> palette;
+    struct Population {
+        PatternPopulation definition;
+        Vector<String> objects, pools, groups;
+    } population;
+    struct Layer { int y = 0; Vector<String> rows; };
+    struct Basement {
+        String id;
+        std::uint32_t weight = 1;
+        Vector<String> rows;
+        Population population;
+    };
+    Vector<Layer> layers;
+    Vector<Basement> basements;
     std::size_t inputOrder = 0;
     Context context;
 };
@@ -544,9 +557,40 @@ bool ParseAiProfile(yyjson_val* object, PendingAiProfile& pending) {
 bool ParseObject(yyjson_val* object, PendingObject& pending) {
     const auto& context = pending.context;
     auto& definition = pending.definition;
-    if (!CheckObject(object, {"id", "name", "behavior", "machine"}, context)
+    if (!CheckObject(object, {"id", "name", "behavior", "machine", "capacity_volume_ml", "kind",
+                              "blocks_movement", "blocks_sight", "movable", "light"}, context)
         || !ReadId(yyjson_obj_get(object, "id"), definition.id, context.Child("id"))
         || !ReadString(yyjson_obj_get(object, "name"), definition.name, context.Child("name"))) { return false; }
+    if (auto* capacity = yyjson_obj_get(object, "capacity_volume_ml")) {
+        std::uint32_t amount = 0;
+        if (!ReadBoundedInteger(capacity, 1, UINT32_MAX, amount, context.Child("capacity_volume_ml"))) { return false; }
+        definition.capacityVolumeMl = amount;
+    }
+    if (auto* kind = yyjson_obj_get(object, "kind")) {
+        if (!yyjson_is_str(kind)) { return context.Child("kind").Fail("expected a semantic kind string"); }
+        const auto name = JsonString(kind);
+        if (name == "generic") { definition.kind = ObjectKind::Generic; }
+        else if (name == "chair") { definition.kind = ObjectKind::Chair; }
+        else if (name == "table") { definition.kind = ObjectKind::Table; }
+        else if (name == "lamp") { definition.kind = ObjectKind::Lamp; }
+        else { return context.Child("kind").Fail("unknown object kind"); }
+    }
+    struct Flag { const char* name; bool* output; };
+    for (const auto& flag : {Flag{"blocks_movement", &definition.blocksMovement},
+                            Flag{"blocks_sight", &definition.blocksSight}, Flag{"movable", &definition.movable}}) {
+        if (auto* value = yyjson_obj_get(object, flag.name)) {
+            if (!ReadBool(value, *flag.output, context.Child(flag.name))) { return false; }
+        }
+    }
+    if (auto* light = yyjson_obj_get(object, "light")) {
+        const auto lightContext = context.Child("light");
+        std::uint32_t intensity = 0, range = 0;
+        if (!CheckObject(light, {"intensity", "range"}, lightContext)
+            || !ReadBoundedInteger(yyjson_obj_get(light, "intensity"), 0, UINT8_MAX, intensity, lightContext.Child("intensity"))
+            || !ReadBoundedInteger(yyjson_obj_get(light, "range"), 0, maxLightRange, range, lightContext.Child("range"))) { return false; }
+        definition.light = {static_cast<std::uint8_t>(intensity), static_cast<std::uint8_t>(range)};
+        if (!ValidLightEmission(definition.light)) { return lightContext.Fail("light intensity and range must both be zero or both positive"); }
+    }
     auto* behavior = yyjson_obj_get(object, "behavior");
     if (!yyjson_is_str(behavior)) { return context.Child("behavior").Fail("expected a behavior kind string"); }
     if (JsonString(behavior) == "none") {
@@ -843,10 +887,274 @@ bool ParseItem(yyjson_val* object, PendingItem& item, const ItemBehaviorRegistry
     return true;
 }
 
+struct PendingLootPool {
+    LootPoolDefinition definition;
+    Vector<String> references;
+    Context context;
+    std::size_t inputOrder = 0;
+};
+struct PendingMonster {
+    MonsterDefinition definition;
+    String profile;
+    Context context;
+    std::size_t inputOrder = 0;
+};
+struct PendingMonsterGroup {
+    MonsterGroupDefinition definition;
+    Vector<String> references;
+    Context context;
+    std::size_t inputOrder = 0;
+};
+struct PendingSpawns {
+    Vector<PendingLootPool> pools;
+    Vector<PendingMonster> monsters;
+    Vector<PendingMonsterGroup> groups;
+    std::size_t Size() const { return pools.size() + monsters.size() + groups.size(); }
+};
+
+bool ReadOptionalInteger(yyjson_val* object, const char* field, std::uint32_t min,
+                         std::uint32_t max, std::uint32_t& output, const Context& context) {
+    auto* value = yyjson_obj_get(object, field);
+    return !value || ReadBoundedInteger(value, min, max, output, context.Child(field));
+}
+
+bool ParseLootPool(yyjson_val* object, PendingLootPool& pending) {
+    const auto& context = pending.context;
+    if (!CheckObject(object, {"type", "id", "entries"}, context)
+        || !ReadId(yyjson_obj_get(object, "id"), pending.definition.id, context.Child("id"))) { return false; }
+    auto* entries = yyjson_obj_get(object, "entries");
+    if (!yyjson_is_arr(entries) || yyjson_arr_size(entries) == 0) { return context.Child("entries").Fail("expected a nonempty array"); }
+    std::uint64_t weight = 0;
+    std::size_t index, size;
+    yyjson_val* value;
+    yyjson_arr_foreach(entries, index, size, value) {
+        const auto child = ArrayElement(context.Child("entries"), index);
+        LootEntry entry;
+        String reference;
+        if (!CheckObject(value, {"item", "pool", "weight", "count"}, child)) { return false; }
+        auto* item = yyjson_obj_get(value, "item");
+        auto* pool = yyjson_obj_get(value, "pool");
+        if ((item != nullptr) == (pool != nullptr)) { return child.Fail("expected exactly one of item or pool"); }
+        entry.kind = item ? LootEntryKind::Item : LootEntryKind::Pool;
+        if (!ReadId(item ? item : pool, reference, child.Child(item ? "item" : "pool"))
+            || !ReadOptionalInteger(value, "weight", 1, UINT32_MAX, entry.weight, child)) { return false; }
+        weight += entry.weight;
+        if (weight > UINT32_MAX) { return child.Child("weight").Fail("weight sum exceeds UINT32_MAX"); }
+        if (auto* count = yyjson_obj_get(value, "count")) {
+            const auto countContext = child.Child("count");
+            if (!CheckObject(count, {"min", "max"}, countContext)
+                || !ReadBoundedInteger(yyjson_obj_get(count, "min"), 1, maxSpawnCount, entry.count.min, countContext.Child("min"))
+                || !ReadBoundedInteger(yyjson_obj_get(count, "max"), entry.count.min, maxSpawnCount, entry.count.max, countContext.Child("max"))) { return false; }
+        }
+        pending.definition.entries.push_back(entry);
+        pending.references.push_back(eastl::move(reference));
+    }
+    return true;
+}
+
+bool ParseMonster(yyjson_val* object, PendingMonster& pending) {
+    const auto& context = pending.context;
+    auto& definition = pending.definition;
+    if (!CheckObject(object, {"type", "id", "name", "ai_profile", "body", "faction", "speed", "attack_damage", "accuracy"}, context)
+        || !ReadId(yyjson_obj_get(object, "id"), definition.id, context.Child("id"))
+        || !ReadString(yyjson_obj_get(object, "name"), definition.name, context.Child("name"))
+        || !ReadId(yyjson_obj_get(object, "ai_profile"), pending.profile, context.Child("ai_profile"))
+        || !ReadOptionalInteger(object, "speed", 1, UINT32_MAX, definition.speed, context)
+        || !ReadOptionalInteger(object, "attack_damage", 0, 100000, definition.attackDamage, context)
+        || !ReadOptionalInteger(object, "accuracy", 0, ratioScale, definition.accuracy, context)) { return false; }
+    if (definition.accuracy % 100 != 0) { return context.Child("accuracy").Fail("accuracy must convert exactly to whole percent (divisible by 100)"); }
+    if (auto* body = yyjson_obj_get(object, "body")) {
+        if (!yyjson_is_str(body)) { return context.Child("body").Fail("expected a body name"); }
+        if (JsonString(body) == "simple") { definition.body = BodyKind::Simple; }
+        else if (JsonString(body) == "detailed") { definition.body = BodyKind::Detailed; }
+        else { return context.Child("body").Fail("unknown body name"); }
+    }
+    if (auto* faction = yyjson_obj_get(object, "faction")) {
+        if (!yyjson_is_str(faction)) { return context.Child("faction").Fail("expected a faction name"); }
+        if (JsonString(faction) == "neutral") { definition.faction = CombatFaction::Neutral; }
+        else if (JsonString(faction) == "survivors") { definition.faction = CombatFaction::Survivors; }
+        else if (JsonString(faction) == "undead") { definition.faction = CombatFaction::Undead; }
+        else { return context.Child("faction").Fail("unknown faction name"); }
+    }
+    return true;
+}
+
+bool ParseMonsterGroup(yyjson_val* object, PendingMonsterGroup& pending) {
+    const auto& context = pending.context;
+    if (!CheckObject(object, {"type", "id", "entries"}, context)
+        || !ReadId(yyjson_obj_get(object, "id"), pending.definition.id, context.Child("id"))) { return false; }
+    auto* entries = yyjson_obj_get(object, "entries");
+    if (!yyjson_is_arr(entries) || yyjson_arr_size(entries) == 0) { return context.Child("entries").Fail("expected a nonempty array"); }
+    std::uint64_t weight = 0;
+    std::size_t index, size;
+    yyjson_val* value;
+    yyjson_arr_foreach(entries, index, size, value) {
+        const auto child = ArrayElement(context.Child("entries"), index);
+        MonsterGroupEntry entry;
+        String reference;
+        if (!CheckObject(value, {"monster", "weight"}, child)
+            || !ReadId(yyjson_obj_get(value, "monster"), reference, child.Child("monster"))
+            || !ReadOptionalInteger(value, "weight", 1, UINT32_MAX, entry.weight, child)) { return false; }
+        weight += entry.weight;
+        if (weight > UINT32_MAX) { return child.Child("weight").Fail("weight sum exceeds UINT32_MAX"); }
+        pending.definition.entries.push_back(entry);
+        pending.references.push_back(eastl::move(reference));
+    }
+    return true;
+}
+
+bool ReadLayerY(yyjson_val* value, int& output, const Context& context) {
+    // Authored layers are constrained to the world's supported vertical coordinates.
+    if (!yyjson_is_int(value)) { return context.Fail("expected an integer layer Y"); }
+    if (yyjson_is_uint(value) && yyjson_get_uint(value) > static_cast<std::uint64_t>(world_max_y)) {
+        return context.Fail("layer Y is outside world bounds");
+    }
+    const auto y = yyjson_get_sint(value);
+    if (y < world_min_y || y > world_max_y) { return context.Fail("layer Y is outside world bounds"); }
+    output = static_cast<int>(y);
+    return true;
+}
+
+bool ReadPosition(yyjson_val* object, TileCoord& position, int width, int height, const Context& context) {
+    std::uint32_t x = 0, z = 0;
+    if (!ReadBoundedInteger(yyjson_obj_get(object, "x"), 0, static_cast<std::uint32_t>(width - 1), x, context.Child("x"))
+        || !ReadBoundedInteger(yyjson_obj_get(object, "z"), 0, static_cast<std::uint32_t>(height - 1), z, context.Child("z"))
+        || !ReadLayerY(yyjson_obj_get(object, "y"), position.y, context.Child("y"))) { return false; }
+    position.x = static_cast<int>(x);
+    position.z = static_cast<int>(z);
+    return true;
+}
+
+bool ParsePopulation(yyjson_val* object, PendingPattern::Population& pending, int width, int height,
+                     bool basement, const Context& context) {
+    for (const char* field : {"furniture", "loot", "monsters"}) {
+        auto* array = yyjson_obj_get(object, field);
+        if (!array) { continue; }
+        if (!yyjson_is_arr(array)) { return context.Child(field).Fail("expected an array"); }
+        std::size_t index, size;
+        yyjson_val* value;
+        yyjson_arr_foreach(array, index, size, value) {
+            const auto child = ArrayElement(context.Child(field), index);
+            TileCoord position;
+            if (!yyjson_is_obj(value) || !ReadPosition(value, position, width, height, child)) { return child.Fail("expected explicit x,z,y population coordinates"); }
+            if (basement && position.y != -1) { return child.Child("y").Fail("basement population must have y=-1"); }
+            String reference;
+            if (std::strcmp(field, "furniture") == 0) {
+                PatternFurniture entry;
+                entry.position = position;
+                if (!CheckObject(value, {"x", "z", "y", "object", "facing"}, child)
+                    || !ReadId(yyjson_obj_get(value, "object"), reference, child.Child("object"))) { return false; }
+                if (auto* facing = yyjson_obj_get(value, "facing")) {
+                    if (!yyjson_is_str(facing)) { return child.Child("facing").Fail("expected a facing name"); }
+                    const auto name = JsonString(facing);
+                    if (name == "north") { entry.facing = ObjectFacing::North; }
+                    else if (name == "east") { entry.facing = ObjectFacing::East; }
+                    else if (name == "south") { entry.facing = ObjectFacing::South; }
+                    else if (name == "west") { entry.facing = ObjectFacing::West; }
+                    else { return child.Child("facing").Fail("unknown facing"); }
+                }
+                pending.definition.furniture.push_back(entry);
+                pending.objects.push_back(eastl::move(reference));
+            } else if (std::strcmp(field, "loot") == 0) {
+                PatternLoot entry;
+                entry.position = position;
+                if (!CheckObject(value, {"x", "z", "y", "pool", "chance", "rolls", "destination"}, child)
+                    || !ReadId(yyjson_obj_get(value, "pool"), reference, child.Child("pool"))
+                    || !ReadOptionalInteger(value, "chance", 0, ratioScale, entry.chance, child)
+                    || !ReadOptionalInteger(value, "rolls", 0, maxSpawnRolls, entry.rolls, child)) { return false; }
+                if (auto* destination = yyjson_obj_get(value, "destination")) {
+                    if (!yyjson_is_str(destination)) { return child.Child("destination").Fail("expected a loot destination"); }
+                    if (JsonString(destination) == "ground") { entry.destination = LootDestination::Ground; }
+                    else if (JsonString(destination) == "furniture") { entry.destination = LootDestination::Furniture; }
+                    else { return child.Child("destination").Fail("unknown loot destination"); }
+                }
+                pending.definition.loot.push_back(entry);
+                pending.pools.push_back(eastl::move(reference));
+            } else {
+                PatternMonster entry;
+                entry.position = position;
+                if (!CheckObject(value, {"x", "z", "y", "group", "chance"}, child)
+                    || !ReadId(yyjson_obj_get(value, "group"), reference, child.Child("group"))
+                    || !ReadOptionalInteger(value, "chance", 0, ratioScale, entry.chance, child)) { return false; }
+                pending.definition.monsters.push_back(entry);
+                pending.groups.push_back(eastl::move(reference));
+            }
+        }
+    }
+    return true;
+}
+
+bool ParseLayerRows(yyjson_val* array, Vector<String>& rows, int width, int height, const Context& context) {
+    if (!yyjson_is_arr(array) || yyjson_arr_size(array) != static_cast<std::size_t>(height)) {
+        return context.Fail("layer rows must match surface height");
+    }
+    std::size_t index, size;
+    yyjson_val* value;
+    yyjson_arr_foreach(array, index, size, value) {
+        String row;
+        const auto child = ArrayElement(context, index);
+        if (!ReadString(value, row, child)) { return false; }
+        if (row.size() != static_cast<std::size_t>(width) || !PrintableAscii(View(row))) {
+            return child.Fail("layer rows must match surface width and use printable ASCII");
+        }
+        rows.push_back(eastl::move(row));
+    }
+    return true;
+}
+
+bool ParsePatternExtensions(yyjson_val* object, PendingPattern& pending) {
+    const auto& context = pending.context;
+    const auto& definition = pending.definition;
+    if (!ParsePopulation(object, pending.population, definition.width, definition.height, false, context)) { return false; }
+    if (auto* layers = yyjson_obj_get(object, "layers")) {
+        if (!yyjson_is_arr(layers)) { return context.Child("layers").Fail("expected an array"); }
+        std::size_t index, size;
+        yyjson_val* value;
+        yyjson_arr_foreach(layers, index, size, value) {
+            const auto child = ArrayElement(context.Child("layers"), index);
+            PendingPattern::Layer layer;
+            if (!CheckObject(value, {"y", "rows"}, child)
+                || !ReadLayerY(yyjson_obj_get(value, "y"), layer.y, child.Child("y"))
+                || !ParseLayerRows(yyjson_obj_get(value, "rows"), layer.rows, definition.width, definition.height, child.Child("rows"))) { return false; }
+            if (layer.y == 0) { return child.Child("y").Fail("surface owns y=0"); }
+            for (const auto& previous : pending.layers) {
+                if (previous.y == layer.y) { return child.Child("y").Fail("duplicate layer Y"); }
+            }
+            pending.layers.push_back(eastl::move(layer));
+        }
+    }
+    if (auto* basements = yyjson_obj_get(object, "basements")) {
+        if (!yyjson_is_arr(basements) || yyjson_arr_size(basements) == 0) { return context.Child("basements").Fail("expected a nonempty array"); }
+        for (const auto& layer : pending.layers) {
+            if (layer.y == -1) { return context.Child("layers").Fail("basements already own y=-1"); }
+        }
+        std::uint64_t weight = 0;
+        std::size_t index, size;
+        yyjson_val* value;
+        yyjson_arr_foreach(basements, index, size, value) {
+            const auto child = ArrayElement(context.Child("basements"), index);
+            PendingPattern::Basement basement;
+            if (!CheckObject(value, {"id", "weight", "rows", "furniture", "loot", "monsters"}, child)
+                || !ReadId(yyjson_obj_get(value, "id"), basement.id, child.Child("id"))
+                || !ReadOptionalInteger(value, "weight", 1, UINT32_MAX, basement.weight, child)
+                || !ParseLayerRows(yyjson_obj_get(value, "rows"), basement.rows, definition.width, definition.height, child.Child("rows"))
+                || !ParsePopulation(value, basement.population, definition.width, definition.height, true, child)) { return false; }
+            for (const auto& previous : pending.basements) {
+                if (previous.id == basement.id) { return child.Child("id").Fail("duplicate basement variant id"); }
+            }
+            weight += basement.weight;
+            if (weight > UINT32_MAX) { return child.Child("weight").Fail("basement weight sum exceeds UINT32_MAX"); }
+            pending.basements.push_back(eastl::move(basement));
+        }
+    }
+    return true;
+}
+
 bool ParsePattern(yyjson_val* object, PendingPattern& pattern) {
     const auto& context = pattern.context;
     auto& definition = pattern.definition;
-    if (!CheckObject(object, {"type", "id", "rows", "palette", "entrance", "weight"}, context)
+    if (!CheckObject(object, {"type", "id", "rows", "palette", "entrance", "weight", "layers",
+                              "furniture", "loot", "monsters", "basements"}, context)
         || !ReadId(yyjson_obj_get(object, "id"), definition.id, context.Child("id"))) { return false; }
     auto* rows = yyjson_obj_get(object, "rows");
     const auto rowsContext = context.Child("rows");
@@ -904,7 +1212,7 @@ bool ParsePattern(yyjson_val* object, PendingPattern& pattern) {
     if (auto* weight = yyjson_obj_get(object, "weight")) {
         if (!ReadBoundedInteger(weight, 1, 1000000, definition.weight, context.Child("weight"))) { return false; }
     }
-    return true;
+    return ParsePatternExtensions(object, pattern);
 }
 
 void* JsonMalloc(void*, std::size_t size) {
@@ -929,6 +1237,7 @@ ContentResult<bool> ParseSource(const ContentSource& source, Vector<PendingTerra
                                 Vector<PendingObject>& objects, Vector<PendingAiProfile>& aiProfiles,
                                 Vector<PendingCrafting>& recipes, Vector<PendingRecycling>& recyclers,
                                 Vector<PendingToolTrait>& traits,
+                                PendingSpawns& spawns,
                                 const ItemBehaviorRegistry& registry, Diagnostics* diagnostics) {
     Context context{diagnostics, source.name, {}};
     yyjson_alc allocator{JsonMalloc, JsonRealloc, JsonFree, nullptr};
@@ -976,7 +1285,7 @@ ContentResult<bool> ParseSource(const ContentSource& source, Vector<PendingTerra
             PendingAiProfile profile;
             profile.context = ArrayElement(context.Child("ai_profiles"), index);
             profile.inputOrder = pending.size() + patterns.size() + items.size() + objects.size() + aiProfiles.size()
-                + recipes.size() + recyclers.size() + traits.size();
+                + recipes.size() + recyclers.size() + traits.size() + spawns.Size();
             if (!ParseAiProfile(value, profile)) {
                 profile.context.Fail("while loading AI profile definition");
                 return eastl::unexpected(ContentError::InvalidData);
@@ -996,7 +1305,7 @@ ContentResult<bool> ParseSource(const ContentSource& source, Vector<PendingTerra
             PendingObject object;
             object.context = ArrayElement(context.Child("objects"), objectIndex);
             object.inputOrder = pending.size() + patterns.size() + items.size() + objects.size() + aiProfiles.size()
-                + recipes.size() + recyclers.size() + traits.size();
+                + recipes.size() + recyclers.size() + traits.size() + spawns.Size();
             if (!ParseObject(value, object)) {
                 object.context.Fail("while loading object definition");
                 return eastl::unexpected(ContentError::InvalidData);
@@ -1022,7 +1331,7 @@ ContentResult<bool> ParseSource(const ContentSource& source, Vector<PendingTerra
         PendingTerrain terrain;
         terrain.context = definitionContext;
         terrain.inputOrder = pending.size() + patterns.size() + items.size() + objects.size() + aiProfiles.size()
-            + recipes.size() + recyclers.size() + traits.size();
+            + recipes.size() + recyclers.size() + traits.size() + spawns.Size();
         bool parsed = false;
         // Dispatch definition kinds at the document boundary; individual parsers own their schemas.
         if (!yyjson_is_obj(value)) {
@@ -1043,6 +1352,27 @@ ContentResult<bool> ParseSource(const ContentSource& source, Vector<PendingTerra
                     return eastl::unexpected(ContentError::InvalidData);
                 }
                 items.push_back(eastl::move(item));
+                continue;
+            } else if (JsonString(type) == "loot_pool") {
+                PendingLootPool pool;
+                pool.context = definitionContext;
+                pool.inputOrder = terrain.inputOrder;
+                if (!ParseLootPool(value, pool)) { return eastl::unexpected(ContentError::InvalidData); }
+                spawns.pools.push_back(eastl::move(pool));
+                continue;
+            } else if (JsonString(type) == "monster") {
+                PendingMonster monster;
+                monster.context = definitionContext;
+                monster.inputOrder = terrain.inputOrder;
+                if (!ParseMonster(value, monster)) { return eastl::unexpected(ContentError::InvalidData); }
+                spawns.monsters.push_back(eastl::move(monster));
+                continue;
+            } else if (JsonString(type) == "monster_group") {
+                PendingMonsterGroup group;
+                group.context = definitionContext;
+                group.inputOrder = terrain.inputOrder;
+                if (!ParseMonsterGroup(value, group)) { return eastl::unexpected(ContentError::InvalidData); }
+                spawns.groups.push_back(eastl::move(group));
                 continue;
             } else if (JsonString(type) == "tool_trait") {
                 PendingToolTrait trait;
@@ -1096,7 +1426,7 @@ ContentResult<bool> ParseSource(const ContentSource& source, Vector<PendingTerra
                 String message = "unsupported definition type '";
                 const auto typeName = JsonString(type);
                 message.append(typeName.data(), typeName.size());
-                message += "' (expected terrain, building_pattern, item, tool_trait, recipe, or recycling_recipe)";
+                message += "' (expected terrain, building_pattern, item, tool_trait, recipe, recycling_recipe, loot_pool, monster, or monster_group)";
                 terrain.context.Child("type").Fail(View(message));
             }
         }
@@ -1259,12 +1589,14 @@ struct DefinitionIdentity {
     bool object = false;
     bool aiProfile = false;
     bool craftingContent = false;
+    bool spawnContent = false;
 };
 
 bool CheckDefinitionIds(const Vector<PendingTerrain>& terrains, const Vector<PendingPattern>& patterns,
                           const Vector<PendingItem>& items, const Vector<PendingObject>& objects,
                           const Vector<PendingAiProfile>& aiProfiles, const Vector<PendingCrafting>& recipes,
                           const Vector<PendingRecycling>& recyclers, const Vector<PendingToolTrait>& traits,
+                          const PendingSpawns& spawns,
                           Diagnostics* diagnostics) {
     Vector<DefinitionIdentity> identities;
     identities.reserve(terrains.size() + patterns.size() + items.size() + objects.size() + aiProfiles.size());
@@ -1286,6 +1618,9 @@ bool CheckDefinitionIds(const Vector<PendingTerrain>& terrains, const Vector<Pen
     for (const auto& recipe : recipes) { identities.push_back({View(recipe.definition.id), &recipe.context, recipe.inputOrder, false, false, false, false, true}); }
     for (const auto& recycler : recyclers) { identities.push_back({View(recycler.definition.id), &recycler.context, recycler.inputOrder, false, false, false, false, true}); }
     for (const auto& trait : traits) { identities.push_back({View(trait.definition.id), &trait.context, trait.inputOrder, false, false, false, false, true}); }
+    for (const auto& pool : spawns.pools) { identities.push_back({View(pool.definition.id), &pool.context, pool.inputOrder, false, false, false, false, false, true}); }
+    for (const auto& monster : spawns.monsters) { identities.push_back({View(monster.definition.id), &monster.context, monster.inputOrder, false, false, false, false, false, true}); }
+    for (const auto& group : spawns.groups) { identities.push_back({View(group.definition.id), &group.context, group.inputOrder, false, false, false, false, false, true}); }
     eastl::sort(identities.begin(), identities.end(), [](const DefinitionIdentity& left, const DefinitionIdentity& right) {
         if (left.id == right.id) { return left.inputOrder < right.inputOrder; }
         return left.id < right.id;
@@ -1295,13 +1630,14 @@ bool CheckDefinitionIds(const Vector<PendingTerrain>& terrains, const Vector<Pen
         const auto& previous = identities[i - 1];
         if (previous.id != current.id) { continue; }
         if (diagnostics) {
-            String message = current.craftingContent ? "duplicate content definition '" : current.aiProfile ? "duplicate AI profile definition '" : current.object ? "duplicate object definition '" : current.item ? "duplicate item definition '" :
+            String message = (current.craftingContent || current.spawnContent) ? "duplicate content definition '" : current.aiProfile ? "duplicate AI profile definition '" : current.object ? "duplicate object definition '" : current.item ? "duplicate item definition '" :
                 (current.pattern ? "duplicate building pattern definition '" : "duplicate terrain definition '");
             message.append(current.id.data(), current.id.size());
             message += '\'';
             current.context->Child("id").Fail(View(message));
             previous.context->Child("id").Fail("previous definition is here");
-            if (current.craftingContent) { current.context->Fail("while loading crafting content definition"); }
+            if (current.spawnContent) { current.context->Fail("while loading spawn content definition"); }
+            else if (current.craftingContent) { current.context->Fail("while loading crafting content definition"); }
             else if (current.aiProfile) { current.context->Fail("while loading AI profile definition"); }
             else if (current.object) { current.context->Fail("while loading object definition"); }
             else if (current.item) { AddItemContext(*current.context, current.id); }
@@ -1427,6 +1763,264 @@ bool ResolveRecycling(PendingRecycling& pending, const ContentCatalog& catalog) 
     return true;
 }
 
+struct LootBounds {
+    std::uint32_t depth = 1;
+    std::uint64_t work = 1, items = 0, volume = 0;
+};
+
+bool ResolveSpawns(PendingSpawns& pending, const ContentCatalog& catalog,
+                   Vector<LootPoolDefinition>& pools, Vector<MonsterDefinition>& monsters,
+                   Vector<MonsterGroupDefinition>& groups, Vector<LootBounds>& bounds) {
+    eastl::sort(pending.pools.begin(), pending.pools.end(), [](const PendingLootPool& a, const PendingLootPool& b) { return a.definition.id < b.definition.id; });
+    eastl::sort(pending.monsters.begin(), pending.monsters.end(), [](const PendingMonster& a, const PendingMonster& b) { return a.definition.id < b.definition.id; });
+    eastl::sort(pending.groups.begin(), pending.groups.end(), [](const PendingMonsterGroup& a, const PendingMonsterGroup& b) { return a.definition.id < b.definition.id; });
+    for (auto& pool : pending.pools) { pools.push_back(eastl::move(pool.definition)); }
+    for (auto& monster : pending.monsters) { monsters.push_back(eastl::move(monster.definition)); }
+    for (auto& group : pending.groups) { groups.push_back(eastl::move(group.definition)); }
+    for (std::size_t i = 0; i < monsters.size(); ++i) {
+        monsters[i].aiProfile = catalog.FindAiProfile(View(pending.monsters[i].profile));
+        if (!monsters[i].aiProfile.value) { return pending.monsters[i].context.Child("ai_profile").Fail("unknown AI profile reference"); }
+        CombatState combat = MakeCombatState(false);
+        combat.body = MakeBody(monsters[i].body);
+        combat.faction = monsters[i].faction;
+        combat.attackDamage = monsters[i].attackDamage;
+        combat.accuracy = static_cast<std::uint8_t>(monsters[i].accuracy / 100);
+        if (!ValidateCombatState(combat)) { return pending.monsters[i].context.Fail("invalid monster combat state"); }
+    }
+    for (std::size_t i = 0; i < groups.size(); ++i) {
+        for (std::size_t j = 0; j < groups[i].entries.size(); ++j) {
+            auto& entry = groups[i].entries[j];
+            entry.monster = catalog.FindMonster(View(pending.groups[i].references[j]));
+            if (!entry.monster.value) { return ArrayElement(pending.groups[i].context.Child("entries"), j).Child("monster").Fail("unknown monster reference"); }
+        }
+    }
+    for (std::size_t i = 0; i < pools.size(); ++i) {
+        for (std::size_t j = 0; j < pools[i].entries.size(); ++j) {
+            auto& entry = pools[i].entries[j];
+            const auto context = ArrayElement(pending.pools[i].context.Child("entries"), j);
+            const auto reference = View(pending.pools[i].references[j]);
+            if (entry.kind == LootEntryKind::Item) {
+                entry.item = catalog.FindItem(reference);
+                const auto* item = catalog.TryGetItem(entry.item);
+                if (!item || item->unfinishedCraft) { return context.Child("item").Fail("unknown or internal loot item reference"); }
+            } else {
+                entry.pool = catalog.FindLootPool(reference);
+                if (!entry.pool.value) { return context.Child("pool").Fail("unknown loot pool reference"); }
+            }
+        }
+    }
+    // Explicit DFS frames prevent content-controlled native recursion. Finish children
+    // before parents, retaining maxima independently across weighted alternatives.
+    struct Frame { std::size_t pool = 0, next = 0; };
+    Vector<Frame> stack;
+    Vector<std::uint8_t> states(pools.size(), 0);
+    bounds.resize(pools.size());
+    for (std::size_t root = 0; root < pools.size(); ++root) {
+        if (states[root] == 2) { continue; }
+        stack.push_back({root, 0});
+        states[root] = 1;
+        while (!stack.empty()) {
+            const auto index = stack.back().pool;
+            auto& next = stack.back().next;
+            const auto& pool = pools[index];
+            if (next < pool.entries.size()) {
+                const auto& entry = pool.entries[next++];
+                if (entry.kind != LootEntryKind::Pool) { continue; }
+                const auto child = static_cast<std::size_t>(entry.pool.value - 1);
+                if (states[child] == 1) { return pending.pools[index].context.Fail("loot pool reference cycle"); }
+                if (states[child] == 0) {
+                    if (stack.size() >= maxLootDepth) { return pending.pools[index].context.Fail("loot pool depth exceeds 16"); }
+                    states[child] = 1;
+                    stack.push_back({child, 0});
+                }
+                continue;
+            }
+            LootBounds result;
+            for (const auto& entry : pool.entries) {
+                LootBounds alternative;
+                if (entry.kind == LootEntryKind::Item) {
+                    alternative.items = entry.count.max;
+                    alternative.volume = static_cast<std::uint64_t>(catalog.GetItem(entry.item).volumeMl) * entry.count.max;
+                } else {
+                    const auto& child = bounds[entry.pool.value - 1];
+                    alternative.depth = child.depth + 1;
+                    alternative.work = 1 + child.work * entry.count.max;
+                    alternative.items = child.items * entry.count.max;
+                    // Child bounds have already passed the item limit, so uint64
+                    // products fit (UINT32_MAX ml * 1024 items * 1024 count).
+                    alternative.volume = child.volume * entry.count.max;
+                }
+                result.depth = eastl::max(result.depth, alternative.depth);
+                result.work = eastl::max(result.work, alternative.work);
+                result.items = eastl::max(result.items, alternative.items);
+                result.volume = eastl::max(result.volume, alternative.volume);
+            }
+            if (result.depth > maxLootDepth || result.work > maxLootExpansionWork || result.items > maxLootItems) {
+                return pending.pools[index].context.Fail("loot pool exceeds depth, expansion work, or leaf item limit");
+            }
+            bounds[index] = result;
+            states[index] = 2;
+            stack.pop_back();
+        }
+    }
+    return true;
+}
+
+bool ResolvePopulation(PendingPattern::Population& pending, const ContentCatalog& catalog, const Context& context) {
+    auto& population = pending.definition;
+    for (std::size_t i = 0; i < population.furniture.size(); ++i) {
+        population.furniture[i].type = catalog.FindObject(View(pending.objects[i]));
+        if (!population.furniture[i].type.value) { return ArrayElement(context.Child("furniture"), i).Child("object").Fail("unknown object reference"); }
+    }
+    for (std::size_t i = 0; i < population.loot.size(); ++i) {
+        population.loot[i].pool = catalog.FindLootPool(View(pending.pools[i]));
+        if (!population.loot[i].pool.value) { return ArrayElement(context.Child("loot"), i).Child("pool").Fail("unknown loot pool reference"); }
+    }
+    for (std::size_t i = 0; i < population.monsters.size(); ++i) {
+        population.monsters[i].group = catalog.FindMonsterGroup(View(pending.groups[i]));
+        if (!population.monsters[i].group.value) { return ArrayElement(context.Child("monsters"), i).Child("group").Fail("unknown monster group reference"); }
+    }
+    return true;
+}
+
+bool ResolveLayerRows(const Vector<String>& rows, const PendingPattern& pending, Vector<TerrainId>& output, const Context& context) {
+    for (std::size_t z = 0; z < rows.size(); ++z) {
+        for (char glyph : rows[z]) {
+            TerrainId terrain;
+            for (const auto& entry : pending.palette) {
+                if (entry.glyph == glyph) { terrain = entry.resolved; break; }
+            }
+            if (!terrain.value) { return ArrayElement(context, z).Fail("row glyph is absent from surface palette"); }
+            output.push_back(terrain);
+        }
+    }
+    return true;
+}
+
+const TerrainDefinition* PopulationTerrain(const BuildingPattern& pattern, const BasementVariant* basement,
+                                          TileCoord position, const ContentCatalog& catalog) {
+    const Vector<TerrainId>* tiles = nullptr;
+    if (position.y == 0) { tiles = &pattern.tiles; }
+    else if (position.y == -1 && basement) { tiles = &basement->layer.tiles; }
+    else {
+        for (const auto& layer : pattern.layers) {
+            if (layer.y == position.y) { tiles = &layer.tiles; break; }
+        }
+    }
+    if (!tiles) { return nullptr; }
+    return catalog.TryGetTerrain((*tiles)[static_cast<std::size_t>(position.z * pattern.width + position.x)]);
+}
+
+bool ValidatePopulation(const BuildingPattern& pattern, const BasementVariant* basement,
+                        const ContentCatalog& catalog, const Vector<LootBounds>& bounds, const Context& context) {
+    const PatternPopulation empty;
+    const auto& common = pattern.population;
+    const auto& variant = basement ? basement->population : empty;
+    // Temporary borrowed lists avoid copying authored populations for each variant.
+    Vector<const PatternFurniture*> furniture;
+    Vector<const PatternLoot*> loot;
+    Vector<const PatternMonster*> monsters;
+    for (const auto* population : {&common, &variant}) {
+        for (const auto& entry : population->furniture) { furniture.push_back(&entry); }
+        for (const auto& entry : population->loot) { loot.push_back(&entry); }
+        for (const auto& entry : population->monsters) { monsters.push_back(&entry); }
+    }
+    const auto validTile = [&](TileCoord position) {
+        const auto* terrain = PopulationTerrain(pattern, basement, position, catalog);
+        return terrain && terrain->passable && !terrain->openSpace && !terrain->stairs;
+    };
+    for (std::size_t i = 0; i < furniture.size(); ++i) {
+        const auto& entry = *furniture[i];
+        if (!validTile(entry.position)) { return context.Child("furniture").Fail("furniture requires authored passable floor without stairs"); }
+        for (std::size_t j = 0; j < i; ++j) {
+            if (furniture[j]->position == entry.position) { return context.Child("furniture").Fail("overlapping furniture markers"); }
+        }
+    }
+    for (std::size_t i = 0; i < monsters.size(); ++i) {
+        const auto& entry = *monsters[i];
+        if (!validTile(entry.position)) { return context.Child("monsters").Fail("monster requires authored passable floor without stairs"); }
+        for (std::size_t j = 0; j < i; ++j) {
+            if (monsters[j]->position == entry.position) { return context.Child("monsters").Fail("overlapping monster markers"); }
+        }
+        for (const auto* object : furniture) {
+            if (object->position == entry.position && catalog.GetObject(object->type).blocksMovement) {
+                return context.Child("monsters").Fail("monster overlaps blocking furniture");
+            }
+        }
+    }
+    Vector<std::uint64_t> volumes(furniture.size(), 0);
+    for (const auto* entry : loot) {
+        if (!validTile(entry->position)) { return context.Child("loot").Fail("loot requires authored passable floor without stairs"); }
+        const auto& bound = bounds[entry->pool.value - 1];
+        const std::uint64_t rolls = entry->chance == 0 ? 0 : entry->rolls;
+        if (bound.work * rolls > maxLootExpansionWork || bound.items * rolls > maxLootItems) {
+            return context.Child("loot").Fail("loot placement rolls exceed expansion work or leaf item limit");
+        }
+        if (entry->destination == LootDestination::Furniture) {
+            std::size_t index = 0;
+            while (index < furniture.size() && furniture[index]->position != entry->position) { ++index; }
+            if (index == furniture.size()) { return context.Child("loot").Fail("furniture loot has no furniture at its coordinate"); }
+            const auto capacity = catalog.GetObject(furniture[index]->type).capacityVolumeMl;
+            if (!capacity) { return context.Child("loot").Fail("furniture loot requires explicit storage capacity"); }
+            const auto volume = bound.volume * rolls;
+            // Subtraction both checks capacity and prevents accumulation overflow.
+            if (volume > *capacity - volumes[index]) { return context.Child("loot").Fail("worst-case loot volume exceeds furniture capacity"); }
+            volumes[index] += volume;
+        }
+    }
+    if (basement) {
+        for (int z = 0; z < pattern.height; ++z) {
+            for (int x = 0; x < pattern.width; ++x) {
+                const auto* surface = PopulationTerrain(pattern, basement, {x, z, 0}, catalog);
+                const auto* cellar = PopulationTerrain(pattern, basement, {x, z, -1}, catalog);
+                if (surface->stairs != cellar->stairs) { return context.Child("basements").Fail("surface and basement stairs must be paired at identical x,z"); }
+            }
+        }
+    } else {
+        // Explicit -1 layers obey the same pairing rule as variants. Legacy
+        // surface-only patterns keep their historical terrain semantics.
+        for (const auto& layer : pattern.layers) {
+            if (layer.y != -1) { continue; }
+            for (std::size_t i = 0; i < pattern.tiles.size(); ++i) {
+                if (catalog.GetTerrain(pattern.tiles[i]).stairs != catalog.GetTerrain(layer.tiles[i]).stairs) {
+                    return context.Child("layers").Fail("surface and basement stairs must be paired at identical x,z");
+                }
+            }
+        }
+    }
+    return true;
+}
+
+bool ResolvePatternExtensions(PendingPattern& pending, const ContentCatalog& catalog, const Vector<LootBounds>& bounds) {
+    auto& pattern = pending.definition;
+    if (!ResolvePopulation(pending.population, catalog, pending.context)) { return false; }
+    pattern.population = eastl::move(pending.population.definition);
+    for (std::size_t i = 0; i < pending.layers.size(); ++i) {
+        const auto context = ArrayElement(pending.context.Child("layers"), i);
+        PatternLayer layer;
+        layer.y = pending.layers[i].y;
+        if (!ResolveLayerRows(pending.layers[i].rows, pending, layer.tiles, context.Child("rows"))) { return false; }
+        pattern.layers.push_back(eastl::move(layer));
+    }
+    for (std::size_t i = 0; i < pending.basements.size(); ++i) {
+        const auto context = ArrayElement(pending.context.Child("basements"), i);
+        auto& source = pending.basements[i];
+        BasementVariant basement;
+        basement.id = eastl::move(source.id);
+        basement.weight = source.weight;
+        if (!ResolveLayerRows(source.rows, pending, basement.layer.tiles, context.Child("rows"))
+            || !ResolvePopulation(source.population, catalog, context)) { return false; }
+        basement.population = eastl::move(source.population.definition);
+        pattern.basements.push_back(eastl::move(basement));
+    }
+    if (pattern.basements.empty()) { return ValidatePopulation(pattern, nullptr, catalog, bounds, pending.context); }
+    for (std::size_t i = 0; i < pattern.basements.size(); ++i) {
+        if (!ValidatePopulation(pattern, &pattern.basements[i], catalog, bounds,
+                                ArrayElement(pending.context.Child("basements"), i))) { return false; }
+    }
+    return true;
+}
+
 eastl::unexpected<ContentError> FileFailure(const Context& context, eastl::string_view message) {
     context.Fail(message);
     Context{context.diagnostics, context.file, {}}.Fail("while loading content files");
@@ -1531,6 +2125,48 @@ const ObjectDefinition& ContentCatalog::GetObject(ObjectTypeId id) const {
 
 std::size_t ContentCatalog::ObjectCount() const { return objects_.size(); }
 
+LootPoolId ContentCatalog::FindLootPool(eastl::string_view id) const {
+    return {static_cast<std::uint32_t>(FindDefinition(lootPools_, id))};
+}
+const LootPoolDefinition* ContentCatalog::TryGetLootPool(LootPoolId id) const {
+    if (!id.value || id.value > lootPools_.size()) { return nullptr; }
+    return &lootPools_[id.value - 1];
+}
+const LootPoolDefinition& ContentCatalog::GetLootPool(LootPoolId id) const {
+    const auto* definition = TryGetLootPool(id);
+    if (!definition) { std::abort(); }
+    return *definition;
+}
+std::size_t ContentCatalog::LootPoolCount() const { return lootPools_.size(); }
+
+MonsterTypeId ContentCatalog::FindMonster(eastl::string_view id) const {
+    return {static_cast<std::uint32_t>(FindDefinition(monsters_, id))};
+}
+const MonsterDefinition* ContentCatalog::TryGetMonster(MonsterTypeId id) const {
+    if (!id.value || id.value > monsters_.size()) { return nullptr; }
+    return &monsters_[id.value - 1];
+}
+const MonsterDefinition& ContentCatalog::GetMonster(MonsterTypeId id) const {
+    const auto* definition = TryGetMonster(id);
+    if (!definition) { std::abort(); }
+    return *definition;
+}
+std::size_t ContentCatalog::MonsterCount() const { return monsters_.size(); }
+
+MonsterGroupId ContentCatalog::FindMonsterGroup(eastl::string_view id) const {
+    return {static_cast<std::uint32_t>(FindDefinition(monsterGroups_, id))};
+}
+const MonsterGroupDefinition* ContentCatalog::TryGetMonsterGroup(MonsterGroupId id) const {
+    if (!id.value || id.value > monsterGroups_.size()) { return nullptr; }
+    return &monsterGroups_[id.value - 1];
+}
+const MonsterGroupDefinition& ContentCatalog::GetMonsterGroup(MonsterGroupId id) const {
+    const auto* definition = TryGetMonsterGroup(id);
+    if (!definition) { std::abort(); }
+    return *definition;
+}
+std::size_t ContentCatalog::MonsterGroupCount() const { return monsterGroups_.size(); }
+
 AiProfileId ContentCatalog::FindAiProfile(eastl::string_view id) const {
     std::size_t begin = 0, end = aiProfiles_.size();
     while (begin < end) {
@@ -1620,8 +2256,9 @@ ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sourc
     Vector<PendingCrafting> recipes;
     Vector<PendingRecycling> recyclers;
     Vector<PendingToolTrait> traits;
+    PendingSpawns spawns;
     for (const auto& source : sources) {
-        auto result = ParseSource(source, pending, patterns, items, objects, aiProfiles, recipes, recyclers, traits, registry, diagnostics);
+        auto result = ParseSource(source, pending, patterns, items, objects, aiProfiles, recipes, recyclers, traits, spawns, registry, diagnostics);
         if (!result) {
             Context{diagnostics, source.name, {}}.Fail("could not load content source");
             return eastl::unexpected(result.error());
@@ -1631,7 +2268,7 @@ ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sourc
         PendingItem internal;
         internal.context = Context{diagnostics, "<generated unfinished craft>", {}};
         internal.inputOrder = pending.size() + patterns.size() + items.size() + objects.size()
-            + aiProfiles.size() + recipes.size() + recyclers.size() + traits.size();
+            + aiProfiles.size() + recipes.size() + recyclers.size() + traits.size() + spawns.Size();
         auto& definition = internal.definition;
         definition.id = "unfinished_craft";
         definition.name = "unfinished craft";
@@ -1652,6 +2289,7 @@ ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sourc
         || patterns.size() > std::numeric_limits<std::uint32_t>::max()
         || items.size() > std::numeric_limits<std::uint32_t>::max()
         || objects.size() > std::numeric_limits<std::uint32_t>::max()
+        || spawns.pools.size() > UINT32_MAX || spawns.monsters.size() > UINT32_MAX || spawns.groups.size() > UINT32_MAX
         || aiProfiles.size() > std::numeric_limits<std::uint32_t>::max()
         || recipes.size() > UINT32_MAX || recyclers.size() > UINT32_MAX || traits.size() > 255
         || ((!recipes.empty() || !recyclers.empty()) && items.size() > maxRecipeItemId)) {
@@ -1664,7 +2302,7 @@ ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sourc
         if (left.definition.id == right.definition.id) { return left.inputOrder < right.inputOrder; }
         return left.definition.id < right.definition.id;
     });
-    if (!CheckDefinitionIds(pending, patterns, items, objects, aiProfiles, recipes, recyclers, traits, diagnostics)) { return eastl::unexpected(ContentError::InvalidData); }
+    if (!CheckDefinitionIds(pending, patterns, items, objects, aiProfiles, recipes, recyclers, traits, spawns, diagnostics)) { return eastl::unexpected(ContentError::InvalidData); }
     if (!Resolve(pending)) {
         Context{diagnostics, {}, {}}.Fail("could not load content catalog");
         return eastl::unexpected(ContentError::InvalidData);
@@ -1736,6 +2374,17 @@ ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sourc
                 object.context.Child("machine").Child("output").Fail("unknown output item reference");
                 return eastl::unexpected(ContentError::InvalidData);
             }
+            if (object.definition.capacityVolumeMl) {
+                const auto& machine = object.definition.machine;
+                // Both factors are bounded uint32 values, so the full batch fits
+                // uint64. A batch must fit even when the storage is empty.
+                const auto outputVolume = static_cast<std::uint64_t>(catalog.GetItem(machine.output).volumeMl)
+                    * machine.outputCount;
+                if (outputVolume > *object.definition.capacityVolumeMl) {
+                    object.context.Child("machine").Child("output_count").Fail("machine output batch exceeds object storage capacity");
+                    return eastl::unexpected(ContentError::InvalidData);
+                }
+            }
         }
         if (!ValidObjectDefinition(object.definition)) {
             object.context.Fail("invalid object definition");
@@ -1745,12 +2394,17 @@ ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sourc
     }
     catalog.definitions_.reserve(pending.size());
     for (auto& terrain : pending) { catalog.definitions_.push_back(eastl::move(terrain.definition)); }
+    Vector<LootBounds> lootBounds;
+    if (!ResolveSpawns(spawns, catalog, catalog.lootPools_, catalog.monsters_, catalog.monsterGroups_, lootBounds)) {
+        Context{diagnostics, {}, {}}.Fail("could not load content catalog");
+        return eastl::unexpected(ContentError::InvalidData);
+    }
     eastl::sort(patterns.begin(), patterns.end(), [](const PendingPattern& left, const PendingPattern& right) {
         return left.definition.id < right.definition.id;
     });
     catalog.patterns_.reserve(patterns.size());
     for (auto& pattern : patterns) {
-        if (!ResolvePattern(pattern, catalog)) {
+        if (!ResolvePattern(pattern, catalog) || !ResolvePatternExtensions(pattern, catalog, lootBounds)) {
             AddPatternContext(pattern.context, View(pattern.definition.id));
             Context{diagnostics, {}, {}}.Fail("could not load content catalog");
             return eastl::unexpected(ContentError::InvalidData);

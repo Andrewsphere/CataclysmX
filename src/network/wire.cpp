@@ -184,6 +184,8 @@ bool ValidCraftingJobs(const Vector<CraftingEntry>& jobs) {
 bool ValidCraftingResult(const CommandResult& result) {
     if (result.craftingOutcome > CraftingOutcome::CapacityExceeded) return false;
     switch (result.outcome) {
+    case Outcome::object_moved:
+        return result.advanced && result.cost != 0;
     case Outcome::craft_started:
     case Outcome::recycling_started:
         return result.craftingOutcome == CraftingOutcome::Started && result.advanced;
@@ -371,7 +373,7 @@ bool Writer::CommandValue(const Command& v) {
 }
 bool Writer::Result(const PlayerCommandResult& v) {
     if (!v.player || !v.sequence || !v.opportunity || v.result.outcome < Outcome::waited ||
-        v.result.outcome > Outcome::crafting_refused || !ValidCraftingResult(v.result) ||
+        v.result.outcome > Outcome::object_moved || !ValidCraftingResult(v.result) ||
         (v.result.storageError && (*v.result.storageError < SaveError::Io || *v.result.storageError > SaveError::NotOpen)) ||
         !ValidItemUseReason(v.result.itemOutcome, v.result.itemReason)) return false;
     U64(v.player); U64(v.sequence); U64(v.opportunity);
@@ -457,7 +459,7 @@ bool Reader::CommandValue(Command& v) {
         !U64(v.target) || !U8(style) || style > static_cast<std::uint8_t>(CombatStyle::Defensive)) return false;
     if (!I32(v.interaction.position.x) || !I32(v.interaction.position.z) || !I32(v.interaction.position.y)
         || !U64(v.interaction.object) || !U32(v.interaction.terrain.value)
-        || !U8(interactionKind) || interactionKind > static_cast<std::uint8_t>(InteractionKind::Unlock)
+        || !U8(interactionKind) || interactionKind > static_cast<std::uint8_t>(InteractionKind::PullObject)
         || !U8(objectAction) || objectAction > static_cast<std::uint8_t>(ObjectAction::Disable)
         || !U32(v.recipe.value)) { return false; }
     v.interaction.kind = static_cast<InteractionKind>(interactionKind);
@@ -470,7 +472,7 @@ bool Reader::Result(PlayerCommandResult& v) {
     std::uint8_t outcome, advanced;
     if (bytes.size() > maxPacket || !U64(v.player) || !v.player || !U64(v.sequence) || !v.sequence ||
         !U64(v.opportunity) || !v.opportunity || !U8(outcome) ||
-        outcome > static_cast<std::uint8_t>(Outcome::crafting_refused) || !U8(advanced) || advanced > 1 ||
+        outcome > static_cast<std::uint8_t>(Outcome::object_moved) || !U8(advanced) || advanced > 1 ||
         !U64(v.result.tick) || !U64(v.result.cost)) return false;
     std::uint8_t hasError;
     if (!U8(hasError) || hasError > 1) return false;

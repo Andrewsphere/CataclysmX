@@ -2,6 +2,7 @@
 #include "client/message_history.h"
 #include "client/lan_profile.h"
 #include "core/server.h"
+#include "core/first_house_scenario.h"
 #include "network/network.h"
 #include "client/localization.h"
 #include "terminal/debug_menu.h"
@@ -51,7 +52,10 @@ bool Endpoint(const std::string& input, std::string& address, std::uint16_t& por
 int main(int argc, char** argv) {
     String savePath;
     String loadPath;
-    String contentPath = CATACLYSMX_TERRAIN_FILE;
+    const char* contentPath = nullptr;
+    const char* contentPack = nullptr;
+    NewGameScenario scenario = NewGameScenario::Demo;
+    eastl::optional<std::uint32_t> seedOverride;
     String localizationDirectory = CATACLYSMX_LOC_DIRECTORY;
     String userRoot = DefaultUserRoot();
     String worldDirectory;
@@ -65,6 +69,18 @@ int main(int argc, char** argv) {
         } else if (argument == "--save" && i + 1 < argc) { savePath = argv[++i];
         } else if (argument == "--load" && i + 1 < argc) { loadPath = argv[++i];
         } else if (argument == "--content" && i + 1 < argc) { contentPath = argv[++i];
+        } else if (argument == "--content-pack" && i + 1 < argc) { contentPack = argv[++i];
+        } else if (argument == "--scenario" && i + 1 < argc) {
+            const eastl::string_view value(argv[++i]);
+            if (value == "first-house") { scenario = NewGameScenario::FirstHouse; }
+            else if (value == "demo") { scenario = NewGameScenario::Demo; }
+            else { std::fputs("Scenario must be demo or first-house\n", stderr); return 2; }
+        } else if (argument == "--seed" && i + 1 < argc) {
+            const eastl::string_view value(argv[++i]);
+            std::uint32_t seed = 0;
+            const auto parsed = std::from_chars(value.data(), value.data() + value.size(), seed);
+            if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size()) { return 2; }
+            seedOverride = seed;
         } else if (argument == "--host") { openLan = true;
         } else if (argument == "--discover") { browse = true;
         } else if (argument == "--join" && i + 1 < argc) { joinAddress = argv[++i];
@@ -79,9 +95,12 @@ int main(int argc, char** argv) {
         } else if (argument == "--loc-dir" && i + 1 < argc) { localizationDirectory = argv[++i];
         } else {
             std::fputs("Usage: cataclysmx_game [--content <path>] [--user-dir <path>] [--world-dir <path>] [--loc-dir <path>] [--render] [--save <path> | --load <path>] [--host] [--port n] [--join address[:port]] [--discover] [--name name] [--profile path]\n", stderr);
+            std::fputs("Content: --content <single definition file> | --content-pack <manifest>. New game: --scenario demo|first-house --seed <uint32>.\n", stderr);
             return 2;
         }
     }
+    if (contentPath && contentPack) { std::fputs("Choose either --content or --content-pack\n", stderr); return 2; }
+    if (!loadPath.empty() && seedOverride) { std::fputs("--seed applies only to a new game, not --load\n", stderr); return 2; }
     if (!savePath.empty() && !loadPath.empty()) { std::fputs("Choose either --save or --load\n", stderr); return 2; }
     if (worldDirectory.empty() && (!savePath.empty() || !loadPath.empty())) {
         worldDirectory = WorldDirectoryForSave((savePath.empty() ? loadPath : savePath).c_str());
@@ -95,14 +114,22 @@ int main(int argc, char** argv) {
         return Failure("Localization load failed", diagnostics);
     }
     // Content and configuration outlive the server and all terminal components.
-    const auto content = LoadContentFile(contentPath.c_str(), &diagnostics);
+    const auto content = contentPath ? LoadContentFile(contentPath, &diagnostics)
+        : LoadContentPack(contentPack ? contentPack : scenario == NewGameScenario::FirstHouse
+            ? CATACLYSMX_CONTENT_PACK : CATACLYSMX_TERRAIN_FILE, &diagnostics);
     if (!content || !ValidateServerContent(*content, &diagnostics)) { return Failure("Content load/validation failed", diagnostics); }
     eastl::unique_ptr<Server> ownedServer;
     if (!loadPath.empty()) {
         auto loaded = Server::LoadSave(*content, loadPath.c_str(), &diagnostics);
         if (!loaded) { return Failure("Load failed", diagnostics); }
         ownedServer = eastl::move(*loaded);
-    } else { ownedServer = eastl::make_unique<Server>(*content, settings.Effective().seed); }
+    } else {
+        const auto seed = seedOverride.value_or(settings.Effective().seed);
+        if (scenario == NewGameScenario::FirstHouse && !FindFirstHouseStart(*content, seed, &diagnostics)) {
+            return Failure("Scenario validation failed", diagnostics);
+        }
+        ownedServer = eastl::make_unique<Server>(*content, seed, scenario);
+    }
     Server& server = *ownedServer;
     if (!ApplySettings(server, settings, &diagnostics)) { return Failure("Settings application failed", diagnostics); }
     if (!savePath.empty()) {

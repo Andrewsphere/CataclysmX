@@ -2,6 +2,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <initializer_list>
+
 namespace {
 using namespace cataclysmx;
 
@@ -106,6 +108,120 @@ TEST_CASE("Machine content accepts maximum bounded integers", "[content][object-
         energy_capacity:9223372036854775807,energy_per_tick:4294967295}})");
     REQUIRE(loaded.has_value());
     CHECK(ValidObjectDefinition(loaded->GetObject({1})));
+}
+
+TEST_CASE("Capacity-bearing machines require a complete output batch to fit empty storage", "[content][object-content]") {
+    constexpr ContentSource machineItems{"machine-items.json5", R"({format_version:1,definitions:[
+        {type:'item',id:'input',name:'Input',mass_g:1,volume_ml:1},
+        {type:'item',id:'output',name:'Output',mass_g:1,volume_ml:40}
+    ]})"};
+    struct Case { const char* capacity; bool valid; };
+    for (const auto& test : {Case{"capacity_volume_ml:100,", false},
+                             Case{"capacity_volume_ml:119,", false},
+                             Case{"capacity_volume_ml:120,", true},
+                             Case{"capacity_volume_ml:121,", true}, Case{"", true}}) {
+        INFO(test.capacity);
+        String text = "{format_version:1,objects:[{id:'press',name:'Press',";
+        text += test.capacity;
+        text += R"(behavior:'crafting_machine',machine:{input:'input',input_count:1,
+            output:'output',output_count:3,duration_ticks:1,energy_capacity:2,energy_per_tick:1}}]})";
+        const ContentSource sources[] = {{"machine.json5", {text.data(), text.size()}}, machineItems};
+        Diagnostics diagnostics;
+        const auto result = LoadContent({sources, 2}, &diagnostics);
+        REQUIRE(result.has_value() == test.valid);
+        if (test.valid) {
+            CHECK(diagnostics.Empty());
+            CHECK(result->GetObject({1}).machine.outputCount == 3);
+        } else {
+            CHECK(result.error() == ContentError::InvalidData);
+            REQUIRE_FALSE(diagnostics.Empty());
+            const auto& frame = diagnostics.Frames().front();
+            REQUIRE(frame.location.has_value());
+            CHECK(frame.location->file == "machine.json5");
+            CHECK(frame.location->path == "objects[0].machine.output_count");
+            CHECK(frame.message == "machine output batch exceeds object storage capacity");
+            CHECK_FALSE(LoadContent({sources, 2}).has_value());
+        }
+    }
+    // The batch volume exceeds UINT32_MAX even though each factor fits uint32.
+    constexpr ContentSource hugeOutput{"huge-output.json5", R"({format_version:1,definitions:[
+        {type:'item',id:'input',name:'Input',mass_g:1,volume_ml:1},
+        {type:'item',id:'output',name:'Output',mass_g:1,volume_ml:2147483648}
+    ]})"};
+    constexpr ContentSource hugeMachine{"huge-machine.json5", R"({format_version:1,objects:[
+        {id:'press',name:'Press',behavior:'crafting_machine',capacity_volume_ml:4294967295,
+         machine:{input:'input',input_count:1,output:'output',output_count:2,
+                  duration_ticks:1,energy_capacity:2,energy_per_tick:1}}
+    ]})"};
+    const ContentSource hugeSources[] = {hugeMachine, hugeOutput};
+    CHECK_FALSE(LoadContent({hugeSources, 2}).has_value());
+}
+
+TEST_CASE("Object light requires both intensity and range to be zero or both positive", "[content][object-content]") {
+    for (const auto light : {"{intensity:0,range:0}", "{intensity:1,range:1}"}) {
+        String object = "{id:'lamp',name:'Lamp',behavior:'none',light:";
+        object += light;
+        object += '}';
+        const auto loaded = LoadObjects({object.data(), object.size()});
+        REQUIRE(loaded.has_value());
+        CHECK(ValidObjectDefinition(loaded->GetObject({1})));
+    }
+    for (const auto light : {"{intensity:0,range:1}", "{intensity:1,range:0}"}) {
+        String object = "{id:'lamp',name:'Lamp',behavior:'none',light:";
+        object += light;
+        object += '}';
+        Diagnostics diagnostics;
+        const auto result = LoadObjects({object.data(), object.size()}, &diagnostics);
+        REQUIRE_FALSE(result.has_value());
+        CHECK(result.error() == ContentError::InvalidData);
+        REQUIRE_FALSE(diagnostics.Empty());
+        REQUIRE(diagnostics.Frames().front().location.has_value());
+        CHECK(diagnostics.Frames().front().location->file == "objects.json5");
+        CHECK(diagnostics.Frames().front().location->path == "objects[0].light");
+        CHECK_FALSE(LoadObjects({object.data(), object.size()}).has_value());
+    }
+    ObjectDefinition definition;
+    definition.light = {0, 1};
+    CHECK_FALSE(ValidObjectDefinition(definition));
+    definition.light = {1, 0};
+    CHECK_FALSE(ValidObjectDefinition(definition));
+}
+
+TEST_CASE("Furniture properties are optional typed and independent of behavior", "[content][object-content]") {
+    const auto loaded = LoadObjects(R"(
+        {id:'cabinet',name:'Cabinet',behavior:'none',capacity_volume_ml:4294967295,
+         kind:'table',blocks_movement:true,blocks_sight:true,movable:true},
+        {id:'legacy',name:'Legacy',behavior:'none'}
+    )");
+    REQUIRE(loaded.has_value());
+    const auto& cabinet = loaded->GetObject(loaded->FindObject("cabinet"));
+    CHECK(cabinet.capacityVolumeMl == UINT32_MAX);
+    CHECK(cabinet.kind == ObjectKind::Table);
+    CHECK(cabinet.blocksMovement);
+    CHECK(cabinet.blocksSight);
+    CHECK(cabinet.movable);
+    CHECK(ValidObjectDefinition(cabinet));
+    const auto& legacy = loaded->GetObject(loaded->FindObject("legacy"));
+    CHECK_FALSE(legacy.capacityVolumeMl.has_value());
+    CHECK(legacy.kind == ObjectKind::Generic);
+    CHECK_FALSE(legacy.blocksMovement);
+    CHECK_FALSE(legacy.blocksSight);
+    CHECK_FALSE(legacy.movable);
+    for (const auto field : {"capacity_volume_ml:0", "capacity_volume_ml:4294967296",
+                            "capacity_volume_ml:null", "kind:'none'", "kind:'bed'", "kind:0",
+                            "blocks_movement:1", "blocks_sight:'true'", "movable:null",
+                            "capacity_volume_ml:1,capacity_volume_ml:2", "kind:'chair',kind:'table'"}) {
+        String object = "{id:'bad',name:'Bad',behavior:'none',";
+        object += field;
+        object += '}';
+        CHECK_FALSE(LoadObjects({object.data(), object.size()}).has_value());
+    }
+    ObjectDefinition invalid = cabinet;
+    invalid.capacityVolumeMl = 0;
+    CHECK_FALSE(ValidObjectDefinition(invalid));
+    invalid = cabinet;
+    invalid.kind = ObjectKind::None;
+    CHECK_FALSE(ValidObjectDefinition(invalid));
 }
 
 }

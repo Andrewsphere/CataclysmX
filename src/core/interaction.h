@@ -3,8 +3,10 @@
 #include "core/world.h"
 
 namespace cataclysmx {
-enum class InteractionKind : std::uint8_t { Open, Close, Object, Lock, Unlock };
+enum class InteractionKind : std::uint8_t { Open, Close, Object, Lock, Unlock, PushObject, PullObject };
 struct InteractionRequest {
+    // Push/pull use expected target position plus object ID, zero terrain and
+    // default action. Direction derives from authoritative actor/object positions.
     TileCoord position{};
     PersistentId object = 0;
     TerrainId terrain{};

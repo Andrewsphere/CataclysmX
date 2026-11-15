@@ -1,5 +1,6 @@
 #include "sdl/session.h"
 #include "client/tile_inspection.h"
+#include "core/first_house_scenario.h"
 
 #include <EASTL/utility.h>
 #include <chrono>
@@ -16,7 +17,8 @@ void Session::Stop() { channels_.Stop(); if (thread_.joinable()) { thread_.join(
 void Session::Notify() { if (wake_) { wake_(userdata_); } }
 
 void Session::Run(const ContentCatalog& content, std::uint64_t generation, SessionOptions options) {
-    if (!ValidateServerContent(content)) {
+    if (!ValidateServerContent(content)
+        || (options.scenario == NewGameScenario::FirstHouse && !FindFirstHouseStart(content, options.settings.seed))) {
         channels_.PublishReply({ReplyKind::StartupFailed, generation, 0, {}, StartupError::InvalidContent});
         Notify();
         channels_.Stop();
@@ -27,7 +29,7 @@ void Session::Run(const ContentCatalog& content, std::uint64_t generation, Sessi
         Notify();
         return;
     }
-    Server server(content, options.settings.seed);
+    Server server(content, options.settings.seed, options.scenario);
     if (!ApplySettings(server, options.settings)) {
         channels_.PublishReply({ReplyKind::StartupFailed, generation, 0, {}, StartupError::InvalidSettings});
         channels_.Stop();

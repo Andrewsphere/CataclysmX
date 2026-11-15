@@ -297,25 +297,28 @@ TEST_CASE("Generation content validates passable roles and supports terrain-only
 }
 
 TEST_CASE("Generation version three preserves version two surface terrain and damage output", "[worldgen][determinism]") {
-    REQUIRE(world_generation_version == 3);
+    REQUIRE(world_generation_version == 4);
     // Environmental seam, rotated divided house, and abandoned cross-chunk long house.
     const ChunkCoord chunks[] = {{-17, 20}, {-16, 20}, {5, 4}, {9, 7}, {10, 7}};
     const std::uint32_t expected[] = {2483476373U, 3666744973U, 2506376988U, 2959312743U, 518236207U};
-    for (std::size_t i = 0; i < 5; ++i) {
-        const auto chunk = chunks[i];
-        const auto plan = GenerateRegionPlan(TestContent(), 42,
-            RegionOf({chunk.x * chunk_size, chunk.z * chunk_size}));
-        const auto tiles = GenerateChunk(TestContent(), 42, plan, chunk);
-        std::uint32_t checksum = 2166136261U;
-        for (const auto tile : tiles) {
-            for (unsigned char ch : TestContent().GetTerrain(tile.terrain).id) {
-                checksum = (checksum ^ ch) * 16777619U;
+    for (const std::uint32_t version : {2U, 3U}) {
+        for (std::size_t i = 0; i < 5; ++i) {
+            const auto chunk = chunks[i];
+            const auto plan = GenerateRegionPlan(TestContent(), 42,
+                RegionOf({chunk.x * chunk_size, chunk.z * chunk_size}), version);
+            CHECK(plan.generationVersion == version);
+            const auto tiles = GenerateChunk(TestContent(), 42, plan, chunk);
+            std::uint32_t checksum = 2166136261U;
+            for (const auto tile : tiles) {
+                for (unsigned char ch : TestContent().GetTerrain(tile.terrain).id) {
+                    checksum = (checksum ^ ch) * 16777619U;
+                }
+                checksum *= 16777619U; // Stable string terminator, not catalog-local ID.
+                checksum = (checksum ^ tile.damage) * 16777619U;
             }
-            checksum *= 16777619U; // Stable string terminator, not catalog-local ID.
-            checksum = (checksum ^ tile.damage) * 16777619U;
+            CAPTURE(version, chunk.x, chunk.z);
+            CHECK(checksum == expected[i]);
         }
-        CAPTURE(chunk.x, chunk.z);
-        CHECK(checksum == expected[i]);
     }
 }
 

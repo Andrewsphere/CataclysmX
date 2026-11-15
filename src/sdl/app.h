@@ -10,6 +10,8 @@ struct AppOptions {
     String fontPath;
     float fontSize = 14.0f;
     float uiScale = 1.0f;
+    NewGameScenario scenario = NewGameScenario::Demo;
+    eastl::optional<std::uint32_t> seedOverride;
 };
 
 eastl::optional<Command> GameplayCommand(InputAction action, bool interacting);

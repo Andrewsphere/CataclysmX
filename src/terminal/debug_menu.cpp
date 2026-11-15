@@ -258,7 +258,10 @@ private:
         }
         return text;
     }
-    bool Available() const { return world_.GetGenerationVersion() == world_generation_version; }
+    bool Available() const {
+        return world_.GetGenerationVersion() >= 2
+            && world_.GetGenerationVersion() <= world_generation_version;
+    }
 
     void RebuildImage() { image_ = BuildWorldgenDebugView(world_.GetContent(), plan_, layer_, scale_); }
     void RebuildDetails() {
@@ -266,7 +269,8 @@ private:
         detailLine_ = 0;
     }
     void RebuildPlan() {
-        plan_ = GenerateRegionPlan(world_.GetContent(), world_.GetSeed(), RegionOf(cursor_));
+        plan_ = GenerateRegionPlan(world_.GetContent(), world_.GetSeed(), RegionOf(cursor_),
+            world_.GetGenerationVersion());
         RebuildImage();
         RebuildDetails();
     }

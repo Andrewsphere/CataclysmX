@@ -674,6 +674,49 @@ bool ValidateChunk(const ContentCatalog& content, const ChunkArchive& chunk,
         for (std::size_t j = 0; j < i; ++j) {
             if (object.position == chunk.objects[j].position) { return false; }
         }
+        const auto* definition = content.TryGetObject(object.type);
+        if (definition && definition->blocksMovement) {
+            for (const auto& actor : chunk.actors) {
+                if (!actor.parked && actor.position == object.position) {
+                    if (diagnostics) { diagnostics->Add("Blocking object overlaps an unparked actor"); }
+                    return false;
+                }
+            }
+        }
+    }
+    // ValidateItemSnapshot has already checked types and parent-first ownership.
+    // Ordinary containers have fixed external volume; unfinished crafts expose
+    // the sum of their reserved children's external volumes instead.
+    Vector<std::uint64_t> externalVolumes(chunk.items.size(), 0);
+    for (std::size_t i = chunk.items.size(); i > 0;) {
+        --i;
+        const auto& item = chunk.items[i];
+        const auto& definition = content.GetItem(item.type);
+        if (!definition.unfinishedCraft) {
+            externalVolumes[i] = definition.volumeMl;
+            continue;
+        }
+        for (std::size_t j = i + 1; j < chunk.items.size(); ++j) {
+            const auto& child = chunk.items[j];
+            if (child.location != LocationKind::item || child.owner != item.id) { continue; }
+            if (externalVolumes[j] > UINT64_MAX - externalVolumes[i]) { return false; }
+            externalVolumes[i] += externalVolumes[j];
+        }
+    }
+    for (const auto& object : chunk.objects) {
+        const auto* definition = content.TryGetObject(object.type);
+        if (!definition || !definition->capacityVolumeMl) { continue; }
+        std::uint64_t usedVolume = 0;
+        for (std::size_t i = 0; i < chunk.items.size(); ++i) {
+            const auto& item = chunk.items[i];
+            if (item.location != LocationKind::object || item.owner != object.id) { continue; }
+            if (externalVolumes[i] > UINT64_MAX - usedVolume) { return false; }
+            usedVolume += externalVolumes[i];
+        }
+        if (usedVolume > *definition->capacityVolumeMl) {
+            if (diagnostics) { diagnostics->Add("Object storage volume capacity exceeded"); }
+            return false;
+        }
     }
     for (const auto& item : chunk.items) {
         if (!addId(item.id)) { return false; }
@@ -739,7 +782,7 @@ SaveResult<SaveSnapshot> DecodeSnapshot(const char* text, std::size_t length,
         || !Counter(Get(root, "next_id"), snapshot.nextId)) {
         return Failure(SaveError::InvalidData, "Invalid world_state fields", diagnostics);
     }
-    if (snapshot.generationVersion < 1 || snapshot.generationVersion > 3) {
+    if (snapshot.generationVersion < 1 || snapshot.generationVersion > 4) {
         return Failure(SaveError::UnsupportedVersion, "Unsupported generation version", diagnostics);
     }
     auto* session = Get(root, "session");
@@ -1715,7 +1758,7 @@ SaveResult<void> SaveDatabase::WriteChunk(const ChunkArchive& chunk, Diagnostics
 SaveResult<void> SaveDatabase::WriteSnapshot(const SaveSnapshot& snapshot, Diagnostics* diagnostics) {
     if (!impl_) { return Failure(SaveError::NotOpen, "Database is not open", diagnostics); }
     if (!impl_->transaction) { return Failure(SaveError::InvalidState, "No active transaction", diagnostics); }
-    const bool supported = snapshot.generationVersion >= 1 && snapshot.generationVersion <= 3;
+    const bool supported = snapshot.generationVersion >= 1 && snapshot.generationVersion <= 4;
     if (!supported || !ValidSnapshot(snapshot) || !ValidMemories(content_, snapshot, diagnostics)) {
         impl_->Rollback();
         return Failure(!supported ? SaveError::UnsupportedVersion : SaveError::InvalidData,

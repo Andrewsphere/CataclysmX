@@ -405,7 +405,7 @@ TEST_CASE("Content dispatch reports unsupported types at the type field", "[cont
     REQUIRE_FALSE(result.has_value());
     CHECK(result.error() == ContentError::InvalidData);
     REQUIRE(diagnostics.Frames().size() == 3);
-    CHECK(diagnostics.Frames()[0].message == "unsupported definition type 'unknown_type' (expected terrain, building_pattern, item, tool_trait, recipe, or recycling_recipe)");
+    CHECK(diagnostics.Frames()[0].message == "unsupported definition type 'unknown_type' (expected terrain, building_pattern, item, tool_trait, recipe, recycling_recipe, loot_pool, monster, or monster_group)");
     REQUIRE(diagnostics.Frames()[0].location.has_value());
     CHECK(diagnostics.Frames()[0].location->path == "definitions[0].type");
     CHECK(diagnostics.Frames()[1].message == "while loading content definition");
@@ -457,7 +457,7 @@ TEST_CASE("Bundled terrain content loads from stdio with door transitions", "[co
     const auto separator = path.find_last_of("/\\");
     REQUIRE(separator != String::npos);
     path.resize(separator);
-    path += "/../data/terrain.json5";
+    path += "/../data/terrain/base.json5";
     const auto catalog = Take(LoadContentFile(path.c_str()));
     CHECK(catalog.TerrainCount() == 13);
     CHECK(catalog.FindTerrain("air") == TerrainId{1});

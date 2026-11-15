@@ -5,6 +5,9 @@
 namespace cataclysmx {
 
 bool ValidObjectDefinition(const ObjectDefinition& definition) {
+    if ((definition.capacityVolumeMl && *definition.capacityVolumeMl == 0)
+        || definition.kind < ObjectKind::Generic || definition.kind > ObjectKind::Lamp
+        || !ValidLightEmission(definition.light)) { return false; }
     if (definition.behavior == ObjectBehaviorKind::None) {
         return definition.machine == CraftingMachineDefinition{};
     }

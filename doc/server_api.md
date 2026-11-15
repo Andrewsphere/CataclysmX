@@ -168,7 +168,7 @@ bookkeeping. Use `OutcomeMessage` for a short display message.
 ```cpp
 #include "core/server.h"
 
-auto content = cataclysmx::LoadContentFile("data/terrain.json5");
+auto content = cataclysmx::LoadContentPack("data/demo.json5");
 if (!content || !cataclysmx::ValidateServerContent(*content)) { return; }
 cataclysmx::Server server(*content, 42);
 const auto result = server.Send({cataclysmx::CommandKind::move, 1, 0});

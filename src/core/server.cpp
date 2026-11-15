@@ -1,6 +1,7 @@
 #include <cstdlib>
 
 #include "core/server.h"
+#include "core/first_house_scenario.h"
 #include "actors/movement.h"
 
 #include "core/simulation.h"
@@ -368,6 +369,7 @@ const char* OutcomeMessage(Outcome outcome) {
     case Outcome::craft_paused: return "You pause crafting after the funded work finishes.";
     case Outcome::craft_cancelled: return "You cancel crafting.";
     case Outcome::crafting_refused: return "You cannot perform that crafting action.";
+    case Outcome::object_moved: return "You move the furniture.";
     }
     std::abort();
 }
@@ -425,8 +427,27 @@ ContentResult<void> ValidateServerContent(const ContentCatalog& content, Diagnos
     return ValidateWorldgenContent(content, diagnostics);
 }
 
-Server::Server(const ContentCatalog& content, std::uint32_t seed) : world_(content, seed), rng_state_(seed) {
+Server::Server(const ContentCatalog& content, std::uint32_t seed)
+    : Server(content, seed, NewGameScenario::Demo) {}
+
+Server::Server(const ContentCatalog& content, std::uint32_t seed, NewGameScenario scenario)
+    : world_(content, seed), rng_state_(seed) {
     Require(ValidateServerContent(content).has_value());
+    Require(scenario == NewGameScenario::Demo || scenario == NewGameScenario::FirstHouse);
+    if (scenario == NewGameScenario::FirstHouse) {
+        const auto start = FindFirstHouseStart(content, seed);
+        Require(start.has_value());
+        active_request_ = Take(world_.RequestChunks({BubbleCenter(start->playerPosition), active_radius_}, LoadMode::active));
+        resident_request_ = RequestResident(world_, start->playerPosition, resident_radius_, circleResidency_);
+        Require(world_.ReconcileChunks().has_value());
+        player_ = Take(world_.CreateActor(start->playerPosition, true));
+        players_.push_back({world_.GetActor(player_)->id, "Host", 0, start->playerPosition, PlayerConnectionState::Active});
+        const auto backpack = Take(world_.CreateItem(content.FindItem("backpack"), ItemLocation::Carried(player_)));
+        Take(world_.CreateItem(content.FindItem("bandage"), ItemLocation::Inside(backpack)));
+        world_.UpdatePlayerObservations();
+        SynchronizePacing();
+        return;
+    }
     active_request_ = Take(world_.RequestChunks({{0, 0}, active_radius_}, LoadMode::active));
     resident_request_ = RequestResident(world_, {0, 0}, resident_radius_, circleResidency_);
     Require(world_.ReconcileChunks().has_value());
@@ -683,7 +704,32 @@ CommandResult Server::Execute(ActorHandle handle, PlayerSlot& slot, Command comm
         });
         if (found == choices.end()) { return failed(Outcome::unavailable); }
         if (found->reason != ObjectUseReason::None) { return failed(Outcome::blocked); }
-        if (command.interaction.kind == InteractionKind::Object) {
+        if (command.interaction.kind == InteractionKind::PushObject || command.interaction.kind == InteractionKind::PullObject) {
+            const auto object = world_.FindObject(command.interaction.object);
+            const auto kind = command.interaction.kind == InteractionKind::PushObject ? ObjectMoveKind::Push : ObjectMoveKind::Pull;
+            const TileCoord objectPosition = command.interaction.position;
+            const TileCoord destination = kind == ObjectMoveKind::Push ? objectPosition
+                : TileCoord{position.x - (objectPosition.x - position.x), position.z - (objectPosition.z - position.z), position.y};
+            if (!ResidencyFits(destination, active_radius_, resident_radius_, circleResidency_)) { return failed(Outcome::unavailable); }
+            Vector<LoadRequest> staging;
+            const auto loaded = StageBubble(world_, destination, active_radius_, resident_radius_, circleResidency_, staging);
+            if (!loaded) {
+                Require(world_.ReconcileChunks().has_value());
+                return {Outcome::unavailable, false, GetTick(), loaded.error()};
+            }
+            const auto moved = world_.TryMoveObject(handle, object, kind);
+            if (!moved || moved->outcome != ObjectMoveOutcome::Moved) {
+                ReleaseStaging(world_, staging);
+                Require(world_.ReconcileChunks().has_value());
+                return failed(Outcome::blocked);
+            }
+            Require(moved->cost > 0 && moved->cost <= UINT32_MAX);
+            baseCost = static_cast<std::uint32_t>(moved->cost);
+            CommitPlayerBubble(slot);
+            ReleaseStaging(world_, staging);
+            Require(world_.ReconcileChunks().has_value());
+            outcome = Outcome::object_moved;
+        } else if (command.interaction.kind == InteractionKind::Object) {
             const auto used = world_.UseObject(handle, world_.FindObject(command.interaction.object), command.interaction.action);
             if (used.outcome != ObjectUseOutcome::Succeeded) { return failed(Outcome::blocked); }
             baseCost = used.baseCost;
@@ -696,7 +742,9 @@ CommandResult Server::Execute(ActorHandle handle, PlayerSlot& slot, Command comm
             case InteractionKind::Close: tile.terrain = terrain.closesTo; outcome = Outcome::closed; break;
             case InteractionKind::Lock: tile.terrain = terrain.locksTo; outcome = Outcome::locked; break;
             case InteractionKind::Unlock: tile.terrain = terrain.unlocksTo; outcome = Outcome::unlocked; break;
-            case InteractionKind::Object: std::abort();
+            case InteractionKind::Object:
+            case InteractionKind::PushObject:
+            case InteractionKind::PullObject: std::abort();
             }
             if (!world_.SetTile(command.interaction.position, tile)) { return failed(Outcome::unavailable); }
         }
@@ -715,7 +763,9 @@ CommandResult Server::Execute(ActorHandle handle, PlayerSlot& slot, Command comm
         if (terrain.unlocksTo.value != 0) { return failed(Outcome::blocked); }
         if (terrain.opensTo.value != 0 || terrain.closesTo.value != 0) {
             const bool closing = terrain.closesTo.value != 0;
-            if (closing && world_.ActorAt(destination).value != 0) {
+            const auto* object = world_.GetObject(world_.ObjectAt(destination));
+            const auto* definition = object ? world_.GetContent().TryGetObject(object->type) : nullptr;
+            if (closing && (world_.ActorAt(destination).value != 0 || (definition && definition->blocksMovement))) {
                 return failed(Outcome::occupied);
             }
             Tile changed = *tile;

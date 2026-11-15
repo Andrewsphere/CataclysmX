@@ -68,11 +68,22 @@ depth for foreground, while the terrain layer determines background tint.
 
 ## Generation and compatibility
 
-World generation version 3 preserves the existing surface at `y=0`. Below it,
+World generation versions 2/3 preserve the existing surface at `y=0`. Below it,
 generated layers are solid rock/wall; above it, they are open air, with building
 roofs at `y=1` over building footprints. The central legacy surface demo area is
 still preserved. New demo stairs around `x=-3` connect a basement, surface, and
 raised platform; nearby open air forms a pit.
+
+Generation version 4 keeps those base terrain rules and overlays authored pattern
+layers at their explicit Y. A building's basement variant is selected once in the
+region plan; its layer at `y=-1` and its population use that stored choice across
+every chunk. Surface, layers, furniture, loot and monsters share one X/Z rotation;
+Y is unchanged. Explicit `y=1` terrain replaces the rectangular roof fallback,
+otherwise that fallback remains. Other unauthored depths stay wall and unauthored
+upper layers stay air. Extended authored patterns are not abandonment-decorated,
+preserving floors and matched stair endpoints. Legacy plans exclude those patterns
+and generate no population. See [world generation API](worldgen_api.md) for version
+dispatch, local deterministic streams and chunk-owned placements.
 
 Y-layer support was originally introduced in save/protocol version 6. The current
 save schema is version 7 and stores Y, lighting sources, skylight, semantic object

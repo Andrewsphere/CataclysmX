@@ -1,4 +1,5 @@
 #include "worldgen/worldgen.h"
+#include "core/ratio.h"
 
 #include <cstdlib>
 
@@ -165,11 +166,71 @@ bool Fits(const BuildingPattern& pattern, const ParcelPlan& parcel) {
     return width <= parcel.bounds.max.x - parcel.bounds.min.x - 4
         && height <= parcel.bounds.max.z - parcel.bounds.min.z - 4;
 }
+bool Extended(const BuildingPattern& pattern) {
+    return !pattern.layers.empty() || !pattern.basements.empty()
+        || !pattern.population.furniture.empty() || !pattern.population.loot.empty()
+        || !pattern.population.monsters.empty();
+}
+
+// SplitMix64 finalizer; sequential fields are mixed separately. Strings include
+// their byte length, then unsigned UTF-8 bytes (never catalog numeric IDs).
+void SeedField(std::uint64_t& state, std::uint64_t value) {
+    state = Mix(state ^ Mix(value + 0x9e3779b97f4a7c15ULL));
+}
+void SeedString(std::uint64_t& state, const String& value) {
+    SeedField(state, value.size());
+    for (unsigned char byte : value) { SeedField(state, byte); }
+}
+std::uint64_t FeatureSeed(std::uint64_t seed, const FeatureOwner& owner,
+                          const BuildingPattern& pattern, std::uint32_t version,
+                          std::uint64_t domain) {
+    auto state = Mix(seed ^ domain);
+    SeedField(state, static_cast<std::uint64_t>(owner.region.x));
+    SeedField(state, static_cast<std::uint64_t>(owner.region.z));
+    SeedField(state, owner.parcel);
+    SeedString(state, pattern.id);
+    SeedField(state, version);
+    return state;
+}
+struct GenerationRandom {
+    std::uint64_t state;
+    std::uint64_t Next() {
+        state += 0x9e3779b97f4a7c15ULL;
+        return Mix(state);
+    }
+    std::uint32_t Bounded(std::uint32_t bound) {
+        Require(bound != 0);
+        const auto wide = static_cast<std::uint64_t>(bound);
+        const auto threshold = (std::uint64_t{0} - wide) % wide;
+        for (;;) {
+            const auto value = Next();
+            if (value >= threshold) { return static_cast<std::uint32_t>(value % wide); }
+        }
+    }
+};
+template<class Entries>
+std::size_t WeightedIndex(const Entries& entries, GenerationRandom& random) {
+    std::uint64_t total = 0;
+    for (const auto& entry : entries) {
+        Require(entry.weight > 0);
+        total += entry.weight;
+        Require(total <= UINT32_MAX);
+    }
+    Require(total > 0);
+    auto choice = random.Bounded(static_cast<std::uint32_t>(total));
+    for (std::size_t i = 0; i < entries.size(); ++i) {
+        if (choice < entries[i].weight) { return i; }
+        choice -= entries[i].weight;
+    }
+    std::abort();
+}
 void AddBuilding(const ContentCatalog& content, RegionPlan& plan, const ParcelPlan& parcel) {
     std::uint64_t total = 0;
     for (std::size_t i = 1; i <= content.BuildingPatternCount(); ++i) {
         const auto& pattern = content.GetBuildingPattern({static_cast<std::uint32_t>(i)});
-        if (Fits(pattern, parcel)) { total += pattern.weight; }
+        if (Fits(pattern, parcel) && (plan.generationVersion >= 4 || !Extended(pattern))) {
+            total += pattern.weight;
+        }
     }
     if (total == 0) { return; }
     const auto random = Hash(plan.seed, plan.region.x, plan.region.z, 100 + parcel.owner.parcel);
@@ -177,7 +238,7 @@ void AddBuilding(const ContentCatalog& content, RegionPlan& plan, const ParcelPl
     BuildingPatternId selected{};
     for (std::size_t i = 1; i <= content.BuildingPatternCount(); ++i) {
         const auto& pattern = content.GetBuildingPattern({static_cast<std::uint32_t>(i)});
-        if (!Fits(pattern, parcel)) { continue; }
+        if (!Fits(pattern, parcel) || (plan.generationVersion <= 3 && Extended(pattern))) { continue; }
         if (choice < pattern.weight) { selected = {static_cast<std::uint32_t>(i)}; break; }
         choice -= pattern.weight;
     }
@@ -193,10 +254,17 @@ void AddBuilding(const ContentCatalog& content, RegionPlan& plan, const ParcelPl
     const auto entry = Rotate(pattern.entrance, pattern.width, pattern.height, turns);
     const TileCoord entrance{x + entry.x, z + entry.z};
     const auto abandonmentSeed = Mix(random ^ 0xa54ff53a5f1d36f1ULL);
+    std::uint32_t basementVariant = 0;
+    if (plan.generationVersion >= 4 && !pattern.basements.empty()) {
+        GenerationRandom basementRandom{FeatureSeed(plan.seed, parcel.owner, pattern,
+            plan.generationVersion, 0x626173656d656e74ULL)}; // "basement"
+        basementVariant = static_cast<std::uint32_t>(WeightedIndex(pattern.basements, basementRandom) + 1);
+    }
     Require(plan.buildings.PushBack({parcel.owner, selected, static_cast<std::uint8_t>(turns),
         {{x, z}, {x + width, z + height}}, entrance,
         {entrance, {entrance.x, parcel.streetZ}, 1}, abandonmentSeed,
-        abandonmentSeed % 4 != 0}));
+        abandonmentSeed % 4 != 0 && !(plan.generationVersion >= 4 && Extended(pattern)),
+        basementVariant}));
 }
 
 bool Accessible(const ContentCatalog& content, TerrainId terrain) {
@@ -254,22 +322,115 @@ void DecorateAbandonedBuilding(const ContentCatalog& content, const Palette& pal
 }
 
 Vector<Tile> MaterializeBuilding(const ContentCatalog& content, const Palette& palette,
-                                 const BuildingPlan& building) {
+                                 const BuildingPlan& building, const Vector<TerrainId>& source,
+                                 bool decorate) {
     const auto& pattern = content.GetBuildingPattern(building.pattern);
     const int width = building.bounds.max.x - building.bounds.min.x;
     const int height = building.bounds.max.z - building.bounds.min.z;
     Require(building.quarterTurns < 4 && width > 0 && height > 0 && width <= 64 && height <= 64);
+    Require(source.size() == static_cast<std::size_t>(pattern.width * pattern.height));
     Vector<Tile> tiles(static_cast<std::size_t>(width * height));
     for (int z = 0; z < pattern.height; ++z) {
         for (int x = 0; x < pattern.width; ++x) {
             const auto p = Rotate({x, z}, pattern.width, pattern.height, building.quarterTurns);
             Require(p.x < width && p.z < height);
             tiles[static_cast<std::size_t>(p.z * width + p.x)] =
-                {pattern.tiles[static_cast<std::size_t>(z * pattern.width + x)], 0};
+                {source[static_cast<std::size_t>(z * pattern.width + x)], 0};
         }
     }
-    DecorateAbandonedBuilding(content, palette, building, tiles, width, height);
+    if (decorate) { DecorateAbandonedBuilding(content, palette, building, tiles, width, height); }
     return tiles;
+}
+
+TileCoord PopulationPosition(const BuildingPattern& pattern, const BuildingPlan& building,
+                             TileCoord local) {
+    const auto rotated = Rotate({local.x, local.z}, pattern.width, pattern.height, building.quarterTurns);
+    return {building.bounds.min.x + rotated.x, building.bounds.min.z + rotated.z, local.y};
+}
+
+GenerationRandom MarkerRandom(const RegionPlan& plan, const BuildingPlan& building,
+                              const BuildingPattern& pattern, const String& variant,
+                              GenerationPlacementKind kind, std::uint32_t placement) {
+    auto state = FeatureSeed(plan.seed, building.owner, pattern, plan.generationVersion,
+        0x706f70756c617465ULL); // "populate", distinct from basement selection.
+    SeedString(state, variant); // Empty string denotes common population.
+    SeedField(state, static_cast<std::uint32_t>(kind));
+    SeedField(state, placement);
+    return {state};
+}
+
+bool Chance(std::uint32_t chance, GenerationRandom& random) {
+    Require(chance <= ratioScale);
+    return random.Bounded(ratioScale) < chance;
+}
+
+// Bounded recursive DFS: the validated catalog guarantees these limits across
+// all rolls. Runtime checks fail on broken catalog invariants; never truncate.
+void ExpandLoot(const ContentCatalog& content, LootPoolId pool, GenerationRandom& random,
+                GenerationKey& key, TileCoord position, LootDestination destination,
+                std::uint32_t depth, std::uint32_t& work, Vector<GeneratedItem>& output) {
+    Require(depth <= maxLootDepth && ++work <= maxLootExpansionWork);
+    const auto& entries = content.GetLootPool(pool).entries;
+    const auto& entry = entries[WeightedIndex(entries, random)];
+    Require(entry.count.min >= 1 && entry.count.min <= entry.count.max
+        && entry.count.max <= maxSpawnCount);
+    const auto count = entry.count.min + random.Bounded(entry.count.max - entry.count.min + 1);
+    for (std::uint32_t i = 0; i < count; ++i) {
+        switch (entry.kind) {
+        case LootEntryKind::Item:
+            Require(key.ordinal < maxLootItems);
+            output.push_back({key, position, entry.item, destination});
+            ++key.ordinal;
+            break;
+        case LootEntryKind::Pool:
+            ExpandLoot(content, entry.pool, random, key, position, destination, depth + 1, work, output);
+            break;
+        default: std::abort();
+        }
+    }
+}
+
+void Populate(const ContentCatalog& content, const RegionPlan& plan, const BuildingPlan& building,
+              const BuildingPattern& pattern, const PatternPopulation& population,
+              std::uint32_t variantIndex, const String& variant, ChunkCoord chunk,
+              ChunkPlacements& output) {
+    for (std::size_t i = 0; i < population.furniture.size(); ++i) {
+        const auto& marker = population.furniture[i];
+        const auto position = PopulationPosition(pattern, building, marker.position);
+        if (ChunkOf(position) != chunk) { continue; }
+        Require(marker.facing <= ObjectFacing::West);
+        const auto facing = static_cast<ObjectFacing>((static_cast<unsigned>(marker.facing)
+            + building.quarterTurns) % 4);
+        output.furniture.push_back({{building.owner, variantIndex, GenerationPlacementKind::Furniture,
+            static_cast<std::uint32_t>(i), 0}, position, marker.type, facing});
+    }
+    for (std::size_t i = 0; i < population.loot.size(); ++i) {
+        const auto& marker = population.loot[i];
+        const auto position = PopulationPosition(pattern, building, marker.position);
+        if (ChunkOf(position) != chunk) { continue; }
+        auto random = MarkerRandom(plan, building, pattern, variant, GenerationPlacementKind::Loot,
+            static_cast<std::uint32_t>(i));
+        Require(marker.rolls <= maxSpawnRolls);
+        if (!Chance(marker.chance, random)) { continue; }
+        GenerationKey key{building.owner, variantIndex, GenerationPlacementKind::Loot,
+            static_cast<std::uint32_t>(i), 0};
+        std::uint32_t work = 0;
+        for (std::uint32_t roll = 0; roll < marker.rolls; ++roll) {
+            ExpandLoot(content, marker.pool, random, key, position, marker.destination, 1, work, output.items);
+        }
+    }
+    for (std::size_t i = 0; i < population.monsters.size(); ++i) {
+        const auto& marker = population.monsters[i];
+        const auto position = PopulationPosition(pattern, building, marker.position);
+        if (ChunkOf(position) != chunk) { continue; }
+        auto random = MarkerRandom(plan, building, pattern, variant, GenerationPlacementKind::Monster,
+            static_cast<std::uint32_t>(i));
+        if (!Chance(marker.chance, random)) { continue; }
+        const auto& entries = content.GetMonsterGroup(marker.group).entries;
+        const auto type = entries[WeightedIndex(entries, random)].monster;
+        output.monsters.push_back({{building.owner, variantIndex, GenerationPlacementKind::Monster,
+            static_cast<std::uint32_t>(i), 0}, position, type});
+    }
 }
 }
 
@@ -294,11 +455,18 @@ EnvironmentSample SampleEnvironment(std::uint64_t seed, TileCoord position) {
 }
 
 RegionPlan GenerateRegionPlan(const ContentCatalog& content, std::uint64_t seed, RegionCoord region) {
+    return GenerateRegionPlan(content, seed, region, world_generation_version);
+}
+
+RegionPlan GenerateRegionPlan(const ContentCatalog& content, std::uint64_t seed, RegionCoord region,
+                              std::uint32_t generationVersion) {
+    Require(generationVersion >= 2 && generationVersion <= world_generation_version);
     CheckRegion(region);
     (void)GetPalette(content);
     RegionPlan plan;
     plan.region = region;
     plan.seed = seed;
+    plan.generationVersion = generationVersion;
     const int x = region.x * region_size;
     const int z = region.z * region_size;
     plan.bounds = {{Max(x, -world_coordinate_limit), Max(z, -world_coordinate_limit)},
@@ -401,6 +569,7 @@ eastl::array<Tile, chunk_size * chunk_size> GenerateChunk(
         && chunk.y >= world_min_y && chunk.y <= world_max_y);
     CheckRegion(plan.region);
     Require(plan.seed == seed);
+    Require(plan.generationVersion >= 2 && plan.generationVersion <= world_generation_version);
     const int x = chunk.x * chunk_size;
     const int z = chunk.z * chunk_size;
     Require((RegionCoord{FloorDiv(x, region_size), FloorDiv(z, region_size)}) == plan.region);
@@ -432,16 +601,30 @@ eastl::array<Tile, chunk_size * chunk_size> GenerateChunk(
             if (IsRoad(plan, p)) { tile.terrain = palette.road; }
         }
     }
-    if (chunk.y != 0) { return tiles; }
+    if (chunk.y != 0 && plan.generationVersion <= 3) { return tiles; }
     const TileRect chunkBounds{{x, z}, {x + chunk_size, z + chunk_size}};
     for (const auto& building : plan.buildings) {
         if (!Intersects(building.bounds, chunkBounds)) { continue; }
-        const auto complete = MaterializeBuilding(content, palette, building);
+        const auto& pattern = content.GetBuildingPattern(building.pattern);
+        const Vector<TerrainId>* source = chunk.y == 0 ? &pattern.tiles : nullptr;
+        if (plan.generationVersion >= 4) {
+            for (const auto& layer : pattern.layers) {
+                if (layer.y == chunk.y) { source = &layer.tiles; }
+            }
+            Require(building.basementVariant <= pattern.basements.size());
+            if (building.basementVariant != 0) {
+                const auto& basement = pattern.basements[building.basementVariant - 1];
+                if (basement.layer.y == chunk.y) { source = &basement.layer.tiles; }
+            }
+        }
+        if (!source) { continue; }
+        const auto complete = MaterializeBuilding(content, palette, building, *source,
+            chunk.y == 0 && (plan.generationVersion <= 3 || !Extended(pattern)));
         const int width = building.bounds.max.x - building.bounds.min.x;
         for (int pz = Max(z, building.bounds.min.z); pz < Min(z + chunk_size, building.bounds.max.z); ++pz) {
             for (int px = Max(x, building.bounds.min.x); px < Min(x + chunk_size, building.bounds.max.x); ++px) {
                 const TileCoord p{px, pz, chunk.y};
-                if (!Inside(plan.bounds, p) || Demo(p)) { continue; }
+                if (!Inside(plan.bounds, p) || (chunk.y == 0 && Demo(p))) { continue; }
                 // Driveway geometry includes the entrance; IsRoad excludes it.
                 // Street centerlines never enter a building's setback footprint.
                 tiles[static_cast<std::size_t>((pz - z) * chunk_size + px - x)] =
@@ -451,5 +634,36 @@ eastl::array<Tile, chunk_size * chunk_size> GenerateChunk(
         }
     }
     return tiles;
+}
+
+void GenerateChunkPlacements(const ContentCatalog& content, std::uint64_t seed,
+                             const RegionPlan& plan, ChunkCoord chunk, ChunkPlacements& output) {
+    output.furniture.clear();
+    output.items.clear();
+    output.monsters.clear();
+    constexpr int chunkLimit = world_coordinate_limit / chunk_size;
+    Require(chunk.x >= -chunkLimit && chunk.x <= chunkLimit
+        && chunk.z >= -chunkLimit && chunk.z <= chunkLimit
+        && chunk.y >= world_min_y && chunk.y <= world_max_y);
+    CheckRegion(plan.region);
+    Require(plan.seed == seed && plan.generationVersion >= 1
+        && plan.generationVersion <= world_generation_version);
+    Require((RegionCoord{FloorDiv(chunk.x * chunk_size, region_size),
+        FloorDiv(chunk.z * chunk_size, region_size)}) == plan.region);
+    if (plan.generationVersion <= 3) { return; }
+    const TileRect chunkBounds{{chunk.x * chunk_size, chunk.z * chunk_size},
+        {(chunk.x + 1) * chunk_size, (chunk.z + 1) * chunk_size}};
+    const String commonVariant;
+    for (const auto& building : plan.buildings) {
+        if (!Intersects(building.bounds, chunkBounds)) { continue; }
+        const auto& pattern = content.GetBuildingPattern(building.pattern);
+        Populate(content, plan, building, pattern, pattern.population, 0, commonVariant, chunk, output);
+        Require(building.basementVariant <= pattern.basements.size());
+        if (building.basementVariant != 0) {
+            const auto& basement = pattern.basements[building.basementVariant - 1];
+            Populate(content, plan, building, pattern, basement.population,
+                building.basementVariant, basement.id, chunk, output);
+        }
+    }
 }
 }

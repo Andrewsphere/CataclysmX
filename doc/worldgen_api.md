@@ -3,7 +3,7 @@
 `worldgen/worldgen.h` is a deterministic planning and materialization API, not a
 world manager. It owns no entities, cache, persistence, or shared RNG. Callers
 provide an immutable `ContentCatalog`, seed, and coordinates. The same catalog,
-seed, and `world_generation_version` produce the same plan and tiles. Plans must
+seed, and generation version produce the same plan, tiles, and placements. Plans must
 be unmodified outputs of `GenerateRegionPlan`; materialize them with the same
 seed and catalog. Returned query pointers borrow the plan and expire when it is
 changed or destroyed.
@@ -57,9 +57,25 @@ crops that buffer to the requested chunk. It never reads adjacent live chunks,
 so chunk load order cannot change the result. No-fit parcels simply have no
 building plan.
 
-`GenerateChunk` lays out row-major tiles (`z * 16 + x`). Generation version 3
-preserves the legacy surface at Y=0, uses solid rock below it and air above it,
-with building roofs at Y=1. Partial edge-chunk slots
+`GenerateRegionPlan(content, seed, region, version)` accepts versions 2, 3, and 4;
+the three-argument overload selects `world_generation_version` (4). The plan
+records its version. Versions 2/3 retain the exact legacy weighted-selection,
+placement and abandonment algorithm, excluding every pattern with authored
+layers, basements or population. Adding such patterns therefore does not alter
+legacy candidate weights. Existing legacy definitions must still be present and
+unchanged to reproduce their old terrain.
+
+Version 4 protects authored extended patterns from abandonment decoration. It
+selects one weighted basement per building and records its 1-based local index
+in `BuildingPlan::basementVariant` (zero means none). Chunk materialization never
+reselects this choice.
+
+`GenerateChunk` lays out row-major tiles (`z * 16 + x`). Versions 2/3
+preserve the legacy surface at Y=0, use solid rock below it and air above it,
+with rectangular building roofs at Y=1. Version 4 overlays each pattern's explicit
+layers and selected basement at their authored Y, using exactly the same X/Z
+rotation as the surface and entrance. An explicit Y=1 layer replaces the roof;
+without one, the rectangle roof fallback remains. Partial edge-chunk slots
 outside valid world bounds are undamaged wall. `ValidateWorldgenContent` returns
 `ContentResult<void>` and optional diagnostics for missing `floor`/`wall` or
 impassable `floor`, `grass`, `road`, or `rubble`. Applications validate before
@@ -69,13 +85,63 @@ Optional `grass`, `tree`, `road`, and
 legacy demo square `[-32,32] × [-32,32]` remains floor and is masked from road
 queries; no town or building intersects it.
 
+## Pure population and deterministic streams
+
+`GenerateChunkPlacements(content, seed, plan, chunk, output)` clears the three
+output vectors while retaining capacity. Versions 1..3 emit nothing. Version 4
+returns furniture, expanded item leaves and monsters, cropped by each transformed
+position's chunk (including Y). Feature order follows the plan; each list visits
+common population before the selected basement, then authored marker order and
+depth-first loot leaf order. Furniture facing rotates clockwise with X/Z.
+Furniture-destination loot remains at its furniture's coordinate and therefore
+has the same chunk owner. Output is independent of chunk request order and uses
+no World RNG, handles or persistent IDs.
+
+Each output carries a `GenerationKey`: owner `(region,parcel)`, basement index
+(zero for common population), kind, authored marker index and expanded leaf
+ordinal. Furniture/monster ordinal is zero. Keys are transient tuples scoped to
+the immutable seed/catalog/version; their hashes are not persistent identities.
+Materialization must issue normal persistent IDs and use full chunk snapshots
+to prevent regeneration after looting, movement, deletion or reload.
+
+The implementation uses the fixed SplitMix64 finalizer (xor shifts 30/27/31,
+multipliers `bf58476d1ce4e5b9` and `94d049bb133111eb`). Field folding is
+`state = Mix(state ^ Mix(field + 9e3779b97f4a7c15))`. Feature seed starts as
+`Mix(seed ^ domain)`, then folds signed region x/z converted to uint64, parcel,
+stable pattern ID and version. A string folds its byte length followed by each
+unsigned UTF-8 byte. Basement domain is `626173656d656e74` ("basement"); population
+domain is `706f70756c617465` ("populate"). Marker streams additionally fold the
+variant ID (empty for common), kind ordinal and marker index. Numeric catalog IDs
+never enter these seeds. The basement index identifies output keys, while its
+stable string identifies the population stream.
+
+Each draw increments state by `9e3779b97f4a7c15` and returns `Mix(state)`.
+For positive bound B, reject values below `(uint64(0)-B)%B`, then use `value%B`.
+Weighted selection uses authored order and checked positive sums <= UINT32_MAX.
+Chance consumes one bounded draw over `ratioScale`, including 0/10000 chances;
+successful loot performs `rolls` draws. Each pool selects one entry, then an
+inclusive count; item counts emit separate leaves and pool counts repeat child
+draws independently. DFS ordinals span all rolls of that marker. Validated limits
+are depth 16, 4096 pool invocations and 1024 leaves per placement, with counts and
+rolls <=1024. Runtime invariant checks enforce the limits without truncation.
+Monster markers test chance once and select one weighted group member.
+
+`FindFirstHouseStart` is a pure query for the `furnished_house` ID. It visits the
+origin's 3x3 regions in squared-distance, x, z order and considers every candidate.
+The nearest entrance by squared tile distance wins; ties compare entrance x/z,
+then owner region x/z and parcel. The starting tile is one driveway step outside
+that entrance, supported/passable and free of generated furniture, loot and
+monsters. Invalid content or no suitable entrance returns `InvalidData`, with
+optional diagnostics. There is no unbounded search or terrain mutation.
+
 ## World integration and debug inspection
 
-`World` owns only a one-region plan cache while generating version-3 chunks. It
+`World` owns a one-region plan cache while generating regional chunks. It
 regenerates that plan when moving to another region; the pure generator itself
-has no cache. Supported generation metadata values 1 and 2 retain their legacy
-surface generation; nonsurface slices use the layered terrain rules. This does
-not make old save formats readable: disk saves require format 6. Generated tiles become ordinary world chunk tiles
+has no cache. Cache identity includes seed, region, version and immutable catalog.
+Generation metadata 1 retains its World-owned surface generator; 2/3 use the
+explicit legacy regional path; 4 adds authored layers and population. Generation
+version is separate from save schema (10). Generated tiles become ordinary world chunk tiles
 and are thereafter saved as terrain IDs/damage.
 
 The in-game F11 world-generation debug menu previews a plan using the current

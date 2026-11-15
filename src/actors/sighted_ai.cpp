@@ -144,7 +144,7 @@ DecisionInput Sense(const World& world, ActorHandle self, SightedState& state,
         if (i < 8) { Observe(world, occupant, profile, input, stats); }
         // Deliberately local probes, with no identity exposed by occupancy.
         if (!world.IsActive(destination)) { input.moves[i] = AiMoveStatus::Inactive; }
-        else if (!terrain.passable) { input.moves[i] = AiMoveStatus::Impassable; }
+        else if (world.BlocksMovement(destination)) { input.moves[i] = AiMoveStatus::Impassable; }
         else if (terrain.openSpace) { input.moves[i] = AiMoveStatus::Unsupported; }
         else if (occupant.value) { input.moves[i] = AiMoveStatus::Occupied; }
         else { input.moves[i] = AiMoveStatus::Available; }

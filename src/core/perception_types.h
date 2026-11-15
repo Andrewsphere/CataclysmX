@@ -1,6 +1,7 @@
 #pragma once
 
 #include "content/content.h"
+#include "core/object_appearance.h"
 #include "core/world_types.h"
 
 #include <EASTL/array.h>
@@ -8,24 +9,6 @@
 namespace cataclysmx {
 
 enum class Visibility : std::uint8_t { Unknown, Remembered, Visible };
-// A small closed set for V1; these are semantic identities, never sprite indices.
-enum class ObjectKind : std::uint8_t { None, Generic, Chair, Table, Lamp };
-enum class ObjectFacing : std::uint8_t { North, East, South, West };
-
-// Owned observation data, deliberately independent of machine/behavior state.
-struct ObjectAppearance {
-    ObjectKind kind = ObjectKind::None;
-    ObjectFacing facing = ObjectFacing::North;
-    bool active = false;
-    bool broken = false;
-    bool operator==(const ObjectAppearance&) const = default;
-};
-
-constexpr bool ValidObjectAppearance(const ObjectAppearance& appearance) {
-    return appearance.kind <= ObjectKind::Lamp && appearance.facing <= ObjectFacing::West
-        && (appearance.kind != ObjectKind::None || appearance == ObjectAppearance{});
-}
-
 struct RememberedObject {
     std::uint8_t tileIndex = 0;
     ObjectAppearance appearance;

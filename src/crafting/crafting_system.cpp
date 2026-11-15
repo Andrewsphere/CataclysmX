@@ -1,6 +1,7 @@
 #include "crafting/crafting_system.h"
 #include "core/world.h"
 #include "core/ratio.h"
+#include "objects/storage_access.h"
 #include <EASTL/algorithm.h>
 #include <EASTL/sort.h>
 #include <cstdlib>
@@ -32,7 +33,7 @@ bool Nearby(const World& world, TileCoord from, TileCoord to, unsigned radius) {
     const int r = static_cast<int>(radius), width = r * 2 + 1;
     const auto passable = [&world](TileCoord p) {
         const auto* tile = world.GetTile(p);
-        return tile && world.IsActive(p) && Passable(world.GetContent(), tile->terrain);
+        return tile && world.IsActive(p) && !world.BlocksMovement(p);
     };
     std::size_t count = 1;
     queue[0] = from;
@@ -79,7 +80,9 @@ bool CraftingSystem::Reachable(ActorHandle actorHandle, ItemHandle handle, unsig
         if (!item) { return false; }
     }
     return (item->location.kind == LocationKind::actor && item->location.actor == actorHandle)
-        || (item->location.kind == LocationKind::ground && Nearby(world_, actor->position, item->location.position, radius));
+        || (item->location.kind == LocationKind::ground && Nearby(world_, actor->position, item->location.position, radius))
+        || (item->location.kind == LocationKind::object
+            && CanReachStorage(world_, actor->position, item->location.object, radius));
 }
 void CraftingSystem::Gather(ActorHandle handle, unsigned radius) {
     candidates_.clear(); traversal_.clear();
@@ -90,6 +93,11 @@ void CraftingSystem::Gather(ActorHandle handle, unsigned radius) {
     const int r = static_cast<int>(radius);
     for (int z = -r; z <= r; ++z) { for (int x = -r; x <= r; ++x) {
         const TileCoord tile{position.x + x, position.z + z, position.y};
+        const auto object = world_.ObjectAt(tile);
+        if (CanReachStorage(world_, position, object, radius)) {
+            const auto& contents = world_.GetObject(object)->contents;
+            traversal_.insert(traversal_.end(), contents.begin(), contents.end());
+        }
         if (!Nearby(world_, position, tile, radius)) { continue; }
         for (auto item : world_.ItemsAt(tile)) { traversal_.push_back(item); }
     } }
@@ -391,7 +399,12 @@ void CraftingSystem::Collect(ActorHandle actor, Vector<CraftingJobView>& output)
     for (auto item : worker->inventory) { visit(visit, item); }
     const int r = settings_.nearbyRadius;
     for (int z = -r; z <= r; ++z) { for (int x = -r; x <= r; ++x) {
-        for (auto item : world_.ItemsAt({worker->position.x + x, worker->position.z + z, worker->position.y})) { visit(visit, item); }
+        const TileCoord position{worker->position.x + x, worker->position.z + z, worker->position.y};
+        for (auto item : world_.ItemsAt(position)) { visit(visit, item); }
+        const auto object = world_.ObjectAt(position);
+        if (CanReachStorage(world_, worker->position, object, settings_.nearbyRadius)) {
+            for (auto item : world_.GetObject(object)->contents) { visit(visit, item); }
+        }
     } }
     eastl::sort(output.begin(), output.end(), [](const auto& a, const auto& b) { return a.id < b.id; });
 }

@@ -88,6 +88,7 @@ endfunction()
 
 add_library(cataclysmx_engine STATIC
     src/content/content.cpp src/content/content.h
+    src/content/content_pack.cpp src/content/spawn_definition.h src/content/building_population.h
     src/content/item_definition.cpp src/content/item_definition.h
     src/content/object_definition.cpp src/content/object_definition.h
     src/content/ai_definition.cpp src/content/ai_definition.h
@@ -105,6 +106,7 @@ add_library(cataclysmx_engine STATIC
     src/combat/combat_system.cpp src/combat/combat_system.h
     src/objects/interactive_object.cpp src/objects/interactive_object.h
     src/objects/object_behavior.cpp src/objects/object_behavior.h
+    src/objects/storage_access.cpp src/objects/storage_access.h src/objects/object_movement.h
     src/core/data_object.cpp src/core/data_object.h src/core/item_state.cpp src/core/item_state.h
     src/core/state_result.h src/core/state_reader.cpp src/core/state_reader.h
     src/core/interaction.cpp src/core/interaction.h
@@ -118,6 +120,7 @@ add_library(cataclysmx_engine STATIC
     src/items/charger_behavior.cpp src/items/door_controller_behavior.cpp
     src/core/diagnostics.cpp src/core/diagnostics.h
     src/core/integration.cpp src/core/world.cpp src/core/simulation.cpp src/core/server.cpp
+    src/core/first_house_scenario.cpp src/core/first_house_scenario.h src/core/object_appearance.h
     src/core/light_types.h src/core/perception_types.h
     src/core/lighting.cpp src/core/lighting.h src/core/perception.cpp src/core/perception.h
     src/core/planar_visibility.cpp src/core/planar_visibility.h
@@ -159,14 +162,16 @@ target_link_libraries(cataclysmx_client PUBLIC cataclysmx_engine PRIVATE yyjson:
 cataclysmx_no_exceptions(cataclysmx_client)
 
 add_executable(cataclysmx_headless src/headless/main.cpp src/headless/lan.cpp src/headless/lan.h)
-target_compile_definitions(cataclysmx_headless PRIVATE CATACLYSMX_TERRAIN_FILE="${CMAKE_CURRENT_SOURCE_DIR}/data/terrain.json5")
+target_compile_definitions(cataclysmx_headless PRIVATE
+    CATACLYSMX_TERRAIN_FILE="${CMAKE_CURRENT_SOURCE_DIR}/data/demo.json5"
+    CATACLYSMX_CONTENT_PACK="${CMAKE_CURRENT_SOURCE_DIR}/data/content.json5")
 target_link_libraries(cataclysmx_headless PRIVATE cataclysmx_client cataclysmx_network Threads::Threads)
 cataclysmx_no_exceptions(cataclysmx_headless)
 
 # Explicit opt-in headless benchmark for chunk residency transitions.
 add_executable(cataclysmx_chunk_benchmark EXCLUDE_FROM_ALL tools/chunk_streaming_benchmark.cpp)
 target_compile_definitions(cataclysmx_chunk_benchmark PRIVATE
-    CATACLYSMX_TERRAIN_FILE="${CMAKE_CURRENT_SOURCE_DIR}/data/terrain.json5")
+    CATACLYSMX_TERRAIN_FILE="${CMAKE_CURRENT_SOURCE_DIR}/data/demo.json5")
 target_link_libraries(cataclysmx_chunk_benchmark PRIVATE cataclysmx_engine)
 cataclysmx_no_exceptions(cataclysmx_chunk_benchmark)
 
@@ -184,7 +189,9 @@ if(CATACLYSMX_BUILD_TERMINAL)
     target_link_libraries(cataclysmx_terminal_smoke PRIVATE cataclysmx_terminal ftxui::component)
     cataclysmx_no_exceptions(cataclysmx_terminal_smoke)
     add_executable(cataclysmx_game src/terminal/main.cpp)
-    target_compile_definitions(cataclysmx_game PRIVATE CATACLYSMX_TERRAIN_FILE="${CMAKE_CURRENT_SOURCE_DIR}/data/terrain.json5")
+    target_compile_definitions(cataclysmx_game PRIVATE
+        CATACLYSMX_TERRAIN_FILE="${CMAKE_CURRENT_SOURCE_DIR}/data/demo.json5"
+        CATACLYSMX_CONTENT_PACK="${CMAKE_CURRENT_SOURCE_DIR}/data/content.json5")
     target_compile_definitions(cataclysmx_game PRIVATE CATACLYSMX_LOC_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/data/loc")
     target_link_libraries(cataclysmx_game PRIVATE cataclysmx_client cataclysmx_network cataclysmx_terminal ftxui::component Threads::Threads)
     cataclysmx_no_exceptions(cataclysmx_game)
@@ -195,7 +202,7 @@ if(CATACLYSMX_BUILD_TERMINAL)
     # Explicit opt-in build target; uses the production engine and terminal paths.
     add_executable(cataclysmx_perception_benchmark EXCLUDE_FROM_ALL tools/perception_benchmark.cpp)
     target_compile_definitions(cataclysmx_perception_benchmark PRIVATE
-        CATACLYSMX_TERRAIN_FILE="${CMAKE_CURRENT_SOURCE_DIR}/data/terrain.json5"
+        CATACLYSMX_TERRAIN_FILE="${CMAKE_CURRENT_SOURCE_DIR}/data/demo.json5"
         CATACLYSMX_LOC_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/data/loc")
     target_link_libraries(cataclysmx_perception_benchmark PRIVATE cataclysmx_terminal)
     cataclysmx_no_exceptions(cataclysmx_perception_benchmark)
@@ -235,7 +242,8 @@ if(CATACLYSMX_BUILD_SDL)
     cataclysmx_no_exceptions(cataclysmx_sdl)
     add_executable(cataclysmx_sdl_game src/sdl/main.cpp)
     target_compile_definitions(cataclysmx_sdl_game PRIVATE
-        CATACLYSMX_TERRAIN_FILE="${CMAKE_CURRENT_SOURCE_DIR}/data/terrain.json5"
+        CATACLYSMX_TERRAIN_FILE="${CMAKE_CURRENT_SOURCE_DIR}/data/demo.json5"
+        CATACLYSMX_CONTENT_PACK="${CMAKE_CURRENT_SOURCE_DIR}/data/content.json5"
         CATACLYSMX_LOC_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/data/loc")
     target_link_libraries(cataclysmx_sdl_game PRIVATE cataclysmx_sdl)
     cataclysmx_no_exceptions(cataclysmx_sdl_game)
@@ -269,7 +277,13 @@ if(CATACLYSMX_BUILD_TESTS)
     target_sources(cataclysmx_tests PRIVATE tests/lighting_tests.cpp tests/surface_lighting_tests.cpp tests/memory_tests.cpp
         tests/lighting_content_tests.cpp tests/perception_save_tests.cpp
         tests/perception_server_tests.cpp tests/bulk_perception_tests.cpp)
-    target_compile_definitions(cataclysmx_tests PRIVATE CATACLYSMX_TERRAIN_FILE="${CMAKE_CURRENT_SOURCE_DIR}/data/terrain.json5")
+    target_sources(cataclysmx_tests PRIVATE tests/content_pack_tests.cpp tests/house_content_tests.cpp
+        tests/house_world_tests.cpp tests/house_crafting_tests.cpp tests/house_worldgen_tests.cpp
+        tests/house_spatial_tests.cpp tests/house_network_tests.cpp tests/house_save_tests.cpp
+        tests/house_server_tests.cpp)
+    target_compile_definitions(cataclysmx_tests PRIVATE
+        CATACLYSMX_TERRAIN_FILE="${CMAKE_CURRENT_SOURCE_DIR}/data/demo.json5"
+        CATACLYSMX_CONTENT_PACK="${CMAKE_CURRENT_SOURCE_DIR}/data/content.json5")
     target_compile_definitions(cataclysmx_tests PRIVATE CATACLYSMX_LOC_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/data/loc")
     target_link_libraries(cataclysmx_tests PRIVATE cataclysmx_client cataclysmx_network Catch2::Catch2WithMain unofficial::sqlite3::sqlite3 Threads::Threads)
     if(CATACLYSMX_BUILD_SDL)

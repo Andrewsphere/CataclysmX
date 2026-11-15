@@ -7,6 +7,7 @@
 #include "content/item_definition.h"
 #include "content/crafting_definition.h"
 #include "content/object_definition.h"
+#include "content/building_population.h"
 #include "content/content_result.h"
 
 #include <EASTL/expected.h>
@@ -63,6 +64,20 @@ struct PatternPoint {
     bool operator==(const PatternPoint&) const = default;
 };
 
+struct PatternLayer {
+    int y = 0;
+    Vector<TerrainId> tiles; // Row-major; same width/height as the surface.
+    bool operator==(const PatternLayer&) const = default;
+};
+
+struct BasementVariant {
+    String id; // Unique within the building; part of generation seed derivation.
+    std::uint32_t weight = 1;
+    PatternLayer layer{-1, {}};
+    PatternPopulation population;
+    bool operator==(const BasementVariant&) const = default;
+};
+
 struct BuildingPattern {
     String id;
     int width = 0;
@@ -70,6 +85,10 @@ struct BuildingPattern {
     Vector<TerrainId> tiles; // Row-major: z * width + x; all terrain references are resolved.
     PatternPoint entrance;
     std::uint32_t weight = 1;
+    Vector<PatternLayer> layers; // Unique nonzero Y; no -1 if basements supply it.
+    PatternPopulation population;
+    Vector<BasementVariant> basements;
+    bool operator==(const BuildingPattern&) const = default;
 };
 
 class ItemBehaviorRegistry;
@@ -97,6 +116,18 @@ public:
     const ObjectDefinition* TryGetObject(ObjectTypeId id) const;
     const ObjectDefinition& GetObject(ObjectTypeId id) const;
     std::size_t ObjectCount() const;
+    LootPoolId FindLootPool(eastl::string_view id) const;
+    const LootPoolDefinition* TryGetLootPool(LootPoolId id) const;
+    const LootPoolDefinition& GetLootPool(LootPoolId id) const;
+    std::size_t LootPoolCount() const;
+    MonsterTypeId FindMonster(eastl::string_view id) const;
+    const MonsterDefinition* TryGetMonster(MonsterTypeId id) const;
+    const MonsterDefinition& GetMonster(MonsterTypeId id) const;
+    std::size_t MonsterCount() const;
+    MonsterGroupId FindMonsterGroup(eastl::string_view id) const;
+    const MonsterGroupDefinition* TryGetMonsterGroup(MonsterGroupId id) const;
+    const MonsterGroupDefinition& GetMonsterGroup(MonsterGroupId id) const;
+    std::size_t MonsterGroupCount() const;
     AiProfileId FindAiProfile(eastl::string_view id) const;
     const AiProfile* TryGetAiProfile(AiProfileId id) const;
     const AiProfile& GetAiProfile(AiProfileId id) const;
@@ -121,6 +152,9 @@ private:
     Vector<BuildingPattern> patterns_;
     Vector<ItemDefinition> items_;
     Vector<ObjectDefinition> objects_;
+    Vector<LootPoolDefinition> lootPools_;
+    Vector<MonsterDefinition> monsters_;
+    Vector<MonsterGroupDefinition> monsterGroups_;
     Vector<AiProfile> aiProfiles_;
     Vector<CraftingRecipeDefinition> craftingRecipes_;
     Vector<RecyclingRecipeDefinition> recyclingRecipes_;
@@ -140,6 +174,13 @@ ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sourc
 ContentResult<ContentCatalog> LoadContentFiles(eastl::span<const eastl::string_view> paths,
     const ItemBehaviorRegistry& registry, Diagnostics* diagnostics = nullptr);
 ContentResult<ContentCatalog> LoadContentFile(const char* path,
+    const ItemBehaviorRegistry& registry, Diagnostics* diagnostics = nullptr);
+
+// Explicit manifest loader. Definition-file loaders never discover siblings or
+// infer manifests. Paths are relative to the manifest; sources resolve together.
+ContentResult<ContentCatalog> LoadContentPack(const char* manifestPath,
+    Diagnostics* diagnostics = nullptr);
+ContentResult<ContentCatalog> LoadContentPack(const char* manifestPath,
     const ItemBehaviorRegistry& registry, Diagnostics* diagnostics = nullptr);
 
 }

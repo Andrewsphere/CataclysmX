@@ -111,7 +111,7 @@ bool Poll(LanHost& host, LanClient& a, LanClient& b, Predicate predicate) {
 }
 
 TEST_CASE("Current protocol preserves signed six-axis commands and authoritative shapes", "[network][codec][3d]") {
-    CHECK(wire::protocol == 0x43584e0d);
+    CHECK(wire::protocol == 0x43584e0e);
     for (const auto kind : {CommandKind::move, CommandKind::interact}) {
         for (const TileCoord direction : {TileCoord{1, 0, 0}, {-1, 0, 0}, {0, 1, 0},
             {0, -1, 0}, {0, 0, 1}, {0, 0, -1}, {0, 0, 0}, {1, 0, 1}, {0, 1, -1}, {0, 0, INT_MIN}}) {

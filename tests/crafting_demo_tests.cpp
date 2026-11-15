@@ -10,8 +10,8 @@ TEST_CASE("Bundled stone marker crafting and recycling definitions load", "[cont
     const auto separator = path.find_last_of("/\\");
     REQUIRE(separator != String::npos);
     path.resize(separator);
-    path += "/../data/terrain.json5";
-    const auto catalog = LoadContentFile(path.c_str());
+    path += "/../data/demo.json5";
+    const auto catalog = LoadContentPack(path.c_str());
     REQUIRE(catalog.has_value());
     const auto rock = catalog->FindItem("rock");
     const auto marker = catalog->FindItem("stone_marker");

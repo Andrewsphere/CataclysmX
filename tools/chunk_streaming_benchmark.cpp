@@ -370,7 +370,7 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "usage: cataclysmx_chunk_benchmark [samples:1..10000] [radius:2|5] [all|split|fresh|server|circle|disk|forward] [circle_radius_tiles:0..128]\n");
         return 2;
     }
-    auto content = LoadContentFile(CATACLYSMX_TERRAIN_FILE);
+    auto content = LoadContentPack(CATACLYSMX_TERRAIN_FILE);
     Require(content.has_value() && ValidateServerContent(*content).has_value());
     std::printf("seed=42 square_radius_chunks=%d circle_radius_tiles=%d samples=%d view_radius=12\n", radius, circleTiles, count);
     if (count < 100) { std::fprintf(stderr, "note: fewer than 100 samples gives coarse p95/p99 estimates\n"); }

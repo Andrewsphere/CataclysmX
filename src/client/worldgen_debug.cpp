@@ -26,6 +26,7 @@ void CheckPlan(const ContentCatalog& content, const RegionPlan& plan) {
          Min(z + region_size, world_coordinate_limit + 1)}};
     Require(plan.bounds == expected);
     Require(ValidateWorldgenContent(content).has_value());
+    Require(plan.generationVersion >= 2 && plan.generationVersion <= world_generation_version);
     // As with GenerateChunk, the remaining plan records must be the unmodified
     // generated plan for this immutable catalog; do not regenerate to verify it.
 }
@@ -230,6 +231,13 @@ Vector<String> WorldgenDebugDetails(const ContentCatalog& content,
             {"max_x", NumberText(building->bounds.max.x)}, {"max_z", NumberText(building->bounds.max.z)},
             {"entrance_x", NumberText(building->entrance.x)}, {"entrance_z", NumberText(building->entrance.z)},
             {"abandoned", localization->Text(building->abandoned ? "game.yes" : "game.no")}}) : line);
+        if (building->basementVariant != 0) {
+            const auto& pattern = content.GetBuildingPattern(building->pattern);
+            Require(building->basementVariant <= pattern.basements.size());
+            String basement = "Basement: ";
+            basement += pattern.basements[building->basementVariant - 1].id;
+            lines.push_back(eastl::move(basement));
+        }
     } else { lines.push_back(localization ? localization->Text("debug.details.no_building") : String("Building: none")); }
     for (const auto& crossing : plan.boundaries) {
         Require(crossing.key.axis == BorderAxis::X || crossing.key.axis == BorderAxis::Z);
@@ -242,6 +250,8 @@ Vector<String> WorldgenDebugDetails(const ContentCatalog& content,
             {"x", NumberText(crossing.position.x)}, {"z", NumberText(crossing.position.z)},
             {"width", NumberText(crossing.width)}, {"approach", NumberText(crossing.approachLength)}}) : String(buffer));
     }
+    std::snprintf(buffer, sizeof(buffer), "Generation version=%u", plan.generationVersion);
+    lines.push_back(String(buffer));
     return lines;
 }
 

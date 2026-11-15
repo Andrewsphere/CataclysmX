@@ -36,10 +36,13 @@ leaves funded work available for explicit reassignment.
 
 ## Selection and funding
 
-Sources are the actor's accessible inventory tree and ground trees within a
-same-layer Chebyshev radius. A bounded passable-tile flood fill prevents sourcing
-through walls or blocked diagonal corners. Other actors, object storage, installed
-children and reserved trees are excluded. Selection uses persistent-ID order and
+Sources are the actor's accessible inventory tree, ground trees, and contents of
+explicit-capacity object storage within a same-layer Chebyshev radius. A bounded
+passable-tile flood fill prevents sourcing through walls or blocked diagonal corners.
+Blocking furniture may be a reachable endpoint, not an intermediate path; the
+terrain beneath it must permit access. Storage must be active, and moving it out
+of reach causes the existing tool revalidation and pause behavior. Other actors,
+installed children and reserved trees are excluded. Selection uses persistent-ID order and
 reusable scratch vectors, with no persistent inventory cache. Exact retained tools
 and trait tools may overlap; consumables and tools do not. Funding bills every
 distinct selected powered tool: every retained instance (including counts greater

@@ -9,7 +9,7 @@
 inline const cataclysmx::ContentCatalog& TestContent() {
     static const cataclysmx::ContentCatalog content = [] {
         cataclysmx::Diagnostics diagnostics;
-        auto result = cataclysmx::LoadContentFile(CATACLYSMX_TERRAIN_FILE, &diagnostics);
+        auto result = cataclysmx::LoadContentPack(CATACLYSMX_TERRAIN_FILE, &diagnostics);
         INFO(cataclysmx::FormatDiagnostics(diagnostics).c_str());
         REQUIRE(result.has_value());
         REQUIRE(result->GetTerrain(result->FindTerrain("air")).openSpace);

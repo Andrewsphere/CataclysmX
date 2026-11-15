@@ -7,7 +7,8 @@
 
 int main(int argc, char** argv) {
     using namespace cataclysmx;
-    String contentPath = CATACLYSMX_TERRAIN_FILE;
+    const char* contentPath = nullptr;
+    const char* contentPack = nullptr;
     String localizationDirectory = CATACLYSMX_LOC_DIRECTORY;
     String userRoot = DefaultUserRoot();
     sdl::AppOptions options;
@@ -15,6 +16,20 @@ int main(int argc, char** argv) {
         const eastl::string_view argument(argv[i]);
         if (argument == "--smoke") { options.smoke = true; }
         else if (argument == "--content" && i + 1 < argc) { contentPath = argv[++i]; }
+        else if (argument == "--content-pack" && i + 1 < argc) { contentPack = argv[++i]; }
+        else if (argument == "--scenario" && i + 1 < argc) {
+            const eastl::string_view value(argv[++i]);
+            if (value == "first-house") { options.scenario = NewGameScenario::FirstHouse; }
+            else if (value == "demo") { options.scenario = NewGameScenario::Demo; }
+            else { std::fputs("Scenario must be demo or first-house\n", stderr); return 2; }
+        }
+        else if (argument == "--seed" && i + 1 < argc) {
+            const eastl::string_view value(argv[++i]);
+            std::uint32_t seed = 0;
+            const auto parsed = std::from_chars(value.data(), value.data() + value.size(), seed);
+            if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size()) { return 2; }
+            options.seedOverride = seed;
+        }
         else if (argument == "--loc-dir" && i + 1 < argc) { localizationDirectory = argv[++i]; }
         else if (argument == "--user-dir" && i + 1 < argc) { userRoot = argv[++i]; }
         else if (argument == "--tileset" && i + 1 < argc && argv[i + 1][0]) { options.tilesetDirectory = argv[++i]; }
@@ -33,10 +48,13 @@ int main(int argc, char** argv) {
         }
         else {
             std::fputs("Usage: cataclysmx_sdl_game [--content path] [--user-dir path] [--loc-dir path]\n"
-                "  [--tileset directory] [--font path] [--font-size 8-48] [--ui-scale 1-4] [--smoke]\n", stderr);
+                "  [--tileset directory] [--font path] [--font-size 8-48] [--ui-scale 1-4] [--smoke]\n"
+                "  [--scenario demo|first-house] [--seed uint32] [--content-pack manifest]\n"
+                "--content loads a single definition file; it cannot be combined with --content-pack.\n", stderr);
             return 2;
         }
     }
+    if (contentPath && contentPack) { std::fputs("Choose either --content or --content-pack\n", stderr); return 2; }
     Diagnostics diagnostics;
     SettingsStore settings(userRoot);
     Localization localization;
@@ -45,7 +63,9 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "Configuration: %s\n", FormatDiagnostics(diagnostics).c_str());
         return 1;
     }
-    const auto content = LoadContentFile(contentPath.c_str(), &diagnostics);
+    const auto content = contentPath ? LoadContentFile(contentPath, &diagnostics)
+        : LoadContentPack(contentPack ? contentPack : options.scenario == NewGameScenario::FirstHouse
+            ? CATACLYSMX_CONTENT_PACK : CATACLYSMX_TERRAIN_FILE, &diagnostics);
     if (!content || !ValidateServerContent(*content, &diagnostics)) {
         std::fprintf(stderr, "Content: %s\n", FormatDiagnostics(diagnostics).c_str());
         return 1;

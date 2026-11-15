@@ -66,9 +66,9 @@ assigning an actor. Joining has a five-second
 explicit-elapsed timeout. The server does not use wall time or RNG for gameplay;
 network-only tokens and discovery identifiers use OS entropy.
 
-## World, item and combat protocol (version 12, `0x43584e0c`)
+## World, item and combat protocol (version 14, `0x43584e0e`)
 
-Version 12 is wire-incompatible with earlier versions and supports maps up to
+Version 14 is wire-incompatible with earlier versions and supports maps up to
 129×129 cells with lossless run-length encoding. Coordinates encode signed
 32-bit X/Z/Y. Commands append signed `dy` after their item arguments; movement,
 and directional item use accept six axial directions. Movement also accepts the

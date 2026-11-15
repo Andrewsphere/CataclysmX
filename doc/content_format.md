@@ -2,9 +2,10 @@
 
 `content/content.h` provides an immutable, owning `ContentCatalog`. The loader
 accepts JSON5, including comments, unquoted keys, single-quoted strings, and trailing
-commas. `data/terrain.json5` bundles ten terrains, three house patterns, and eleven items. Content may define
-terrain, building patterns, and items in the same catalog; terrain-only catalogs remain
-valid and generate terrain/roads without buildings.
+commas. `data/demo.json5` is a content pack manifest that combines the demo
+definition documents into one catalog. Content may define terrain, building patterns,
+and items in the same catalog; terrain-only catalogs remain valid and generate
+terrain/roads without buildings. See [content packs](content_pack.md) for manifest loading.
 
 ```json5
 {

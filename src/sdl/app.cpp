@@ -130,7 +130,9 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
     SpritePlaybackController playback;
     MapIdentity mapIdentity{1, 0, 1, 1};
     bool mapValid = false;
-    Session session(content, 1, SessionOptions{settings}, Wake, &wakeup);
+    SessionOptions sessionOptions{settings, options.scenario};
+    if (options.seedOverride) { sessionOptions.settings.seed = *options.seedOverride; }
+    Session session(content, 1, sessionOptions, Wake, &wakeup);
     SessionSnapshot snapshot;
     bool running = true, dirty = true, started = false;
     using Screen = ModalScreen;
@@ -619,7 +621,11 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
         if (smokeFailed) { std::fprintf(stderr,"SDL smoke step %u: %s\n",smokeStep,message.c_str()); return 1; }
         if (options.smoke && snapshot.paused && (modal.Active() == Screen::Examine || modal.Active() == Screen::Targets || modal.Active() == Screen::Actions)
             && snapshot.view.tick != smokeModalTick) { std::fputs("SDL modal advanced simulation.\n", stderr); return 1; }
-        if (options.smoke && started && snapshot.view.playerId && assetState == AssetState::Ready && mapValid && !smokeWaiting && !settingsId
+        if (options.smoke && options.scenario == NewGameScenario::FirstHouse
+            && started && snapshot.view.playerId && assetState == AssetState::Ready && mapValid && smokeHealthDrawn) {
+            running = false;
+        }
+        if (options.smoke && options.scenario == NewGameScenario::Demo && started && snapshot.view.playerId && assetState == AssetState::Ready && mapValid && !smokeWaiting && !settingsId
             && (smokeStep > 3 || snapshot.view.opportunity > smokeOpportunity)) {
             const auto press = [&](SDL_Keycode key, SDL_Keymod modifiers = SDL_KMOD_NONE) {
                 SDL_Event event{}; event.type = SDL_EVENT_KEY_DOWN; event.key.key = key; event.key.mod = modifiers;

@@ -44,20 +44,11 @@ bool LineVisible(const World& world, TileCoord origin, TileCoord target) {
             const int x1 = eastl::min(eastl::min(origin.x + radius, (cx + 1) * chunk_size - 1), world_coordinate_limit);
             const int z0 = eastl::max(eastl::max(startZ, cz * chunk_size), -world_coordinate_limit);
             const int z1 = eastl::min(eastl::min(origin.z + radius, (cz + 1) * chunk_size - 1), world_coordinate_limit);
-            TerrainId lastTerrain{};
-            bool haveTerrain = false;
-            std::uint8_t flags = 0;
             for (int z = z0; z <= z1; ++z) {
                 for (int x = x0; x <= x1; ++x) {
                     world.RecordPointLos(true);
-                    const auto terrain = chunk->tiles[(z - cz * chunk_size) * chunk_size + x - cx * chunk_size].terrain;
-                    if (!haveTerrain || terrain != lastTerrain) {
-                        lastTerrain = terrain;
-                        haveTerrain = true;
-                        flags = static_cast<std::uint8_t>(1
-                            | (world.GetContent().GetTerrain(terrain).blocksSight ? 2 : 0));
-                    }
-                    optics[(z - startZ) * width + x - startX] = flags;
+                    optics[(z - startZ) * width + x - startX] = static_cast<std::uint8_t>(1
+                        | (world.BlocksSight({x, z, origin.y}) ? 2 : 0));
                 }
             }
         }
@@ -74,7 +65,8 @@ bool LineVisible(const World& world, TileCoord origin, TileCoord target) {
         const Tile* tile = world.GetTile(cursor);
         if (!tile) { return false; }
         if (cursor.y == target.y) { return true; }
-        if (!world.GetContent().GetTerrain(tile->terrain).openSpace) { return false; }
+        if (world.BlocksSight(cursor)
+            || !world.GetContent().GetTerrain(tile->terrain).openSpace) { return false; }
         --cursor.y;
     }
 }
@@ -120,12 +112,15 @@ OpticalChunk SnapshotChunk(const World& world, ChunkCoord coord, const Chunk& ch
         if (chunk.tiles[i].terrain != previous) {
             previous = chunk.tiles[i].terrain;
             const auto& terrain = world.GetContent().GetTerrain(previous);
-            flags = static_cast<std::uint8_t>(1 | (terrain.blocksSight ? 2 : 0)
+            flags = static_cast<std::uint8_t>(1
                 | (terrain.openSpace ? 4 : 0) | (terrain.stairs ? 8 : 0));
         }
-        snapshot.cells[i] = flags;
-        if (flags & 2) { snapshot.opaqueRows[i / chunk_size] |= std::uint16_t{1} << (i % chunk_size); }
-        snapshot.transparent = snapshot.transparent && !(flags & 2);
+        const TileCoord position{coord.x * chunk_size + i % chunk_size,
+            coord.z * chunk_size + i / chunk_size, coord.y};
+        const auto cell = static_cast<std::uint8_t>(flags | (world.BlocksSight(position) ? 2 : 0));
+        snapshot.cells[i] = cell;
+        if (cell & 2) { snapshot.opaqueRows[i / chunk_size] |= std::uint16_t{1} << (i % chunk_size); }
+        snapshot.transparent = snapshot.transparent && !(cell & 2);
     }
     return snapshot;
 }
@@ -327,7 +322,7 @@ void BuildVisibilityMask(const World& world, TileCoord origin, int radius,
             mark(p, flags);
             // The radius-one diagonal allowance belongs only to this plane.
             if (x * x + z * z > radius * radius) { continue; }
-            while ((flags & 4) && p.y > world_min_y) {
+            while ((flags & 4) && !(flags & 2) && p.y > world_min_y) {
                 --p.y;
                 ++workspace.projectionSamples;
                 flags = SampleField(*suppliedOptics, p);

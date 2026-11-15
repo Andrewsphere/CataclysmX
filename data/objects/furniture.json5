@@ -1,0 +1,11 @@
+{format_version:1, objects:[
+  {id:'house_table', name:'table', behavior:'none', kind:'table', movable:true, blocks_movement:true, blocks_sight:false},
+  {id:'house_chair', name:'chair', behavior:'none', kind:'chair', movable:true, blocks_movement:true, blocks_sight:false},
+  {id:'house_bed', name:'bed', behavior:'none', kind:'generic', movable:true, blocks_movement:true, blocks_sight:false},
+  {id:'kitchen_cabinet', name:'kitchen cabinet', behavior:'none', kind:'generic', movable:true, blocks_movement:true, blocks_sight:false, capacity_volume_ml:20000},
+  {id:'bathroom_cabinet', name:'bathroom cabinet', behavior:'none', kind:'generic', movable:true, blocks_movement:true, blocks_sight:false, capacity_volume_ml:10000},
+  {id:'bedroom_cabinet', name:'bedroom cabinet', behavior:'none', kind:'generic', movable:true, blocks_movement:true, blocks_sight:false, capacity_volume_ml:15000},
+  {id:'cellar_chest', name:'storage chest', behavior:'none', kind:'generic', movable:true, blocks_movement:true, blocks_sight:false, capacity_volume_ml:30000},
+  {id:'workshop_bench', name:'workbench', behavior:'none', kind:'table', movable:true, blocks_movement:true, blocks_sight:false, capacity_volume_ml:30000},
+  {id:'cellar_lamp', name:'lamp', behavior:'none', kind:'lamp', movable:true, blocks_movement:false, blocks_sight:false, light:{intensity:220,range:6}},
+], definitions:[]}

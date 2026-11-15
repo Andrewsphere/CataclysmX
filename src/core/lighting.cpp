@@ -62,7 +62,7 @@ std::uint8_t TerrainLightLevel(const World& world, TileCoord observer, TileCoord
     const Tile* tile = world.GetTile(target);
     if (!tile || !world.GetTile(observer)) { return 0; }
     const auto& terrain = world.GetContent().GetTerrain(tile->terrain);
-    if (!terrain.blocksSight) { return world.GetLightLevel(target); }
+    if (!world.BlocksSight(target)) { return world.GetLightLevel(target); }
     auto level = terrain.light.intensity;
     // Lower terrain is projected through its vertical column, so its receiving
     // surface is the top even when horizontal displacement dominates.
@@ -83,7 +83,7 @@ std::uint8_t TerrainLightLevel(const World& world, TileCoord observer, TileCoord
         const auto offset = directions[face];
         const TileCoord sample{target.x+offset.x, target.z+offset.z, target.y+offset.y};
         const Tile* sampleTile = world.GetTile(sample);
-        if (!sampleTile || world.GetContent().GetTerrain(sampleTile->terrain).blocksSight
+        if (!sampleTile || world.BlocksSight(sample)
             || (face >= 4 && !OpenVerticalFace(world, sample, target))) {
             if (observer.y == target.y) { continue; }
             return level;
@@ -438,15 +438,15 @@ void LightingField::Prepare(const World& world) {
             bool opticalChanged = false;
             for (int i = 0; i < tileCount; ++i) {
                 const TileCoord p{coord.x*chunk_size+i%chunk_size,coord.z*chunk_size+i/chunk_size,coord.y};
-                if (optical.terrain[i] != chunk.tiles[i].terrain.value || !optical.flags[i]) {
-                    const auto& terrain = world.GetContent().GetTerrain(chunk.tiles[i].terrain);
-                    const std::uint8_t flags = ValidPosition(p) ? resident | (terrain.blocksSight ? 0 : transparent)
-                        | (terrain.openSpace ? openSpace : 0) | (terrain.stairs ? stairs : 0) : 0;
-                    if (flags != optical.flags[i]) { opticalChanged = true; }
-                    optical.flags[i] = flags;
-                    optical.terrain[i] = chunk.tiles[i].terrain.value;
-                    optical.emission[i] = terrain.light;
-                }
+                // Object mutations can change optics while the terrain ID stays
+                // unchanged. The chunk input revision covers both inputs.
+                const auto& terrain = world.GetContent().GetTerrain(chunk.tiles[i].terrain);
+                const std::uint8_t flags = ValidPosition(p) ? resident | (world.BlocksSight(p) ? 0 : transparent)
+                    | (terrain.openSpace ? openSpace : 0) | (terrain.stairs ? stairs : 0) : 0;
+                if (flags != optical.flags[i]) { opticalChanged = true; }
+                optical.flags[i] = flags;
+                optical.terrain[i] = chunk.tiles[i].terrain.value;
+                optical.emission[i] = terrain.light;
                 if (optical.emission[i].intensity) { optical.emitters.push_back({p,optical.emission[i]}); }
             }
             for (const auto handle : chunk.objects) {

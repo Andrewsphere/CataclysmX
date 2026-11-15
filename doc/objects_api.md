@@ -40,8 +40,29 @@ rejected. `none` forbids a machine config. References resolve only after all
 item sources have been parsed and sorted. Structural validation is also
 available through `ValidObjectDefinition`; it cannot check catalog membership.
 
-`data/terrain.json5` includes the `scrap_press` demonstration alongside its input
-and output item definitions.
+The demo manifest includes `data/objects/demo.json5` and `data/items/demo.json5`.
+The full pack adds furniture in `data/objects/furniture.json5`; see
+[house content](house_content.md) and [content packs](content_pack.md).
+
+Optional definition properties include `kind`, `blocks_movement`, `blocks_sight`,
+`movable`, `capacity_volume_ml`, and `light`. Blocking and movability default to
+false; kind defaults to generic. Light defaults to zero and accepts
+`{intensity, range}` with the same validation as terrain emission: both zero or
+both positive, with intensity at most 255 and range at most `maxLightRange`.
+`CreateObject` copies the initial emission into runtime light; enabled state gates
+emission. These properties live in shared immutable definitions, while existing
+runtime fields hold appearance, light, contents and behavior. Behavior-none
+furniture is passive and has no per-furniture tick behavior; dismantling is not
+implemented.
+
+Explicit `capacity_volume_ml` is a positive, finite external-volume budget for
+direct contents, including dynamic unfinished-craft volume. `GetObjectUsedVolume`
+returns the used volume, or zero for an invalid handle. Insertions and restored
+contents must fit. No capacity means no player storage interface, not unlimited
+player storage; legacy generic and machine internal contents remain supported.
+`CanAccessObjectStorage` checks active same-layer immediate reach and the explicit
+capacity. Behavior-none storage supports `Collect` through the usual carry checks.
+Crafting can also access reachable storage as described in [crafting](crafting.md).
 
 ## Ownership and API shape
 
@@ -178,6 +199,21 @@ handle, behavior, and capacity. `UseObject(actor, object, action)` checks active
 residency and reach, including vertical access, and returns `ObjectUseResult`.
 It does not schedule the actor: a direct caller must schedule the positive
 `baseCost` on success, with a ready active actor.
+
+`MoveObject(object, destination)` is administrative: it ignores movability,
+reach and action costs, but validates a resident, passable, supported destination
+without another object, and excludes unparked actors for blocking objects. A
+same-position move is a no-op; contents remain attached. In contrast, legacy
+administrative `CreateObject` permits fixtures on wall or air terrain. Generated
+placements require supported passable terrain, and blocking objects cannot overlap
+unparked actors.
+
+`QueryObjectMove(actor, object, kind)` is side-effect-free and reports a prospective
+base cost when push or pull is executable. `TryMoveObject` returns typed errors for
+invalid handles and gameplay outcomes for refusals; it atomically moves actor and
+object after preflight. Both use orthogonal same-layer adjacency and neither
+schedules an actor. Server schedules a successful move once. See
+[object gameplay](object_gameplay.md) for player interactions.
 
 For example, with a loaded position and a ready, nearby actor carrying inputs:
 

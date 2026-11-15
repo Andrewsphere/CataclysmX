@@ -1,0 +1,7 @@
+{format_version: 1, files: [
+  'terrain/base.json5', 'items/demo.json5', 'crafting/demo.json5',
+  'monsters/ai_profiles.json5', 'objects/demo.json5', 'worldgen/buildings/demo.json5',
+  'items/household.json5', 'crafting/household.json5', 'objects/furniture.json5',
+  'worldgen/loot/household.json5', 'monsters/cellar.json5',
+  'worldgen/buildings/furnished_house.json5',
+]}

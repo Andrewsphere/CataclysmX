@@ -16,7 +16,7 @@ Optics ReadOptics(const World& world, TileCoord position, AiVisionStats* stats) 
     const Tile* tile = world.GetTile(position);
     if (!tile) { return {}; }
     const auto& terrain = world.GetContent().GetTerrain(tile->terrain);
-    return {!terrain.blocksSight, terrain.openSpace, terrain.stairs};
+    return {!world.BlocksSight(position), terrain.openSpace, terrain.stairs};
 }
 
 TileCoord Advance(TileCoord position, unsigned mask, const int* step) {

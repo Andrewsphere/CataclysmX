@@ -1,6 +1,10 @@
 #pragma once
 
 #include "items/item_types.h"
+#include "core/object_appearance.h"
+#include "core/light_types.h"
+
+#include <EASTL/optional.h>
 
 namespace cataclysmx {
 
@@ -27,6 +31,14 @@ struct ObjectDefinition {
     String name;
     ObjectBehaviorKind behavior = ObjectBehaviorKind::None;
     CraftingMachineDefinition machine;
+    // Positive when present. Absence exposes no player storage; legacy internal
+    // machine/generic contents remain supported independently of this property.
+    eastl::optional<std::uint32_t> capacityVolumeMl;
+    ObjectKind kind = ObjectKind::Generic;
+    bool blocksMovement = false;
+    bool blocksSight = false;
+    bool movable = false;
+    LightEmission light{}; // Initial emission, gated by the object's enabled state.
     bool operator==(const ObjectDefinition&) const = default;
 };
 

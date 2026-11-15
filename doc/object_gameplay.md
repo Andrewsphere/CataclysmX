@@ -1,4 +1,4 @@
-# Machine interaction through Server
+# Object interaction through Server
 
 Directional `interact` keeps the existing terrain priority: doors open or close
 before an object on the same tile is considered. Unavailable tiles and
@@ -15,15 +15,15 @@ Successful actions use the behavior's `baseCost`, scaled by actor speed through
 the existing action scheduler, and report `Outcome::toggled`. Refused actions
 spend no time: `NoContents` and `NoJob` report `nothing_here`; other machine
 failures report `blocked`. Untyped objects have no state snapshot and keep their
-enabled toggle interaction. Typed None objects have a None snapshot and their
-use is refused as an invalid action.
+enabled toggle interaction. Explicit-capacity behavior-none furniture supports
+Collect; other typed None uses are refused as invalid actions.
 
 Start consumes direct carried leaf inputs. Work advances with simulation time;
 completed output stays in object contents until collected. Stop preserves work
 and energy, and resuming requires power but no replacement inputs. Progress and
 energy inspection use the direct `World::DescribeObjectState` API. Reusing the
 existing command and outcome keeps this integration small and compatible with
-the current wire format.
+the current interaction system.
 
 Direct `world.UseObject(actor, object, action)` calls return a positive `baseCost`
 on success but do not schedule it; a caller with a ready actor must call
@@ -39,10 +39,17 @@ the server retains rollback paths, bubble commits, and action scheduling.
 `tests/object_server_tests.cpp` covers standalone Server start/completion/
 collection, stop/resume costs, power failures, direct-input eligibility,
 collection capacity, vertical access, and door priority. The bundled
-`scrap_press` definition is in `data/terrain.json5`. Save v9 and the legacy v7/v8
+`scrap_press` definition is in `data/objects/demo.json5`. Save v9 and the legacy v7/v8
 upgrade are described in the
 [save format](save_format.md#version-78-compatibility-and-checkpoint-upgrade).
 
-Object access uses the player’s tile and eight immediate neighbors on the same
-Y level. `World::CanUseObject` is the shared read-only access check for action
-discovery, execution, and inspection of stored contents.
+Object use checks the player's tile and immediate neighbors on the same Y level.
+Explicit-capacity storage also checks unobstructed reach via
+`World::CanAccessObjectStorage`.
+
+Movable furniture offers push and pull interactions. Each uses orthogonal same-layer
+adjacency and atomically relocates both actor and object after checking destinations.
+Refusals spend no time; Server schedules a successful action once. Direct
+`QueryObjectMove` and `TryMoveObject` calls do not schedule the actor. Furniture
+without behavior is passive, and dismantling is not available. See the
+[objects API](objects_api.md) for administrative movement and storage details.

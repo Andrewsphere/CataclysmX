@@ -81,6 +81,11 @@ During a cooldown you can queue the next action. The latest valid input replaces
 the one pending intent, which is validated when the player becomes ready.
 `cataclysmx_game --render` prints a snapshot without entering interactive mode.
 
+Start the furnished-house review with `--scenario first-house --seed 0` on
+headless, terminal, or SDL. Seed 13 is the second basement review candidate.
+See [first-house review](doc/first_house_review.md) for launch/smoke commands,
+storage, furniture movement, and current review limitations.
+
 **F2** opens settings and keybindings. Preferences resolve from built-in defaults,
 global files, and sparse world overrides; saves within a world share its settings.
 Use `--user-dir <path>` and `--world-dir <path>` to select configuration locations.
@@ -88,10 +93,17 @@ Player-facing terminal text comes from `data/loc/en.json5`. Ctrl bindings preser
 letter case when the terminal supports enhanced keyboard reporting; basic mode
 reports unavailable combinations. See [settings and localization](doc/settings_api.md).
 
-Terrain definitions live in [`data/terrain.json5`](data/terrain.json5), with UTF-8
+Default content is loaded through [`data/demo.json5`](data/demo.json5); the
+first-house scenario selects [`data/content.json5`](data/content.json5).
+Terrain definitions include UTF-8
 symbols, named/RGB colors, appearance fallback, passability, sight blocking, and
-door transitions. Both clients accept `--content <path>` to load another JSON5
-document. The default path points to the bundled file in this source checkout.
+door transitions. All three frontends accept `--content <path>` for exactly one
+definition document or `--content-pack <path>` for a manifest, never both.
+Bundled default paths point into this source checkout. `--seed <uint32>` overrides
+the configured new-game seed for this invocation without editing preferences;
+headless/terminal reject it with `--load`. Load a house save with
+`--content-pack data/content.json5 --load <save>`; the save retains its seed and
+position without a persisted scenario setting.
 See [content format and APIs](doc/content_format.md). Save V6 stores terrain and
 item stable string IDs, nested ownership, and versioned item capability state;
 older save versions are rejected and migrations are not implemented yet.

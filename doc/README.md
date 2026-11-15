@@ -31,7 +31,8 @@
   overlays, shared movement costs, and owned frontend captures.
 - [Combat API](combat_api.md): body, injury, moves, disruption and recovery.
 - [Combat presentation](combat_presentation.md): frontend status and feedback text.
-- [Objects API](objects_api.md): typed crafting machines, actions, and saved-state defaults.
+- [Objects API](objects_api.md): furniture, storage, movement, lighting, crafting machines and saved state.
+- [Object gameplay](object_gameplay.md): interaction, collection and push/pull scheduling.
 - [Object callbacks](object_callbacks.md): explicit identity, atomic transactions,
   and deferred destruction.
 - [Entity scheduling](entity_scheduling.md): absolute deadlines, suspended time,
@@ -72,6 +73,9 @@
   speed-scaled input deadlines and idle policy.
 - [Content format and catalog](content_format.md): JSON5 terrain and item definitions,
   capabilities, IDs, building patterns, appearance inheritance, and loading APIs.
+- [Content packs](content_pack.md): manifest loading and source organization.
+- [House content](house_content.md): furniture, loot, monsters and building schemas.
+- [First furnished house](first_house_design.md): implemented scenario, generation and design rationale.
 - [World generation](worldgen_api.md): deterministic region plans, boundary
   crossings, parcels/buildings, terrain materialization and debug inspection.
 - [Diagnostics](diagnostics.md): structured error causes and contextual frames.

@@ -4,9 +4,12 @@
 
 namespace cataclysmx {
 bool ValidInteraction(const InteractionRequest& request) {
-    if (!ValidPosition(request.position) || request.kind > InteractionKind::Unlock) { return false; }
+    if (!ValidPosition(request.position) || request.kind > InteractionKind::PullObject) { return false; }
     if (request.kind == InteractionKind::Object) {
         return request.object != 0 && request.terrain.value == 0 && request.action >= ObjectAction::Start && request.action <= ObjectAction::Disable;
+    }
+    if (request.kind == InteractionKind::PushObject || request.kind == InteractionKind::PullObject) {
+        return request.object != 0 && request.terrain.value == 0 && request.action == ObjectAction::Start;
     }
     return request.object == 0 && request.terrain.value != 0 && request.action == ObjectAction::Start;
 }
@@ -20,13 +23,18 @@ void QueryInteractions(const World& world, ActorHandle handle, TileCoord positio
     const auto* source = world.GetTile(a);
     if (!tile || !source || !world.IsActive(position)) { return; }
     const auto& terrain = world.GetContent().GetTerrain(tile->terrain);
+    const auto objectHandle = world.ObjectAt(position);
+    const auto* object = world.GetObject(objectHandle);
+    const auto* objectDefinition = object ? world.GetContent().TryGetObject(object->type) : nullptr;
+    const bool obstructsDoor = objectDefinition && objectDefinition->blocksMovement;
     if (terrain.opensTo.value || terrain.closesTo.value || terrain.locksTo.value || terrain.unlocksTo.value) {
         output.push_back({{position, 0, tile->terrain, InteractionKind::Open}, terrain.name, "Open",
             terrain.unlocksTo.value ? ObjectUseReason::Locked
                 : terrain.opensTo.value ? ObjectUseReason::None : ObjectUseReason::AlreadyOpen});
         output.push_back({{position, 0, tile->terrain, InteractionKind::Close}, terrain.name, "Close",
             !terrain.closesTo.value ? ObjectUseReason::AlreadyClosed
-                : world.ActorAt(position).value ? ObjectUseReason::Occupied : ObjectUseReason::None});
+                : world.ActorAt(position).value || obstructsDoor
+                    ? ObjectUseReason::Occupied : ObjectUseReason::None});
     }
     if (terrain.locksTo.value || terrain.unlocksTo.value) {
         output.push_back({{position, 0, tile->terrain, InteractionKind::Lock}, terrain.name, "Lock",
@@ -35,15 +43,34 @@ void QueryInteractions(const World& world, ActorHandle handle, TileCoord positio
         output.push_back({{position, 0, tile->terrain, InteractionKind::Unlock}, terrain.name, "Unlock",
             terrain.unlocksTo.value ? ObjectUseReason::None : ObjectUseReason::AlreadyUnlocked});
     }
-    const auto objectHandle = world.ObjectAt(position);
-    const auto* object = world.GetObject(objectHandle);
     if (!object) { return; }
     const String name = object->type.value ? world.GetContent().GetObject(object->type).name : String("Object");
     Vector<ObjectActionInfo> actions;
     world.QueryObjectActions(handle, objectHandle, actions);
     for (const auto& action : actions) {
+        const auto* definition = world.GetContent().TryGetObject(object->type);
+        const bool storage = definition && definition->capacityVolumeMl
+            && definition->behavior == ObjectBehaviorKind::None && action.action == ObjectAction::Collect;
         output.push_back({{position, object->id, {}, InteractionKind::Object, action.action}, name,
-            ObjectActionLabel(action.action), action.reason});
+            storage ? "Take contents" : ObjectActionLabel(action.action), action.reason});
+    }
+    const auto* definition = world.GetContent().TryGetObject(object->type);
+    if (!definition || !definition->movable) { return; }
+    for (const auto kind : {ObjectMoveKind::Push, ObjectMoveKind::Pull}) {
+        const auto result = world.QueryObjectMove(handle, objectHandle, kind);
+        ObjectUseReason reason = ObjectUseReason::None;
+        switch (result.outcome) {
+        case ObjectMoveOutcome::Moved: break;
+        case ObjectMoveOutcome::NotReady: reason = ObjectUseReason::Busy; break;
+        case ObjectMoveOutcome::Blocked:
+        case ObjectMoveOutcome::Occupied: reason = ObjectUseReason::Occupied; break;
+        case ObjectMoveOutcome::Unavailable:
+        case ObjectMoveOutcome::OutOfReach:
+        case ObjectMoveOutcome::Immovable: reason = ObjectUseReason::OutOfReach; break;
+        }
+        const bool push = kind == ObjectMoveKind::Push;
+        output.push_back({{position, object->id, {}, push ? InteractionKind::PushObject : InteractionKind::PullObject},
+            name, push ? "Push" : "Pull", reason});
     }
 }
 }

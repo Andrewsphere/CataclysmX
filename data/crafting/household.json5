@@ -1,0 +1,6 @@
+{format_version: 1, definitions: [
+  {type:'tool_trait', id:'house_cutting', name:'Cutting'},
+  {type:'recipe', id:'cut_house_bandage', name:'Cut an improvised bandage',
+   inputs:[{item:'clean_rag', count:1}], tool_traits:[{id:'house_cutting', tier:1}],
+   result:{item:'house_bandage', count:2}, work:100},
+]}

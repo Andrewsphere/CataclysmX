@@ -7,7 +7,10 @@
 
 namespace cataclysmx::sdl {
 
-struct SessionOptions { Settings settings; };
+struct SessionOptions {
+    Settings settings;
+    NewGameScenario scenario = NewGameScenario::Demo;
+};
 
 // The immutable catalog and wake callback's userdata must outlive the session.
 class Session {

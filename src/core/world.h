@@ -14,6 +14,7 @@
 #include "actors/ai_controller.h"
 #include "objects/interactive_object.h"
 #include "objects/object_behavior.h"
+#include "objects/object_movement.h"
 
 #include <EASTL/array.h>
 #include <EASTL/expected.h>
@@ -162,7 +163,7 @@ struct TileCircleRegion {
 class World {
 public:
     // Content must outlive the World and remain unchanged. New worlds use layered
-    // regional generation; versions 1/2 retain their surface generation. All
+    // regional generation; versions 1/2/3 retain their legacy generation. All
     // layers require floor/wall/air terrain roles.
     explicit World(const ContentCatalog& content, std::uint32_t seed = 42);
     ~World();
@@ -207,6 +208,10 @@ public:
 
     const Chunk* GetChunk(ChunkCoord position) const;
     const Tile* GetTile(TileCoord position) const;
+    // Terrain plus typed furniture. Invalid/nonresident tiles block. These do
+    // not include actor occupancy, floor support or stair travel rules.
+    bool BlocksMovement(TileCoord position) const;
+    bool BlocksSight(TileCoord position) const;
     bool IsActive(TileCoord position) const;
     // Unspecified column order; each full-height column is contiguous, ascending Y.
     Vector<ChunkCoord> LoadedChunks() const;
@@ -238,6 +243,8 @@ public:
     // also settle affected resident columns; parked actors remain frozen.
     void SettleGravity();
     WorldResult<ActorHandle> CreateActor(TileCoord position, bool player = false);
+    // Ordinary NPC initialized from a validated recipe; consumes no World RNG.
+    WorldResult<ActorHandle> CreateMonster(MonsterTypeId type, TileCoord position);
     WorldResult<void> MoveActor(ActorHandle actor, TileCoord destination);
     WorldResult<void> TryActorStep(ActorHandle actor, TileCoord direction, bool activeOnly = false);
     DataObject CaptureActorController(ActorHandle actor) const;
@@ -283,6 +290,21 @@ public:
     std::size_t ActiveItemCount() const;
     WorldResult<ObjectHandle> CreateObject(TileCoord position, bool enabled = false);
     WorldResult<ObjectHandle> CreateObject(ObjectTypeId type, TileCoord position, bool enabled = true);
+    // Administrative relocation: bypasses movable/reach/time but preserves
+    // terrain support, occupancy, chunk ownership and contained-item identity.
+    WorldResult<void> MoveObject(ObjectHandle object, TileCoord destination);
+    // Orthogonal same-layer push/pull moves actor and object atomically. Query
+    // reports Moved plus prospective base cost when executable. TryMoveObject
+    // returns typed handle/request errors and ordinary gameplay refusals as
+    // outcomes. Successful mutation does not schedule time; server commits cost.
+    ObjectMoveResult QueryObjectMove(ActorHandle actor, ObjectHandle object,
+        ObjectMoveKind kind) const;
+    WorldResult<ObjectMoveResult> TryMoveObject(ActorHandle actor, ObjectHandle object,
+        ObjectMoveKind kind);
+    // External volume of direct contents; zero for an invalid handle.
+    std::uint64_t GetObjectUsedVolume(ObjectHandle object) const;
+    // Explicit capacity and unobstructed immediate same-layer reach required.
+    bool CanAccessObjectStorage(ActorHandle actor, ObjectHandle object) const;
     eastl::optional<ObjectStateView> DescribeObjectState(ObjectHandle object) const;
     // Same-layer Chebyshev distance <= 1; validates actor/object activity and parking.
     bool CanUseObject(ActorHandle actor, ObjectHandle object) const;

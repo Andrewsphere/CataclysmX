@@ -1,5 +1,6 @@
 #include "core/integration.h"
 #include "core/server.h"
+#include "core/first_house_scenario.h"
 #include "client/text.h"
 #include "headless/lan.h"
 #include "client/settings.h"
@@ -298,7 +299,10 @@ int main(int argc, char** argv) {
         std::printf("seed=42 checksum=%u\n", cataclysmx::headless_checksum(42));
         return 0;
     }
-    const char* contentPath = CATACLYSMX_TERRAIN_FILE;
+    const char* contentPath = nullptr;
+    const char* contentPack = nullptr;
+    NewGameScenario scenario = NewGameScenario::Demo;
+    eastl::optional<std::uint32_t> seedOverride;
     const char* savePath = nullptr;
     const char* loadPath = nullptr;
     bool script = false;
@@ -329,16 +333,28 @@ int main(int argc, char** argv) {
             if (!Number(text, lan.runForMs)) { return 2; }
             lanMode = true;
         } else if (argument == "--content" && i + 1 < argc) { contentPath = argv[++i];
+        } else if (argument == "--content-pack" && i + 1 < argc) { contentPack = argv[++i];
+        } else if (argument == "--scenario" && i + 1 < argc) {
+            const eastl::string_view value(argv[++i]);
+            if (value == "first-house") { scenario = NewGameScenario::FirstHouse; }
+            else if (value == "demo") { scenario = NewGameScenario::Demo; }
+            else { std::fputs("Scenario must be demo or first-house\n", stderr); return 2; }
+        } else if (argument == "--seed" && i + 1 < argc) {
+            std::uint32_t seed = 0;
+            if (!Number(eastl::string_view(argv[++i]), seed)) { return 2; }
+            seedOverride = seed;
         } else if (argument == "--save" && i + 1 < argc) { savePath = argv[++i];
         } else if (argument == "--load" && i + 1 < argc) { loadPath = argv[++i];
         } else if (argument == "--user-dir" && i + 1 < argc) { configuration.userRoot = argv[++i]; configuration.enabled = true;
         } else if (argument == "--world-dir" && i + 1 < argc) { configuration.worldDirectory = argv[++i]; configuration.enabled = true;
         } else {
             std::fputs("Usage: cataclysmx_headless [--content path] [--user-dir path] [--world-dir path] [--save path | --load path] [--script | --host | --join address[:port] | --discover] [--port n] [--discovery-port n] [--discovery-address address] [--name name] [--profile path] [--new-character] [--run-for ms] [--command 'move e'] | --probe | --fail-log\nMovement: move n/s/e/w, move down or move < (downstairs), move up or move > (upstairs).\nCombat: attack [persistentId], style balanced|aggressive|defensive.\n", stderr);
-            std::fputs("Crafting (local --script): recipes, crafting, craft ID, recycle ITEM_ID, resume-craft JOB_ID, pause-craft JOB_ID, cancel-craft JOB_ID.\n", stderr);
+            std::fputs("Content: --content <single definition file> | --content-pack <manifest>. New game: --scenario demo|first-house --seed <uint32>.\nCrafting (local --script): recipes, crafting, craft ID, recycle ITEM_ID, resume-craft JOB_ID, pause-craft JOB_ID, cancel-craft JOB_ID.\n", stderr);
             return 2;
         }
     }
+    if (contentPath && contentPack) { std::fputs("Choose either --content or --content-pack\n", stderr); return 2; }
+    if (loadPath && seedOverride) { std::fputs("--seed applies only to a new game, not --load\n", stderr); return 2; }
     if (savePath != nullptr && loadPath != nullptr) {
         std::fputs("Choose either --save or --load\n", stderr);
         return 2;
@@ -354,7 +370,9 @@ int main(int argc, char** argv) {
         configuration.store = eastl::move(*loaded);
     }
     // Scripted save loads also retain a reference to this main-stack catalog.
-    const auto content = LoadContentFile(contentPath, &diagnostics);
+    const auto content = contentPath ? LoadContentFile(contentPath, &diagnostics)
+        : LoadContentPack(contentPack ? contentPack : scenario == NewGameScenario::FirstHouse
+            ? CATACLYSMX_CONTENT_PACK : CATACLYSMX_TERRAIN_FILE, &diagnostics);
     if (!content) {
         std::fprintf(stderr, "Content load failed (error=%d): %s\n", static_cast<int>(content.error()),
             FormatDiagnostics(diagnostics).c_str());
@@ -376,7 +394,11 @@ int main(int argc, char** argv) {
         }
         server = eastl::move(*loaded);
     } else {
-        server = eastl::make_unique<Server>(*content, configuration.store ? configuration.store->Effective().seed : 42);
+        const auto seed = seedOverride.value_or(configuration.store ? configuration.store->Effective().seed : 42);
+        if (scenario == NewGameScenario::FirstHouse && !FindFirstHouseStart(*content, seed, &diagnostics)) {
+            std::fprintf(stderr, "Scenario validation failed: %s\n", FormatDiagnostics(diagnostics).c_str()); return 1;
+        }
+        server = eastl::make_unique<Server>(*content, seed, scenario);
     }
     if (configuration.store && !ApplySettings(*server, *configuration.store, &diagnostics)) {
         std::fprintf(stderr, "Configuration application failed: %s\n", FormatDiagnostics(diagnostics).c_str()); return 1;

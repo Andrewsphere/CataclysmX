@@ -1,5 +1,6 @@
 #include "sdl/session.h"
 #include "content_fixture.h"
+#include "core/first_house_scenario.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <chrono>
@@ -333,6 +334,42 @@ TEST_CASE("AI inspection is paused owner work with identified owned captures", "
     CHECK(retained.cursor == player); CHECK(retained.tick == tick);
     CHECK(retained.image.cells[0].symbol == firstSymbol);
     CHECK(retained.details[0] == firstDetail);
+}
+
+TEST_CASE("First-house session rejects a demo-only catalog before construction", "[sdl][session][house]") {
+    WakeState wake;
+    SessionOptions options;
+    options.scenario = NewGameScenario::FirstHouse;
+    Session session(TestContent(), 1, options, Wake, &wake);
+    SessionReply reply;
+    REQUIRE(WaitForReply(session, wake, reply));
+    CHECK(reply.kind == ReplyKind::StartupFailed);
+    session.Stop();
+    SessionSnapshot snapshot;
+    CHECK_FALSE(session.TakeSnapshot(snapshot));
+}
+
+TEST_CASE("First-house session publishes the selected seed and planned start", "[sdl][session][house]") {
+    const auto content = LoadContentPack(CATACLYSMX_CONTENT_PACK);
+    REQUIRE(content);
+    for (const std::uint32_t seed : {0U, 13U}) {
+        const auto start = FindFirstHouseStart(*content, seed);
+        REQUIRE(start);
+        WakeState wake;
+        SessionOptions options;
+        options.settings.seed = seed;
+        options.scenario = NewGameScenario::FirstHouse;
+        Session session(*content, 1, options, Wake, &wake);
+        SessionReply reply;
+        REQUIRE(WaitForReply(session, wake, reply));
+        REQUIRE(reply.kind == ReplyKind::Started);
+        session.Stop();
+        SessionSnapshot snapshot;
+        REQUIRE(session.TakeSnapshot(snapshot));
+        CHECK(snapshot.seed == seed);
+        CHECK(snapshot.runtimeSettings.seed == seed);
+        CHECK(snapshot.view.player_position == start->playerPosition);
+    }
 }
 
 TEST_CASE("Session completion publishes the next opportunity before accepting another frontend action", "[sdl][session]") {

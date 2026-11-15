@@ -9,6 +9,8 @@
 
 namespace cataclysmx {
 
+enum class NewGameScenario { Demo, FirstHouse };
+
 enum class CommandKind {
     wait, move, pick_up, drop, interact, use_item, store_item, attack, combat_style, interact_action,
     craft, recycle, resume_craft, pause_craft, cancel_craft
@@ -40,7 +42,8 @@ enum class Outcome {
     capacity_exceeded, invalid_container,
     attacked, attack_missed, attack_parried, attack_blocked, attack_windup,
     target_defeated, no_target, no_combat_move, combat_style_changed, locked, unlocked,
-    craft_started, recycling_started, craft_resumed, craft_paused, craft_cancelled, crafting_refused
+    craft_started, recycling_started, craft_resumed, craft_paused, craft_cancelled, crafting_refused,
+    object_moved
 };
 const char* OutcomeMessage(Outcome outcome);
 // The demo requires floor, wall, and closed_door; floor must be passable.
@@ -187,6 +190,9 @@ struct WorldView {
 class Server {
 public:
     explicit Server(const ContentCatalog& content, std::uint32_t seed = 42);
+    // FirstHouse requires successful FindFirstHouseStart validation at the
+    // application boundary. The existing constructor retains Demo behavior.
+    Server(const ContentCatalog& content, std::uint32_t seed, NewGameScenario scenario);
     // While busy, retain one intent; the latest valid command replaces it.
     CommandResult Send(Command command);
     // Real elapsed time is supplied by the application; no clock is read here.

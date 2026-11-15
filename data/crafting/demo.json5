@@ -1,0 +1,7 @@
+{format_version: 1, definitions: [
+    {
+      type: 'recipe', id: 'shape_stone_marker', name: 'Shape stone marker',
+      inputs: [{item: 'rock', count: 1}], result: {item: 'stone_marker', count: 1}, work: 300,
+      recycling: {id: 'recycle_stone_marker', work: 100, efficiency: 10000},
+    },
+]}

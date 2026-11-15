@@ -171,7 +171,7 @@ int main(int argc, char** argv) {
     if (argc > 3) { resident = std::atoi(argv[3]); }
     if (argc > 4) { flat = std::strcmp(argv[4], "flat") == 0; }
     if (argc > 5) { viewport = std::atoi(argv[5]); }
-    auto content = cataclysmx::LoadContentFile(CATACLYSMX_TERRAIN_FILE);
+    auto content = cataclysmx::LoadContentPack(CATACLYSMX_TERRAIN_FILE);
     Require(content.has_value());
     Frontend frontend;
     frontend.viewport = viewport;
