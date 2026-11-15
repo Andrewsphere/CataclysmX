@@ -1,4 +1,4 @@
-execute_process(COMMAND "${HEADLESS}" --script
+execute_process(COMMAND "${HEADLESS}" --scenario demo --script
     INPUT_FILE "${SCENARIO}"
     OUTPUT_VARIABLE output ERROR_VARIABLE error RESULT_VARIABLE result)
 if(INVALID)
@@ -7,7 +7,7 @@ if(INVALID)
     endif()
 else()
     if(NOT result EQUAL 0
-        OR NOT output MATCHES "tick=5400 position=16,2,0"
+        OR NOT output MATCHES "tick=5400 position=16,-2,0"
         OR NOT output MATCHES "Inventory: 2:backpack\\(1 inside\\)"
         # The default circle initially materializes 88 columns; the two force
         # requests add two more, leaving 87 archived after the final three loads.

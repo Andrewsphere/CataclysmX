@@ -5,7 +5,7 @@ set(directory "${CMAKE_CURRENT_BINARY_DIR}/save-script-${suffix}")
 file(MAKE_DIRECTORY "${directory}")
 file(WRITE "${directory}/create.txt"
     "autosave 2\nsave world.sqlite   # trailing whitespace is not part of the path\npickup\nwait\nwait\ninspect\n")
-execute_process(COMMAND "${HEADLESS}" --script
+execute_process(COMMAND "${HEADLESS}" --scenario demo --script
     WORKING_DIRECTORY "${directory}" INPUT_FILE "${directory}/create.txt"
     RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE errors)
 if(NOT result EQUAL 0 OR NOT output MATCHES "inspect tick=300.*invariants=ok")
@@ -13,7 +13,7 @@ if(NOT result EQUAL 0 OR NOT output MATCHES "inspect tick=300.*invariants=ok")
 endif()
 file(WRITE "${directory}/load.txt"
     "load world.sqlite   # load the autosave at turn two\ninspect\nwait\nsave\nload world.sqlite\ninspect\n")
-execute_process(COMMAND "${HEADLESS}" --script
+execute_process(COMMAND "${HEADLESS}" --scenario demo --script
     WORKING_DIRECTORY "${directory}" INPUT_FILE "${directory}/load.txt"
     RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE errors)
 if(NOT result EQUAL 0 OR NOT output MATCHES "inspect tick=200.*invariants=ok"

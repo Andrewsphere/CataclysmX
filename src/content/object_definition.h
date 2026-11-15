@@ -38,6 +38,7 @@ struct ObjectDefinition {
     bool blocksMovement = false;
     bool blocksSight = false;
     bool movable = false;
+    std::uint32_t moveCost = ticks_per_turn; // Base ticks per cardinal dragged step.
     LightEmission light{}; // Initial emission, gated by the object's enabled state.
     bool operator==(const ObjectDefinition&) const = default;
 };

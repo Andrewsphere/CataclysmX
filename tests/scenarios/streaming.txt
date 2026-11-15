@@ -1,8 +1,9 @@
 # Pick up a nested inventory, drop it in the next chunk, unload, and return.
 bubble 0 0
 pickup
-move s
-move s
+# Cross the north chunk boundary first so the demo zombie is outside the bubble.
+move n
+move n
 move e
 move e
 move e

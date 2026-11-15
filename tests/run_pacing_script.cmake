@@ -1,4 +1,4 @@
-execute_process(COMMAND "${HEADLESS}" --script
+execute_process(COMMAND "${HEADLESS}" --scenario demo --script
     INPUT_FILE "${SCENARIO}"
     OUTPUT_VARIABLE output ERROR_VARIABLE error RESULT_VARIABLE result)
 string(REGEX MATCHALL "tick=200 skipped=0 needs-input=1" idleUpdates "${output}")

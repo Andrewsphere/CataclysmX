@@ -29,7 +29,7 @@ This milestone originally used generation version **4**. New worlds now use
 generation **6**; see [street-led towns](urban_generation_v6_design.md). The
 save format is not bumped for this slice. This milestone introduced network
 protocol `0x43584e0e`; the later [specialist identity increment](urban_content_design.md)
-uses `0x43584e0f`.
+uses `0x43584e0f`; [grab mode](grabbing.md) advances this to `0x43584e10`.
 Placement keys are transient generation identities, not persistent entity IDs.
 Reproducibility depends on the same seed, generation version and content; runtime
 entity IDs depend on materialization history.
@@ -44,8 +44,8 @@ per-furniture tick behavior. Lamps with authored light are actual light sources;
 runtime enabled state gates their emission. There is no furniture dismantling in
 this slice.
 
-`World::MoveObject` is administrative relocation; `QueryObjectMove` and
-`TryMoveObject` implement gameplay push/pull. Push and pull preflight both actor
+`World::MoveObject` is administrative relocation; `QueryObjectStep` and
+`TryObjectStep` implement eight-direction grabbed movement. They preflight both actor
 and object positions and commit atomically; direct World calls do not schedule the
 actor. Server charges successful actions once through normal scheduling.
 Generated placements and moves require supported passable terrain; legacy

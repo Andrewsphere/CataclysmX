@@ -1,6 +1,7 @@
 #include "core/server.h"
 #include "core/first_house_scenario.h"
 #include "worldgen/worldgen.h"
+#include "actors/movement.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <EASTL/array.h>
@@ -196,7 +197,7 @@ ContentCatalog RuntimeContent() {
     // avoids copying/merging immutable catalogs or accidentally loading a manifest
     // as a definition document.
     const ContentSource source{"house-server.json5", R"({format_version:1,objects:[
-      {id:'cabinet',name:'Test cabinet',behavior:'none',capacity_volume_ml:1000,blocks_movement:true,movable:true}
+      {id:'cabinet',name:'Test cabinet',behavior:'none',capacity_volume_ml:1000,blocks_movement:true,movable:true,move_cost:240}
     ],definitions:[
       {type:'terrain',id:'floor',name:'Floor',movement:{passable:true},blocks_sight:false,appearance:{symbol:'.',foreground:'white'}},
       {type:'terrain',id:'wall',name:'Wall',movement:{passable:false},blocks_sight:true,appearance:{symbol:'#',foreground:'white'}},
@@ -259,7 +260,7 @@ CommandResult FreeRefusal(Server& server, Command command) {
     return result;
 }
 
-TEST_CASE("Server push and pull charge once and reconcile the post-move chunk bubble", "[house][server][movement]") {
+TEST_CASE("Grabbed push and pull charge once and reconcile the post-move chunk bubble", "[house][server][movement][grab]") {
     RuntimeRig r;
     auto& world = r.server.GetWorld();
     WalkTo(r.server, {14, 0}, {{0, -2}, {19, 1}});
@@ -268,19 +269,17 @@ TEST_CASE("Server push and pull charge once and reconcile the post-move chunk bu
     const auto item = Take(world.CreateItem(r.content.FindItem("material"), ItemLocation::Stored(cabinet)));
     const auto itemId = world.GetItem(item)->id;
     const auto objectId = world.GetObject(cabinet)->id;
-    const auto stale = Choice(r.server, {15, 0}, InteractionKind::PushObject).request;
+    const InteractionRequest stale{{15, 0}, objectId, {}, InteractionKind::PushObject};
+    const auto grabbed = r.server.Send({CommandKind::grab, 1, 0});
+    REQUIRE(grabbed.outcome == Outcome::grabbed);
+    CHECK_FALSE(grabbed.advanced);
+    CHECK(CommandResultMessage(grabbed) == "You take hold of the Test cabinet.");
+    CHECK(r.server.View(0).grabbedObject == objectId);
     const auto relocate = [&](InteractionKind kind, TileCoord actorPosition, TileCoord objectPosition) {
-        const auto choice = Choice(r.server, world.GetObject(cabinet)->position, kind);
-        CHECK(choice.target == "Test cabinet");
-        CHECK(choice.label == (kind == InteractionKind::PushObject ? "Push" : "Pull"));
-        REQUIRE(choice.reason == ObjectUseReason::None);
-        CHECK(choice.request.object == objectId);
-        CHECK(choice.request.terrain.value == 0);
-        CHECK(choice.request.action == ObjectAction::Start);
         const auto tick = r.server.GetTick();
         const auto turns = world.GetActor(r.server.GetPlayer())->turns;
-        const Tick cost = ActionTicks(ticks_per_turn, world.GetActor(r.server.GetPlayer())->speed);
-        const auto result = r.server.Send(Action(choice.request));
+        const Tick cost = ActionTicks(240, world.GetActor(r.server.GetPlayer())->speed);
+        const auto result = r.server.Send({CommandKind::move, kind == InteractionKind::PushObject ? 1 : -1, 0});
         REQUIRE(result.outcome == Outcome::object_moved);
         CHECK(result.advanced);
         CHECK(result.cost == cost);
@@ -315,21 +314,92 @@ TEST_CASE("Server push and pull charge once and reconcile the post-move chunk bu
     REQUIRE(world.DestroyObject(cabinet));
     const auto replacement = r.Cabinet({15, 0});
     CHECK(world.GetObject(replacement)->id != objectId);
+    CHECK(FreeRefusal(r.server, {CommandKind::move, 1, 0}).outcome == Outcome::grab_lost);
+    CHECK(r.server.View(0).grabbedObject == 0);
     // Same position now belongs to a different object.
     CHECK(FreeRefusal(r.server, Action(stale)).outcome == Outcome::unavailable);
     CHECK(world.GetObject(replacement)->position == TileCoord{15, 0});
     REQUIRE(world.CheckInvariants());
 }
 
-TEST_CASE("Server rejects diagonal furniture movement without spending time", "[house][server][movement]") {
+TEST_CASE("Grab maintains all eight offsets through all eight movement directions", "[house][server][movement][grab]") {
     RuntimeRig r;
     auto& world = r.server.GetWorld();
-    const auto cabinet = r.Cabinet({1, -1});
-    for (const auto kind : {InteractionKind::PushObject, InteractionKind::PullObject}) {
-        const InteractionRequest request{{1, -1}, world.GetObject(cabinet)->id, {}, kind};
-        FreeRefusal(r.server, Action(request));
+    for (int z = -3; z <= 3; ++z) {
+        for (int x = -3; x <= 3; ++x) { REQUIRE(world.SetTile({x, z}, {r.content.FindTerrain("floor"), 0})); }
+    }
+    for (const auto offset : actorStepDirections) {
+        if (offset.y) { continue; }
+        const auto cabinet = r.Cabinet(offset);
+        REQUIRE(r.server.Send({CommandKind::grab, offset.x, offset.z}).outcome == Outcome::grabbed);
+        for (const auto direction : actorStepDirections) {
+            if (direction.y) { continue; }
+            const auto result = r.server.Send({CommandKind::move, direction.x, direction.z});
+            REQUIRE(result.outcome == Outcome::object_moved);
+            CHECK(result.cost == ActorStepBaseCost(240, direction));
+            CHECK(world.GetActor(r.server.GetPlayer())->position == direction);
+            CHECK(world.GetObject(cabinet)->position == TileCoord{offset.x + direction.x, offset.z + direction.z});
+            REQUIRE(r.server.Send({CommandKind::move, -direction.x, -direction.z}).outcome == Outcome::object_moved);
+            REQUIRE(world.CheckInvariants());
+        }
+        const auto release = r.server.Send({CommandKind::release_grab});
+        CHECK(release.outcome == Outcome::released);
+        CHECK_FALSE(release.advanced);
+        CHECK(CommandResultMessage(release) == "You let go of the Test cabinet.");
+        REQUIRE(world.DestroyObject(cabinet));
+    }
+    REQUIRE(world.CheckInvariants());
+}
+
+TEST_CASE("Blocked grabs leave both positions and time unchanged", "[house][server][movement][grab]") {
+    RuntimeRig r;
+    auto& world = r.server.GetWorld();
+    const auto cabinet = r.Cabinet({1, 0});
+    REQUIRE(r.server.Send({CommandKind::grab, 1, 0}).outcome == Outcome::grabbed);
+    SECTION("Object destination wall") { REQUIRE(world.SetTile({1, -1}, {r.content.FindTerrain("wall"), 0})); }
+    SECTION("Player destination wall") { REQUIRE(world.SetTile({0, -1}, {r.content.FindTerrain("wall"), 0})); }
+    SECTION("Object destination actor") { Take(world.CreateActor({1, -1})); }
+    SECTION("Object destination furniture") { r.Cabinet({1, -1}); }
+    SECTION("Unsupported destination") { REQUIRE(world.SetTile({1, -1}, {r.content.FindTerrain("air"), 0})); }
+    SECTION("Closed door is not opened by dragging") { REQUIRE(world.SetTile({1, -1}, {r.content.FindTerrain("closed_door"), 0})); }
+    const auto result = FreeRefusal(r.server, {CommandKind::move, 0, -1});
+    CHECK(result.outcome == Outcome::grab_blocked);
+    CHECK(result.objectName == "Test cabinet");
+    CHECK(world.GetActor(r.server.GetPlayer())->position == TileCoord{0, 0});
+    CHECK(world.GetObject(cabinet)->position == TileCoord{1, 0});
+    CHECK(r.server.View(0).grabbedObject == world.GetObject(cabinet)->id);
+    REQUIRE(world.CheckInvariants());
+}
+
+TEST_CASE("Grab is explicit refuses fixed tiles and releases before ordinary movement", "[house][server][grab]") {
+    RuntimeRig r;
+    auto& world = r.server.GetWorld();
+    CHECK(FreeRefusal(r.server, {CommandKind::grab, 1, 0}).outcome == Outcome::nothing_to_grab);
+    const auto fixed = Take(world.CreateObject({1, 0}));
+    CHECK(FreeRefusal(r.server, {CommandKind::grab, 1, 0}).outcome == Outcome::nothing_to_grab);
+    REQUIRE(world.DestroyObject(fixed));
+    const auto cabinet = r.Cabinet({1, 0});
+    Vector<InteractionChoice> choices;
+    QueryInteractions(world, r.server.GetPlayer(), {1, 0}, choices);
+    for (const auto& choice : choices) {
+        CHECK(choice.request.kind != InteractionKind::PushObject);
+        CHECK(choice.request.kind != InteractionKind::PullObject);
+    }
+    REQUIRE(r.server.Send({CommandKind::grab, 1, 0}).outcome == Outcome::grabbed);
+    SECTION("Release leaves object behind") {
+        CHECK(FreeRefusal(r.server, {CommandKind::release_grab}).outcome == Outcome::released);
+        REQUIRE(r.server.Send({CommandKind::move, 0, -1}).outcome == Outcome::moved);
+        CHECK(world.GetObject(cabinet)->position == TileCoord{1, 0});
+    }
+    SECTION("External relocation loses grip rather than teleporting furniture") {
+        REQUIRE(world.MoveObject(cabinet, {2, 0}));
+        CHECK(FreeRefusal(r.server, {CommandKind::move, 0, -1}).outcome == Outcome::grab_lost);
+        CHECK(world.GetObject(cabinet)->position == TileCoord{2, 0});
+    }
+    SECTION("Vertical movement requires releasing first") {
+        Command up{CommandKind::move}; up.dy = 1;
+        CHECK(FreeRefusal(r.server, up).outcome == Outcome::grab_blocked);
         CHECK(world.GetActor(r.server.GetPlayer())->position == TileCoord{0, 0});
-        CHECK(world.GetObject(cabinet)->position == TileCoord{1, -1});
     }
     REQUIRE(world.CheckInvariants());
 }
@@ -340,8 +410,9 @@ TEST_CASE("Furniture in an open doorway refuses Close until the doorway is clear
     const TileCoord doorway{2, 0};
     REQUIRE(world.SetTile(doorway, {r.content.FindTerrain("open_door"), 0}));
     const auto cabinet = r.Cabinet({1, 0});
-    const auto push = Choice(r.server, {1, 0}, InteractionKind::PushObject);
-    REQUIRE(r.server.Send(Action(push.request)).outcome == Outcome::object_moved);
+    REQUIRE(r.server.Send({CommandKind::grab, 1, 0}).outcome == Outcome::grabbed);
+    REQUIRE(r.server.Send({CommandKind::move, 1, 0}).outcome == Outcome::object_moved);
+    REQUIRE(r.server.Send({CommandKind::release_grab}).outcome == Outcome::released);
     REQUIRE(world.GetObject(cabinet)->position == doorway);
     WalkTo(r.server, {2, -1}, {{0, -2}, {4, 1}});
     CHECK_FALSE(world.ActorAt(doorway).value);
@@ -360,8 +431,9 @@ TEST_CASE("Furniture in an open doorway refuses Close until the doorway is clear
     // Push the cabinet through the door, then leave the doorway with an ordinary
     // move so neither furniture nor the player remains as a closing obstruction.
     WalkTo(r.server, {1, 0}, {{0, -2}, {4, 1}});
-    const auto clear = Choice(r.server, doorway, InteractionKind::PushObject);
-    REQUIRE(r.server.Send(Action(clear.request)).outcome == Outcome::object_moved);
+    REQUIRE(r.server.Send({CommandKind::grab, 1, 0}).outcome == Outcome::grabbed);
+    REQUIRE(r.server.Send({CommandKind::move, 1, 0}).outcome == Outcome::object_moved);
+    REQUIRE(r.server.Send({CommandKind::release_grab}).outcome == Outcome::released);
     REQUIRE(world.GetActor(r.server.GetPlayer())->position == doorway);
     REQUIRE(world.GetObject(cabinet)->position == TileCoord{3, 0});
     WalkTo(r.server, {2, -1}, {{0, -2}, {4, 1}});

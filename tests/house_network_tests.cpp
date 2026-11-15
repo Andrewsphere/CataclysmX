@@ -56,6 +56,49 @@ TEST_CASE("Object moved receipts require a time charged successful action", "[ho
     CHECK_FALSE(malformed.Result(decoded));
 }
 
+TEST_CASE("Grab commands receipts and view state survive the network codec", "[house][network][codec][grab]") {
+    for (const Command command : {Command{CommandKind::grab, -1, 1}, Command{CommandKind::release_grab}}) {
+        wire::Writer writer;
+        REQUIRE(writer.CommandValue(command));
+        Command decoded;
+        wire::Reader reader{{writer.bytes.data(), writer.bytes.size()}};
+        REQUIRE(reader.CommandValue(decoded));
+        CHECK(reader.Done());
+        CHECK(decoded.kind == command.kind);
+        CHECK(decoded.dx == command.dx); CHECK(decoded.dz == command.dz);
+    }
+    CHECK_FALSE(wire::Writer{}.CommandValue({CommandKind::grab, 0, 0}));
+    CHECK_FALSE(wire::Writer{}.CommandValue({CommandKind::grab, 2, 0}));
+    for (const auto outcome : {Outcome::grabbed, Outcome::released, Outcome::grab_blocked}) {
+        PlayerCommandResult receipt{1, 2, 3, {outcome, false, 100}};
+        receipt.result.objectName = "table";
+        wire::Writer writer;
+        REQUIRE(writer.Result(receipt));
+        PlayerCommandResult decoded;
+        wire::Reader reader{{writer.bytes.data(), writer.bytes.size()}};
+        REQUIRE(reader.Result(decoded));
+        CHECK(reader.Done());
+        CHECK(decoded.result.outcome == outcome);
+        CHECK(CommandResultMessage(decoded.result) == CommandResultMessage(receipt.result));
+        for (std::size_t size = 0; size < writer.bytes.size(); ++size) {
+            wire::Reader truncated{{writer.bytes.data(), size}};
+            CHECK_FALSE(truncated.Result(decoded));
+        }
+        receipt.result.cost = 100;
+        CHECK_FALSE(wire::Writer{}.Result(receipt));
+    }
+    WorldView view;
+    view.width = view.height = 1; view.playerId = 1; view.grabbedObject = 77;
+    view.cells.resize(1);
+    wire::Writer writer;
+    REQUIRE(writer.View(view));
+    WorldView decoded;
+    wire::Reader reader{{writer.bytes.data(), writer.bytes.size()}};
+    REQUIRE(reader.View(decoded));
+    CHECK(reader.Done());
+    CHECK(decoded.grabbedObject == 77);
+}
+
 ContentCatalog FingerprintContent(bool reverse = false) {
     const ContentSource definitions{"definitions", R"({format_version:1,definitions:[
       {type:'terrain',id:'floor',name:'Floor',movement:{passable:true},blocks_sight:false,appearance:{symbol:'.',foreground:'white'}},
@@ -102,6 +145,7 @@ TEST_CASE("House fingerprints include furniture and complete spawn recipes", "[h
     CheckField(content, object.blocksMovement, true);
     CheckField(content, object.blocksSight, true);
     CheckField(content, object.movable, true);
+    CheckField(content, object.moveCost, std::uint32_t{250});
     CHECK(object.light == LightEmission{80, 4});
     CHECK(content.GetObject(content.FindObject("other_object")).light == LightEmission{});
     CheckField(content, object.light.intensity, std::uint8_t{81});

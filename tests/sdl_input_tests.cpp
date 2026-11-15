@@ -48,6 +48,9 @@ TEST_CASE("SDL input handles named keys and ignores unsupported events", "[sdl][
 TEST_CASE("SDL Tab resolves by input context", "[sdl][input]") {
     const auto chord = sdl::TranslateKey(Key(SDLK_TAB)); REQUIRE(chord);
     const auto keys = DefaultKeymap();
+    const auto grab = sdl::TranslateKey(Key(SDLK_G, SDL_SCANCODE_G, SDL_KMOD_SHIFT)); REQUIRE(grab);
+    CHECK(ResolveAction(keys, InputContext::Gameplay, *grab) == InputAction::Grab);
+    CHECK(ResolveAction(keys, InputContext::Gameplay, {"g"}) == InputAction::PickUp);
     CHECK(ResolveAction(keys, InputContext::Gameplay, *chord) == InputAction::Attack);
     CHECK(ResolveAction(keys, InputContext::Menu, *chord) == InputAction::Next);
     CHECK(ResolveAction(keys, InputContext::Debug, *chord) == InputAction::Next);

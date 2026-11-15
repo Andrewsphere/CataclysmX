@@ -33,6 +33,7 @@
 - [Combat presentation](combat_presentation.md): frontend status and feedback text.
 - [Objects API](objects_api.md): furniture, storage, movement, lighting, crafting machines and saved state.
 - [Object gameplay](object_gameplay.md): interaction, collection and push/pull scheduling.
+- [Grabbing](grabbing.md): persistent eight-direction furniture movement, timing and feedback.
 - [Object callbacks](object_callbacks.md): explicit identity, atomic transactions,
   and deferred destruction.
 - [Entity scheduling](entity_scheduling.md): absolute deadlines, suspended time,

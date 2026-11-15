@@ -1,6 +1,12 @@
 {
   format_version: 1,
   messages: {
+    "action.grab": "grab / release",
+    "settings.ui.action_help.grab": "Grab adjacent movable furniture, then move to push or pull it. Press again to release.",
+    "grab.direction": "Grab where? Choose one of eight directions; Escape cancels.",
+    "grab.started": "You take hold of the {object}.",
+    "grab.released": "You let go of the {object}.",
+    "grab.blocked": "You cannot move the {object} that way; something is in the way.",
     "action.examine": "examine",
     "action.northwest": "northwest",
     "action.northeast": "northeast",

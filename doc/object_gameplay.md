@@ -47,9 +47,10 @@ Object use checks the player's tile and immediate neighbors on the same Y level.
 Explicit-capacity storage also checks unobstructed reach via
 `World::CanAccessObjectStorage`.
 
-Movable furniture offers push and pull interactions. Each uses orthogonal same-layer
-adjacency and atomically relocates both actor and object after checking destinations.
-Refusals spend no time; Server schedules a successful action once. Direct
-`QueryObjectMove` and `TryMoveObject` calls do not schedule the actor. Furniture
+Movable furniture uses **G**, then an adjacent direction, to enter grab mode.
+Normal movement translates the player and object together in all eight directions;
+**G** releases it. `QueryObjectStep` and `TryObjectStep` preflight and atomically
+relocate the pair. Refusals spend no time; Server schedules successful movement
+once using the object's `move_cost`. See [grabbing](grabbing.md). Furniture
 without behavior is passive, and dismantling is not available. See the
 [objects API](objects_api.md) for administrative movement and storage details.

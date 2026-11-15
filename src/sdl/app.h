@@ -10,7 +10,7 @@ struct AppOptions {
     String fontPath;
     float fontSize = 14.0f;
     float uiScale = 1.0f;
-    NewGameScenario scenario = NewGameScenario::Demo;
+    NewGameScenario scenario = NewGameScenario::Town;
     eastl::optional<std::uint32_t> seedOverride;
 };
 

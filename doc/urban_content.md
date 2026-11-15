@@ -170,7 +170,7 @@ actors. Archives and disk saves use the stable definition ID string instead of
 the catalog index. The optional `monster_type` field in save format v10 may be
 absent in older saves, leaving those actors untyped. Restoration preserves saved
 combat state rather than reapplying monster defaults or healing damage. LAN
-protocol 15 carries visible type identity; older protocol peers are incompatible.
+protocol 16 carries visible type identity and grab state; older protocol peers are incompatible.
 See [actors](actors_api.md), [save format](save_format.md), and
 [networking](networking.md) for the contracts.
 

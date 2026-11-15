@@ -186,6 +186,9 @@ bool ValidCraftingJobs(const Vector<CraftingEntry>& jobs) {
 bool ValidCraftingResult(const CommandResult& result) {
     if (result.craftingOutcome > CraftingOutcome::CapacityExceeded) return false;
     switch (result.outcome) {
+    case Outcome::grabbed: case Outcome::released: case Outcome::nothing_to_grab:
+    case Outcome::grab_lost: case Outcome::grab_blocked:
+        return !result.advanced && result.cost == 0;
     case Outcome::object_moved:
         return result.advanced && result.cost != 0;
     case Outcome::craft_started:
@@ -382,7 +385,7 @@ bool Writer::CommandValue(const Command& v) {
 }
 bool Writer::Result(const PlayerCommandResult& v) {
     if (!v.player || !v.sequence || !v.opportunity || v.result.outcome < Outcome::waited ||
-        v.result.outcome > Outcome::object_moved || !ValidCraftingResult(v.result) ||
+        v.result.outcome > Outcome::grab_blocked || !ValidCraftingResult(v.result) ||
         (v.result.storageError && (*v.result.storageError < SaveError::Io || *v.result.storageError > SaveError::NotOpen)) ||
         !ValidItemUseReason(v.result.itemOutcome, v.result.itemReason)) return false;
     U64(v.player); U64(v.sequence); U64(v.opportunity);
@@ -393,6 +396,7 @@ bool Writer::Result(const PlayerCommandResult& v) {
     U8(static_cast<std::uint8_t>(v.result.itemOutcome));
     if (!WriteReason(*this, v.result.itemReason)) return false;
     U8(static_cast<std::uint8_t>(v.result.craftingOutcome));
+    if (!Text(v.result.objectName, 255)) return false;
     return bytes.size() <= maxPacket;
 }
 bool Writer::View(const WorldView& v) {
@@ -446,6 +450,7 @@ bool Writer::View(const WorldView& v) {
         U32(job.totalWork); U32(job.completedWork); U64(job.fundedTicksRemaining);
         U8(job.pauseRequested ? 1 : 0);
     }
+    U64(v.grabbedObject);
     return bytes.size() <= maxPacket;
 }
 bool Reader::U8(std::uint8_t& v) { if (offset >= bytes.size()) return false; v = bytes[offset++]; return true; }
@@ -462,7 +467,7 @@ bool Reader::Text(String& v, std::size_t limit) {
 }
 bool Reader::CommandValue(Command& v) {
     std::uint8_t kind, style, interactionKind, objectAction;
-    if (bytes.size() > maxPacket || !U8(kind) || kind > static_cast<std::uint8_t>(CommandKind::cancel_craft) ||
+    if (bytes.size() > maxPacket || !U8(kind) || kind > static_cast<std::uint8_t>(CommandKind::release_grab) ||
         !I32(v.dx) || !I32(v.dz) || !U64(v.item) || !U32(v.waitCost) ||
         !U16(v.capability.value) || v.capability.value > maxItemCapabilities ||
         !Text(v.itemAction, maxItemActionName) || !U64(v.otherItem) || !I32(v.dy) ||
@@ -482,7 +487,7 @@ bool Reader::Result(PlayerCommandResult& v) {
     std::uint8_t outcome, advanced;
     if (bytes.size() > maxPacket || !U64(v.player) || !v.player || !U64(v.sequence) || !v.sequence ||
         !U64(v.opportunity) || !v.opportunity || !U8(outcome) ||
-        outcome > static_cast<std::uint8_t>(Outcome::object_moved) || !U8(advanced) || advanced > 1 ||
+        outcome > static_cast<std::uint8_t>(Outcome::grab_blocked) || !U8(advanced) || advanced > 1 ||
         !U64(v.result.tick) || !U64(v.result.cost)) return false;
     std::uint8_t hasError;
     if (!U8(hasError) || hasError > 1) return false;
@@ -495,7 +500,8 @@ bool Reader::Result(PlayerCommandResult& v) {
     std::uint8_t itemOutcome, craftingOutcome;
     if (!U8(itemOutcome) || itemOutcome > static_cast<std::uint8_t>(ItemUseOutcome::Refused) ||
         !ReadReason(*this, v.result.itemReason) ||
-        !U8(craftingOutcome) || craftingOutcome > static_cast<std::uint8_t>(CraftingOutcome::CapacityExceeded)) return false;
+        !U8(craftingOutcome) || craftingOutcome > static_cast<std::uint8_t>(CraftingOutcome::CapacityExceeded)
+        || !Text(v.result.objectName, 255)) return false;
     v.result.itemOutcome = static_cast<ItemUseOutcome>(itemOutcome);
     v.result.craftingOutcome = static_cast<CraftingOutcome>(craftingOutcome);
     if (!ValidItemUseReason(v.result.itemOutcome, v.result.itemReason)) return false;
@@ -573,7 +579,7 @@ bool Reader::View(WorldView& v) {
         job.pauseRequested = pauseRequested != 0;
         v.craftingJobs.push_back(job);
     }
-    return ValidCraftingJobs(v.craftingJobs);
+    return U64(v.grabbedObject) && ValidCraftingJobs(v.craftingJobs);
 }
 
 }

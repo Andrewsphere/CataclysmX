@@ -23,6 +23,8 @@ fields apply to both `none` and `crafting_machine` behaviors:
 `capacity_volume_ml` is 1..UINT32_MAX when present; absence does not expose player
 storage. `kind` is `generic` (default), `chair`, `table`, or `lamp`. The three flags
 are booleans, default false. No machine configuration is allowed for `none`.
+Optional `move_cost` is 1..1,000,000 base ticks (default 100), used by grabbed
+movement before diagonal and actor-speed scaling; see [grabbing](grabbing.md).
 Optional `light` defaults to zero emission and requires integer `intensity` and
 `range`, following terrain's emission rules: both zero or both positive, intensity
 at most 255, range at most `maxLightRange`. `CreateObject` copies this initial
@@ -97,19 +99,37 @@ and square selections receive no use bias. Each family member resolves its own
 default: omitted `use` agrees with explicit `mixed` but conflicts with any other
 use. Generation versions 1..5 ignore this selection metadata.
 
-Palette values may be terrain ID strings or `{terrain:'floor', object:'cabinet',
-facing:'east'}` objects. `terrain` is required; `object` and its `facing` are
-optional. A glyph paints its terrain and places one object on the same tile on
-the surface, any explicit layer, or the selected basement. Facing defaults north
-and rotates with the building. All references, including unused glyphs, resolve
-across sources. Furniture loot can target these objects by coordinate.
+**Prefer palettes for routine population.** The rows should show furniture,
+loot and monsters alongside walls and doors. Coordinate arrays remain an escape
+hatch for exceptional placements. A palette value is a terrain ID string or:
 
-This is authoring shorthand: the loader expands glyph objects into ordinary
-`PatternFurniture` records, so runtime placement, saving, and collision rules
-remain shared. Explicit furniture comes first, then surface glyphs in row-major
-order, then explicit layers in authored order (each row-major). Each basement
-expands its own glyphs after its explicit furniture. Overlapping glyph/explicit
-objects are errors, rather than overrides; blocking the entrance is also rejected.
+```json5
+C:{terrain:'floor', object:'cabinet', facing:'east',
+   loot:[{pool:'supplies',rolls:2,destination:'furniture'}]},
+Z:{terrain:'floor', monsters:[{group:'cellar_monsters',chance:5000}]},
+i:{terrain:'floor', loot:[{pool:'supplies',chance:8000}]}
+```
+
+`terrain` is required. `object`, its `facing`, `loot`, and `monsters` are optional.
+Facing defaults north and requires an object. Loot is an array so a cupboard can
+combine several pools; monsters is an array with at most one entry because only
+one monster may occupy a tile. Entries accept the same pool/group, chance, rolls
+and destination fields as coordinate markers, but reject coordinates. Ground loot
+and monsters need no object. All references, including unused glyphs, resolve
+across sources. Glyph recipes apply on the surface, explicit layers and selected
+basement, using the shared palette. Reuse glyphs for identical recipes and distinct
+glyphs for different facing, terrain or population.
+
+The loader expands glyphs into ordinary `PatternFurniture`, `PatternLoot` and
+`PatternMonster` records. Runtime placement, saving, collision, storage capacity
+and spawn limits remain shared. For each population kind, explicit markers come
+first, then surface glyphs in row-major order, then layers in authored order (each
+row-major). Multiple loot entries on a glyph retain their array order. Each
+basement expands its own glyphs after its explicit population. Overlapping
+glyph/explicit furniture or monsters are errors rather than overrides; blocking
+the entrance is also rejected. Changing authoring from coordinate order to
+row-major glyph order can change seeded chance/loot results within a content
+revision, even when all marker positions and recipes are equivalent.
 
 Optional `site` is `building` (default), `landmark`, `park`, or `square`. Generation
 version 5 matches it to the lot class; large landmark plots and outdoor civic
@@ -118,12 +138,11 @@ sites have dedicated slots. Park/square patterns do not receive implicit roofs.
 ```json5
 {
  type:'building_pattern', id:'furnished_house',
- rows:['....','...>','....'],
- palette:{'.':'floor','>':'stairs'}, entrance:{x:0,z:1},
+ rows:['..Z.','...>','.C..'],
+ palette:{'.':'floor','>':'stairs',
+   C:{terrain:'floor',object:'cabinet',facing:'east',loot:[{pool:'supplies',destination:'furniture'}]},
+   Z:{terrain:'floor',monsters:[{group:'cellar_monsters'}]}}, entrance:{x:0,z:1},
  layers:[{y:1,rows:['....','....','....']}],
- furniture:[{x:1,z:2,y:0,object:'cabinet',facing:'east'}],
- loot:[{x:1,z:2,y:0,pool:'supplies',chance:10000,rolls:1,destination:'furniture'}],
- monsters:[{x:2,z:0,y:0,group:'cellar_monsters',chance:10000}],
  basements:[
    {id:'storage_cellar',weight:1,rows:['....','...>','....'],
     furniture:[],loot:[],monsters:[]},
@@ -141,8 +160,8 @@ and `rows`, accepts optional population arrays and positive `weight` (default 1)
 and owns exactly Y=-1. Basement weight sums must fit UINT32_MAX. Variants retain
 authored order; their IDs participate in generation seeding, not global IDs.
 
-Population fields are optional arrays, including in variants. Every marker
-requires explicit integer `x`, `z`, `y`; X/Z must be within the unrotated surface
+Coordinate population fields are optional arrays, including in variants. Every
+coordinate marker requires explicit integer `x`, `z`, `y`; X/Z must be within the unrotated surface
 rectangle. Coordinate order is X,Z,Y throughout parsing and catalog storage.
 The Y must identify an authored surface/layer/selected basement. Variant markers
 must specify Y=-1. Implicit roof fallback does not provide an authored spawn layer.

@@ -9,6 +9,7 @@
 
 TEST_CASE("SDL gameplay dispatch preserves axial directions and action kinds", "[sdl][input]") {
     using namespace cataclysmx;
+    CHECK(sdl::AppOptions{}.scenario == NewGameScenario::Town);
     for (auto action : {InputAction::West, InputAction::East, InputAction::North,
         InputAction::South, InputAction::MoveDown, InputAction::MoveUp}) {
         const auto move = sdl::GameplayCommand(action, false);

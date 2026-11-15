@@ -314,6 +314,67 @@ TEST_CASE("Building palette characters expand terrain and oriented furniture on 
     CHECK(pattern.basements[0].population.furniture[0].type == loaded->FindObject("cabinet"));
 }
 
+TEST_CASE("Palette populations expand on every layer and retain per-tile loot order", "[content][house-content][palette]") {
+    const auto definitions = WithRecipes(R"({type:'building_pattern',id:'mapped',
+        rows:['.CZ'],entrance:{x:0,z:0},
+        palette:{'.':'floor',C:{terrain:'floor',object:'cabinet',facing:'east',
+          loot:[{pool:'supplies',rolls:2,destination:'furniture'},{pool:'supplies',chance:5000}]},
+          Z:{terrain:'floor',monsters:[{group:'zombies',chance:7500}]}},
+        layers:[{y:1,rows:['ZC.']}],basements:[{id:'cellar',rows:['.ZC']}]})");
+    const auto loaded = Load(View(definitions));
+    REQUIRE(loaded);
+    const auto& pattern = loaded->GetBuildingPattern({1});
+    REQUIRE(pattern.population.furniture.size() == 2);
+    REQUIRE(pattern.population.loot.size() == 4);
+    REQUIRE(pattern.population.monsters.size() == 2);
+    CHECK(pattern.population.loot[0].position == TileCoord{1, 0, 0});
+    CHECK(pattern.population.loot[0].rolls == 2);
+    CHECK(pattern.population.loot[0].destination == LootDestination::Furniture);
+    CHECK(pattern.population.loot[1].destination == LootDestination::Ground);
+    CHECK(pattern.population.loot[1].chance == 5000);
+    CHECK(pattern.population.loot[2].position == TileCoord{1, 0, 1});
+    CHECK(pattern.population.monsters[0].position == TileCoord{2, 0, 0});
+    CHECK(pattern.population.monsters[1].position == TileCoord{0, 0, 1});
+    CHECK(pattern.population.monsters[1].chance == 7500);
+    const auto& cellar = pattern.basements[0].population;
+    REQUIRE(cellar.loot.size() == 2);
+    REQUIRE(cellar.monsters.size() == 1);
+    CHECK(cellar.loot[0].position == TileCoord{2, 0, -1});
+    CHECK(cellar.monsters[0].position == TileCoord{1, 0, -1});
+    CHECK(cellar.monsters[0].group == loaded->FindMonsterGroup("zombies"));
+}
+
+TEST_CASE("Palette loot and monsters share strict schema collision and capacity checks", "[content][house-content][palette]") {
+    const eastl::string_view pattern = R"({type:'building_pattern',id:'mapped',rows:['.C'],entrance:{x:0,z:0},
+      palette:{'.':'floor',C:{terrain:'floor',object:'cabinet',loot:[{pool:'supplies',destination:'furniture'}]}}})";
+    for (const auto entry : {
+        "{terrain:'floor',loot:[{pool:'missing'}]}",
+        "{terrain:'floor',monsters:[{group:'missing'}]}",
+        "{terrain:'floor',loot:[{pool:'supplies',x:0}]}",
+        "{terrain:'floor',monsters:[{group:'zombies',y:0}]}",
+        "{terrain:'floor',loot:[{pool:'supplies',chance:10001}]}",
+        "{terrain:'floor',monsters:[{group:'zombies',chance:-1}]}",
+        "{terrain:'floor',loot:[{pool:'supplies',rolls:1025}]}",
+        "{terrain:'floor',loot:[{pool:'supplies',destination:'furniture'}]}",
+        "{terrain:'floor',object:'cabinet',loot:[{pool:'supplies',rolls:6,destination:'furniture'}]}",
+        "{terrain:'floor',object:'cabinet',monsters:[{group:'zombies'}]}",
+        "{terrain:'floor',monsters:[{group:'zombies'},{group:'zombies'}]}",
+        "{terrain:'air',loot:[{pool:'supplies'}]}",
+        "{terrain:'wall',monsters:[{group:'zombies'}]}",
+        "{terrain:'floor',loot:{pool:'supplies'}}",
+        "{terrain:'floor',monsters:[null]}"}) {
+        INFO(entry);
+        const auto changed = Replace(pattern, "{terrain:'floor',object:'cabinet',loot:[{pool:'supplies',destination:'furniture'}]}", entry);
+        Invalid(View(WithRecipes(View(changed))));
+    }
+    // References in unused glyphs are also checked.
+    Invalid(View(WithRecipes(R"({type:'building_pattern',id:'mapped',rows:['.'],entrance:{x:0,z:0},
+      palette:{'.':'floor',Z:{terrain:'floor',monsters:[{group:'missing'}]}}})")));
+    Invalid(View(WithRecipes(R"({type:'building_pattern',id:'mapped',rows:['.Z'],entrance:{x:0,z:0},
+      palette:{'.':'floor',Z:{terrain:'floor',monsters:[{group:'zombies'}]}},
+      monsters:[{x:1,z:0,y:0,group:'zombies'}]})")));
+}
+
 TEST_CASE("Building object palettes reject malformed references unsupported tiles and overlaps", "[content][house-content][palette]") {
     for (const auto entry : {"{}", "{object:'cabinet'}", "{terrain:'floor',object:'missing'}",
         "{terrain:'floor',facing:'north'}", "{terrain:'floor',object:'cabinet',facing:'up'}",

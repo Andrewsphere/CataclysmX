@@ -73,9 +73,9 @@ pack regardless of the original scenario.
   radius (currently 1), subject to walls, corners and layer restrictions.
   Storage volume and item transfer APIs are implemented; a deposit/browser UI
   is a follow-up. For this review, use collection or craft directly from storage.
-- From orthogonal adjacency, select **Push** or **Pull** on movable furniture.
-  Push moves it away and follows; pull steps backward and brings it onto the old
-  player tile. Both destinations must be clear. There is no persistent grab mode.
+- Press **G**, then any adjacent direction, to grab movable furniture. Movement
+  pushes, pulls or drags it sideways, preserving the offset in all eight directions.
+  Both destinations must be clear; **G** releases the object. See [grabbing](grabbing.md).
 - `x` examines; `g` picks up ground loot; `&` opens crafting. Use the existing crafting menu and
   inventory UI; no house-specific UI or art is required.
 

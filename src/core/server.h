@@ -13,7 +13,7 @@ enum class NewGameScenario { Demo, FirstHouse, Town, ZombieShowcase };
 
 enum class CommandKind {
     wait, move, pick_up, drop, interact, use_item, store_item, attack, combat_style, interact_action,
-    craft, recycle, resume_craft, pause_craft, cancel_craft
+    craft, recycle, resume_craft, pause_craft, cancel_craft, grab, release_grab
 };
 struct Command {
     CommandKind kind = CommandKind::wait;
@@ -43,7 +43,7 @@ enum class Outcome {
     attacked, attack_missed, attack_parried, attack_blocked, attack_windup,
     target_defeated, no_target, no_combat_move, combat_style_changed, locked, unlocked,
     craft_started, recycling_started, craft_resumed, craft_paused, craft_cancelled, crafting_refused,
-    object_moved
+    object_moved, grabbed, released, nothing_to_grab, grab_lost, grab_blocked
 };
 const char* OutcomeMessage(Outcome outcome);
 // The demo requires floor, wall, and closed_door; floor must be passable.
@@ -61,8 +61,9 @@ struct CommandResult {
     ItemUseOutcome itemOutcome = ItemUseOutcome::Succeeded;
     ItemUseReason itemReason;
     CraftingOutcome craftingOutcome = CraftingOutcome::ActorUnavailable;
+    String objectName; // Grab feedback; captured before deletion/movement can invalidate the target.
 };
-const char* CommandResultMessage(const CommandResult& result);
+String CommandResultMessage(const CommandResult& result);
 
 enum class PlayerConnectionState { Parked, Joining, Active };
 struct PlayerStatus {
@@ -187,6 +188,7 @@ struct WorldView {
     LightBand playerLight = LightBand::Dark;
     CombatView combat;
     Vector<CraftingEntry> craftingJobs; // Reachable wrappers, persistent-ID order.
+    PersistentId grabbedObject = 0; // Transient session grip, released on disconnect/load.
 };
 
 // Authoritative deterministic endpoint. No transport or clock access.
@@ -263,6 +265,8 @@ private:
         LoadRequest residentRequest{};
         ChunkCoord center{};
         eastl::optional<PlayerInput> pending;
+        ObjectHandle grabbedObject{};
+        TileCoord grabOffset{};
         std::uint64_t opportunity = 1;
         std::uint64_t lastSequence = 0;
         mutable WorldView cachedView;

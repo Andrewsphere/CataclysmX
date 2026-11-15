@@ -160,6 +160,13 @@ queries; no town or building intersects it.
 
 ## Pure population and deterministic streams
 
+Bundled populated patterns author furniture, loot and monsters in their row
+palettes, including upper floors and basements. The loader expands them to the
+same typed records as coordinate placements; see [palette authoring](house_content.md#building-extensions).
+Coordinate arrays remain available for exceptional placements. Palette migration
+preserves layout and spawn recipes but reorders marker streams into row-major
+order, so seeded chance outcomes differ from the preceding content revision.
+
 `GenerateChunkPlacements(content, seed, plan, chunk, output)` clears the three
 output vectors while retaining capacity. Versions 1..3 emit nothing. Versions 4..6
 return furniture, expanded item leaves and monsters, cropped by each transformed

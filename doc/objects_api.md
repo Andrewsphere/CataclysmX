@@ -212,8 +212,10 @@ unparked actors.
 base cost when push or pull is executable. `TryMoveObject` returns typed errors for
 invalid handles and gameplay outcomes for refusals; it atomically moves actor and
 object after preflight. Both use orthogonal same-layer adjacency and neither
-schedules an actor. Server schedules a successful move once. See
-[object gameplay](object_gameplay.md) for player interactions.
+schedules an actor. This legacy cardinal API remains for direct callers.
+Player grab mode uses `QueryObjectStep`/`TryObjectStep` with an explicit horizontal
+direction, preserving any eight-neighbor offset and using object-defined movement
+costs. See [grabbing](grabbing.md) for lifetime, timing and collision contracts.
 
 For example, with a loaded position and a ready, nearby actor carrying inputs:
 

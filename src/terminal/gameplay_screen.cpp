@@ -711,7 +711,7 @@ ftxui::Element GameplayUi::Render(WorldView view, const ContentCatalog& content,
         };
         group("game.ui.windows", {InputAction::QuickActions, InputAction::Inventory, InputAction::Crafting, InputAction::Players,
             InputAction::Settings, InputAction::Help});
-        group("game.ui.actions", {InputAction::Use, InputAction::PickUp, InputAction::Drop, InputAction::Interact, InputAction::Wait,
+        group("game.ui.actions", {InputAction::Use, InputAction::PickUp, InputAction::Drop, InputAction::Interact, InputAction::Grab, InputAction::Wait,
             InputAction::Attack, InputAction::StyleBalanced, InputAction::StyleAggressive, InputAction::StyleDefensive});
         group("game.ui.movement", {InputAction::West, InputAction::North, InputAction::South, InputAction::East, InputAction::MoveDown, InputAction::MoveUp});
         group("game.ui.pacing", {InputAction::RateDown, InputAction::RateUp, InputAction::ToggleRate, InputAction::ToggleIdle});

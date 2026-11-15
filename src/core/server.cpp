@@ -304,6 +304,10 @@ bool ValidCommandShape(const Command& command) {
     }
     if (command.recipe.value != 0) { return false; }
     switch (command.kind) {
+    case CommandKind::grab:
+        return command.dy == 0 && MovementDirection(command.dx, command.dz, 0);
+    case CommandKind::release_grab:
+        return command.dx == 0 && command.dz == 0 && command.dy == 0;
     case CommandKind::interact_action: return ValidInteraction(command.interaction);
     case CommandKind::attack:
     case CommandKind::combat_style:
@@ -370,11 +374,21 @@ const char* OutcomeMessage(Outcome outcome) {
     case Outcome::craft_cancelled: return "You cancel crafting.";
     case Outcome::crafting_refused: return "You cannot perform that crafting action.";
     case Outcome::object_moved: return "You move the furniture.";
+    case Outcome::grabbed: return "You take hold of the furniture.";
+    case Outcome::released: return "You let go of the furniture.";
+    case Outcome::nothing_to_grab: return "There is nothing movable to grab there.";
+    case Outcome::grab_lost: return "You lose your grip; the object is no longer beside you.";
+    case Outcome::grab_blocked: return "The furniture cannot move that way; something is in the way.";
     }
     std::abort();
 }
 
-const char* CommandResultMessage(const CommandResult& result) {
+String CommandResultMessage(const CommandResult& result) {
+    if (!result.objectName.empty()) {
+        if (result.outcome == Outcome::grabbed) { return String("You take hold of the ") + result.objectName + "."; }
+        if (result.outcome == Outcome::released) { return String("You let go of the ") + result.objectName + "."; }
+        if (result.outcome == Outcome::grab_blocked) { return String("You cannot move the ") + result.objectName + " that way; something is in the way."; }
+    }
     if (result.outcome == Outcome::crafting_refused) {
         switch (result.craftingOutcome) {
         case CraftingOutcome::ActorUnavailable: return "You cannot craft here now.";
@@ -619,6 +633,27 @@ CommandResult Server::Execute(ActorHandle handle, PlayerSlot& slot, Command comm
     Outcome outcome = Outcome::invalid_command;
     std::uint32_t baseCost = command.kind == CommandKind::wait ? command.waitCost : ticks_per_turn;
     switch (command.kind) {
+    case CommandKind::grab: {
+        const TileCoord target{position.x + command.dx, position.z + command.dz, position.y};
+        const auto objectHandle = world_.ObjectAt(target);
+        const auto* object = world_.GetObject(objectHandle);
+        const auto* definition = object ? world_.GetContent().TryGetObject(object->type) : nullptr;
+        if (!definition || !definition->movable || !world_.CanPlayerSee(handle, target)
+            || !world_.IsActive(target)) { return failed(Outcome::nothing_to_grab); }
+        slot.grabbedObject = objectHandle;
+        slot.grabOffset = {command.dx, command.dz, 0};
+        auto result = failed(Outcome::grabbed);
+        result.objectName = definition->name;
+        return result;
+    }
+    case CommandKind::release_grab: {
+        auto result = failed(Outcome::released);
+        if (const auto* object = world_.GetObject(slot.grabbedObject)) {
+            result.objectName = world_.GetContent().GetObject(object->type).name;
+        }
+        slot.grabbedObject = {};
+        return result;
+    }
     case CommandKind::attack: {
         const auto target = command.target ? world_.FindActor(command.target) : world_.Combat().FindTarget(handle);
         const auto* other = world_.GetActor(target);
@@ -637,6 +672,39 @@ CommandResult Server::Execute(ActorHandle handle, PlayerSlot& slot, Command comm
             return failed(Outcome::invalid_command);
         }
         const TileCoord destination{position.x + command.dx, position.z + command.dz, position.y + command.dy};
+        if (slot.grabbedObject.value) {
+            const auto* object = world_.GetObject(slot.grabbedObject);
+            const TileCoord expected{position.x + slot.grabOffset.x, position.z + slot.grabOffset.z, position.y};
+            if (!object || object->position != expected || !world_.IsActive(expected)) {
+                slot.grabbedObject = {};
+                return failed(Outcome::grab_lost);
+            }
+            const auto& definition = world_.GetContent().GetObject(object->type);
+            const auto blocked = [&] {
+                auto result = failed(Outcome::grab_blocked);
+                result.objectName = definition.name;
+                return result;
+            };
+            if (command.dy || !ResidencyFits(destination, active_radius_, resident_radius_, circleResidency_)) { return blocked(); }
+            Vector<LoadRequest> staging;
+            const auto loaded = StageBubble(world_, destination, active_radius_, resident_radius_, circleResidency_, staging);
+            if (!loaded) {
+                Require(world_.ReconcileChunks().has_value());
+                return {Outcome::unavailable, false, GetTick(), loaded.error()};
+            }
+            const auto moved = world_.TryObjectStep(handle, slot.grabbedObject, {command.dx, command.dz, 0});
+            if (!moved || moved->outcome != ObjectMoveOutcome::Moved) {
+                ReleaseStaging(world_, staging);
+                Require(world_.ReconcileChunks().has_value());
+                return blocked();
+            }
+            baseCost = static_cast<std::uint32_t>(moved->cost);
+            CommitPlayerBubble(slot);
+            ReleaseStaging(world_, staging);
+            Require(world_.ReconcileChunks().has_value());
+            outcome = Outcome::object_moved;
+            break;
+        }
         const auto occupant = world_.ActorAt(destination);
         const auto* other = world_.GetActor(occupant);
         if (other && Hostile(actor->combat.faction, other->combat.faction)) {
@@ -743,32 +811,7 @@ CommandResult Server::Execute(ActorHandle handle, PlayerSlot& slot, Command comm
         });
         if (found == choices.end()) { return failed(Outcome::unavailable); }
         if (found->reason != ObjectUseReason::None) { return failed(Outcome::blocked); }
-        if (command.interaction.kind == InteractionKind::PushObject || command.interaction.kind == InteractionKind::PullObject) {
-            const auto object = world_.FindObject(command.interaction.object);
-            const auto kind = command.interaction.kind == InteractionKind::PushObject ? ObjectMoveKind::Push : ObjectMoveKind::Pull;
-            const TileCoord objectPosition = command.interaction.position;
-            const TileCoord destination = kind == ObjectMoveKind::Push ? objectPosition
-                : TileCoord{position.x - (objectPosition.x - position.x), position.z - (objectPosition.z - position.z), position.y};
-            if (!ResidencyFits(destination, active_radius_, resident_radius_, circleResidency_)) { return failed(Outcome::unavailable); }
-            Vector<LoadRequest> staging;
-            const auto loaded = StageBubble(world_, destination, active_radius_, resident_radius_, circleResidency_, staging);
-            if (!loaded) {
-                Require(world_.ReconcileChunks().has_value());
-                return {Outcome::unavailable, false, GetTick(), loaded.error()};
-            }
-            const auto moved = world_.TryMoveObject(handle, object, kind);
-            if (!moved || moved->outcome != ObjectMoveOutcome::Moved) {
-                ReleaseStaging(world_, staging);
-                Require(world_.ReconcileChunks().has_value());
-                return failed(Outcome::blocked);
-            }
-            Require(moved->cost > 0 && moved->cost <= UINT32_MAX);
-            baseCost = static_cast<std::uint32_t>(moved->cost);
-            CommitPlayerBubble(slot);
-            ReleaseStaging(world_, staging);
-            Require(world_.ReconcileChunks().has_value());
-            outcome = Outcome::object_moved;
-        } else if (command.interaction.kind == InteractionKind::Object) {
+        if (command.interaction.kind == InteractionKind::Object) {
             const auto used = world_.UseObject(handle, world_.FindObject(command.interaction.object), command.interaction.action);
             if (used.outcome != ObjectUseOutcome::Succeeded) { return failed(Outcome::blocked); }
             baseCost = used.baseCost;
@@ -1078,6 +1121,7 @@ SessionResult<void> Server::DisconnectPlayer(PersistentId id) {
     Require(slot->opportunity != eastl::numeric_limits<std::uint64_t>::max());
     ++slot->opportunity;
     slot->state = PlayerConnectionState::Parked;
+    slot->grabbedObject = {};
     if (slot->activeRequest.value) { Require(world_.ReleaseRequest(slot->activeRequest).has_value()); }
     if (slot->residentRequest.value) { Require(world_.ReleaseRequest(slot->residentRequest).has_value()); }
     slot->activeRequest = {};
@@ -1257,6 +1301,11 @@ WorldView Server::ViewForPlayerAtLayer(PersistentId id, int radius, int layerY) 
     ++viewStats_.constructions;
     WorldView result;
     result.player_position = actor->position;
+    if (const auto* object = world_.GetObject(slot->grabbedObject); object
+        && object->position == TileCoord{actor->position.x + slot->grabOffset.x,
+            actor->position.z + slot->grabOffset.z, actor->position.y}) {
+        result.grabbedObject = object->id;
+    }
     result.origin = {actor->position.x - radius, actor->position.z - radius, layerY};
     result.width = 2 * radius + 1;
     result.height = result.width;

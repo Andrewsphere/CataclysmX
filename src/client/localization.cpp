@@ -177,11 +177,18 @@ String Localization::OutcomeText(Outcome outcome) const {
     case Outcome::combat_style_changed: return Text("outcome.combat_style_changed", OutcomeMessage(outcome));
     case Outcome::craft_started: case Outcome::recycling_started: case Outcome::craft_resumed:
     case Outcome::craft_paused: case Outcome::craft_cancelled: case Outcome::crafting_refused:
+    case Outcome::object_moved: case Outcome::grabbed: case Outcome::released:
+    case Outcome::nothing_to_grab: case Outcome::grab_lost: case Outcome::grab_blocked:
         return OutcomeMessage(outcome);
     }
     std::abort();
 }
 String Localization::ResultText(const CommandResult& result) const {
+    if (result.outcome == Outcome::grabbed || result.outcome == Outcome::released || result.outcome == Outcome::grab_blocked) {
+        const auto key = result.outcome == Outcome::grabbed ? "grab.started"
+            : result.outcome == Outcome::released ? "grab.released" : "grab.blocked";
+        return !result.objectName.empty() && Find(key) ? Format(key, {{"object", result.objectName}}) : CommandResultMessage(result);
+    }
     if (result.outcome == Outcome::crafting_refused || result.outcome == Outcome::craft_started
         || result.outcome == Outcome::recycling_started || result.outcome == Outcome::craft_resumed
         || result.outcome == Outcome::craft_paused || result.outcome == Outcome::craft_cancelled) {

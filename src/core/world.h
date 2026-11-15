@@ -301,6 +301,10 @@ public:
         ObjectMoveKind kind) const;
     WorldResult<ObjectMoveResult> TryMoveObject(ActorHandle actor, ObjectHandle object,
         ObjectMoveKind kind);
+    // Translate an adjacent object and actor together by one of eight horizontal steps.
+    // Queries never mutate; refusal leaves both positions unchanged. Caller schedules cost.
+    ObjectMoveResult QueryObjectStep(ActorHandle actor, ObjectHandle object, TileCoord direction) const;
+    WorldResult<ObjectMoveResult> TryObjectStep(ActorHandle actor, ObjectHandle object, TileCoord direction);
     // External volume of direct contents; zero for an invalid handle.
     std::uint64_t GetObjectUsedVolume(ObjectHandle object) const;
     // Explicit capacity and unobstructed immediate same-layer reach required.

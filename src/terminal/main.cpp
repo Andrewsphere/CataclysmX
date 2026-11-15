@@ -54,7 +54,7 @@ int main(int argc, char** argv) {
     String loadPath;
     const char* contentPath = nullptr;
     const char* contentPack = nullptr;
-    NewGameScenario scenario = NewGameScenario::Demo;
+    NewGameScenario scenario = NewGameScenario::Town;
     eastl::optional<std::uint32_t> seedOverride;
     String localizationDirectory = CATACLYSMX_LOC_DIRECTORY;
     String userRoot = DefaultUserRoot();
@@ -201,6 +201,7 @@ int main(int argc, char** argv) {
     screen.TrackMouse(false);
     TerminalKeyboard keyboard;
     bool interacting = false;
+    bool choosingGrab = false;
     bool debugOpen = false;
     bool lanOpen = browse;
     auto StartDiscovery = [&] {
@@ -500,6 +501,18 @@ int main(int argc, char** argv) {
                 [&] { debugOpen = false; lastUpdate = std::chrono::steady_clock::now(); }, &localization, &settings.Keys());
             debugOpen = true; return true;
         }
+        if (choosingGrab && action == InputAction::Cancel) { choosingGrab = false; return true; }
+        if (action == InputAction::Grab) {
+            if (choosingGrab) { choosingGrab = false; return true; }
+            interacting = false;
+            if (CurrentView().grabbedObject) {
+                Command command; command.kind = CommandKind::release_grab; SubmitCommand(command);
+            } else {
+                choosingGrab = true;
+                SetMessage(Frontend(localization.Text("grab.direction", "Grab where? Choose one of eight directions; Escape cancels.")));
+            }
+            return true;
+        }
         if (action == InputAction::Quit || (action == InputAction::Cancel && !interacting)) { exit(); return true; }
         if (action == InputAction::Cancel) { interacting = false; lastUpdate = now; return true; }
         if (action == InputAction::Save) {
@@ -546,7 +559,10 @@ int main(int argc, char** argv) {
         case InputAction::MoveUp: command.dy = 1; break;
         default: directional = false; break;
         }
-        if (directional) { command.kind = interacting ? CommandKind::interact : CommandKind::move; }
+        if (choosingGrab) {
+            if (!directional || command.dy) { return true; }
+            command.kind = CommandKind::grab; choosingGrab = false;
+        } else if (directional) { command.kind = interacting ? CommandKind::interact : CommandKind::move; }
         else if (*action == InputAction::Interact) { interacting = true; return true; }
         else if (*action == InputAction::Wait) { command.kind = CommandKind::wait; }
         else if (*action == InputAction::Attack) { command.kind = CommandKind::attack; }

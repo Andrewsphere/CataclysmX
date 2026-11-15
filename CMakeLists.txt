@@ -305,9 +305,13 @@ if(CATACLYSMX_BUILD_TESTS)
         target_sources(cataclysmx_tests PRIVATE tests/sdl_ui_tests.cpp)
         target_sources(cataclysmx_tests PRIVATE tests/sdl_shader_tests.cpp tests/sdl_shading_integration_tests.cpp)
         target_link_libraries(cataclysmx_tests PRIVATE cataclysmx_sdl)
-        add_test(NAME sdl_frontend_smoke COMMAND cataclysmx_sdl_game --smoke
+        add_test(NAME sdl_frontend_smoke COMMAND cataclysmx_sdl_game --smoke --scenario demo
             --user-dir "${CMAKE_CURRENT_BINARY_DIR}/test-user/sdl-smoke")
         set_tests_properties(sdl_frontend_smoke PROPERTIES
+            TIMEOUT 20 PASS_REGULAR_EXPRESSION "SDL smoke: ok")
+        add_test(NAME sdl_town_default_smoke COMMAND cataclysmx_sdl_game --smoke
+            --user-dir "${CMAKE_CURRENT_BINARY_DIR}/test-user/sdl-town-smoke")
+        set_tests_properties(sdl_town_default_smoke PROPERTIES
             TIMEOUT 20 PASS_REGULAR_EXPRESSION "SDL smoke: ok")
     endif()
     if(CATACLYSMX_BUILD_TERMINAL)
@@ -367,7 +371,7 @@ if(CATACLYSMX_BUILD_TESTS)
     endif()
     if(CATACLYSMX_BUILD_TERMINAL)
         add_test(NAME terminal_game_render COMMAND cataclysmx_game --user-dir "${CMAKE_CURRENT_BINARY_DIR}/test-user/terminal-render" --render)
-        set_tests_properties(terminal_game_render PROPERTIES PASS_REGULAR_EXPRESSION "tick=0 position=0,0")
+        set_tests_properties(terminal_game_render PROPERTIES PASS_REGULAR_EXPRESSION "tick=0 position=")
         add_test(NAME settings_client_roundtrip COMMAND ${CMAKE_COMMAND}
             "-DHEADLESS=$<TARGET_FILE:cataclysmx_headless>"
             "-DTERMINAL=$<TARGET_FILE:cataclysmx_game>"

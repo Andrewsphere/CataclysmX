@@ -66,9 +66,9 @@ assigning an actor. Joining has a five-second
 explicit-elapsed timeout. The server does not use wall time or RNG for gameplay;
 network-only tokens and discovery identifiers use OS entropy.
 
-## World, item and combat protocol (version 15, `0x43584e0f`)
+## World, item and combat protocol (version 16, `0x43584e10`)
 
-Version 15 is wire-incompatible with earlier versions and supports maps up to
+Version 16 is wire-incompatible with earlier versions and supports maps up to
 129×129 cells with lossless run-length encoding. Coordinates encode signed
 32-bit X/Z/Y. Commands append signed `dy` after their item arguments; movement,
 and directional item use accept six axial directions. Movement also accepts the
@@ -86,6 +86,13 @@ interaction kind (u8: Open, Close, Object, Lock, Unlock), and object action (u8)
 absolute target and exact action against the current authoritative query.
 Object targets require a nonzero object ID and zero terrain ID; terrain targets
 require the inverse. Non-interaction commands use default interaction fields.
+
+Version 16 adds `grab` (one of eight horizontal unit directions) and
+`release_grab` (zero direction), without changing the command payload layout.
+Views append a u64 `grabbedObject` after the crafting job list.
+Receipts append an `objectName` string (u8 length, at most 255 bytes) after the
+crafting outcome for named grab/release/obstacle messages. New grip outcomes are
+zero-cost, non-advancing responses. See [grabbing](grabbing.md).
 
 `use_item` requires an explicit source item, valid capability and nonempty action
 ID. A secondary item must differ from the source and cannot accompany a direction;

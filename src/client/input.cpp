@@ -17,7 +17,7 @@ constexpr eastl::string_view actionNames[] = {
     "details_up", "details_down", "apply", "save_settings", "reload", "inspect", "add_binding", "unbind", "reset",
     "inventory", "players", "help", "quick_actions", "use", "move_down", "move_up", "attack",
     "style_balanced", "style_aggressive", "style_defensive", "examine",
-    "northwest", "northeast", "southwest", "southeast", "crafting"
+    "northwest", "northeast", "southwest", "southeast", "crafting", "grab"
 };
 constexpr eastl::string_view contextNames[] = {"gameplay", "interaction", "menu", "debug", "items"};
 constexpr eastl::string_view namedKeys[] = {
@@ -119,6 +119,7 @@ Keymap DefaultKeymap() {
     }
     const auto game = InputContext::Gameplay;
     add(game, InputAction::Examine, {"x"});
+    add(game, InputAction::Grab, {"G"});
     map.push_back({game, InputAction::Northwest, {{"Left", false, false, true}}});
     map.push_back({game, InputAction::Northeast, {{"Right", false, false, true}}});
     map.push_back({game, InputAction::Southwest, {{"Left", true}}});
@@ -205,7 +206,7 @@ Keymap ResolveKeymap(const Keymap& global, const Keymap& world) {
         }
         if (explicitAction) { continue; }
         for (auto it = binding.keys.begin(); it != binding.keys.end();) {
-            const bool introduced = binding.action == InputAction::Examine || binding.action == InputAction::Northwest
+            const bool introduced = binding.action == InputAction::Grab || binding.action == InputAction::Examine || binding.action == InputAction::Northwest
                 || binding.action == InputAction::Northeast || binding.action == InputAction::Southwest || binding.action == InputAction::Southeast
                 || (binding.action == InputAction::Interact && it->key == "e")
                 || ((binding.action == InputAction::MoveUp || binding.action == InputAction::MoveDown) && it->alt)

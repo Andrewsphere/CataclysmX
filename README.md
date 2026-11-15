@@ -108,15 +108,20 @@ sprites. See [the showcase guide](doc/zombie_showcase.md) for pack and save deta
 ./out/build/win-msvc-sdl/cataclysmx_sdl_game.exe --scenario zombie-showcase
 ```
 
-The default `demo` scenario loads [`data/demo.json5`](data/demo.json5);
-`first-house` selects [`data/first_house.json5`](data/first_house.json5), and
-`town` selects [`data/content.json5`](data/content.json5), with 32 populated building
+All three frontends default to `town`, loading [`data/content.json5`](data/content.json5).
+Use `--scenario demo` for [`data/demo.json5`](data/demo.json5), or
+`--scenario first-house` for [`data/first_house.json5`](data/first_house.json5).
+The town pack contains 32 populated building
 layouts, a park and square, larger civic landmarks and multi-floor variants.
 Generation 6 builds variable street-led towns with four-way frontages, gardens
 and connected service alleys where space permits. Soft neighborhood preferences
 favor homes on side streets, businesses near the main-street center and industry
 toward street ends, without excluding other uses. See [urban content](doc/urban_content.md)
 and the [world-generation API](doc/worldgen_api.md).
+Press **G** (Shift+g), then a direction, to grab adjacent movable furniture.
+Movement pushes, pulls or drags it sideways while preserving your relative positions
+in all eight directions. Press **G** again to release. Heavy furniture takes longer;
+blocked movement spends no time. See [grabbing](doc/grabbing.md).
 Terrain definitions include UTF-8
 symbols, named/RGB colors, appearance fallback, passability, sight blocking, and
 door transitions. All three frontends accept `--content <path>` for exactly one

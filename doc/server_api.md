@@ -461,7 +461,7 @@ For filtered CTest runs and compact output/result-log locations, see
 [running tests](testing.md).
 
 `cataclysmx_headless --probe` retains the earlier checksum-probe invocation;
-the default invocation is the game demo. Build/run setup belongs in the
+the default invocation starts in town; `--scenario demo` selects the demo. Build/run setup belongs in the
 [project README](../README.md).
 
 ## Saves

@@ -16,6 +16,7 @@ using namespace cataclysmx::network;
 
 constexpr std::size_t combatViewWireSize = 128;
 constexpr std::size_t emptyCraftingJobsWireSize = 2; // Protocol 13 appends a u16 job count.
+constexpr std::size_t grabWireSize = 8; // Protocol 16 appends the grabbed object's persistent ID.
 
 TEST_CASE("Network wire rejects truncated values, invalid enums and oversized snapshots", "[network][codec]") {
     CHECK(NetworkErrorMessage(NetworkError::UnknownToken) != nullptr);
@@ -67,8 +68,8 @@ TEST_CASE("Network wire rejects truncated values, invalid enums and oversized sn
     wire::Reader badSpeed{{bad.data(), bad.size()}};
     CHECK_FALSE(badSpeed.View(result));
     bad = snapshot.bytes;
-    // State is followed by 19 bytes of player fields, player light, combat, and the empty job list.
-    bad[bad.size() - (20 + combatViewWireSize + emptyCraftingJobsWireSize)] = 255;
+    // State is followed by player fields, player light, combat, the empty job list and grip.
+    bad[bad.size() - (20 + combatViewWireSize + emptyCraftingJobsWireSize + grabWireSize)] = 255;
     wire::Reader badState{{bad.data(), bad.size()}};
     CHECK_FALSE(badState.View(result));
     wire::Writer commandBytes;
@@ -185,7 +186,7 @@ TEST_CASE("Combat snapshot roundtrips and validates all fields", "[network][code
     wire::Writer writer; REQUIRE(writer.View(view));
     wire::Reader reader{{writer.bytes.data(), writer.bytes.size()}};
     WorldView decoded; REQUIRE(reader.View(decoded)); CHECK(reader.Done()); CHECK(decoded.combat == combat);
-    const auto start = writer.bytes.size() - combatViewWireSize - emptyCraftingJobsWireSize;
+    const auto start = writer.bytes.size() - combatViewWireSize - emptyCraftingJobsWireSize - grabWireSize;
     // Each entry names an invalid byte: enums, limits, flags, and absent simple-body parts.
     for (const auto [offset, value] : {eastl::pair<std::size_t, std::uint8_t>{0, 2}, {1, 3}, {2, 5},
         {6, 101}, {7, 31}, {16, 2}, {89, 11}, {93, 5}, {102, 10},
@@ -472,7 +473,7 @@ TEST_CASE("Snapshot runs reject hidden information and malformed perception stat
 TEST_CASE("Snapshot runs validate the appended player light band", "[network][codec][perception]") {
     auto view = SingleCellView();
     wire::Writer writer; REQUIRE(writer.View(view));
-    writer.bytes[writer.bytes.size() - 129] = 4;
+    writer.bytes[writer.bytes.size() - (1 + combatViewWireSize + emptyCraftingJobsWireSize + grabWireSize)] = 4;
     wire::Reader reader{{writer.bytes.data(), writer.bytes.size()}};
     WorldView decoded; CHECK_FALSE(reader.View(decoded));
     view.playerLight = static_cast<LightBand>(4);

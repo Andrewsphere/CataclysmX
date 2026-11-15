@@ -132,7 +132,7 @@ int RunLan(Server& server, const ContentCatalog& content, const LanOptions& opti
                 if (receipt.player == server.GetHostPlayerId() && receipt.result.outcome != Outcome::queued) { ++resolved; }
                 std::printf("receipt player=%llu sequence=%llu outcome=%s tick=%llu\n",
                     static_cast<unsigned long long>(receipt.player), static_cast<unsigned long long>(receipt.sequence),
-                    CommandResultMessage(receipt.result), static_cast<unsigned long long>(receipt.result.tick));
+                    CommandResultMessage(receipt.result).c_str(), static_cast<unsigned long long>(receipt.result.tick));
             }
             if (update.storageError) { std::fprintf(stderr, "Storage error=%d\n", static_cast<int>(*update.storageError)); hostFailure = true; break; }
             if (update.networkError) {
@@ -179,7 +179,7 @@ int RunLan(Server& server, const ContentCatalog& content, const LanOptions& opti
                 if (receipt.result.outcome != Outcome::queued) { ++resolved; }
                 std::printf("receipt player=%llu sequence=%llu outcome=%s tick=%llu\n",
                     static_cast<unsigned long long>(receipt.player), static_cast<unsigned long long>(receipt.sequence),
-                    CommandResultMessage(receipt.result), static_cast<unsigned long long>(receipt.result.tick));
+                    CommandResultMessage(receipt.result).c_str(), static_cast<unsigned long long>(receipt.result.tick));
             }
         }
         if (options.discover) {
@@ -217,7 +217,7 @@ int RunLan(Server& server, const ContentCatalog& content, const LanOptions& opti
             if (receipt.player == server.GetHostPlayerId() && receipt.result.outcome != Outcome::queued) { ++resolved; }
             std::printf("receipt player=%llu sequence=%llu outcome=%s tick=%llu\n",
                 static_cast<unsigned long long>(receipt.player), static_cast<unsigned long long>(receipt.sequence),
-                CommandResultMessage(receipt.result), static_cast<unsigned long long>(receipt.result.tick));
+                CommandResultMessage(receipt.result).c_str(), static_cast<unsigned long long>(receipt.result.tick));
         }
         const auto view = server.View();
         std::fputs(ItemDetails(view, content).c_str(), stdout);

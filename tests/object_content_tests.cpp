@@ -53,6 +53,23 @@ TEST_CASE("Objects resolve later item sources into typed definitions", "[content
     CHECK(old->ObjectCount() == 0);
 }
 
+TEST_CASE("Furniture movement costs have bounded integer content values", "[content][object-content][grab]") {
+    const auto loaded = LoadObjects(R"(
+        {id:'chair',name:'Chair',behavior:'none',movable:true},
+        {id:'table',name:'Table',behavior:'none',movable:true,move_cost:200},
+        {id:'heavy',name:'Heavy',behavior:'none',movable:true,move_cost:1000000}
+    )");
+    REQUIRE(loaded);
+    CHECK(loaded->GetObject(loaded->FindObject("chair")).moveCost == 100);
+    CHECK(loaded->GetObject(loaded->FindObject("table")).moveCost == 200);
+    CHECK(loaded->GetObject(loaded->FindObject("heavy")).moveCost == 1000000);
+    for (const auto cost : {"0", "-1", "1.5", "1000001", "true", "'200'"}) {
+        String text = "{id:'table',name:'Table',behavior:'none',movable:true,move_cost:";
+        text += cost; text += "}";
+        CHECK_FALSE(LoadObjects(text));
+    }
+}
+
 TEST_CASE("Object IDs are lexical across sources and globally unique", "[content][object-content]") {
     const ContentSource sources[] = {
         {"z", "{format_version:1,objects:[{id:'z',name:'Z',behavior:'none'}]}"},

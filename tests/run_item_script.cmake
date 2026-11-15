@@ -1,4 +1,4 @@
-execute_process(COMMAND "${HEADLESS}" --script
+execute_process(COMMAND "${HEADLESS}" --scenario demo --script
     INPUT_FILE "${SCENARIO}"
     RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE errors)
 if(NOT result EQUAL 0)

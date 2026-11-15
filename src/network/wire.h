@@ -6,8 +6,8 @@
 
 namespace cataclysmx::network::wire {
 
-// Version 15 adds the visible actor's catalog-local monster type to each cell.
-inline constexpr std::uint32_t protocol = 0x43584e0f;
+// Version 16 adds grab commands, named grab receipts and the current grip in views.
+inline constexpr std::uint32_t protocol = 0x43584e10;
 inline constexpr int maxViewRadius = 64;
 inline constexpr int maxViewDimension = 2 * maxViewRadius + 1;
 static_assert(maxViewDimension <= UINT8_MAX && maxViewDimension * maxViewDimension <= UINT16_MAX);

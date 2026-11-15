@@ -71,7 +71,7 @@ TEST_CASE("Crafting results and job snapshots roundtrip with bounded invariants"
     wire::Reader reader{{writer.bytes.data(), writer.bytes.size()}}; WorldView decoded;
     REQUIRE(reader.View(decoded)); CHECK(reader.Done()); CHECK(decoded.craftingJobs == view.craftingJobs);
     CHECK(decoded.inventory == view.inventory); CHECK(wire::ValidItemDefinitions(decoded, content));
-    writer.bytes.back() = 2;
+    writer.bytes[writer.bytes.size() - 9] = 2; // pauseRequested precedes the protocol-16 u64 grip.
     wire::Reader malformed{{writer.bytes.data(), writer.bytes.size()}}; CHECK_FALSE(malformed.View(decoded));
     view.craftingJobs.front().completedWork = 250;
     wire::Writer invalid; CHECK_FALSE(invalid.View(view));
@@ -97,7 +97,7 @@ TEST_CASE("Crafting results and job snapshots roundtrip with bounded invariants"
         REQUIRE(resultReader.Result(result)); CHECK(resultReader.Done());
         CHECK(result.result.outcome == outcome); CHECK(result.result.craftingOutcome == receipt.result.craftingOutcome);
         CHECK(result.result.advanced == receipt.result.advanced); CHECK(result.result.cost == receipt.result.cost);
-        encoded.bytes.back() = 255;
+        encoded.bytes[encoded.bytes.size() - 2] = 255; // Crafting outcome precedes empty objectName.
         wire::Reader badResult{{encoded.bytes.data(), encoded.bytes.size()}}; CHECK_FALSE(badResult.Result(result));
     }
 }

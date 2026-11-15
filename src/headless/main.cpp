@@ -48,6 +48,10 @@ bool Direction(eastl::string_view text, Command& command) {
     } else if (text == "s") { command.dz = 1;
     } else if (text == "e") { command.dx = 1;
     } else if (text == "w") { command.dx = -1;
+    } else if (text == "nw") { command.dx = -1; command.dz = -1;
+    } else if (text == "ne") { command.dx = 1; command.dz = -1;
+    } else if (text == "sw") { command.dx = -1; command.dz = 1;
+    } else if (text == "se") { command.dx = 1; command.dz = 1;
     } else if (text == "down" || text == "<") { command.dy = -1;
     } else if (text == "up" || text == ">") { command.dy = 1;
     } else { return false; }
@@ -199,7 +203,7 @@ bool Execute(eastl::unique_ptr<Server>& ownedServer, eastl::string_view line, bo
             const CommandResult& resolved = *update.commandResult;
             std::printf("resolved tick=%llu advanced=%d %s\n",
                 static_cast<unsigned long long>(resolved.tick), resolved.advanced ? 1 : 0,
-                CommandResultMessage(resolved));
+                CommandResultMessage(resolved).c_str());
         }
         if (update.storageError) {
             std::fprintf(stderr, "%s (error=%d)\n",
@@ -262,9 +266,12 @@ bool Execute(eastl::unique_ptr<Server>& ownedServer, eastl::string_view line, bo
         else if (words[1] == "aggressive") { command.style = CombatStyle::Aggressive; }
         else if (words[1] == "defensive") { command.style = CombatStyle::Defensive; }
         else { return false; }
-    } else if ((name == "move" || name == "interact") && count == 2) {
-        command.kind = name == "move" ? CommandKind::move : CommandKind::interact;
+    } else if (name == "ungrab" && count == 1) {
+        command.kind = CommandKind::release_grab;
+    } else if ((name == "move" || name == "interact" || name == "grab") && count == 2) {
+        command.kind = name == "move" ? CommandKind::move : name == "grab" ? CommandKind::grab : CommandKind::interact;
         if (!Direction(words[1], command)) { return false; }
+        if (name == "grab" && command.dy != 0) { return false; }
     } else if ((name == "pickup" || name == "drop") && (count == 1 || count == 2)) {
         command.kind = name == "pickup" ? CommandKind::pick_up : CommandKind::drop;
         if (count == 2 && !Number(words[1], command.item)) { return false; }
@@ -278,7 +285,7 @@ bool Execute(eastl::unique_ptr<Server>& ownedServer, eastl::string_view line, bo
     } else { return false; }
     const CommandResult result = server.Send(command);
     std::printf("tick=%llu advanced=%d %s\n", static_cast<unsigned long long>(result.tick),
-        result.advanced ? 1 : 0, CommandResultMessage(result));
+        result.advanced ? 1 : 0, CommandResultMessage(result).c_str());
     if (result.storageError) {
         std::fprintf(stderr, "%s (error=%d)\n",
             result.advanced ? "Autosave failed after completed turn" : "World load failed",
@@ -301,7 +308,7 @@ int main(int argc, char** argv) {
     }
     const char* contentPath = nullptr;
     const char* contentPack = nullptr;
-    NewGameScenario scenario = NewGameScenario::Demo;
+    NewGameScenario scenario = NewGameScenario::Town;
     eastl::optional<std::uint32_t> seedOverride;
     const char* savePath = nullptr;
     const char* loadPath = nullptr;
@@ -351,7 +358,7 @@ int main(int argc, char** argv) {
         } else if (argument == "--world-dir" && i + 1 < argc) { configuration.worldDirectory = argv[++i]; configuration.enabled = true;
         } else {
             std::fputs("Usage: cataclysmx_headless [--content path] [--user-dir path] [--world-dir path] [--save path | --load path] [--script | --host | --join address[:port] | --discover] [--port n] [--discovery-port n] [--discovery-address address] [--name name] [--profile path] [--new-character] [--run-for ms] [--command 'move e'] | --probe | --fail-log\nMovement: move n/s/e/w, move down or move < (downstairs), move up or move > (upstairs).\nCombat: attack [persistentId], style balanced|aggressive|defensive.\n", stderr);
-            std::fputs("Content: --content <single definition file> | --content-pack <manifest>. New game: --scenario demo|first-house|town|zombie-showcase --seed <uint32>.\nCrafting (local --script): recipes, crafting, craft ID, recycle ITEM_ID, resume-craft JOB_ID, pause-craft JOB_ID, cancel-craft JOB_ID.\n", stderr);
+            std::fputs("Content: --content <single definition file> | --content-pack <manifest>. New game: --scenario demo|first-house|town|zombie-showcase (default town) --seed <uint32>.\nGrab (local --script): grab n/ne/e/se/s/sw/w/nw, move in any of those directions, ungrab.\nCrafting (local --script): recipes, crafting, craft ID, recycle ITEM_ID, resume-craft JOB_ID, pause-craft JOB_ID, cancel-craft JOB_ID.\n", stderr);
             return 2;
         }
     }

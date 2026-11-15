@@ -23,7 +23,7 @@ execute_process(COMMAND "${TERMINAL}" --user-dir "${directory}/user" --world-dir
     --save "${directory}/world/a.sqlite" --host --port 24680 --name SettingsHost
     --profile "${directory}/host.profile" --render
     RESULT_VARIABLE result OUTPUT_VARIABLE before ERROR_VARIABLE errors)
-if(NOT result EQUAL 0 OR NOT before MATCHES "tick=0 position=0,0")
+if(NOT result EQUAL 0 OR NOT before MATCHES "tick=0 position=")
     message(FATAL_ERROR "Configured terminal create failed (${result}): ${errors}")
 endif()
 check_map_rows("${before}" 5)

@@ -61,7 +61,7 @@ String Hints(const Keymap& keys) {
     for (auto action : {InputAction::West, InputAction::East, InputAction::North, InputAction::South,
         InputAction::Northwest, InputAction::Northeast, InputAction::Southwest, InputAction::Southeast,
         InputAction::MoveDown, InputAction::MoveUp, InputAction::Examine, InputAction::Settings, InputAction::Debug, InputAction::Wait, InputAction::PickUp,
-        InputAction::Drop, InputAction::Interact, InputAction::Attack, InputAction::StyleBalanced,
+        InputAction::Drop, InputAction::Interact, InputAction::Grab, InputAction::Attack, InputAction::StyleBalanced,
         InputAction::StyleAggressive, InputAction::StyleDefensive, InputAction::Crafting, InputAction::Help, InputAction::Quit}) {
         text += BindingHint(keys, InputContext::Gameplay, action);
         text += " ";
@@ -187,6 +187,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
     auto assetState = AssetState::Loading;
     bool minimized = false;
     bool commandPending = false;
+    bool choosingGrab = false;
     int zoom = 0;
     using Clock = std::chrono::steady_clock;
     auto animationEpoch = Clock::now();
@@ -424,8 +425,29 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             inspectionNeeded = true; frame.scroll = 0;
             return;
         }
+        if (choosingGrab) {
+            if (*action == InputAction::Cancel || *action == InputAction::Grab) {
+                choosingGrab = false; SetMessage("Grab cancelled."); return;
+            }
+            auto command = GameplayCommand(*action, false);
+            if (!command || command->kind != CommandKind::move || command->dy) { return; }
+            command->kind = CommandKind::grab;
+            if (submit(RequestKind::Command, *command)) { choosingGrab = false; }
+            return;
+        }
         if (*action == InputAction::Quit || *action == InputAction::Cancel) { running = false; return; }
         if (!started || assetState != AssetState::Ready || !mapValid) { return; }
+        if (*action == InputAction::Grab) {
+            heldKey.Reset();
+            if (snapshot.view.grabbedObject) {
+                Command command; command.kind = CommandKind::release_grab;
+                submit(RequestKind::Command, command);
+            } else {
+                choosingGrab = true;
+                SetMessage(localization.Text("grab.direction", "Grab where? Choose one of eight directions; Escape cancels."));
+            }
+            return;
+        }
         if (*action == InputAction::Help || *action == InputAction::Examine || *action == InputAction::Interact
             || *action == InputAction::Settings || *action == InputAction::Debug || *action == InputAction::Crafting) {
             const auto nextScreen = *action == InputAction::Help ? Screen::Help : *action == InputAction::Examine ? Screen::Examine

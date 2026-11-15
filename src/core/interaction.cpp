@@ -54,23 +54,5 @@ void QueryInteractions(const World& world, ActorHandle handle, TileCoord positio
         output.push_back({{position, object->id, {}, InteractionKind::Object, action.action}, name,
             storage ? "Take contents" : ObjectActionLabel(action.action), action.reason});
     }
-    const auto* definition = world.GetContent().TryGetObject(object->type);
-    if (!definition || !definition->movable) { return; }
-    for (const auto kind : {ObjectMoveKind::Push, ObjectMoveKind::Pull}) {
-        const auto result = world.QueryObjectMove(handle, objectHandle, kind);
-        ObjectUseReason reason = ObjectUseReason::None;
-        switch (result.outcome) {
-        case ObjectMoveOutcome::Moved: break;
-        case ObjectMoveOutcome::NotReady: reason = ObjectUseReason::Busy; break;
-        case ObjectMoveOutcome::Blocked:
-        case ObjectMoveOutcome::Occupied: reason = ObjectUseReason::Occupied; break;
-        case ObjectMoveOutcome::Unavailable:
-        case ObjectMoveOutcome::OutOfReach:
-        case ObjectMoveOutcome::Immovable: reason = ObjectUseReason::OutOfReach; break;
-        }
-        const bool push = kind == ObjectMoveKind::Push;
-        output.push_back({{position, object->id, {}, push ? InteractionKind::PushObject : InteractionKind::PullObject},
-            name, push ? "Push" : "Pull", reason});
-    }
 }
 }

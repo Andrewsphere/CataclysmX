@@ -99,7 +99,7 @@ block movement; clear windows transmit sight and curtained windows block it.
 Y-layer support was originally introduced in save/protocol version 6. The current
 save schema is version 10 and stores Y, lighting sources, skylight, semantic object
 appearance, and per-player observations; versions 1–6 are rejected and versions
-7–9 have explicit compatibility handling. The current LAN protocol is version 15 (`0x43584e0f`),
+7–9 have explicit compatibility handling. The current LAN protocol is version 16 (`0x43584e10`),
 incompatible with earlier versions. It carries Y, vertical command `dy`, view depth,
 independent terrain/overlay visibility, and light bands. Content format version
 remains 1. See [lighting, perception, and player memory](perception.md),

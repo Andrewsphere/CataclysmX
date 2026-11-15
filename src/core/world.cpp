@@ -2756,6 +2756,51 @@ WorldResult<ObjectMoveResult> World::TryMoveObject(ActorHandle actorHandle, Obje
     return result;
 }
 
+ObjectMoveResult World::QueryObjectStep(ActorHandle actorHandle, ObjectHandle handle, TileCoord direction) const {
+    const auto* actor = GetActor(actorHandle);
+    const auto* object = GetObject(handle);
+    if (!actor || !object || actor->parked || !IsActive(actor->position) || !IsActive(object->position)
+        || direction.y != 0 || direction.x < -1 || direction.x > 1 || direction.z < -1 || direction.z > 1
+        || (direction.x == 0 && direction.z == 0)) { return {}; }
+    if (actor->actionDeadline.Remaining(impl_->tick) || actor->combat.action.kind != ActorActionKind::None
+        || impl_->craftingSystem.Busy(actorHandle)) { return {ObjectMoveOutcome::NotReady}; }
+    const TileCoord a = actor->position, o = object->position;
+    if (a.y != o.y || a == o || eastl::max(std::abs(o.x - a.x), std::abs(o.z - a.z)) > 1) {
+        return {ObjectMoveOutcome::OutOfReach};
+    }
+    const auto* definition = impl_->content.TryGetObject(object->type);
+    if (!definition || !definition->movable) { return {ObjectMoveOutcome::Immovable}; }
+    const TileCoord actorDestination{a.x + direction.x, a.z + direction.z, a.y};
+    const TileCoord objectDestination{o.x + direction.x, o.z + direction.z, o.y};
+    // The pair may enter each other's vacated tile, but cannot displace a third occupant.
+    for (const auto destination : {objectDestination, actorDestination}) {
+        const auto* tile = GetTile(destination);
+        if (!tile) { return {ObjectMoveOutcome::Unavailable}; }
+        const auto& terrain = impl_->content.GetTerrain(tile->terrain);
+        if (!terrain.passable || terrain.openSpace) { return {ObjectMoveOutcome::Blocked}; }
+        const auto occupant = ActorAt(destination);
+        const auto furniture = ObjectAt(destination);
+        if (occupant.value && occupant != actorHandle) { return {ObjectMoveOutcome::Occupied}; }
+        if (furniture.value && furniture != handle
+            && (destination == objectDestination || BlocksMovement(destination))) { return {ObjectMoveOutcome::Occupied}; }
+    }
+    const auto cost = ActorStepBaseCost(eastl::max(definition->moveCost, LocomotionBaseCost(actor->combat.body)), direction);
+    if (ActionTicks(cost, actor->speed) > UINT64_MAX - impl_->tick) { return {ObjectMoveOutcome::NotReady}; }
+    return {ObjectMoveOutcome::Moved, cost};
+}
+
+WorldResult<ObjectMoveResult> World::TryObjectStep(ActorHandle actor, ObjectHandle object, TileCoord direction) {
+    if (!GetActor(actor) || !GetObject(object)) { return eastl::unexpected(WorldError::invalid_handle); }
+    if (direction.y != 0 || direction.x < -1 || direction.x > 1 || direction.z < -1 || direction.z > 1
+        || (direction.x == 0 && direction.z == 0)) { return eastl::unexpected(WorldError::invalid_request); }
+    const auto result = QueryObjectStep(actor, object, direction);
+    if (result.outcome != ObjectMoveOutcome::Moved) { return result; }
+    const auto a = GetActor(actor)->position, o = GetObject(object)->position;
+    impl_->RelocatePair(*this, actor, object, {a.x + direction.x, a.z + direction.z, a.y},
+        {o.x + direction.x, o.z + direction.z, o.y});
+    return result;
+}
+
 eastl::optional<ObjectStateView> World::DescribeObjectState(ObjectHandle handle) const {
     const auto* object = GetObject(handle);
     if (!object || !object->type.value) { return eastl::nullopt; }
