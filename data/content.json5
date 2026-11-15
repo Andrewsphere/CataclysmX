@@ -23,4 +23,5 @@
   'worldgen/buildings/park.json5', 'worldgen/buildings/square.json5',
   'worldgen/buildings/courtyard_house.json5', 'worldgen/buildings/tall_row_house.json5',
   'worldgen/buildings/office_annex.json5', 'worldgen/buildings/corner_store.json5',
+  'worldgen/buildings/apartment_walkup.json5',
 ]}

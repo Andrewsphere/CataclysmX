@@ -54,8 +54,10 @@ ContentResult<BuildingStart> FindStart(const ContentCatalog& content,
                     continue;
                 }
                 const auto entrance = building.entrance;
-                const int step = building.driveway.last.z < entrance.z ? -1 : 1;
-                const TileCoord outside{entrance.x, entrance.z + step, entrance.y};
+                const auto street = building.driveway.last;
+                const int stepX = (street.x > entrance.x) - (street.x < entrance.x);
+                const int stepZ = (street.z > entrance.z) - (street.z < entrance.z);
+                const TileCoord outside{entrance.x + stepX, entrance.z + stepZ, entrance.y};
                 if (Contains(building.bounds, outside) || !IsRoad(plan, outside)) { continue; }
                 const auto& floor = content.GetTerrain(TerrainAt(content, plan, outside).terrain);
                 if (!floor.passable || floor.openSpace || floor.stairs) { continue; }

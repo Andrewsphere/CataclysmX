@@ -16,7 +16,7 @@ definition document, not a manifest.
 | --- | --- |
 | `data/demo.json5` | Shared legacy definitions from `terrain/`, `items/`, `crafting/`, `monsters/`, `objects/`, and `worldgen/buildings/`. |
 | `data/first_house.json5` | Curated FirstHouse pack: demo sources plus household items, crafting, furniture, loot, cellar monsters, and furnished house. |
-| `data/content.json5` | Expanded Town pack: shared sources plus urban resources, specialists, 31 populated building layouts, a park and a square, and three legacy patterns. |
+| `data/content.json5` | Expanded Town pack: shared sources plus urban resources, specialists, 32 populated building layouts, a park and a square, and three legacy patterns (37 total). |
 
 The manifests reference shared definition files; they do not duplicate those
 definitions within a loaded pack. See [urban content](urban_content.md) for the
@@ -26,8 +26,8 @@ The house has two equally weighted cellar layouts. The workshop variant has a
 30% chance of a zombie away from the stairs. Movable lamps light both surface
 rooms and each cellar without blocking movement.
 
-The kitchen cabinet at (1,1) always contains a knife, and the bedroom cabinet at
-(10,6) always contains clean rags. Collect the knife, then craft improvised
+The kitchen cabinet always contains a knife, and the bedroom cabinet contains
+clean rags. Collect the knife, then craft improvised
 bandages within reach of the bedroom cabinet (or collect the rags too). Both
 placements have guaranteed rolls with single-entry pools, so this recipe path is
 independent of seed and cellar choice.

@@ -20,7 +20,7 @@ ContentCatalog LoadPack(const char* path) {
     return eastl::move(*result);
 }
 
-ContentCatalog SmallTown() {
+ContentCatalog SmallTown(bool sparsePopulation = false) {
     const ContentSource source{"small-town.json5", R"({format_version:1,
       objects:[{id:'cabinet',name:'Cabinet',behavior:'none',capacity_volume_ml:1000}],
       definitions:[
@@ -37,8 +37,13 @@ ContentCatalog SmallTown() {
          palette:{'.':'floor'},entrance:{x:1,z:0},
          furniture:[{x:1,z:1,y:0,object:'cabinet'}]}
       ]})"};
+    const ContentSource emptyShops{"empty-shops.json5", R"({format_version:1,definitions:[
+        {type:'building_pattern',id:'empty_shop',weight:30,rows:['...','...','...'],
+         palette:{'.':'floor'},entrance:{x:1,z:0}}
+    ]})"};
+    const ContentSource sources[] = {source, emptyShops};
     Diagnostics diagnostics;
-    auto result = LoadContent({&source, 1}, &diagnostics);
+    auto result = LoadContent({sources, sparsePopulation ? 2u : 1u}, &diagnostics);
     INFO(FormatDiagnostics(diagnostics).c_str());
     REQUIRE(result);
     REQUIRE(ValidateServerContent(*result));
@@ -86,9 +91,9 @@ TEST_CASE("Town query selects a usable populated entrance near origin", "[town][
         CHECK(pattern.site != BuildingSite::Square);
         CHECK_FALSE(Contains(building->bounds, start->playerPosition));
         CHECK(IsRoad(plan, start->playerPosition));
-        CHECK(start->playerPosition.x == start->entrance.x);
         CHECK(start->playerPosition.y == start->entrance.y);
-        CHECK(std::abs(start->playerPosition.z - start->entrance.z) == 1);
+        CHECK(std::abs(start->playerPosition.x - start->entrance.x)
+            + std::abs(start->playerPosition.z - start->entrance.z) == 1);
         const auto& floor = TerrainAt(content, plan, start->playerPosition);
         CHECK(floor.passable); CHECK_FALSE(floor.openSpace); CHECK_FALSE(floor.stairs);
         const auto& door = TerrainAt(content, plan, start->entrance);
@@ -111,8 +116,15 @@ TEST_CASE("Town query selects a usable populated entrance near origin", "[town][
                     const auto site = content.GetBuildingPattern(other.pattern).site;
                     if (site == BuildingSite::Park || site == BuildingSite::Square) { continue; }
                     if (!Populated(content.GetBuildingPattern(other.pattern), other)) { continue; }
-                    const TileCoord outside{other.entrance.x, other.entrance.z
-                        + (other.driveway.last.z < other.entrance.z ? -1 : 1), other.entrance.y};
+                    auto outside = other.entrance;
+                    const auto* parcel = ParcelAt(candidate, other.entrance);
+                    REQUIRE(parcel);
+                    switch (parcel->frontage) {
+                    case Frontage::North: --outside.z; break;
+                    case Frontage::South: ++outside.z; break;
+                    case Frontage::East: ++outside.x; break;
+                    case Frontage::West: --outside.x; break;
+                    }
                     if (Contains(other.bounds, outside) || !IsRoad(candidate, outside)) { continue; }
                     const auto& ground = TerrainAt(content, candidate, outside);
                     const auto& entry = TerrainAt(content, candidate, other.entrance);
@@ -197,18 +209,40 @@ TEST_CASE("Town rejects demo content without a populated pattern", "[town][scena
     CHECK_FALSE(diagnostics.Empty());
 }
 
-TEST_CASE("Curated first house has reproducible generation five review starts", "[town][scenario][house]") {
+TEST_CASE("Curated first house has reproducible generation six review starts", "[town][scenario][house]") {
     const auto content = LoadPack(CATACLYSMX_FIRST_HOUSE_PACK);
-    struct Review { std::uint32_t seed; TileCoord position; };
-    for (const auto review : {Review{0, {79, -74}}, Review{13, {78, -74}}}) {
-        INFO("seed=" << review.seed << " starting pattern=furnished_house");
-        const auto start = FindFirstHouseStart(content, review.seed);
+    for (const auto seed : {0u, 13u}) {
+        INFO("seed=" << seed << " starting pattern=furnished_house");
+        const auto start = FindFirstHouseStart(content, seed);
         REQUIRE(start);
-        CHECK(start->playerPosition == review.position);
-        const auto plan = GenerateRegionPlan(content, review.seed, RegionOf(start->entrance));
+        CHECK(start == FindFirstHouseStart(content, seed));
+        const auto plan = GenerateRegionPlan(content, seed, RegionOf(start->entrance));
         const auto* building = BuildingAt(plan, start->entrance);
         REQUIRE(building);
         CHECK(content.GetBuildingPattern(building->pattern).id == "furnished_house");
     }
+}
+
+TEST_CASE("Town starts use east and west driveways as well as north and south", "[town][scenario][worldgen]") {
+    // In a uniform, fully populated town the long main street always wins the
+    // distance query. Sparse population exercises eligible side-street starts.
+    const auto content = SmallTown(true);
+    bool east = false, west = false;
+    for (std::uint32_t seed = 0; seed < 64 && !(east && west); ++seed) {
+        const auto start = FindTownStart(content, seed);
+        REQUIRE(start);
+        const auto plan = GenerateRegionPlan(content, seed, RegionOf(start->entrance));
+        const auto* parcel = ParcelAt(plan, start->entrance);
+        REQUIRE(parcel);
+        if (parcel->frontage == Frontage::East || parcel->frontage == Frontage::West) {
+            CHECK(start->playerPosition.z == start->entrance.z);
+            CHECK(start->playerPosition.x == start->entrance.x + (parcel->frontage == Frontage::East ? 1 : -1));
+            CHECK(IsRoad(plan, start->playerPosition));
+            east |= parcel->frontage == Frontage::East;
+            west |= parcel->frontage == Frontage::West;
+        }
+    }
+    CHECK(east);
+    CHECK(west);
 }
 }

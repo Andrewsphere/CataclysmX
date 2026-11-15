@@ -183,8 +183,8 @@ TEST_CASE("Region coordinates floor negative tiles and include world extremes", 
             const auto plan = GenerateRegionPlan(TestContent(), 91, RegionOf(p));
             CHECK(Contains(plan.bounds, p));
             CHECK_FALSE(plan.hasTown);
-            CHECK(plan.parcels.Empty());
-            CHECK(plan.buildings.Empty());
+            CHECK(plan.parcels.empty());
+            CHECK(plan.buildings.empty());
             CHECK(ParcelAt(plan, p) == nullptr);
             CHECK(BuildingAt(plan, p) == nullptr);
             const auto sample = SampleEnvironment(91, p);
@@ -255,7 +255,7 @@ TEST_CASE("Generation content validates passable roles and supports terrain-only
     const auto content = CustomContent({});
     REQUIRE(ValidateWorldgenContent(content));
     const auto plan = GenerateRegionPlan(content, 42, {1, 1});
-    CHECK(plan.buildings.Empty());
+    CHECK(plan.buildings.empty());
     const auto image = Materialize(content, plan, plan.bounds);
     bool floor = false;
     bool wall = false;
@@ -297,7 +297,7 @@ TEST_CASE("Generation content validates passable roles and supports terrain-only
 }
 
 TEST_CASE("Generation version three preserves version two surface terrain and damage output", "[worldgen][determinism]") {
-    REQUIRE(world_generation_version == 5);
+    REQUIRE(world_generation_version == 6);
     // Environmental seam, rotated divided house, and abandoned cross-chunk long house.
     const ChunkCoord chunks[] = {{-17, 20}, {-16, 20}, {5, 4}, {9, 7}, {10, 7}};
     const std::uint32_t expected[] = {2483476373U, 3666744973U, 2506376988U, 2959312743U, 518236207U};
@@ -324,7 +324,7 @@ TEST_CASE("Generation version three preserves version two surface terrain and da
 
 TEST_CASE("Vertical generation has solid depths open sky and coherent building roofs", "[worldgen][vertical]") {
     const auto plan = GenerateRegionPlan(TestContent(), 42, {0, 0});
-    REQUIRE_FALSE(plan.buildings.Empty());
+    REQUIRE_FALSE(plan.buildings.empty());
     for (int y : {world_min_y, -1, 1, 2, world_max_y}) {
         const TileRect bounds{{0, 0, y}, {256, 256, y}};
         const auto image = Materialize(TestContent(), plan, bounds);
@@ -374,12 +374,12 @@ TEST_CASE("Vertical terrain-only generation uses air without requiring stairs or
 }
 
 TEST_CASE("Region plans fit their full and clipped geometry bounds", "[worldgen][roads][town]") {
-    const auto full = GenerateRegionPlan(TestContent(), 73, {-2, 1});
+    const auto full = GenerateRegionPlan(TestContent(), 73, {-2, 1}, 5);
     REQUIRE(full.hasTown);
     CHECK(full.roads.Size() == 18);
-    CHECK(full.parcels.Size() == 20);
-    REQUIRE(full.buildings.Size() == 20);
-    for (std::size_t i = 0; i < full.parcels.Size(); ++i) {
+    CHECK(full.parcels.size() == 20);
+    REQUIRE(full.buildings.size() == 20);
+    for (std::size_t i = 0; i < full.parcels.size(); ++i) {
         CHECK(full.parcels[i].owner.parcel == i);
         CHECK(full.buildings[i].owner == full.parcels[i].owner);
     }
@@ -387,8 +387,8 @@ TEST_CASE("Region plans fit their full and clipped geometry bounds", "[worldgen]
         RegionOf({world_coordinate_limit, world_coordinate_limit}));
     CHECK_FALSE(edge.hasTown);
     CHECK(edge.roads.Size() == 18);
-    CHECK(edge.parcels.Empty());
-    CHECK(edge.buildings.Empty());
+    CHECK(edge.parcels.empty());
+    CHECK(edge.buildings.empty());
 }
 
 TEST_CASE("Canonical crossings have matching width-three materialized seams only at declared borders", "[worldgen][roads]") {
@@ -433,9 +433,9 @@ TEST_CASE("Canonical crossings have matching width-three materialized seams only
 }
 
 TEST_CASE("Materialized road network reaches every crossing street and frontage", "[worldgen][roads][town]") {
-    const auto plan = GenerateRegionPlan(TestContent(), 73, {-2, 1});
+    const auto plan = GenerateRegionPlan(TestContent(), 73, {-2, 1}, 5);
     REQUIRE(plan.hasTown);
-    REQUIRE_FALSE(plan.buildings.Empty());
+    REQUIRE_FALSE(plan.buildings.empty());
     const auto image = Materialize(TestContent(), plan, plan.bounds);
     const auto seen = Reachable(image, TestContent(), plan.townCenter, true);
     const auto reached = [&](TileCoord p) {
@@ -540,8 +540,8 @@ TEST_CASE("All authored entrance sides rotate non-square templates toward both f
         bool north = false;
         bool south = false;
         for (std::uint64_t seed = 0; seed < 64 && !(north && south); ++seed) {
-            const auto plan = GenerateRegionPlan(content, seed, {1, -1});
-            REQUIRE(plan.buildings.Size() == plan.parcels.Size());
+            const auto plan = GenerateRegionPlan(content, seed, {1, -1}, 5);
+            REQUIRE(plan.buildings.size() == plan.parcels.size());
             for (const auto& building : plan.buildings) {
                 REQUIRE(building.quarterTurns < 4);
                 const bool odd = building.quarterTurns % 2 != 0;
@@ -566,12 +566,12 @@ TEST_CASE("Weighted selection uses fitting authored patterns and skips oversized
     const String fitting = RectanglePattern("small", 5, 3, {2, 2});
     const String oversized = RectanglePattern("oversized", 64, 64, {2, 63}, 1000000);
     const auto onlyLarge = CustomContent(View(oversized));
-    const auto noFit = GenerateRegionPlan(onlyLarge, 9, {1, 1});
-    REQUIRE_FALSE(noFit.parcels.Empty());
-    CHECK(noFit.buildings.Empty());
+    const auto noFit = GenerateRegionPlan(onlyLarge, 9, {1, 1}, 5);
+    REQUIRE_FALSE(noFit.parcels.empty());
+    CHECK(noFit.buildings.empty());
     const auto oneFits = CustomContent(View(fitting + ',' + oversized));
     const auto plan = GenerateRegionPlan(oneFits, 9, {1, 1});
-    REQUIRE(plan.buildings.Size() == plan.parcels.Size());
+    REQUIRE(plan.buildings.size() == plan.parcels.size());
     for (const auto& building : plan.buildings) {
         CHECK(building.pattern == oneFits.FindBuildingPattern("small"));
     }
@@ -582,7 +582,7 @@ TEST_CASE("Weighted selection uses fitting authored patterns and skips oversized
     // Broad deterministic sample, no required seed-to-pattern mapping or exact ratio.
     for (std::uint64_t seed = 0; seed < 128; ++seed) {
         const auto sample = GenerateRegionPlan(weighted, seed, {-1, 2});
-        REQUIRE(sample.buildings.Size() == sample.parcels.Size());
+        REQUIRE(sample.buildings.size() == sample.parcels.size());
         for (const auto& building : sample.buildings) {
             CHECK(building.pattern != weighted.FindBuildingPattern("oversized"));
             smallCount += building.pattern == weighted.FindBuildingPattern("small");

@@ -252,6 +252,16 @@ Vector<String> WorldgenDebugDetails(const ContentCatalog& content,
     }
     std::snprintf(buffer, sizeof(buffer), "Generation version=%u", plan.generationVersion);
     lines.push_back(String(buffer));
+    const char* profile = "legacy grid";
+    switch (plan.townProfile) {
+    case TownProfile::LegacyGrid: break;
+    case TownProfile::MainStreet: profile = "main street"; break;
+    case TownProfile::Crossroads: profile = "crossroads"; break;
+    case TownProfile::OffsetNeighborhood: profile = "offset neighborhood"; break;
+    }
+    std::snprintf(buffer, sizeof(buffer), "Town profile: %s | Sites: %zu | Access segments: %zu",
+        profile, plan.buildings.size(), plan.serviceAlleys.size());
+    lines.push_back(String(buffer));
     return lines;
 }
 

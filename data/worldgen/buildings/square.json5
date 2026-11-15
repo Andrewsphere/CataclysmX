@@ -1,5 +1,6 @@
 {format_version:1, definitions:[{
   type:'building_pattern', id:'civic_square', site:'square',
+  // Benches face the fountain across open paved promenades; planting frames entry corners.
   rows:[
     ':::::::::::::::',
     ':p:::::::::::p:',
@@ -12,12 +13,13 @@
     ':::::::::::::::',
     ':::::::::::::::',
     ':::::::::::::::',
-    ':::b:::::::b:::',
+    ':::B:::::::B:::',
     ':::::::::::::::',
     ':p:::::::::::p:',
     ':::::::::::::::',
   ],
-  palette:{':':'pavement',b:{terrain:'pavement',object:'park_bench'},
+  palette:{':':'pavement',b:{terrain:'pavement',object:'park_bench',facing:'south'},
+    B:{terrain:'pavement',object:'park_bench',facing:'north'},
     p:{terrain:'pavement',object:'planter'},f:{terrain:'pavement',object:'square_fountain'}},
   entrance:{x:7,z:14},
   loot:[{x:3,z:11,y:0,pool:'loot_food',destination:'furniture',chance:2500}],

@@ -82,10 +82,14 @@ the one pending intent, which is validated when the player becomes ready.
 `cataclysmx_game --render` prints a snapshot without entering interactive mode.
 
 Start the furnished-house review with `--scenario first-house --seed 0` on
-headless, terminal, or SDL. Seed 13 is the second basement review candidate.
+headless, terminal, or SDL.
 See [first-house review](doc/first_house_review.md) for launch/smoke commands,
 storage, furniture movement, and current review limitations.
-Use `--scenario town --seed 0` to start in the populated town on any frontend.
+Use `--scenario town --seed 42` to start in the populated town on any frontend:
+
+```powershell
+./out/build/win-msvc-sdl/cataclysmx_sdl_game.exe --scenario town --seed 42
+```
 
 **F2** opens settings and keybindings. Preferences resolve from built-in defaults,
 global files, and sparse world overrides; saves within a world share its settings.
@@ -96,10 +100,13 @@ reports unavailable combinations. See [settings and localization](doc/settings_a
 
 The default `demo` scenario loads [`data/demo.json5`](data/demo.json5);
 `first-house` selects [`data/first_house.json5`](data/first_house.json5), and
-`town` selects [`data/content.json5`](data/content.json5), with 31 populated building
-layouts, parks and squares, larger civic landmarks and two-/three-floor variants.
-New generation-5 towns contain 17 buildings plus two civic outdoor sites, with
-paved sidewalks and shared rear alleys. See [urban content](doc/urban_content.md).
+`town` selects [`data/content.json5`](data/content.json5), with 32 populated building
+layouts, a park and square, larger civic landmarks and multi-floor variants.
+Generation 6 builds variable street-led towns with four-way frontages, gardens
+and connected service alleys where space permits. Soft neighborhood preferences
+favor homes on side streets, businesses near the main-street center and industry
+toward street ends, without excluding other uses. See [urban content](doc/urban_content.md)
+and the [world-generation API](doc/worldgen_api.md).
 Terrain definitions include UTF-8
 symbols, named/RGB colors, appearance fallback, passability, sight blocking, and
 door transitions. All three frontends accept `--content <path>` for exactly one
@@ -111,9 +118,9 @@ headless/terminal reject it with `--load`. Select the matching pack when loading
 `--content-pack data/content.json5 --load <save>` for a town save. Alternatively,
 select the matching `--scenario` to choose its default pack. The save retains its
 seed and position without a persisted scenario setting.
-See [content format and APIs](doc/content_format.md). Save V6 stores terrain and
+See [content format and APIs](doc/content_format.md). Saves store terrain and
 item stable string IDs, nested ownership, and versioned item capability state;
-older save versions are rejected and migrations are not implemented yet.
+see the save guide for supported schema versions.
 
 The world spans Y=-10..10 in single-layer 16×16 XZ chunks. Chunk requests cover
 whole-height columns. It uses typed generational handles, nested item ownership,
@@ -126,8 +133,8 @@ See [save format and behavior](doc/save_format.md), and [lighting, perception,
 and player memory](doc/perception.md) for sight, light, and per-player observations.
 
 See [`doc/`](doc/README.md) for the world/server API, [Y-layer rules](doc/y_layers.md),
-and headless command grammar. Current save and network formats are version 7;
-older saves are rejected without migration. [Running tests](doc/testing.md)
+and headless command grammar. See the linked save and network guides for version
+compatibility. [Running tests](doc/testing.md)
 documents the compact CTest runner.
 The dependency probes remain available separately below.
 Headless scripts can set `rate <ticks-per-second>`, `limit <on|off>`,

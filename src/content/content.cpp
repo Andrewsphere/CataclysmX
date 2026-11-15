@@ -1162,8 +1162,24 @@ bool ParsePattern(yyjson_val* object, PendingPattern& pattern) {
     const auto& context = pattern.context;
     auto& definition = pattern.definition;
     if (!CheckObject(object, {"type", "id", "rows", "palette", "entrance", "weight", "layers",
-                              "furniture", "loot", "monsters", "basements", "site"}, context)
+                              "furniture", "loot", "monsters", "basements", "site", "family", "family_weight", "use"}, context)
         || !ReadId(yyjson_obj_get(object, "id"), definition.id, context.Child("id"))) { return false; }
+    if (auto* family = yyjson_obj_get(object, "family")) {
+        if (!ReadId(family, definition.family, context.Child("family"))) { return false; }
+    }
+    if (auto* familyWeight = yyjson_obj_get(object, "family_weight")) {
+        if (definition.family.empty()) { return context.Child("family_weight").Fail("family_weight requires family"); }
+        if (!ReadBoundedInteger(familyWeight, 1, 1000000, definition.familyWeight, context.Child("family_weight"))) { return false; }
+    }
+    if (auto* use = yyjson_obj_get(object, "use")) {
+        if (!yyjson_is_str(use)) { return context.Child("use").Fail("expected a use name"); }
+        const auto name = JsonString(use);
+        if (name == "mixed") { definition.use = BuildingUse::Mixed; }
+        else if (name == "residential") { definition.use = BuildingUse::Residential; }
+        else if (name == "commercial") { definition.use = BuildingUse::Commercial; }
+        else if (name == "industrial") { definition.use = BuildingUse::Industrial; }
+        else { return context.Child("use").Fail("unknown use"); }
+    }
     auto* rows = yyjson_obj_get(object, "rows");
     const auto rowsContext = context.Child("rows");
     if (!yyjson_is_arr(rows) || yyjson_arr_size(rows) == 0 || yyjson_arr_size(rows) > 64) {
@@ -1723,6 +1739,40 @@ bool ResolveTraits(eastl::span<const PendingTrait> pending, StaticList<TraitRequ
     eastl::sort(output.begin(), output.end(), [](const TraitRequirement& left, const TraitRequirement& right) {
         return left.trait.value < right.trait.value;
     });
+    return true;
+}
+
+bool CheckPatternFamilies(const Vector<PendingPattern>& patterns, Diagnostics* diagnostics) {
+    Vector<const PendingPattern*> named;
+    for (const auto& pattern : patterns) {
+        if (!pattern.definition.family.empty()) { named.push_back(&pattern); }
+    }
+    eastl::sort(named.begin(), named.end(), [](const PendingPattern* left, const PendingPattern* right) {
+        if (left->definition.family == right->definition.family) { return left->inputOrder < right->inputOrder; }
+        return left->definition.family < right->definition.family;
+    });
+    for (std::size_t i = 1; i < named.size(); ++i) {
+        const auto& previous = *named[i - 1];
+        const auto& current = *named[i];
+        if (previous.definition.family != current.definition.family) { continue; }
+        const bool weightConflict = previous.definition.familyWeight != current.definition.familyWeight;
+        const bool siteConflict = previous.definition.site != current.definition.site;
+        if (!weightConflict && !siteConflict && previous.definition.use == current.definition.use) { continue; }
+        if (diagnostics) {
+            const auto field = weightConflict ? "family_weight" : siteConflict ? "site" : "use";
+            String message = "family '";
+            message += current.definition.family;
+            message += "' conflicts with building pattern '";
+            message += previous.definition.id;
+            message += "' in ";
+            message += field;
+            current.context.Child(field).Fail(View(message));
+            previous.context.Fail("conflicting family definition is here");
+            AddPatternContext(current.context, View(current.definition.id));
+            Context{diagnostics, {}, {}}.Fail("could not load content catalog");
+        }
+        return false;
+    }
     return true;
 }
 
@@ -2374,6 +2424,7 @@ ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sourc
         return left.definition.id < right.definition.id;
     });
     if (!CheckDefinitionIds(pending, patterns, items, objects, aiProfiles, recipes, recyclers, traits, spawns, diagnostics)) { return eastl::unexpected(ContentError::InvalidData); }
+    if (!CheckPatternFamilies(patterns, diagnostics)) { return eastl::unexpected(ContentError::InvalidData); }
     if (!Resolve(pending)) {
         Context{diagnostics, {}, {}}.Fail("could not load content catalog");
         return eastl::unexpected(ContentError::InvalidData);

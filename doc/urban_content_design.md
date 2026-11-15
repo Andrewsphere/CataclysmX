@@ -2,10 +2,11 @@
 
 ## Scope and decisions
 
-**Implemented.** The original generation-4 milestone added 26 populated building
-types to the eight-parcel planner. The generation-5 follow-up adds dense lots,
-31 populated building layouts and two civic outdoor sites, larger landmarks and
-multi-storey variants. See [urban content](urban_content.md) for the current guide and
+**Implemented.** The original generation-4 milestone added populated buildings;
+generation 5 introduced dense lots and civic sites. Generation 6 adds street-led
+profiles, family-first selection and soft use-based neighborhood preferences, and
+the detail pass brings the catalog to 32
+populated building layouts and two civic outdoor sites. See [urban content](urban_content.md) for the current guide and
 [urban resources](urban_resources.md) for definition details. The following
 sections retain the design rationale and integration contract.
 
@@ -88,13 +89,14 @@ monster name and recipe fingerprint coverage should be retained.
 ## Buildings, FirstHouse, and Town
 
 Use separate root manifests. `data/first_house.json5` preserves exactly the old
-full manifest source list; `data/content.json5` now contains 31 populated building
+full manifest source list; `data/content.json5` now contains 32 populated building
 layouts, two civic outdoor sites and three legacy patterns.
 Both manifests reference shared definition files without duplicating definitions.
 The curated manifest retains furnished_house weight 1000 and its existing
-competitors. Generation 5 changes new-game parcel placement and basement draws;
-the [review guide](first_house_review.md) records current starts. Expanded pattern weights are approximately 500-1800
-each, with furnished_house staying at 1000 (weights are relative, not ratios).
+competitors. Generation 6 and updated content change new-game parcel placement and
+basement draws; the [review guide](first_house_review.md) explains inspection.
+Named families choose prevalence separately from fitting variant weights; see
+the current guide for bundled family values. `furnished_house` remains at 1000.
 Do not edit shared house weight solely for the expanded pack.
 
 Applications select `CATACLYSMX_FIRST_HOUSE_PACK` for FirstHouse and
@@ -143,10 +145,10 @@ Applications validate before constructing Server, with the same catalog and
 seed; the Town constructor branch uses that same pure query. Keep the existing
 FirstHouse selection behavior and checks unchanged.
 
-This changes content, not generation algorithms. Existing generation versions
-remain supported; reproducibility is for the same content as well as seed and
-version. An expanded manifest is not a promise of identical future ungenerated
-chunks for an old save. No generation v5 is needed for manifest-only expansion.
+The earlier manifest expansion was content-only; the subsequent v6 planner changes
+generation. Existing generation versions remain supported with the same catalog;
+an expanded or edited manifest does not promise identical future ungenerated
+chunks for an old save. See [v6 design](urban_generation_v6_design.md).
 
 Implemented 26-type roster (count furnished_house once):
 

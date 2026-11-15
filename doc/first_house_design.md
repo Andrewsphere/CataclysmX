@@ -10,7 +10,7 @@ furniture, loot and monsters is integrated with generation, World and the
 `Server(content, seed, NewGameScenario::FirstHouse)` starts the player on the
 planned driveway outside a generated house entrance, carrying a backpack with a
 bandage inside. The existing constructor continues to select the demo scenario.
-The first-house pack is `data/content.json5`; `data/demo.json5` preserves the demo
+The curated first-house pack is `data/first_house.json5`; `data/demo.json5` preserves the demo
 pack. Both reference shared files including `data/terrain/base.json5`,
 `data/items/demo.json5`, and `data/objects/demo.json5`. The house pack adds
 household items, recipes, furniture, loot, cellar monsters and the furnished
@@ -25,7 +25,8 @@ materializes them for previously unsnapshotted chunks after terrain and restores
 Snapshots, including empty ones, prevent population from respawning after reload.
 See [world generation](worldgen_api.md) and [World archives](world_api.md#generation-archives-and-brief-implementation-notes).
 
-Generation version is **4**; legacy generation versions remain supported. The
+This milestone originally used generation version **4**. New worlds now use
+generation **6**; see [street-led towns](urban_generation_v6_design.md). The
 save format is not bumped for this slice. This milestone introduced network
 protocol `0x43584e0e`; the later [specialist identity increment](urban_content_design.md)
 uses `0x43584e0f`.

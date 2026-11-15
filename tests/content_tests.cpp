@@ -459,18 +459,14 @@ TEST_CASE("Bundled terrain content loads from stdio with door transitions", "[co
     path.resize(separator);
     path += "/../data/terrain/base.json5";
     const auto catalog = Take(LoadContentFile(path.c_str()));
-    CHECK(catalog.TerrainCount() == 14);
-    CHECK(catalog.FindTerrain("air") == TerrainId{1});
-    CHECK(catalog.FindTerrain("closed_door") == TerrainId{2});
-    CHECK(catalog.FindTerrain("floor") == TerrainId{3});
-    CHECK(catalog.FindTerrain("grass") == TerrainId{4});
-    CHECK(catalog.FindTerrain("open_door") == TerrainId{8});
-    CHECK(catalog.FindTerrain("pavement") == TerrainId{9});
-    CHECK(catalog.FindTerrain("road") == TerrainId{10});
-    CHECK(catalog.FindTerrain("rubble") == TerrainId{11});
-    CHECK(catalog.FindTerrain("stairs") == TerrainId{12});
-    CHECK(catalog.FindTerrain("tree") == TerrainId{13});
-    CHECK(catalog.FindTerrain("wall") == TerrainId{14});
+    CHECK(catalog.TerrainCount() == 24);
+    std::uint32_t nextId = 1;
+    for (const char* id : {"air", "closed_door", "floor", "floor_concrete", "floor_tile", "floor_wood",
+        "grass", "lockable_closed_door", "lockable_open_door", "locked_door", "open_door", "pavement",
+        "road", "rubble", "stairs", "tree", "wall", "wall_brick", "wall_concrete", "wall_metal",
+        "wall_plaster", "wall_wood", "window", "window_curtained"}) {
+        CHECK(catalog.FindTerrain(id) == TerrainId{nextId++});
+    }
     CHECK(Get(catalog, "air").openSpace);
     CHECK(Get(catalog, "air").passable);
     CHECK_FALSE(Get(catalog, "air").blocksSight);

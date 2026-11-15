@@ -79,6 +79,24 @@ surface at Y=0. Width and height are inferred from 1..64 equal-width printable
 ASCII rows, each 1..64 characters. Existing `weight` defaults to 1 (1..1000000).
 The optional fields below extend `building_pattern` definitions:
 
+Optional `family` is a stable ID using the same syntax as a building ID. Its
+optional `family_weight` is an integer in 1..1000000 and defaults independently
+to 1 on each member; it is invalid without `family`. All members of a named
+family across all sources must agree on resolved `family_weight`, `site`, and `use`.
+An omitted family denotes a singleton, distinct from a named family with the
+same ID; its effective family weight is its existing `weight`. For family-first
+selection, a named family's `family_weight` sets its prevalence once among
+families with fitting variants, and `weight` selects among those variants.
+This prevents adding variants from multiplying family prevalence. Generation
+versions 1..5 ignore family metadata and retain their existing weight behavior.
+
+Optional `use` is `mixed` (the default), `residential`, `commercial`, or
+`industrial`. It may be specified without a family and on any site class. It is
+a soft selection preference, not a site eligibility restriction; landmark, park,
+and square selections receive no use bias. Each family member resolves its own
+default: omitted `use` agrees with explicit `mixed` but conflicts with any other
+use. Generation versions 1..5 ignore this selection metadata.
+
 Palette values may be terrain ID strings or `{terrain:'floor', object:'cabinet',
 facing:'east'}` objects. `terrain` is required; `object` and its `facing` are
 optional. A glyph paints its terrain and places one object on the same tile on

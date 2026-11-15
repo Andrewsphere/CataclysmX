@@ -22,26 +22,42 @@ invariants, not recoverable gameplay errors.
 `SampleEnvironment(seed, position)` is integer-only and returns moisture,
 temperature, and woodland values in `[0,1000]`, plus meadow/woodland classification.
 It does not consume RNG state. A region plan contains roads, parcels, buildings,
-boundary crossings, and stable feature ownership. Town geometry is 112×112;
-where the complete town fits, three streets on each axis form four blocks.
-Generation 5 splits each block into two 53×25 frontage strips, separated by a
-three-tile paved rear alley. Strips alternate two and three lots (26/27 or
-17/18 tiles wide), with one-tile building setbacks. A seed-selected strip is
-reserved whole for a landmark when that site class exists in content. Separate
-strips reserve a park and a square lot. The bundled pack therefore supplies 17
-buildings plus two civic outdoor sites per complete town; catalogs without those
-site classes use ordinary lots instead. Versions 2..4 retain eight 53×26/27
-parcels with two-tile setbacks. Parcel identity is the pair
+boundary crossings, and stable feature ownership. Generation 6 uses a 176×176
+maximum town envelope and three street-led profiles. Lots follow four-way street
+frontages and are packed to the rotated footprint plus two side-margin tiles;
+front setback is one tile and rear gardens are 3..8 tiles when space permits,
+otherwise at least one. Landmark, park and square opportunities fall back to
+ordinary lots when no eligible pattern fits. Parcel identity is the pair
 `(region, parcel ordinal)`; building owner identity uses the same pair. Hashes
 are deterministic local mixing, not globally unique IDs.
 
-Plan roads, parcels, and buildings use `StaticList` with capacities 18, 24, and 24.
-The geometric bound is four blocks × two strips × at most three lots; it is not
-inferred from the number of content definitions. The generator emits six streets
-and twelve connector segments, and at most one site per lot. Checked appends make changes
-that violate those bounds fail fast. Use `Size`/`Empty`, indexing, or iteration
-to inspect the used records; inline storage avoids three growing heap buffers
-per plan without affecting generation order or version.
+`RegionPlan::parcels` and `buildings` are value-owned `Vector`s: counts depend on
+authored footprint widths, and bulk output buffers can be moved cheaply into the
+World cache. Inline capacity would cost space and element moves even for empty
+plans. Do not retain element pointers across appends. `roads` remains a checked
+`StaticList<RoadSegment, 18>`: legacy emits at most six streets and twelve
+connectors; v6 emits at most four streets and twelve connectors. `serviceAlleys`
+is a vector of pavement rectangles; parcel and building owner ordinals remain stable.
+
+`TownProfile` reports `LegacyGrid`, `MainStreet`, `Crossroads`, or
+`OffsetNeighborhood`. Full v6 towns choose equal-weight profiles. MainStreet has
+an east/west main street with independent 56..72 reaches and a short north/south
+feeder; only the main street has frontage. Crossroads adds frontage on both axes,
+with independent east/west reaches 64..80 and north/south reaches 72..80.
+OffsetNeighborhood adds two full east/west branches at independent distances
+60..64 north and south, with independent reaches 60..76. MainStreet strip depth
+is 28..40; the other profiles use 28..32. Complete towns use region-local
+`[40,216)` as an envelope, not a tight urban boundary. Clipped edge regions use
+legacy-style roads without a town or parcels.
+
+V6 attempts connected rear service lanes for suitable primary strips, rejecting
+an obstructed opportunity rather than splitting it. One-tile rear access spurs
+connect shallower parcels; alleys are not `IsRoad` segments. Natural terrain
+remains outside explicit roads, driveways, parcel front pavement and alleys; there
+is no blanket pavement. Site counts depend on content and selected footprints;
+with the current bundled pack and preferences, a seeds-0–31 sample in region
+`(0,0)` produced 10–12 MainStreet, 19–23 Crossroads and 27–35 OffsetNeighborhood
+sites (including parks and squares). These are observations, not content limits.
 
 Each of the four region edges derives its crossing from a canonical
 `BoundaryKey`: axis, geometric border coordinate (a multiple of 256), and the
@@ -57,7 +73,9 @@ contain no roads.
 
 Buildings are selected from catalog patterns that fit parcel bounds and
 setbacks. Eligible pattern weights select among fits; rotations are quarter
-turns clockwise, aligning the entrance with the parcel's north/south frontage.
+turns clockwise, aligning the entrance with the parcel's frontage. V6 supports
+north, east, south and west; `streetZ` describes horizontal frontages and
+`streetX` vertical frontages, with the unused component zero.
 Corner entrances use north, east, south, west priority to choose their authored
 side. Building abandonment is deterministic. Materialization
 first builds the complete pattern buffer and applies abandonment there, then
@@ -65,15 +83,15 @@ crops that buffer to the requested chunk. It never reads adjacent live chunks,
 so chunk load order cannot change the result. No-fit parcels simply have no
 building plan.
 
-`GenerateRegionPlan(content, seed, region, version)` accepts versions 2..5;
-the three-argument overload selects `world_generation_version` (5). The plan
+`GenerateRegionPlan(content, seed, region, version)` accepts versions 2..6;
+the three-argument overload selects `world_generation_version` (6). The plan
 records its version. Versions 2/3 retain the exact legacy weighted-selection,
 placement and abandonment algorithm, excluding every pattern with authored
 layers, basements or population. Adding such patterns therefore does not alter
 legacy candidate weights. Existing legacy definitions must still be present and
 unchanged to reproduce their old terrain.
 
-Versions 4/5 protect authored extended patterns from abandonment decoration. Each
+Versions 4..6 protect authored extended patterns from abandonment decoration. Each
 selects one weighted basement per building and records its 1-based local index
 in `BuildingPlan::basementVariant` (zero means none). Chunk materialization never
 reselects this choice.
@@ -84,17 +102,50 @@ keeps eligibility explicit and prevents a tiny house from consuming a civic plot
 Weights still choose among fitting patterns within that class. This uses the
 existing feature ownership and population pipeline for parks as well as buildings,
 so benches, loot and inhabitants have ordinary chunk ownership and persistence.
-No separate park entity system or planner cache is needed. All unoccupied ground
-inside the town is pavement (floor fallback), with authored lawns and gardens
-inside outdoor patterns. Roads retain their distinct road role and connected
-driveways; paving is pedestrian space, not additional `IsRoad` centerlines.
+No separate park entity system or planner cache is needed. Version 5 fills
+unoccupied town ground with pavement; version 6 uses selective paving as above.
+
+V6 groups fitting patterns by named `family`, draws family prevalence once using
+`family_weight`, then draws among that family's fitting variants using `weight`.
+An unnamed pattern is a singleton whose `weight` supplies its prevalence. Family
+members must agree on site class, resolved family weight and use across all sources;
+`family_weight` requires `family` and defaults to 1. This metadata belongs once
+per catalog pattern, not per placed entity. See [house content](house_content.md)
+for the authoring rules.
+
+### Neighborhood composition
+
+`BuildingPattern::use` is a typed `BuildingUse` catalog value: optional JSON
+`use` accepts `mixed` (default), `residential`, `commercial`, or `industrial`.
+It is stored once per catalog pattern. A named family's members must agree on
+resolved use as well as site and family weight. No per-entity zoning metadata or
+zoning framework is needed.
+
+For generation 6 ordinary `BuildingSite::Building` choices, classify the slot
+before choosing a family, using its leading prospective footprint tile. Relative
+to each street's center and actual arm endpoints, multiply a fitting family's
+base prevalence as follows:
+
+| Use | Preferred location | Multiplier |
+| --- | --- | ---: |
+| Residential | Side street, not the main street | 3× |
+| Commercial | Main street, within 24 longitudinal tiles of town center | 4× |
+| Industrial | Outer quarter of either actual street arm | 4× |
+| Mixed | Any location | 1× |
+
+Otherwise the multiplier is 1×. All weights remain positive, so these are soft
+preferences rather than exclusions or quotas. Count each fitting family once;
+the selected family's variant draw retains its authored `weight`. Landmark,
+park and square selections receive no use bias. An all-mixed catalog produces
+exactly the same v6 output as before these preferences; versions 1..5 ignore
+`use`. See [house content](house_content.md#building-extensions) for validation.
 
 `GenerateChunk` lays out row-major tiles (`z * 16 + x`). Versions 2/3
 preserve the legacy surface at Y=0, use solid rock below it and air above it,
-with rectangular building roofs at Y=1. Versions 4/5 overlay each pattern's explicit
+with rectangular building roofs at Y=1. Versions 4..6 overlay each pattern's explicit
 layers and selected basement at their authored Y, using exactly the same X/Z
 rotation as the surface and entrance. An explicit Y=1 layer replaces the roof;
-without one, version 4 retains its rectangle roof fallback. Version 5 masks that
+without one, version 4 retains its rectangle roof fallback. Versions 5 and 6 mask that
 fallback by surface terrain: grass, tree, road, pavement and open space remain
 air, and park/square sites receive no implicit roof. Multi-floor content authors
 the final roof explicitly, using air for courtyards and setbacks. Partial edge-chunk slots
@@ -110,8 +161,8 @@ queries; no town or building intersects it.
 ## Pure population and deterministic streams
 
 `GenerateChunkPlacements(content, seed, plan, chunk, output)` clears the three
-output vectors while retaining capacity. Versions 1..3 emit nothing. Versions 4/5
-returns furniture, expanded item leaves and monsters, cropped by each transformed
+output vectors while retaining capacity. Versions 1..3 emit nothing. Versions 4..6
+return furniture, expanded item leaves and monsters, cropped by each transformed
 position's chunk (including Y). Feature order follows the plan; each list visits
 common population before the selected basement, then authored marker order and
 depth-first loot leaf order. Furniture facing rotates clockwise with X/Z.
@@ -139,7 +190,8 @@ stable string identifies the population stream.
 
 Each draw increments state by `9e3779b97f4a7c15` and returns `Mix(state)`.
 For positive bound B, reject values below `(uint64(0)-B)%B`, then use `value%B`.
-Weighted selection uses authored order and checked positive sums <= UINT32_MAX.
+Population weighted selection uses authored order and checked positive sums <= UINT32_MAX;
+v6 family and variant selection uses stable ID ordering and 64-bit weight sums.
 Chance consumes one bounded draw over `ratioScale`, including 0/10000 chances;
 successful loot performs `rolls` draws. Each pool selects one entry, then an
 inclusive count; item counts emit separate leaves and pool counts repeat child
@@ -163,8 +215,9 @@ regenerates that plan when moving to another region; the pure generator itself
 has no cache. Cache identity includes seed, region, version and immutable catalog.
 Generation metadata 1 retains its World-owned surface generator; 2/3 use the
 explicit legacy regional path; 4 adds authored layers and population; 5 adds dense
-lots and civic outdoor sites. Saved versions 1..4 continue using their recorded
-algorithm, while new worlds use 5. Reproduction still requires the same content.
+lots and civic outdoor sites; 6 adds street-led geometry and family selection.
+Saved versions 1..5 continue using their recorded algorithm, while new worlds use
+6. Reproduction still requires the same content.
 Generation
 version is separate from save schema (10). Generated tiles become ordinary world chunk tiles
 and are thereafter saved as terrain IDs/damage.

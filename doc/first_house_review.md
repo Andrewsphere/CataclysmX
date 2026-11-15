@@ -9,17 +9,19 @@
 ```
 
 For headless review, enter `view`, `inspect`, then `quit`. `inspect` reports actor
-positions and world invariants. Generation 5 review seeds (coordinates are X,Z,Y):
+positions and world invariants. Generation 6 and revised content change new-game
+starts, entrance directions and basement draws. Current curated-pack observations
+use project coordinate order **X,Z,Y**:
 
-| Seed | Cellar | Player start | Entrance direction |
+| Seed | Player start | Move toward door | Basement |
 | --- | --- | --- | --- |
-| 0 | Household storage | `(79,-74,0)` | North |
-| 13 | Household storage | `(78,-74,0)` | North |
+| 0 | `(-71,-62,0)` | South | Workshop |
+| 13 | `(-89,61,0)` | North | Workshop |
+| 42 | `(78,-66,0)` | South | Workshop |
 
-The dense-town generation increment changes new-game starts and basement draws.
-Earlier generation-4 review positions were `(84,75,0)` and `(94,-75,0)`; existing
-saves retain their generation version. Both cellar variants remain covered by
-the bounded-seed server walkthrough test.
+Existing saves retain their generation version, but reproducing ungenerated areas
+also requires the same catalog. Both cellar variants are covered by a bounded-seed
+server walkthrough test.
 
 Walk toward the entrance twice: the first action opens the door, the second
 enters. One more step in the same direction reaches the stairs; `<` descends.
@@ -103,16 +105,5 @@ Build integration defines `CATACLYSMX_FIRST_HOUSE_PACK` for the curated
 `data/content.json5`, and points `CATACLYSMX_TERRAIN_FILE` at `data/demo.json5`. The scenario and pack
 implementations are linked through the existing engine/content targets.
 
-Verification includes Debug and SDL builds, 844/844 Debug tests with the two
-known failures below excluded, 19/19 focused SDL/session tests, and SDL
-startup/render smoke for both review seeds. Coverage includes the server
-walkthrough of both cellars, storage/crafting, push/pull, and archive/save
-non-respawn behavior. Terminal render, headless descent into both cellars, and
-crafting two bandages from the bedroom cabinet's rag also succeeded.
-SDL smoke is automated rendering coverage, not a manual visual-art review.
-
-The broader Debug suite has two previously recorded failures from the earlier
-diagonal-AI change: `Server creates the deterministic demo and advances only
-successful commands` and `headless_streaming_script`. Both have matching failures
-in the pre-house 793-test run at
-`out/test-results/6e0d161c-4250-4d4b-89c6-578aedcfde5f/ctest.log`.
+Coverage includes cellar walkthroughs, storage/crafting, push/pull, and
+archive/save non-respawn behavior. Final verification is recorded by the coordinator.

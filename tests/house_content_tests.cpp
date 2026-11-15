@@ -85,6 +85,125 @@ String WithRecipes(eastl::string_view pattern) {
     return definitions;
 }
 
+TEST_CASE("Building family metadata defaults and validates fields", "[content][house-content]") {
+    const auto loaded = Load(R"(
+        {type:'building_pattern',id:'single',weight:9,rows:['.'],palette:{'.':'floor'},entrance:{x:0,z:0}},
+        {type:'building_pattern',id:'first',family:'single',weight:8,rows:['.'],palette:{'.':'floor'},entrance:{x:0,z:0}},
+        {type:'building_pattern',id:'second',family:'single',family_weight:1,rows:['.'],palette:{'.':'floor'},entrance:{x:0,z:0}},
+        {type:'building_pattern',id:'third',family:'other',family_weight:1000000,rows:['.'],palette:{'.':'floor'},entrance:{x:0,z:0}})");
+    REQUIRE(loaded);
+    const auto& single = loaded->GetBuildingPattern(loaded->FindBuildingPattern("single"));
+    CHECK(single.family.empty());
+    CHECK(single.familyWeight == 1);
+    CHECK(single.weight == 9);
+    const auto& first = loaded->GetBuildingPattern(loaded->FindBuildingPattern("first"));
+    CHECK(first.family == "single");
+    CHECK(first.familyWeight == 1);
+    CHECK(first.weight == 8);
+    CHECK(loaded->GetBuildingPattern(loaded->FindBuildingPattern("third")).familyWeight == 1000000);
+    for (const auto fields : {"family:''", "family:null", "family:'Bad'", "family:4",
+             "family_weight:1", "family:'x',family_weight:0", "family:'x',family_weight:1000001",
+             "family:'x',family_weight:-1", "family:'x',family_weight:1.5", "family:'x',family_weight:null",
+             "family:'x',family:'y'", "family:'x',family_weight:1,family_weight:1"}) {
+        INFO(fields);
+        String definition = "{type:'building_pattern',id:'test',rows:['.'],palette:{'.':'floor'},entrance:{x:0,z:0},";
+        definition += fields;
+        definition += '}';
+        Invalid(View(definition));
+    }
+}
+
+TEST_CASE("Building use accepts exact names and defaults to mixed", "[content][house-content]") {
+    const auto loaded = Load(R"(
+        {type:'building_pattern',id:'default_use',rows:['.'],palette:{'.':'floor'},entrance:{x:0,z:0}},
+        {type:'building_pattern',id:'mixed_use',use:'mixed',rows:['.'],palette:{'.':'floor'},entrance:{x:0,z:0}},
+        {type:'building_pattern',id:'home',use:'residential',rows:['.'],palette:{'.':'floor'},entrance:{x:0,z:0}},
+        {type:'building_pattern',id:'shop',use:'commercial',rows:['.'],palette:{'.':'floor'},entrance:{x:0,z:0}},
+        {type:'building_pattern',id:'factory',site:'park',use:'industrial',rows:['.'],palette:{'.':'floor'},entrance:{x:0,z:0}})");
+    REQUIRE(loaded);
+    CHECK(loaded->GetBuildingPattern(loaded->FindBuildingPattern("default_use")).use == BuildingUse::Mixed);
+    CHECK(loaded->GetBuildingPattern(loaded->FindBuildingPattern("mixed_use")).use == BuildingUse::Mixed);
+    CHECK(loaded->GetBuildingPattern(loaded->FindBuildingPattern("home")).use == BuildingUse::Residential);
+    CHECK(loaded->GetBuildingPattern(loaded->FindBuildingPattern("shop")).use == BuildingUse::Commercial);
+    CHECK(loaded->GetBuildingPattern(loaded->FindBuildingPattern("factory")).use == BuildingUse::Industrial);
+    for (const auto value : {"null", "''", "'unknown'", "'Mixed'", "3", "true", "[]", "{}"}) {
+        INFO(value);
+        String definition = "{type:'building_pattern',id:'test',rows:['.'],palette:{'.':'floor'},entrance:{x:0,z:0},use:";
+        definition += value;
+        definition += '}';
+        Invalid(View(definition));
+    }
+    Invalid("{type:'building_pattern',id:'test',rows:['.'],palette:{'.':'floor'},entrance:{x:0,z:0},use:'mixed',use:'mixed'}");
+}
+
+TEST_CASE("Named families resolve use independently across sources", "[content][house-content]") {
+    constexpr ContentSource first{"first.json5", R"({format_version:1,definitions:[
+        {type:'building_pattern',id:'alpha',family:'row',use:'mixed',rows:['.'],palette:{'.':'floor'},entrance:{x:0,z:0}}
+    ]})"};
+    constexpr ContentSource second{"second.json5", R"({format_version:1,definitions:[
+        {type:'building_pattern',id:'beta',family:'row',rows:['.'],palette:{'.':'floor'},entrance:{x:0,z:0}}
+    ]})"};
+    const auto changed = Replace(first.text, "use:'mixed'", "use:'residential'");
+    const ContentSource conflicting{"first.json5", View(changed)};
+    for (bool reverse : {false, true}) {
+        const ContentSource valid[] = {reverse ? second : first, basics, reverse ? first : second};
+        const auto loaded = LoadContent({valid, 3});
+        REQUIRE(loaded);
+        CHECK(loaded->GetBuildingPattern(loaded->FindBuildingPattern("alpha")).use == BuildingUse::Mixed);
+        CHECK(loaded->GetBuildingPattern(loaded->FindBuildingPattern("beta")).use == BuildingUse::Mixed);
+        const ContentSource bad[] = {reverse ? second : conflicting, basics, reverse ? conflicting : second};
+        Diagnostics diagnostics;
+        const auto result = LoadContent({bad, 3}, &diagnostics);
+        REQUIRE_FALSE(result);
+        CHECK(result.error() == ContentError::InvalidData);
+        REQUIRE(diagnostics.Frames().size() >= 2);
+        CHECK(diagnostics.Frames()[0].message.find("'row'") != String::npos);
+        CHECK(diagnostics.Frames()[0].message.find(reverse ? "'beta'" : "'alpha'") != String::npos);
+        REQUIRE(diagnostics.Frames()[0].location);
+        REQUIRE(diagnostics.Frames()[1].location);
+        CHECK(View(diagnostics.Frames()[0].location->file) == bad[2].name);
+        CHECK(diagnostics.Frames()[0].location->path == "definitions[0].use");
+        CHECK(View(diagnostics.Frames()[1].location->file) == bad[0].name);
+        CHECK_FALSE(LoadContent({bad, 3}));
+    }
+}
+
+TEST_CASE("Building families agree across sources in either order", "[content][house-content]") {
+    constexpr ContentSource first{"first.json5", R"({format_version:1,definitions:[
+        {type:'building_pattern',id:'alpha',family:'row',family_weight:1,rows:['.'],palette:{'.':'floor'},entrance:{x:0,z:0}}
+    ]})"};
+    constexpr ContentSource second{"second.json5", R"({format_version:1,definitions:[
+        {type:'building_pattern',id:'beta',family:'row',rows:['.'],palette:{'.':'floor'},entrance:{x:0,z:0}}
+    ]})"};
+    for (bool reverse : {false, true}) {
+        const ContentSource sources[] = {reverse ? second : first, basics, reverse ? first : second};
+        const auto valid = LoadContent({sources, 3});
+        REQUIRE(valid);
+        CHECK(valid->GetBuildingPattern(valid->FindBuildingPattern("alpha")).familyWeight == 1);
+        CHECK(valid->GetBuildingPattern(valid->FindBuildingPattern("beta")).familyWeight == 1);
+        for (bool siteConflict : {false, true}) {
+            const auto changed = siteConflict
+                ? Replace(second.text, "family:'row'", "family:'row',site:'park'")
+                : Replace(first.text, "family_weight:1", "family_weight:2");
+            const ContentSource changedFirst{"first.json5", siteConflict ? first.text : View(changed)};
+            const ContentSource changedSecond{"second.json5", siteConflict ? View(changed) : second.text};
+            const ContentSource bad[] = {reverse ? changedSecond : changedFirst, basics, reverse ? changedFirst : changedSecond};
+            Diagnostics diagnostics;
+            const auto result = LoadContent({bad, 3}, &diagnostics);
+            REQUIRE_FALSE(result);
+            CHECK(result.error() == ContentError::InvalidData);
+            REQUIRE(diagnostics.Frames().size() >= 2);
+            CHECK(diagnostics.Frames()[0].message.find("'row'") != String::npos);
+            CHECK(diagnostics.Frames()[0].message.find(reverse ? "'beta'" : "'alpha'") != String::npos);
+            REQUIRE(diagnostics.Frames()[0].location);
+            REQUIRE(diagnostics.Frames()[1].location);
+            CHECK(View(diagnostics.Frames()[0].location->file) == bad[2].name);
+            CHECK(View(diagnostics.Frames()[1].location->file) == bad[0].name);
+            CHECK_FALSE(LoadContent({bad, 3}));
+        }
+    }
+}
+
 TEST_CASE("House definitions resolve forward references across sources with lexical IDs", "[content][house-content]") {
     const auto definitions = WithRecipes(house);
     const auto loaded = Load(View(definitions));

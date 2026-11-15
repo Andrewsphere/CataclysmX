@@ -156,6 +156,9 @@ TEST_CASE("House fingerprints include layers common population and basement vari
     const auto floor = content.FindTerrain("floor");
     const auto wall = content.FindTerrain("wall");
     CheckField(content, pattern.site, BuildingSite::Landmark);
+    CheckField(content, pattern.family, String{"row_house"});
+    CheckField(content, pattern.familyWeight, std::uint32_t{2});
+    CheckField(content, pattern.use, BuildingUse::Residential);
     CheckField(content, pattern.layers, Vector<PatternLayer>{{1, {floor}}});
     pattern.layers.push_back({1, {floor}});
     CheckField(content, pattern.layers[0].y, 2);

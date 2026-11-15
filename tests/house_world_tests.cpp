@@ -171,7 +171,7 @@ TEST_CASE("Object movement query is side effect free and has typed mutation erro
 TEST_CASE("Incoming request order does not affect generated persistent ID allocation", "[house][world][generation]") {
     const auto content = HouseContent();
     const auto plan = GenerateRegionPlan(content, 42, {0, 0});
-    REQUIRE_FALSE(plan.buildings.Empty());
+    REQUIRE_FALSE(plan.buildings.empty());
     const auto first = ChunkOf(plan.buildings[0].bounds.min);
     const ChunkCoord second{first.x + 1, first.z, first.y};
     World a(content), b(content);
@@ -238,7 +238,7 @@ struct SaveFile {
 TEST_CASE("Generated population and empty source snapshots survive RAM and disk reload", "[house][world][save]") {
     const auto content = HouseContent();
     const auto plan = GenerateRegionPlan(content, 42, {0, 0});
-    REQUIRE_FALSE(plan.buildings.Empty());
+    REQUIRE_FALSE(plan.buildings.empty());
     const auto& building = plan.buildings[0];
     ChunkPlacements placements;
     TileCoord furniturePosition{};

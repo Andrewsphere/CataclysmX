@@ -434,7 +434,7 @@ TEST_CASE("Regional generation saves preserve edits and regenerate neighboring b
     SaveDirectory files;
     constexpr std::uint32_t seed = 42;
     const auto plan = GenerateRegionPlan(TestContent(), seed, {1, -1});
-    REQUIRE_FALSE(plan.buildings.Empty());
+    REQUIRE_FALSE(plan.buildings.empty());
     const auto building = plan.buildings[0];
     const auto first = ChunkOf(building.bounds.min);
     const auto last = ChunkOf({building.bounds.max.x - 1, building.bounds.max.z - 1});
@@ -803,7 +803,7 @@ TEST_CASE("Saved generation four and five worlds keep their planner and populate
         INFO("generation=" << version);
         SaveDirectory files;
         const auto plan = GenerateRegionPlan(content, 0, {1, 1}, version);
-        CHECK(plan.parcels.Size() == (version == 4 ? 8 : 20));
+        CHECK(plan.parcels.size() == (version == 4 ? 8 : 20));
         TileCoord position{};
         bool found = false;
         ChunkPlacements expected;

@@ -6,10 +6,9 @@
 namespace cataclysmx {
 
 inline constexpr int region_size = 256;
-inline constexpr std::uint32_t world_generation_version = 5;
-inline constexpr std::size_t maxRegionRoads = 18; // Six streets and four three-segment connectors.
-inline constexpr std::size_t maxRegionParcels = 24; // Four blocks, two strips, up to three lots.
-inline constexpr std::size_t maxRegionBuildings = maxRegionParcels; // One site per lot.
+inline constexpr std::uint32_t world_generation_version = 6;
+// Street-led profiles and family-first frontage packing; see urban_generation_v6_design.md.
+inline constexpr std::size_t maxRegionRoads = 18; // Legacy 6+12; v6 at most 4 streets+12 connectors.
 
 struct RegionCoord {
     int x = 0;
@@ -59,13 +58,16 @@ struct FeatureOwner {
     std::uint32_t parcel = 0;
     bool operator==(const FeatureOwner&) const = default;
 };
-enum class Frontage { North, South };
+// Preserve legacy values; use an explicit switch, not ordinal rotation arithmetic.
+enum class Frontage { North, South, East, West };
+enum class TownProfile : std::uint8_t { LegacyGrid, MainStreet, Crossroads, OffsetNeighborhood };
 struct ParcelPlan {
     FeatureOwner owner{};
     TileRect bounds{};
     Frontage frontage = Frontage::North;
-    int streetZ = 0;
+    int streetZ = 0; // Street centerline for North/South; unused for East/West.
     BuildingSite site = BuildingSite::Building;
+    int streetX = 0; // Street centerline for East/West; unused for North/South.
     bool operator==(const ParcelPlan&) const = default;
 };
 struct BuildingPlan {
@@ -84,14 +86,19 @@ struct RegionPlan {
     RegionCoord region{};
     std::uint64_t seed = 0;
     TileRect bounds{};
-    TileRect townBounds{}; // Nominal 112x112, even in partial edge regions.
+    TileRect townBounds{}; // Legacy nominal 112x112; v6 enclosing envelope, not a paving mask.
     TileCoord townCenter{};
     bool hasTown = false; // False when nominal town exceeds world bounds.
     eastl::array<BoundaryCrossing, 4> boundaries{}; // North, east, south, west.
     StaticList<RoadSegment, maxRegionRoads> roads;
-    StaticList<ParcelPlan, maxRegionParcels> parcels; // Block row, column, north/south strip, lot.
-    StaticList<BuildingPlan, maxRegionBuildings> buildings; // Same order, omitting ineligible parcels.
+    Vector<ParcelPlan> parcels; // Legacy order unchanged; v6 street, side, interval, lot order.
+    Vector<BuildingPlan> buildings; // Same order, omitting ineligible parcels.
     std::uint32_t generationVersion = world_generation_version;
+    TownProfile townProfile = TownProfile::LegacyGrid;
+    // V6-only surface pavement outside parcels: three-tile service lanes and
+    // their pedestrian connections. Empty in legacy plans; not IsRoad geometry.
+    // Explicit rectangles preserve deliberate shared access without paving the town.
+    Vector<TileRect> serviceAlleys;
     bool operator==(const RegionPlan&) const = default;
 };
 
@@ -150,7 +157,7 @@ ContentResult<void> ValidateWorldgenContent(const ContentCatalog& content,
 EnvironmentSample SampleEnvironment(std::uint64_t seed, TileCoord position);
 RegionPlan GenerateRegionPlan(const ContentCatalog& content, std::uint64_t seed,
                               RegionCoord region);
-// Explicit legacy/current selection: accepts 2..5. The three-argument call
+// Explicit legacy/current selection: accepts 2..6. The three-argument call
 // selects world_generation_version; version 1 surface generation stays in World.
 RegionPlan GenerateRegionPlan(const ContentCatalog& content, std::uint64_t seed,
                               RegionCoord region, std::uint32_t generationVersion);
@@ -158,8 +165,8 @@ RegionPlan GenerateRegionPlan(const ContentCatalog& content, std::uint64_t seed,
 // Surface-only calls permit legacy catalogs without air. Upper-layer generation
 // requires the 'air' openSpace role; missing/invalid roles are invariant failures.
 // Base Y<0 is solid wall; Y>0 is air. Versions 2..4 have rectangular Y=1 roofs;
-// version 5 leaves civic outdoor sites and surface grass/tree/road/pavement open.
-// Versions 4/5 overlay authored layers and a once-selected basement. Taller
+// versions 5/6 leave civic outdoor sites and surface grass/tree/road/pavement open.
+// Versions 4..6 overlay authored layers and a once-selected basement. Taller
 // buildings explicitly author their floors and roof; air cells allow setbacks.
 // Required floor/wall terrain absence is an invariant failure. Optional grass,
 // tree, road, rubble, pavement fall back to floor, wall, floor, floor, floor.
@@ -189,6 +196,9 @@ const BuildingPlan* BuildingAt(const RegionPlan& plan, TileCoord position);
 // 2..4 use eight 53x26/27 parcels and two-tile setbacks. Version 5 subdivides
 // 53x25 strips into 2/3 lots with one-tile setbacks, reserving civic sites when
 // present in content. Three-tile rear alleys and gaps between sites are paved.
+// Version 6 uses main-street, crossroads or offset profiles, four-way building-sized
+// frontage lots, family-first weights, front sidewalks, gardens and connected rear
+// pedestrian lanes. The enclosing town bounds are not a pavement fill mask.
 // Weighted fitting templates rotate from any entrance side (corner preference:
 // north, east, south, west). No cache, entities, persistence, or neighbor loads.
 // Generation is deterministic for the same catalog and world_generation_version.

@@ -1,5 +1,7 @@
 #include "worldgen/worldgen.h"
 #include "core/ratio.h"
+#include <EASTL/algorithm.h>
+#include <EASTL/sort.h>
 
 #include <cstdlib>
 
@@ -159,8 +161,14 @@ PatternPoint Rotate(PatternPoint p, int width, int height, int turns) {
     }
 }
 int Turns(const BuildingPattern& pattern, Frontage frontage) {
-    Require(frontage == Frontage::North || frontage == Frontage::South);
-    return ((frontage == Frontage::North ? 0 : 2) - EntranceSide(pattern) + 4) % 4;
+    int side = 0;
+    switch (frontage) {
+    case Frontage::North: side = 0; break;
+    case Frontage::East: side = 1; break;
+    case Frontage::South: side = 2; break;
+    case Frontage::West: side = 3; break;
+    }
+    return (side - EntranceSide(pattern) + 4) % 4;
 }
 bool Fits(const BuildingPattern& pattern, const ParcelPlan& parcel, int setback) {
     const int turns = Turns(pattern, parcel.frontage);
@@ -269,11 +277,11 @@ void AddBuilding(const ContentCatalog& content, RegionPlan& plan, const ParcelPl
             plan.generationVersion, 0x626173656d656e74ULL)}; // "basement"
         basementVariant = static_cast<std::uint32_t>(WeightedIndex(pattern.basements, basementRandom) + 1);
     }
-    Require(plan.buildings.PushBack({parcel.owner, selected, static_cast<std::uint8_t>(turns),
+    plan.buildings.push_back({parcel.owner, selected, static_cast<std::uint8_t>(turns),
         {{x, z}, {x + width, z + height}}, entrance,
         {entrance, {entrance.x, parcel.streetZ}, 1}, abandonmentSeed,
         abandonmentSeed % 4 != 0 && !(plan.generationVersion >= 4 && Extended(pattern)),
-        basementVariant}));
+        basementVariant});
 }
 
 bool HasSite(const ContentCatalog& content, BuildingSite site) {
@@ -302,16 +310,502 @@ void AddDenseParcels(const ContentCatalog& content, RegionPlan& plan, int x, int
                     BuildingSite site = landmark ? BuildingSite::Landmark : BuildingSite::Building;
                     if (lot == 0 && parks && strip == (civicStrip + 2) % 8) { site = BuildingSite::Park; }
                     if (lot == 0 && squares && strip == (civicStrip + 5) % 8) { site = BuildingSite::Square; }
-                    ParcelPlan parcel{{plan.region, static_cast<std::uint32_t>(plan.parcels.Size())},
+                    ParcelPlan parcel{{plan.region, static_cast<std::uint32_t>(plan.parcels.size())},
                         {{left + 53 * lot / count, top + half * 28},
                          {left + 53 * (lot + 1) / count, top + half * 28 + 25}},
                         half == 0 ? Frontage::North : Frontage::South,
                         z + 72 + (row + half) * 56, site};
-                    Require(plan.parcels.PushBack(parcel));
+                    plan.parcels.push_back(parcel);
                     AddBuilding(content, plan, parcel);
                 }
             }
         }
+    }
+}
+
+// V6 streams and scratch are local to a plan. Numeric catalog IDs are only
+// borrowed lookup indices; ordering and all seed fields use stable content keys.
+std::uint64_t TownSeed(const RegionPlan& plan, std::uint64_t domain,
+                       std::uint64_t street = 0, std::uint64_t side = 0,
+                       std::uint64_t interval = 0, std::uint64_t slot = 0) {
+    auto state = Mix(plan.seed ^ domain);
+    SeedField(state, static_cast<std::uint64_t>(plan.region.x));
+    SeedField(state, static_cast<std::uint64_t>(plan.region.z));
+    SeedField(state, 6);
+    SeedField(state, street);
+    SeedField(state, side);
+    SeedField(state, interval);
+    SeedField(state, slot);
+    return state;
+}
+std::uint64_t Bounded64(GenerationRandom& random, std::uint64_t bound) {
+    Require(bound != 0);
+    const auto threshold = (std::uint64_t{0} - bound) % bound;
+    for (;;) {
+        const auto value = random.Next();
+        if (value >= threshold) { return value % bound; }
+    }
+}
+void AddWeight(std::uint64_t& total, std::uint64_t weight) {
+    Require(weight > 0 && total <= UINT64_MAX - weight);
+    total += weight;
+}
+TileRect RoadBounds(const RoadSegment& road) {
+    const int radius = road.width / 2;
+    return {{Min(road.first.x, road.last.x) - radius, Min(road.first.z, road.last.z) - radius},
+        {Max(road.first.x, road.last.x) + radius + 1, Max(road.first.z, road.last.z) + radius + 1}};
+}
+bool Encloses(TileRect outer, TileRect inner) {
+    return Inside(outer, inner.min) && Inside(outer, {inner.max.x - 1, inner.max.z - 1});
+}
+struct FrontageInterval {
+    TileRect bounds;
+    bool horizontal;
+    Frontage frontage;
+    int axis;
+    std::uint32_t street;
+    std::uint32_t side;
+    std::uint32_t interval;
+    int cursor;
+    int end;
+};
+int FrontageWidth(const FrontageInterval& strip) {
+    return strip.horizontal ? strip.bounds.max.x - strip.bounds.min.x
+        : strip.bounds.max.z - strip.bounds.min.z;
+}
+int StripDepth(const FrontageInterval& strip) {
+    return strip.horizontal ? strip.bounds.max.z - strip.bounds.min.z
+        : strip.bounds.max.x - strip.bounds.min.x;
+}
+int PedestrianGap(const FrontageInterval& strip) {
+    return strip.street <= 1 && FrontageWidth(strip) >= 12 ? 3 : 0;
+}
+void Footprint(const BuildingPattern& pattern, const FrontageInterval& strip,
+               int& frontage, int& depth) {
+    const int turns = Turns(pattern, strip.frontage);
+    const int width = turns % 2 ? pattern.height : pattern.width;
+    const int height = turns % 2 ? pattern.width : pattern.height;
+    frontage = strip.horizontal ? width : height;
+    depth = strip.horizontal ? height : width;
+}
+struct FrontageCandidates {
+    Vector<BuildingPatternId> ordered;
+    Vector<BuildingPatternId> fitting;
+    Vector<std::size_t> families;
+};
+bool SameFamily(const BuildingPattern& a, const BuildingPattern& b) {
+    if (a.family.empty() != b.family.empty()) { return false; }
+    if (a.family.empty()) { return a.id == b.id; }
+    return a.family == b.family;
+}
+void CollectCandidates(const ContentCatalog& content, const FrontageInterval& strip,
+                       BuildingSite site, int remaining, FrontageCandidates& scratch) {
+    scratch.fitting.clear();
+    scratch.families.clear();
+    for (const auto id : scratch.ordered) {
+        const auto& pattern = content.GetBuildingPattern(id);
+        int width = 0;
+        int depth = 0;
+        Footprint(pattern, strip, width, depth);
+        if (pattern.site != site || width + 2 > remaining || depth + 2 > StripDepth(strip)) { continue; }
+        if (scratch.fitting.empty() || !SameFamily(pattern,
+            content.GetBuildingPattern(scratch.fitting.back()))) {
+            scratch.families.push_back(scratch.fitting.size());
+        }
+        scratch.fitting.push_back(id);
+    }
+}
+struct SlotPreference {
+    bool sideStreet = false;
+    bool centralMain = false;
+    bool outerEnd = false;
+};
+SlotPreference ClassifyFrontageSlot(const RegionPlan& plan, const FrontageInterval& strip) {
+    const auto& street = plan.roads[strip.street];
+    const int q = strip.cursor + 1;
+    const int center = strip.horizontal ? plan.townCenter.x : plan.townCenter.z;
+    const int low = strip.horizontal ? Min(street.first.x, street.last.x) : Min(street.first.z, street.last.z);
+    const int high = strip.horizontal ? Max(street.first.x, street.last.x) : Max(street.first.z, street.last.z);
+    const int distance = q < center ? center - q : q - center;
+    const int reach = q < center ? center - low : high - center;
+    Require(reach > 0 && distance <= reach);
+    return {strip.street != 0, strip.street == 0 && distance <= 24, 4 * distance >= 3 * reach};
+}
+std::uint64_t EffectiveFamilyWeight(const BuildingPattern& pattern, SlotPreference preference) {
+    const auto base = pattern.family.empty() ? pattern.weight : pattern.familyWeight;
+    Require(base > 0 && base <= 1'000'000);
+    std::uint64_t multiplier = ratioScale;
+    switch (pattern.use) {
+    case BuildingUse::Mixed: break;
+    case BuildingUse::Residential:
+        if (preference.sideStreet) { multiplier = 3ULL * ratioScale; }
+        break;
+    case BuildingUse::Commercial:
+        if (preference.centralMain) { multiplier = 4ULL * ratioScale; }
+        break;
+    case BuildingUse::Industrial:
+        if (preference.outerEnd) { multiplier = 4ULL * ratioScale; }
+        break;
+    default: std::abort();
+    }
+    Require(multiplier > 0 && multiplier <= 4ULL * ratioScale
+        && static_cast<std::uint64_t>(base) <= UINT64_MAX / multiplier);
+    const auto effective = static_cast<std::uint64_t>(base) * multiplier / ratioScale;
+    Require(effective > 0 && effective <= 4'000'000);
+    return effective;
+}
+BuildingPatternId SelectFrontage(const ContentCatalog& content, const RegionPlan& plan,
+                                const FrontageInterval& strip, BuildingSite site,
+                                std::uint32_t slot, FrontageCandidates& scratch) {
+    CollectCandidates(content, strip, site, strip.end - strip.cursor, scratch);
+    if (scratch.fitting.empty()) { return {}; }
+    // Classification precedes selection, independent of candidate footprint or
+    // entrance. Civic classes retain neutral weights, including fallback parks.
+    const auto preference = plan.generationVersion == 6 && site == BuildingSite::Building
+        ? ClassifyFrontageSlot(plan, strip) : SlotPreference{};
+    std::uint64_t total = 0;
+    for (const auto first : scratch.families) {
+        const auto& pattern = content.GetBuildingPattern(scratch.fitting[first]);
+        AddWeight(total, EffectiveFamilyWeight(pattern, preference));
+    }
+    GenerationRandom familyRandom{TownSeed(plan, 0x763666616d696c79ULL,
+        strip.street, strip.side, strip.interval, slot)};
+    SeedField(familyRandom.state, static_cast<std::uint32_t>(site));
+    auto choice = Bounded64(familyRandom, total);
+    std::size_t family = 0;
+    for (; family < scratch.families.size(); ++family) {
+        const auto& pattern = content.GetBuildingPattern(scratch.fitting[scratch.families[family]]);
+        const auto weight = EffectiveFamilyWeight(pattern, preference);
+        if (choice < weight) { break; }
+        choice -= weight;
+    }
+    Require(family < scratch.families.size());
+    const auto first = scratch.families[family];
+    const auto last = family + 1 < scratch.families.size() ? scratch.families[family + 1] : scratch.fitting.size();
+    const auto& representative = content.GetBuildingPattern(scratch.fitting[first]);
+    GenerationRandom variantRandom{TownSeed(plan, 0x763676617269616eULL,
+        strip.street, strip.side, strip.interval, slot)};
+    SeedField(variantRandom.state, static_cast<std::uint32_t>(site));
+    SeedField(variantRandom.state, representative.family.empty() ? 0 : 1);
+    SeedString(variantRandom.state, representative.family.empty() ? representative.id : representative.family);
+    total = 0;
+    for (auto i = first; i < last; ++i) { AddWeight(total, content.GetBuildingPattern(scratch.fitting[i]).weight); }
+    choice = Bounded64(variantRandom, total);
+    for (auto i = first; i < last; ++i) {
+        const auto id = scratch.fitting[i];
+        const auto weight = content.GetBuildingPattern(id).weight;
+        if (choice < weight) { return id; }
+        choice -= weight;
+    }
+    std::abort();
+}
+
+struct LongitudinalInterval { int first; int last; };
+void SubtractInterval(Vector<LongitudinalInterval>& intervals, int first, int last) {
+    const auto count = intervals.size();
+    for (std::size_t i = 0; i < count; ++i) {
+        const auto original = intervals[i];
+        if (first >= original.last || last <= original.first) { continue; }
+        intervals[i].last = Max(original.first, first);
+        if (last < original.last) { intervals.push_back({Max(last, original.first), original.last}); }
+    }
+}
+void AddFrontageStrips(RegionPlan& plan, std::size_t streetCount,
+                      Vector<FrontageInterval>& strips) {
+    Vector<LongitudinalInterval> intervals;
+    for (std::size_t street = 0; street < streetCount; ++street) {
+        if (street == 1 && plan.townProfile == TownProfile::MainStreet) { continue; }
+        const auto& road = plan.roads[street];
+        const bool horizontal = road.first.z == road.last.z;
+        const int axis = horizontal ? road.first.z : road.first.x;
+        for (std::uint32_t side = 0; side < 2; ++side) {
+            GenerationRandom random{TownSeed(plan, 0x7636737472697073ULL, street, side)};
+            // Deep reserved strips consume the perpendicular street's usable
+            // frontage even when the selected buildings are shallow.
+            const int depth = 28 + static_cast<int>(random.Bounded(
+                plan.townProfile == TownProfile::MainStreet ? 13 : 5));
+            const int first = (horizontal ? Min(road.first.x, road.last.x) : Min(road.first.z, road.last.z))
+                + static_cast<int>(random.Bounded(7));
+            const int last = (horizontal ? Max(road.first.x, road.last.x) : Max(road.first.z, road.last.z))
+                + 1 - static_cast<int>(random.Bounded(7));
+            const int near = side == 0 ? axis - 1 : axis + 2;
+            const int far = side == 0 ? near - depth : near + depth;
+            TileRect bounds = horizontal ? TileRect{{first, Min(near, far)}, {last, Max(near, far)}}
+                : TileRect{{Min(near, far), first}, {Max(near, far), last}};
+            bounds.min.x = Max(bounds.min.x, plan.townBounds.min.x);
+            bounds.min.z = Max(bounds.min.z, plan.townBounds.min.z);
+            bounds.max.x = Min(bounds.max.x, plan.townBounds.max.x);
+            bounds.max.z = Min(bounds.max.z, plan.townBounds.max.z);
+            intervals.clear();
+            intervals.push_back({horizontal ? bounds.min.x : bounds.min.z,
+                horizontal ? bounds.max.x : bounds.max.z});
+            const auto subtract = [&](TileRect blocker) {
+                if (Intersects(bounds, blocker)) {
+                    SubtractInterval(intervals, horizontal ? blocker.min.x : blocker.min.z,
+                        horizontal ? blocker.max.x : blocker.max.z);
+                }
+            };
+            for (const auto& other : plan.roads) { subtract(RoadBounds(other)); }
+            for (const auto& earlier : strips) { subtract(earlier.bounds); }
+            eastl::sort(intervals.begin(), intervals.end(), [](auto a, auto b) { return a.first < b.first; });
+            std::uint32_t ordinal = 0;
+            for (const auto interval : intervals) {
+                if (interval.last - interval.first < 3) { continue; }
+                auto part = bounds;
+                if (horizontal) { part.min.x = interval.first; part.max.x = interval.last; }
+                else { part.min.z = interval.first; part.max.z = interval.last; }
+                FrontageInterval strip{part, horizontal,
+                    horizontal ? (side == 0 ? Frontage::South : Frontage::North)
+                        : (side == 0 ? Frontage::East : Frontage::West),
+                    axis, static_cast<std::uint32_t>(street), side, ordinal++, interval.first, interval.last};
+                if (StripDepth(strip) < 3) { continue; }
+                // Reserve pedestrian access before committing lots. A short
+                // interval stays entirely available to tiny authored sites.
+                strip.cursor += PedestrianGap(strip);
+                strips.push_back(strip);
+            }
+        }
+    }
+}
+
+void CommitFrontage(const ContentCatalog& content, RegionPlan& plan, FrontageInterval& strip,
+                    BuildingPatternId selected, std::uint32_t slot) {
+    const auto& pattern = content.GetBuildingPattern(selected);
+    int frontage = 0;
+    int depth = 0;
+    Footprint(pattern, strip, frontage, depth);
+    GenerationRandom yardRandom{TownSeed(plan, 0x7636796172647321ULL,
+        strip.street, strip.side, strip.interval, slot)};
+    SeedString(yardRandom.state, pattern.id);
+    const int rear = Min(3 + static_cast<int>(yardRandom.Bounded(6)), StripDepth(strip) - depth - 1);
+    Require(rear >= 1);
+    const int lotDepth = depth + 1 + rear;
+    const int cursor = strip.cursor;
+    TileRect lot;
+    switch (strip.frontage) {
+    case Frontage::North: lot = {{cursor, strip.axis + 2}, {cursor + frontage + 2, strip.axis + 2 + lotDepth}}; break;
+    case Frontage::South: lot = {{cursor, strip.axis - 1 - lotDepth}, {cursor + frontage + 2, strip.axis - 1}}; break;
+    case Frontage::East: lot = {{strip.axis - 1 - lotDepth, cursor}, {strip.axis - 1, cursor + frontage + 2}}; break;
+    case Frontage::West: lot = {{strip.axis + 2, cursor}, {strip.axis + 2 + lotDepth, cursor + frontage + 2}}; break;
+    }
+    const bool forward = strip.frontage == Frontage::North || strip.frontage == Frontage::West;
+    const int width = strip.horizontal ? frontage : depth;
+    const int height = strip.horizontal ? depth : frontage;
+    const int x = strip.horizontal ? cursor + 1 : forward ? lot.min.x + 1 : lot.max.x - width - 1;
+    const int z = !strip.horizontal ? cursor + 1 : forward ? lot.min.z + 1 : lot.max.z - height - 1;
+    const TileRect buildingBounds{{x, z}, {x + width, z + height}};
+    Require(Encloses(plan.bounds, lot) && Encloses(strip.bounds, lot) && Encloses(lot, buildingBounds));
+    const FeatureOwner owner{plan.region, static_cast<std::uint32_t>(plan.parcels.size())};
+    const int turns = Turns(pattern, strip.frontage);
+    const auto localEntry = Rotate(pattern.entrance, pattern.width, pattern.height, turns);
+    const TileCoord entrance{x + localEntry.x, z + localEntry.z};
+    const TileCoord terminal = strip.horizontal ? TileCoord{entrance.x, strip.axis} : TileCoord{strip.axis, entrance.z};
+    const auto abandonment = FeatureSeed(plan.seed, owner, pattern, 6, 0x76366162616e646fULL);
+    std::uint32_t basement = 0;
+    if (!pattern.basements.empty()) {
+        GenerationRandom random{FeatureSeed(plan.seed, owner, pattern, 6, 0x626173656d656e74ULL)};
+        basement = static_cast<std::uint32_t>(WeightedIndex(pattern.basements, random) + 1);
+    }
+    plan.parcels.push_back({owner, lot, strip.frontage, strip.horizontal ? strip.axis : 0,
+        pattern.site, strip.horizontal ? 0 : strip.axis});
+    plan.buildings.push_back({owner, selected, static_cast<std::uint8_t>(turns), buildingBounds,
+        entrance, {entrance, terminal, 1}, abandonment, abandonment % 4 != 0 && !Extended(pattern), basement});
+    strip.cursor += frontage + 2;
+}
+
+struct AlleyOpportunity {
+    TileRect lane;
+    TileRect connection;
+    std::size_t firstParcel;
+    std::size_t lastParcel;
+    Frontage frontage;
+};
+void PlanServiceAlley(const RegionPlan& plan, const FrontageInterval& strip,
+                     std::size_t first, Vector<AlleyOpportunity>& opportunities) {
+    if (strip.street > 1 || plan.parcels.size() - first < 2 || FrontageWidth(strip) < 12) { return; }
+    const int start = strip.horizontal ? strip.bounds.min.x : strip.bounds.min.z;
+    int far = strip.axis;
+    const bool positive = strip.frontage == Frontage::North || strip.frontage == Frontage::West;
+    for (auto i = first; i < plan.parcels.size(); ++i) {
+        const auto b = plan.parcels[i].bounds;
+        const int edge = strip.horizontal ? (positive ? b.max.z : b.min.z) : (positive ? b.max.x : b.min.x);
+        far = positive ? Max(far, edge) : Min(far, edge);
+    }
+    const int low = positive ? far : far - 3;
+    const int high = positive ? far + 3 : far;
+    const int roadEdge = positive ? strip.axis - 1 : strip.axis + 2;
+    const auto lane = strip.horizontal ? TileRect{{start, low}, {strip.cursor, high}}
+        : TileRect{{low, start}, {high, strip.cursor}};
+    const auto connection = strip.horizontal
+        ? TileRect{{start, Min(low, roadEdge)}, {start + 3, Max(high, roadEdge)}}
+        : TileRect{{Min(low, roadEdge), start}, {Max(high, roadEdge), start + 3}};
+    if (Encloses(plan.townBounds, lane) && Encloses(plan.townBounds, connection)) {
+        opportunities.push_back({lane, connection, first, plan.parcels.size(), strip.frontage});
+    }
+}
+
+bool ClearServiceSpace(const RegionPlan& plan, TileRect bounds, bool allowRoads = false) {
+    if (!Encloses(plan.bounds, bounds) || !Encloses(plan.townBounds, bounds)) { return false; }
+    for (const auto& parcel : plan.parcels) {
+        if (Intersects(bounds, parcel.bounds)) { return false; }
+    }
+    if (!allowRoads) {
+        for (const auto& road : plan.roads) {
+            if (Intersects(bounds, RoadBounds(road))) { return false; }
+        }
+    }
+    for (const auto alley : plan.serviceAlleys) {
+        if (Intersects(bounds, alley)) { return false; }
+    }
+    return true;
+}
+
+TileRect RearAccessSpur(const ParcelPlan& parcel, TileRect lane) {
+    const auto b = parcel.bounds;
+    const int x = b.min.x + (b.max.x - b.min.x) / 2;
+    const int z = b.min.z + (b.max.z - b.min.z) / 2;
+    // Half-open endpoints touch both the rear garden and lane without entering
+    // either parcel interiors or the lane. Deepest lots need no extra rectangle.
+    switch (parcel.frontage) {
+    case Frontage::North: return {{x, b.max.z}, {x + 1, lane.min.z}};
+    case Frontage::South: return {{x, lane.max.z}, {x + 1, b.min.z}};
+    case Frontage::West: return {{b.max.x, z}, {lane.min.x, z + 1}};
+    case Frontage::East: return {{lane.max.x, z}, {b.min.x, z + 1}};
+    }
+    std::abort();
+}
+
+void GenerateTownV6(const ContentCatalog& content, RegionPlan& plan) {
+    const int x = plan.region.x * region_size;
+    const int z = plan.region.z * region_size;
+    plan.townBounds = {{x + 40, z + 40}, {x + 216, z + 216}};
+    plan.hasTown = true;
+    GenerationRandom geometry{TownSeed(plan, 0x763670726f66696cULL)};
+    plan.townProfile = static_cast<TownProfile>(1 + geometry.Bounded(3));
+    plan.townCenter = {x + 124 + static_cast<int>(geometry.Bounded(9)),
+        z + 124 + static_cast<int>(geometry.Bounded(9))};
+    const auto center = plan.townCenter;
+    const bool shortFeeder = plan.townProfile == TownProfile::MainStreet;
+    // Longer perpendicular arms must extend past the reserved main-street
+    // strips. Center 124..132 plus reach <=80 keeps radius-one caps in [40,216).
+    const int west = center.x - (shortFeeder ? 56 : 64) - static_cast<int>(geometry.Bounded(17));
+    const int east = center.x + (shortFeeder ? 56 : 64) + static_cast<int>(geometry.Bounded(17));
+    const int north = center.z - (shortFeeder ? 12 : 72) - static_cast<int>(geometry.Bounded(9));
+    const int south = center.z + (shortFeeder ? 12 : 72) + static_cast<int>(geometry.Bounded(9));
+    AddRoad(plan, {west, center.z}, {east, center.z});
+    AddRoad(plan, {center.x, north}, {center.x, south});
+    if (plan.townProfile == TownProfile::OffsetNeighborhood) {
+        // Two full cross streets provide neighborhood-scale frontage. Independent
+        // ends stay uneven; the 72..80 spine always reaches both 60..64 branches.
+        for (std::uint32_t side = 0; side < 2; ++side) {
+            const int branchZ = center.z + (side == 0 ? -1 : 1) * (60 + static_cast<int>(geometry.Bounded(5)));
+            const int left = center.x - 60 - static_cast<int>(geometry.Bounded(17));
+            const int right = center.x + 60 + static_cast<int>(geometry.Bounded(17));
+            AddRoad(plan, {left, branchZ}, {right, branchZ});
+        }
+    }
+    const auto streetCount = plan.roads.Size();
+    auto p = plan.boundaries[0].position;
+    AddRoad(plan, p, {p.x, z + 24});
+    AddRoad(plan, {p.x, z + 24}, {center.x, z + 24});
+    AddRoad(plan, {center.x, z + 24}, {center.x, north});
+    p = plan.boundaries[1].position;
+    AddRoad(plan, p, {x + 232, p.z});
+    AddRoad(plan, {x + 232, p.z}, {x + 232, center.z});
+    AddRoad(plan, {x + 232, center.z}, {east, center.z});
+    p = plan.boundaries[2].position;
+    AddRoad(plan, p, {p.x, z + 232});
+    AddRoad(plan, {p.x, z + 232}, {center.x, z + 232});
+    AddRoad(plan, {center.x, z + 232}, {center.x, south});
+    p = plan.boundaries[3].position;
+    AddRoad(plan, p, {x + 24, p.z});
+    AddRoad(plan, {x + 24, p.z}, {x + 24, center.z});
+    AddRoad(plan, {x + 24, center.z}, {west, center.z});
+
+    Vector<FrontageInterval> strips;
+    AddFrontageStrips(plan, streetCount, strips);
+    FrontageCandidates scratch;
+    scratch.ordered.reserve(content.BuildingPatternCount());
+    scratch.fitting.reserve(content.BuildingPatternCount());
+    scratch.families.reserve(content.BuildingPatternCount());
+    for (std::size_t i = 1; i <= content.BuildingPatternCount(); ++i) {
+        scratch.ordered.push_back({static_cast<std::uint32_t>(i)});
+    }
+    eastl::sort(scratch.ordered.begin(), scratch.ordered.end(), [&](auto a, auto b) {
+        const auto& left = content.GetBuildingPattern(a);
+        const auto& right = content.GetBuildingPattern(b);
+        if (left.family.empty() != right.family.empty()) { return left.family.empty(); }
+        const auto& leftKey = left.family.empty() ? left.id : left.family;
+        const auto& rightKey = right.family.empty() ? right.id : right.family;
+        if (leftKey != rightKey) { return leftKey < rightKey; }
+        return left.id < right.id;
+    });
+    struct CivicReservation { std::size_t strip; BuildingPatternId pattern; };
+    Vector<CivicReservation> civic;
+    Vector<std::size_t> available;
+    // Temporary cursors reserve actual widths; emission later restores them and
+    // assigns owner ordinals only in canonical frontage order.
+    for (const auto site : {BuildingSite::Landmark, BuildingSite::Park, BuildingSite::Square}) {
+        available.clear();
+        for (std::size_t i = 0; i < strips.size(); ++i) {
+            const auto& strip = strips[i];
+            if (strip.street != 0) { continue; }
+            if (site == BuildingSite::Landmark && (strip.end - strip.cursor < 42 || StripDepth(strip) < 27)) { continue; }
+            CollectCandidates(content, strip, site, strip.end - strip.cursor, scratch);
+            if (!scratch.fitting.empty()) { available.push_back(i); }
+        }
+        if (available.empty()) { continue; }
+        GenerationRandom random{TownSeed(plan, 0x7636636976696373ULL)};
+        SeedField(random.state, static_cast<std::uint32_t>(site));
+        const auto i = available[static_cast<std::size_t>(Bounded64(random, available.size()))];
+        auto& strip = strips[i];
+        const auto selected = SelectFrontage(content, plan, strip, site, static_cast<std::uint32_t>(civic.size()), scratch);
+        Require(selected.value != 0);
+        civic.push_back({i, selected});
+        int width = 0;
+        int depth = 0;
+        Footprint(content.GetBuildingPattern(selected), strip, width, depth);
+        strip.cursor += width + 2;
+    }
+    // Grow output only as actual fitting sites are committed. Empty/no-fit
+    // catalogs must not allocate buffers sized for hypothetical 1x1 buildings.
+    Vector<AlleyOpportunity> alleys;
+    for (std::size_t i = 0; i < strips.size(); ++i) {
+        auto& strip = strips[i];
+        strip.cursor = (strip.horizontal ? strip.bounds.min.x : strip.bounds.min.z) + PedestrianGap(strip);
+        const auto first = plan.parcels.size();
+        std::uint32_t slot = 0;
+        for (const auto reservation : civic) {
+            if (reservation.strip == i) { CommitFrontage(content, plan, strip, reservation.pattern, slot++); }
+        }
+        while (strip.end - strip.cursor >= 3) {
+            auto selected = SelectFrontage(content, plan, strip, BuildingSite::Building, slot, scratch);
+            if (!selected.value) { selected = SelectFrontage(content, plan, strip, BuildingSite::Park, slot, scratch); }
+            if (!selected.value) { break; }
+            CommitFrontage(content, plan, strip, selected, slot++);
+        }
+        PlanServiceAlley(plan, strip, first, alleys);
+    }
+    Vector<TileRect> accessSpurs;
+    for (const auto opportunity : alleys) {
+        if (!ClearServiceSpace(plan, opportunity.lane)
+            || !ClearServiceSpace(plan, opportunity.connection, true)) { continue; }
+        accessSpurs.clear();
+        bool clear = true;
+        for (auto i = opportunity.firstParcel; i < opportunity.lastParcel; ++i) {
+            const auto& parcel = plan.parcels[i];
+            Require(parcel.frontage == opportunity.frontage);
+            const auto spur = RearAccessSpur(parcel, opportunity.lane);
+            if (spur.min.x == spur.max.x || spur.min.z == spur.max.z) { continue; }
+            if (!ClearServiceSpace(plan, spur)) { clear = false; break; }
+            accessSpurs.push_back(spur);
+        }
+        // Commit atomically: an emitted lane serves every associated rear yard,
+        // rather than leaving a shallower lot separated by uncleared woodland.
+        if (!clear) { continue; }
+        plan.serviceAlleys.push_back(opportunity.lane);
+        plan.serviceAlleys.push_back(opportunity.connection);
+        for (const auto spur : accessSpurs) { plan.serviceAlleys.push_back(spur); }
     }
 }
 
@@ -528,6 +1022,14 @@ RegionPlan GenerateRegionPlan(const ContentCatalog& content, std::uint64_t seed,
         Crossing(seed, BorderAxis::Z, z + 256, region.x),
         Crossing(seed, BorderAxis::X, x, region.z)}};
 
+    if (generationVersion == 6 && plan.bounds.min.x == x && plan.bounds.min.z == z
+        && plan.bounds.max.x == x + region_size && plan.bounds.max.z == z + region_size) {
+        GenerateTownV6(content, plan);
+        return plan;
+    }
+    // V6 partial regions deliberately use nominal v5 roads, without a town.
+    if (generationVersion == 6) { plan.hasTown = false; }
+
     // Three vertical/horizontal town streets, followed by N,E,S,W connectors.
     for (int offset : {72, 128, 184}) {
         AddRoad(plan, {x + offset, z + 72}, {x + offset, z + 184});
@@ -560,11 +1062,11 @@ RegionPlan GenerateRegionPlan(const ContentCatalog& content, std::uint64_t seed,
             const int left = x + 74 + column * 56;
             const int top = z + 74 + row * 56;
             for (int half = 0; half < 2; ++half) {
-                ParcelPlan parcel{{region, static_cast<std::uint32_t>(plan.parcels.Size())},
+                ParcelPlan parcel{{region, static_cast<std::uint32_t>(plan.parcels.size())},
                     {{left, top + half * 26}, {left + 53, top + (half == 0 ? 26 : 53)}},
                     half == 0 ? Frontage::North : Frontage::South,
                     z + 72 + (row + half) * 56};
-                Require(plan.parcels.PushBack(parcel));
+                plan.parcels.push_back(parcel);
                 AddBuilding(content, plan, parcel);
             }
         }
@@ -650,8 +1152,24 @@ eastl::array<Tile, chunk_size * chunk_size> GenerateChunk(
                 ? palette.tree : palette.grass;
             // Keep parcels usable: no trees in yards, access or building sites.
             if (ParcelAt(plan, p)) { tile.terrain = palette.grass; }
-            if (plan.generationVersion >= 5 && plan.hasTown && Inside(plan.townBounds, p)) {
+            if (plan.generationVersion == 5 && plan.hasTown && Inside(plan.townBounds, p)) {
                 tile.terrain = palette.pavement;
+            }
+            if (plan.generationVersion == 6) {
+                if (const auto* parcel = ParcelAt(plan, p)) {
+                    const auto b = parcel->bounds;
+                    bool front = false;
+                    switch (parcel->frontage) {
+                    case Frontage::North: front = p.z == b.min.z; break;
+                    case Frontage::South: front = p.z == b.max.z - 1; break;
+                    case Frontage::East: front = p.x == b.max.x - 1; break;
+                    case Frontage::West: front = p.x == b.min.x; break;
+                    }
+                    if (front) { tile.terrain = palette.pavement; }
+                }
+                for (const auto alley : plan.serviceAlleys) {
+                    if (Inside(alley, p)) { tile.terrain = palette.pavement; break; }
+                }
             }
             if (IsRoad(plan, p)) { tile.terrain = palette.road; }
         }

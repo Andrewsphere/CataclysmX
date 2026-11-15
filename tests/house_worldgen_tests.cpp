@@ -171,8 +171,8 @@ TEST_CASE("Explicit legacy plans exclude layered and populated patterns without 
             CHECK(after.generationVersion == version);
             CHECK(after.roads == before.roads);
             CHECK(after.parcels == before.parcels);
-            REQUIRE(after.buildings.Size() == before.buildings.Size());
-            for (std::size_t i = 0; i < before.buildings.Size(); ++i) {
+            REQUIRE(after.buildings.size() == before.buildings.size());
+            for (std::size_t i = 0; i < before.buildings.size(); ++i) {
                 auto comparable = after.buildings[i];
                 CHECK(expanded.GetBuildingPattern(comparable.pattern).id == "legacy");
                 comparable.pattern = before.buildings[i].pattern;
@@ -194,11 +194,11 @@ TEST_CASE("Explicit legacy plans exclude layered and populated patterns without 
         }
     }
     const auto onlyNew = Catalog();
-    CHECK(GenerateRegionPlan(onlyNew, 42, {0, 0}, 3).buildings.Empty());
+    CHECK(GenerateRegionPlan(onlyNew, 42, {0, 0}, 3).buildings.empty());
     const auto current = GenerateRegionPlan(onlyNew, 42, {0, 0});
     CHECK(current.generationVersion == world_generation_version);
     CHECK(current == GenerateRegionPlan(onlyNew, 42, {0, 0}, world_generation_version));
-    CHECK_FALSE(current.buildings.Empty());
+    CHECK_FALSE(current.buildings.empty());
 }
 
 TEST_CASE("House layers and once-selected basements rotate together with roof fallback",
@@ -207,8 +207,8 @@ TEST_CASE("House layers and once-selected basements rotate together with roof fa
     // Pins the string/domain/version seed contract independently of chunk draws.
     const auto workshop = GenerateRegionPlan(golden, 0, {0, 0}, 4);
     const auto storage = GenerateRegionPlan(golden, 2, {0, 0}, 4);
-    REQUIRE_FALSE(workshop.buildings.Empty());
-    REQUIRE_FALSE(storage.buildings.Empty());
+    REQUIRE_FALSE(workshop.buildings.empty());
+    REQUIRE_FALSE(storage.buildings.empty());
     CHECK(workshop.buildings[0].basementVariant == 2);
     CHECK(storage.buildings[0].basementVariant == 1);
     bool variants[2] = {};
@@ -218,7 +218,7 @@ TEST_CASE("House layers and once-selected basements rotate together with roof fa
             const auto content = Catalog(entrance, roof);
             for (std::uint64_t seed = 0; seed < 4; ++seed) {
                 const auto plan = GenerateRegionPlan(content, seed, {-1, 0}, 4);
-                REQUIRE(plan.buildings.Size() == 8);
+                REQUIRE(plan.buildings.size() == 8);
                 CHECK(plan == GenerateRegionPlan(content, seed, {-1, 0}, 4));
                 for (const auto& building : plan.buildings) {
                     const auto& pattern = content.GetBuildingPattern(building.pattern);
@@ -407,8 +407,8 @@ TEST_CASE("First-house query selects the globally nearest entrance in its bounde
         CHECK(IsRoad(plan, start->playerPosition));
         CHECK_FALSE(Contains(house->bounds, start->playerPosition));
         CHECK(start->playerPosition.y == 0);
-        CHECK(start->playerPosition.x == start->entrance.x);
-        CHECK(std::abs(start->playerPosition.z - start->entrance.z) == 1);
+        CHECK(std::abs(start->playerPosition.x - start->entrance.x)
+            + std::abs(start->playerPosition.z - start->entrance.z) == 1);
         const auto& floor = content.GetTerrain(At(content, plan, start->playerPosition).terrain);
         CHECK(floor.passable);
         CHECK_FALSE(floor.openSpace);

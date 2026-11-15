@@ -5,12 +5,17 @@ The SDL default is `assets/tiles/gen1_32x32/tileset.json5`, selectable with
 atlas pages on every launch. The individual files are the editable production
 artwork; no preassembled tileset atlases are shipped.
 
-The pack maps all ten terrain types, six generic overlays and the backpack. Grass
+The pack maps the base and architectural terrain types, six generic overlays and the backpack. Grass
 uses horizontal mirroring so tufts stay upright. Roads use plain full-cell asphalt
 without lane markings or connection shapes. Trees use a transparent 32x64 upright
 sprite with a separate grass underlay. Actors, ground items and machines preserve
 transparent surroundings so terrain remains visible beneath them. PNG colors are
 independent of content glyph and UI colors.
+
+Ten opaque 32×32 architecture PNGs under `tile/world/architecture/` map the five
+wall materials, three floor materials, and two window variants. They are geometric
+pixel art produced offline with Pillow in the existing authoring environment;
+Pillow is not a build or runtime dependency. Terrain mappings are in `tileset.json5`.
 
 Separate `sprite/item/bulb/off.png` and `on.png` images provide lightbulb artwork.
 Local `loop.meta` and `once.meta` clips provide the continuous/toggled 500/500 ms

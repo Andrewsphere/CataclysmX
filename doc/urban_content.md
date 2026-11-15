@@ -1,19 +1,33 @@
 # Urban content and Town
 
-The expanded `data/content.json5` pack supplies **31 populated building layouts,
+The expanded `data/content.json5` pack supplies **32 populated building layouts,
 a neighborhood park and a civic square**, plus the three legacy surface-only
-patterns `compact_house`, `divided_house`, and `long_house` (36 patterns total).
-Generation **5** creates **17 buildings plus a park and square** in each complete
-town with this pack, replacing the former eight-building layout. Lots have
-one-tile setbacks, paved sidewalks and shared rear alleys. A full-width civic
-plot holds a hospital, police station or fire station, selected by relative weight.
+patterns `compact_house`, `divided_house`, and `long_house` (37 patterns total).
+Generation **6** creates variable street-led towns: MainStreet, Crossroads, and
+OffsetNeighborhood. Lots fit actual building footprints, with one-tile front
+setbacks, side margins and rear gardens. Connected shared rear alleys and access
+spurs are added where clear. Civic opportunities can hold a hospital, police
+station, fire station, park or square when fitting content is available.
 Authored gardens, trees, benches, planters and a dry fountain give the outdoor
 sites a distinct purpose. Wilderness outside the town retains its biome terrain.
 
 Selection and population depend on seed, coordinates, generation version and
 content; a particular town need not contain every building type. Existing saves
-retain their recorded generation algorithm. Start a new Town to see the new lot
-layout; generation-5 FirstHouse review positions also differ from generation 4.
+retain their recorded generation algorithm for the same catalog. Start a new Town
+to see the new layout; changed generation and content also change FirstHouse starts.
+
+Site counts depend on the selected patterns as well as street geometry. With the
+bundled pack and neighborhood preferences, seeds 0–31 in region `(0,0)` produced:
+
+| Profile | Observed sites (buildings plus civic outdoor sites) |
+| --- | ---: |
+| MainStreet | 10–12 |
+| Crossroads | 19–23 |
+| OffsetNeighborhood | 27–35 |
+
+These are sample ranges, not fixed counts or limits. Seed 42's region `(0,0)` is
+a 22-site Crossroads town. The Town start query may choose a nearby region instead;
+F11's generated-plan details identify its profile and site count.
 
 ## Try it
 
@@ -29,7 +43,7 @@ The start query considers nine nearby region plans and chooses a usable entrance
 near the origin; eligibility requires authored population in the building or its
 selected basement, not a successful random loot or monster roll. The curated
 FirstHouse scenario uses `data/first_house.json5`; see the updated
-[first-house review](first_house_review.md) for current seed positions. Both packs reference shared
+[first-house review](first_house_review.md) for launch and inspection. Both packs reference shared
 definition files without duplicating definitions. Pack selection and explicit
 overrides are described in [content packs](content_pack.md).
 
@@ -37,7 +51,7 @@ overrides are described in [content packs](content_pack.md).
 
 | Group | Populated types |
 | --- | --- |
-| Residential | furnished house, bungalow, duplex, row house, farmhouse, apartment |
+| Residential | furnished house, bungalow, duplex, row house, farmhouse, apartment, apartment walkup |
 | Food and everyday services | diner, restaurant, laundromat |
 | Retail | grocery store, convenience store, pharmacy, hardware store, bookstore, clothing store, electronics store, sporting goods store |
 | Public and professional | office, clinic, fire station, police station, school, library |
@@ -50,8 +64,26 @@ overrides are described in [content packs](content_pack.md).
 The courtyard house has two wings around an open garden; the office annex and
 corner store have stepped/L-shaped footprints. Internal divisions include narrow
 stair halls, connected wards, crew dormitories and an attic studio. Each new
-layout is a separately weighted pattern, so variants share the normal generation
-and population system rather than requiring a second random-layout mechanism.
+layout is a separate pattern. Named families choose prevalence once, then select
+among fitting variants by their own weights; adding a variant does not multiply
+family prevalence. Bundled families are `detached_home` (2200), `row_home` (1600),
+`apartments` (1500), `dining` (1500), `office` (1200), and `convenience` (1200).
+Other patterns are weighted singletons. Values are relative weights, not ratios.
+
+### Neighborhood composition
+
+Generation 6 softly favors residential families on side streets (3×), commercial
+families on the main street within 24 longitudinal tiles of the town center (4×),
+and industrial families in the outer quarter of an actual street arm (4×).
+Elsewhere the multiplier is 1×. These are relative weights, not zones or quotas:
+every fitting family stays eligible, and landmark, park and square choices are
+unbiased. Homes are residential; shops, offices and the clinic are commercial;
+auto repair, warehouse and workshop are industrial. School and library remain
+mixed. The preference applies once to family prevalence, not to variant weights.
+See [world generation API](worldgen_api.md#neighborhood-composition) for the
+content field and compatibility rules.
+
+### Occupied floors
 
 | Layout | Footprint | Occupied above-ground floors |
 | --- | --- | ---: |
@@ -61,6 +93,7 @@ and population system rather than requiring a second random-layout mechanism.
 | Courtyard house | 16×15 | 2 |
 | Tall row house | 14×13 | 3 |
 | Office annex | 20×17 | 2 |
+| Apartment walkup | 20×18 | 2 |
 
 Ground is Y=0; upper occupied floors are Y=1 and, for three-storey buildings,
 Y=2. Matching stairs connect them using the existing `>`/`<` controls. Upper
@@ -68,6 +101,14 @@ floors contain furniture, supplies and themed inhabitants. Roofs are explicit
 layers above the last occupied floor; courtyards and recessed wings remain open
 air. Single-storey implicit roofs follow the indoor footprint, and parks/squares
 remain entirely open to the sky.
+
+The walkup has three flats on each occupied floor and an explicit roof. All 33
+previously populated sites were reviewed alongside it: homes have enclosed
+bathrooms, improved kitchens, dining, lounges and workstations, with purposeful
+basements where authored. Commercial and civic interiors also received a detail
+pass. New wood, brick, concrete, metal and plaster walls and wood, tile and
+concrete floors distinguish rooms and buildings. Clear windows block movement
+but admit sight; curtained windows block both. Neither has an open or smash action.
 
 ## Character-based furniture
 
@@ -89,11 +130,12 @@ for expansion order, strict validation and the `site` placement class.
 
 ## Basements
 
-Five of the six residential types have basements: furnished house has storage or
+Five residential layouts have basements: furnished house has storage or
 workshop; duplex has shared laundry/utility or hobby/pantry; row house has
 laundry/pantry or preparedness/workshop; farmhouse has pantry/preserves or farm
 workshop; apartment has communal laundry/utility or tenant workshop/storage.
-Bungalow has none. Each residential basement type has two equally weighted
+Bungalow, courtyard house, tall row house and apartment walkup have none.
+Each residential basement type has two equally weighted
 variants. Other basements include restaurant bulk pantry, office records archive,
 hardware bulk tools, electronics spares, bookstore archive, clinic medical stock,
 and workshop parts storage. These seven buildings each have one variant.
@@ -148,19 +190,16 @@ recipe semantics.
 ## Validation coverage
 
 Coverage includes all authored floors and basement variants, furniture approaches,
-matched stairs, class/size eligibility, all 33 populated site patterns appearing
-in a bounded generation sample, rotation and chunk-order independence, specialist
-populations and crafting. Live World checks climb and descend all six multi-floor
-layouts and unload/reload their upstairs occupants and furniture. Save tests
-verify that generation-4 and generation-5 checkpoints retain their planner and
-generate missing chunks with the recorded version.
+seven live multi-storey stair/streaming checks, four-way starts and frontage,
+connected rear access over tree-bearing terrain, source/chunk order independence,
+family multiplicity and neighborhood preferences, window sight/collision, and
+legacy generation compatibility.
 
-Debug and SDL builds succeeded. The broad Debug run passed 876/877 selected tests;
-the remaining debug-menu expectation still named generation 4, was updated
-for generation 5, and passed a 4/4 focused rerun alongside the density/roof,
-multi-floor streaming and saved-generation tests. The two known baseline failures
-(`Server creates the deterministic demo and advances only successful commands`
-and `headless_streaming_script`) were excluded. All 34 selected SDL/session/tileset tests passed. Town SDL startup/render
-smoke passed for seeds 42 and 13, and FirstHouse smoke passed for seed 13.
-Headless Town seed 42 reported intact world invariants, and FirstHouse seed 0
-opened its door and descended to the cellar through normal movement commands.
+The final Debug run passed **896/896 selected tests**. The two known baseline
+failures, `Server creates the deterministic demo and advances only successful commands`
+and `headless_streaming_script`, were excluded. Debug and SDL builds succeeded;
+**34/34 SDL/session/tileset checks** passed. Final Town SDL startup/render smoke
+passed for seeds 0, 13 and 42, and FirstHouse smoke passed for seed 0. The headless
+FirstHouse seed-0 walkthrough opened the door and descended normally to
+`(-71,-60,-1)`. The v6 cases selected by name also passed **10/10** after removing
+an unreachable test-only fallback statement.

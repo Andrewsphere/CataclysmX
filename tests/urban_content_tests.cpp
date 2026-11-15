@@ -17,7 +17,7 @@ constexpr eastl::string_view populatedIds[] = {
     "sporting_goods_store", "clinic", "fire_station", "police_station", "school",
     "library", "auto_repair", "warehouse", "workshop", "hospital",
     "courtyard_house", "tall_row_house", "office_annex", "corner_store",
-    "neighborhood_park", "civic_square"
+    "neighborhood_park", "civic_square", "apartment_walkup"
 };
 constexpr PatternPoint cardinal[] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
 
@@ -191,10 +191,10 @@ const PatternPopulation& Population(const BuildingPattern& pattern, const Buildi
     return pattern.basements[key.basementVariant - 1].population;
 }
 
-TEST_CASE("Expanded urban manifest loads all 33 populated building and civic site patterns",
+TEST_CASE("Expanded urban manifest loads all 34 populated building and civic site patterns",
     "[content][urban-content][manifest]") {
     const auto& content = UrbanContent();
-    CHECK(content.BuildingPatternCount() == 36); // 33 populated sites plus three legacy demos.
+    CHECK(content.BuildingPatternCount() == 37); // 34 populated sites plus three legacy demos.
     for (const auto id : populatedIds) {
         INFO("building=" << id.data());
         const auto patternId = content.FindBuildingPattern(id);
@@ -288,30 +288,23 @@ TEST_CASE("Every urban surface upper floor and basement variant has cardinal flo
 TEST_CASE("Urban patterns fit their lot classes and bounded generation includes every authored site",
     "[content][urban-content][worldgen][eligibility]") {
     const auto& content = UrbanContent();
-    const auto example = GenerateRegionPlan(content, 0, {1, -1});
-    REQUIRE_FALSE(example.parcels.Empty());
-    for (const auto id : populatedIds) {
-        const auto& pattern = content.GetBuildingPattern(content.FindBuildingPattern(id));
-        INFO("building=" << id.data() << " dimensions=" << pattern.width << 'x' << pattern.height);
-        const bool sideEntrance = pattern.entrance.z != 0 && pattern.entrance.z != pattern.height - 1;
-        const int width = sideEntrance ? pattern.height : pattern.width;
-        const int height = sideEntrance ? pattern.width : pattern.height;
-        // North/south frontages differ by a half-turn, hence have identical dimensions.
-        bool fits = false;
-        for (const auto& parcel : example.parcels) {
-            if (parcel.site != pattern.site) { continue; }
-            fits |= width <= parcel.bounds.max.x - parcel.bounds.min.x - 2
-                && height <= parcel.bounds.max.z - parcel.bounds.min.z - 2;
-        }
-        CHECK(fits);
-    }
+    // V6 lots are sized around their selected footprint. Sampling every authored
+    // site, then checking its actual lot, verifies eligibility without assuming
+    // that one unrelated town has a fixed-size lot suitable for every variant.
     Vector<std::uint8_t> seen(content.BuildingPatternCount() + 1, 0);
     unsigned diverseRegions = 0, regionCount = 0;
+    unsigned profileCounts[4] = {}, profileSites[4] = {};
     for (std::uint64_t seed = 0; seed < 64; ++seed) {
         for (const auto region : {RegionCoord{0, 0}, RegionCoord{-1, 1}, RegionCoord{1, -1}}) {
             INFO("seed=" << seed << " region=(" << region.x << ',' << region.z << ')');
             const auto plan = GenerateRegionPlan(content, seed, region);
             CHECK(plan == GenerateRegionPlan(content, seed, region));
+            const auto profile = static_cast<unsigned>(plan.townProfile);
+            REQUIRE(profile >= 1);
+            REQUIRE(profile <= 3);
+            ++profileCounts[profile];
+            profileSites[profile] += static_cast<unsigned>(plan.buildings.size());
+            bool northArm = false, eastArm = false, southArm = false, westArm = false;
             Vector<std::uint8_t> local(seen.size(), 0);
             unsigned distinct = 0;
             for (const auto& building : plan.buildings) {
@@ -325,6 +318,23 @@ TEST_CASE("Urban patterns fit their lot classes and bounded generation includes 
                 CHECK(building.bounds.min.z >= parcel->bounds.min.z + 1);
                 CHECK(building.bounds.max.x <= parcel->bounds.max.x - 1);
                 CHECK(building.bounds.max.z <= parcel->bounds.max.z - 1);
+                const bool horizontal = parcel->frontage == Frontage::North || parcel->frontage == Frontage::South;
+                if (horizontal) {
+                    CHECK(parcel->bounds.max.x - parcel->bounds.min.x
+                        == building.bounds.max.x - building.bounds.min.x + 2);
+                    eastArm |= building.entrance.x > plan.townCenter.x;
+                    westArm |= building.entrance.x < plan.townCenter.x;
+                } else {
+                    CHECK(parcel->bounds.max.z - parcel->bounds.min.z
+                        == building.bounds.max.z - building.bounds.min.z + 2);
+                    northArm |= building.entrance.z < plan.townCenter.z;
+                    southArm |= building.entrance.z > plan.townCenter.z;
+                }
+            }
+            if (plan.townProfile == TownProfile::Crossroads) {
+                // Real building sizes must leave useful occupied frontage on
+                // every arm, not only roads extending into empty woodland.
+                CHECK(northArm); CHECK(eastArm); CHECK(southArm); CHECK(westArm);
             }
             diverseRegions += distinct > 1;
             ++regionCount;
@@ -336,6 +346,9 @@ TEST_CASE("Urban patterns fit their lot classes and bounded generation includes 
     }
     // Diversity is typical across the sample, not a promise for each random region.
     CHECK(diverseRegions > regionCount / 2);
+    for (unsigned i = 1; i <= 3; ++i) { REQUIRE(profileCounts[i] != 0); }
+    CHECK(profileSites[2] * profileCounts[1] > profileSites[1] * profileCounts[2]);
+    CHECK(profileSites[3] * profileCounts[2] > profileSites[2] * profileCounts[3]);
 }
 
 TEST_CASE("Urban chunk placements are deterministic rotated and owned across chunk boundaries",
@@ -500,14 +513,14 @@ TEST_CASE("Urban professional groups favor distinct specialists and generate the
 
 template<class T> T Take(WorldResult<T> result) { REQUIRE(result); return eastl::move(*result); }
 
-TEST_CASE("Dense towns double building occupancy and reserve parks squares and large civic plots",
+TEST_CASE("Generation five preserves dense lots civic plots and footprint roofs",
     "[worldgen][urban-content][density]") {
     const auto& content = UrbanContent();
     bool checkedSteppedRoof = false, checkedCourtyard = false;
     for (std::uint64_t seed = 0; seed < 8; ++seed) {
-        const auto plan = GenerateRegionPlan(content, seed, {-1, 1});
+        const auto plan = GenerateRegionPlan(content, seed, {-1, 1}, 5);
         const auto legacy = GenerateRegionPlan(content, seed, {-1, 1}, 4);
-        CHECK(legacy.parcels.Size() == 8);
+        CHECK(legacy.parcels.size() == 8);
         unsigned buildings = 0, landmarks = 0, parks = 0, squares = 0;
         for (const auto& building : plan.buildings) {
             const auto& pattern = content.GetBuildingPattern(building.pattern);
@@ -541,7 +554,7 @@ TEST_CASE("Dense towns double building occupancy and reserve parks squares and l
         CHECK(landmarks == 1);
         CHECK(parks == 1);
         CHECK(squares == 1);
-        CHECK(plan.buildings.Size() == plan.parcels.Size());
+        CHECK(plan.buildings.size() == plan.parcels.size());
         // Every gap between sites is a supported paved sidewalk or access road.
         const auto first = ChunkOf(plan.townBounds.min);
         const auto last = ChunkOf(plan.townBounds.max);
@@ -573,7 +586,7 @@ TEST_CASE("Authored multi-storey buildings allow real stair travel and retain up
     "[worldgen][urban-content][vertical][world]") {
     const auto& content = UrbanContent();
     for (const auto name : {"hospital", "police_station", "fire_station", "courtyard_house",
-                            "tall_row_house", "office_annex"}) {
+                            "tall_row_house", "office_annex", "apartment_walkup"}) {
         INFO(name);
         const auto id = content.FindBuildingPattern(name);
         const auto& pattern = content.GetBuildingPattern(id);
@@ -602,7 +615,7 @@ TEST_CASE("Authored multi-storey buildings allow real stair travel and retain up
         World world(content, seed);
         const auto request = Take(world.RequestChunks({ChunkOf(start), 2}, LoadMode::active));
         REQUIRE(world.ReconcileChunks());
-        CHECK(world.GetGenerationVersion() == 5);
+        CHECK(world.GetGenerationVersion() == world_generation_version);
         const auto actor = Take(world.CreateActor(start, true));
         int floors = 1;
         for (int y = 1; y <= 2; ++y) {

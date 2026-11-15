@@ -259,6 +259,7 @@ if(CATACLYSMX_BUILD_TESTS)
         tests/save_database_tests.cpp tests/world_save_tests.cpp tests/server_save_tests.cpp
         tests/content_tests.cpp tests/diagnostics_tests.cpp tests/client_tests.cpp
         tests/terrain_integration_tests.cpp tests/building_pattern_tests.cpp tests/worldgen_tests.cpp
+        tests/worldgen_v6_tests.cpp tests/architecture_content_tests.cpp
         tests/worldgen_debug_tests.cpp tests/pacing_tests.cpp tests/scheduling_tests.cpp
         tests/multiplayer_session_tests.cpp tests/player_parking_tests.cpp tests/network_tests.cpp
         tests/lan_profile_tests.cpp

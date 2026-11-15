@@ -92,6 +92,10 @@ and squares receive no implicit roof. Multi-storey layouts author their occupied
 floors, matched stair landings and final roof, with air cells over courtyards and
 setbacks. See [urban content](urban_content.md) for the two-/three-floor roster.
 
+Generation 6 retains these authored layer, basement, population and roof rules
+while changing surface planning and materials. Windows have normal support and
+block movement; clear windows transmit sight and curtained windows block it.
+
 Y-layer support was originally introduced in save/protocol version 6. The current
 save schema is version 10 and stores Y, lighting sources, skylight, semantic object
 appearance, and per-player observations; versions 1–6 are rejected and versions

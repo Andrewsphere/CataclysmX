@@ -33,6 +33,10 @@ the existing `cellar_lamp`; `house_chair` is also available.
 | `utility_cabinet` | utility cabinet | generic | yes |
 | `display_rack` | display rack | generic | yes |
 
+The detail pass also adds `house_sofa`, `house_toilet`, `kitchen_sink`,
+`kitchen_stove`, and `house_bathtub` in shared furniture definitions. All five
+block movement and have no storage; use actual storage furniture for loot.
+
 ## Loot pools
 
 Each invocation selects one weighted alternative; nested pools make independent

@@ -1,4 +1,9 @@
 {format_version:1, objects:[
+  {id:'house_sofa', name:'sofa', behavior:'none', kind:'chair', movable:true, blocks_movement:true, blocks_sight:false},
+  {id:'house_toilet', name:'toilet', behavior:'none', kind:'generic', movable:false, blocks_movement:true, blocks_sight:false},
+  {id:'kitchen_sink', name:'sink', behavior:'none', kind:'generic', movable:false, blocks_movement:true, blocks_sight:false},
+  {id:'kitchen_stove', name:'stove', behavior:'none', kind:'generic', movable:false, blocks_movement:true, blocks_sight:false},
+  {id:'house_bathtub', name:'bathtub', behavior:'none', kind:'generic', movable:false, blocks_movement:true, blocks_sight:false},
   {id:'house_table', name:'table', behavior:'none', kind:'table', movable:true, blocks_movement:true, blocks_sight:false},
   {id:'house_chair', name:'chair', behavior:'none', kind:'chair', movable:true, blocks_movement:true, blocks_sight:false},
   {id:'house_bed', name:'bed', behavior:'none', kind:'generic', movable:true, blocks_movement:true, blocks_sight:false},

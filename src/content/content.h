@@ -79,6 +79,8 @@ struct BasementVariant {
 };
 
 enum class BuildingSite : std::uint8_t { Building, Landmark, Park, Square };
+// Soft neighborhood preference for ordinary building sites, never eligibility.
+enum class BuildingUse : std::uint8_t { Mixed, Residential, Commercial, Industrial };
 
 struct BuildingPattern {
     String id;
@@ -91,6 +93,15 @@ struct BuildingPattern {
     Vector<PatternLayer> layers; // Unique nonzero Y; no -1 if basements supply it.
     PatternPopulation population;
     Vector<BasementVariant> basements;
+    // Generation 6 selection metadata; versions 1..5 ignore both fields.
+    // Empty family is a singleton keyed by id, with effective family weight=weight.
+    String family;
+    // Named families share one site and this resolved weight (JSON default 1).
+    // Existing weight selects fitting variants within a named family.
+    std::uint32_t familyWeight = 1;
+    // JSON default Mixed is neutral. Named family members must agree on use.
+    // Generation 6 biases family weights only; versions 1..5 ignore this field.
+    BuildingUse use = BuildingUse::Mixed;
     bool operator==(const BuildingPattern&) const = default;
 };
 
