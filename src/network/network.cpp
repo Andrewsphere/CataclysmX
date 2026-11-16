@@ -12,6 +12,7 @@
 #include <EASTL/sort.h>
 
 #include <cstdlib>
+#include <initializer_list>
 #include <random>
 
 namespace cataclysmx::network {
@@ -147,6 +148,15 @@ bool Receive(ENetSocket socket, ENetAddress& address, wire::Reader& r, std::uint
 
 std::uint64_t ContentFingerprint(const ContentCatalog& content) {
     std::uint64_t hash = 14695981039346656037ull;
+    HashNumber(hash, content.FlagCount());
+    for (std::size_t i = 0; i < content.FlagCount(); ++i) {
+        const auto& flag = content.GetFlag({static_cast<std::uint32_t>(i + 1)});
+        HashString(hash, flag.id); HashString(hash, flag.name); HashString(hash, flag.description);
+        HashNumber(hash, static_cast<std::uint8_t>(flag.kind));
+        for (const auto domain : {FlagDomain::Item, FlagDomain::Monster, FlagDomain::Terrain, FlagDomain::Object}) {
+            HashNumber(hash, flag.domains.Contains(domain));
+        }
+    }
     HashNumber(hash, content.TerrainCount());
     for (std::size_t i = 0; i < content.TerrainCount(); ++i) {
         const auto& t = content.GetTerrain({static_cast<std::uint32_t>(i + 1)});
@@ -182,11 +192,17 @@ std::uint64_t ContentFingerprint(const ContentCatalog& content) {
         const auto& item = content.GetItem({static_cast<std::uint32_t>(i + 1)});
         HashString(hash, item.id); HashString(hash, item.name);
         HashString(hash, item.description);
+        HashNumber(hash, item.flags.Ids().size());
+        for (const auto flag : item.flags.Ids()) { HashString(hash, content.GetFlag(flag).id); }
         HashNumber(hash, item.art.width); HashNumber(hash, item.art.lines.size());
         for (const auto& line : item.art.lines) {
             HashNumber(hash, line.size());
             for (const auto& run : line) {
-                HashString(hash, run.text); HashNumber(hash, static_cast<std::uint8_t>(run.color)); HashNumber(hash, run.cells);
+                HashString(hash, run.text); HashNumber(hash, run.color.useDefault);
+                if (!run.color.useDefault) {
+                    HashNumber(hash, run.color.red); HashNumber(hash, run.color.green); HashNumber(hash, run.color.blue);
+                }
+                HashNumber(hash, run.cells);
             }
         }
         const auto& melee = ItemMelee(item);

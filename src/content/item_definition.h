@@ -3,6 +3,7 @@
 #include "core/data_object.h"
 #include "content/crafting_definition.h"
 #include "content/text_art.h"
+#include "content/definition_flags.h"
 #include "combat/melee_profile.h"
 #include "items/item_types.h"
 #include <EASTL/optional.h>
@@ -49,6 +50,7 @@ struct ItemDefinition {
     String name;
     String description;
     TextArt art;
+    FlagSet flags;
     eastl::optional<MeleeProfile> melee;
     std::uint32_t massGrams = 0;
     std::uint32_t volumeMl = 0;

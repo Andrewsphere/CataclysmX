@@ -28,6 +28,18 @@ storage metadata at 4115, and the complete packet at 1 MiB. Decoders validate
 canonical storage shapes, parent links, unique equipment identity and booleans.
 Content fingerprints include description, parsed art runs and effective melee
 profiles in canonical order. No runtime entity handles cross this boundary.
+Art colors hash a canonical `useDefault` boolean and, only for non-default
+colors, the exact red/green/blue channels. Run text, cell counts, line boundaries
+and art width are included. Palette aliases and asset paths are not identities:
+equivalent resolved artwork has the same fingerprint.
+
+The shared flag vocabulary is hashed in canonical catalog order, including each
+string ID, name, description, kind and membership in all four domains (item,
+monster, terrain and object). Item flag attachments hash their canonical sorted
+stable string IDs. Definition, domain and attachment authoring order therefore
+does not matter; changed meaning or attachments reject admission, including
+changes to unused vocabulary. These fingerprint changes use the existing
+matching-content check and do not change protocol 18's wire layout.
 
 `network/network.h` exposes `NetworkRuntime`, `LanHost`, `LanClient` and
 `LanDiscovery`. The content catalog and server must outlive their network peers;

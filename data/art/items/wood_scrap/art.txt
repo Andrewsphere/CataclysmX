@@ -1,0 +1,23 @@
+@text-art 1
+@color grain #A77B4D
+@color endgrain #D1AC79
+@color shadow #63472F
+@color splinter #E2C596
+@default grain
+---
+       <endgrain>__________________
+      <endgrain>/ _______________ /<shadow>|
+     <endgrain>/ /___/____/____/ / <shadow>|
+    <splinter>/_______________ /  <shadow>|
+   <grain>|  ────   ─────  | <shadow>/|
+   <grain>| ──   ────────  |<shadow>/ |
+   <grain>|    ─────   ──  |  <shadow>|
+   <grain>| ─────  ────    | <shadow>/|
+   <grain>|   ───────  ──  |<shadow>/ |
+   <grain>| ───   ───────  |  <shadow>|
+   <grain>|    ─────  ───  | <shadow>/|
+   <grain>| ─────   ─────  |<shadow>/ |
+   <grain>|   ────   ────  |  <shadow>/
+   <grain>| ───  ────────  | <shadow>/
+   <shadow>|________________|/
+    <splinter>/ /     / /    /

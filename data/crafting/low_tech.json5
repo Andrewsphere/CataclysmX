@@ -1,0 +1,14 @@
+{format_version: 1, definitions: [
+  {type:'recipe', id:'cut_wood_scrap', name:'Cut a plank into wood scraps',
+   inputs:[{item:'wood_plank',count:1}],
+   tool_traits:[{id:'house_cutting',tier:1}],
+   result:{item:'wood_scrap',count:10}, work:200},
+  // Select a long strip from salvage; cold straighten, bend a separate guard,
+  // then abrade on rough masonry. No forging, welding, or heat treatment.
+  // Scrap 1400 + wood 400 + wire 200 = 2000 g; 200 g is shaping waste.
+  {type:'recipe', id:'make_salvaged_arming_sword', name:'Shape a salvaged arming sword',
+   inputs:[{item:'scrap',count:14},{item:'wood_scrap',count:2},
+           {item:'wire_bundle',count:1}],
+   tool_traits:[{id:'hammering',tier:1},{id:'house_cutting',tier:1}],
+   result:{item:'arming_sword',count:1}, work:6000},
+]}

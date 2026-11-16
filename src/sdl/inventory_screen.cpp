@@ -78,6 +78,27 @@ bool Column(SDL_Renderer* renderer, SdlText& text, unsigned slot, const char* va
         && text.Draw(slot, value, float(bounds.x + bounds.w - text.Width(slot) - 3), float(bounds.y), color);
 }
 
+bool ArtRunText(SdlText& text, const ArtRun& run, unsigned index, float x, float y, int cell) {
+    const auto color = ItemArtColor(run.color);
+    if (index < 128) { return text.DrawCells(128 + index, run.text.c_str(), run.cells, x, y, color, cell); }
+    // Overflow must not overwrite the stable run slots. Reuse the same bounded
+    // codepoint-cache range as DrawCells, with stack-only UTF-8 scratch.
+    std::uint32_t column = 0;
+    for (std::size_t byte = 0; byte < run.text.size() && column < run.cells; ++column) {
+        const auto first = static_cast<unsigned char>(run.text[byte]);
+        const std::size_t bytes = first < 0x80 ? 1 : first < 0xe0 ? 2 : first < 0xf0 ? 3 : 4;
+        char glyph[5]{};
+        unsigned hash = 2166136261U;
+        for (std::size_t n = 0; n < bytes; ++n) {
+            glyph[n] = run.text[byte + n];
+            hash = (hash ^ static_cast<unsigned char>(glyph[n])) * 16777619U;
+        }
+        if (!text.Draw(256 + hash % 64, glyph, x + column * cell, y, color)) { return false; }
+        byte += bytes;
+    }
+    return true;
+}
+
 bool Pane(SDL_Renderer* renderer, SdlText& text, const SdlAssets& assets, const ContentCatalog& content,
     ItemUiPane& pane, SDL_Rect bounds, bool active, int line, unsigned index) {
     if (!SDL_SetRenderClipRect(renderer, &bounds) || !Box(renderer, bounds, active)) { return false; }
@@ -161,8 +182,8 @@ bool Examination(SDL_Renderer* renderer, SdlText& text, const SdlAssets& assets,
             std::uint32_t column = 0;
             for (const auto& run : artLine) {
                 if (y + line > detail.y && y < detail.y + detail.h && column * cell < static_cast<unsigned>(body.w)) {
-                    if (!text.DrawCells(128 + runIndex % 128, run.text.c_str(), run.cells,
-                        float(body.x + column * cell), float(y), ItemArtColor(run.color), cell)) { return false; }
+                    if (!ArtRunText(text, run, runIndex,
+                        float(body.x + column * cell), float(y), cell)) { return false; }
                 }
                 ++runIndex; // Stable slots also for offscreen runs when scrolling.
                 column += run.cells;
@@ -176,20 +197,7 @@ bool Examination(SDL_Renderer* renderer, SdlText& text, const SdlAssets& assets,
 }
 
 SDL_Color ItemArtColor(ArtColor color) {
-    switch (color) {
-    case ArtColor::Default: return normal;
-    case ArtColor::Black: return {0, 0, 0, 255};
-    case ArtColor::Red: return {220, 83, 83, 255};
-    case ArtColor::Green: return {88, 194, 132, 255};
-    case ArtColor::Yellow: return {225, 204, 89, 255};
-    case ArtColor::Blue: return {100, 140, 230, 255};
-    case ArtColor::Magenta: return {200, 110, 210, 255};
-    case ArtColor::Cyan: return {90, 200, 210, 255};
-    case ArtColor::White: return {245, 245, 245, 255};
-    case ArtColor::Gray: return {170, 170, 170, 255};
-    case ArtColor::DarkGray: return {90, 90, 90, 255};
-    }
-    return normal;
+    return color.useDefault ? normal : SDL_Color{color.red, color.green, color.blue, 255};
 }
 
 void HandleInventoryKey(ItemUi& ui, HeldKey& held, const KeyChord& key, const Keymap& keys,

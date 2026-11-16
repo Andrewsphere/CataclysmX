@@ -1,0 +1,25 @@
+@text-art 1
+@color cloth #819FAC
+@color seam #A8C0CE
+@color highlight #D2DDE0
+@color fold #718D9C
+@color button #DDCBA7
+@color patch #B5A878
+@default seam
+---
+          <highlight>┌────┐┌────┐
+     <seam>┌────┘   <highlight>/└┘\   <seam>└────┐
+    <seam>/ <cloth>░░░░░░<highlight>\ /  \ /<cloth>░░░░░ <seam>\
+   <seam>/ <cloth>░░░░░░░ <highlight>V <seam>│  <highlight>V <cloth>░░░░░░ <seam>\
+  <seam>/ <cloth>░░░░░░░░░░ <button>o <cloth>░░░░░░░░░░░ <seam>\
+ <seam>/ <cloth>░░░░░<highlight>┌─────┐<seam>│ <highlight>┌─────┐<cloth>░░░░░ <seam>\
+<highlight>┌──────┐<seam>│ <patch>─── <seam>││ │     │<highlight>┌──────┐
+<seam>└─────┐<fold>│<seam>└──v──┘<button>o <seam>└──v──┘<fold>│<seam>┌─────┘
+      <seam>│<fold>│       <seam>│        <fold>│<seam>│
+      <seam>│ <cloth>░      <seam>│      <cloth>░  <seam>│
+      <seam>│ <cloth>░      <button>o      <cloth>░  <seam>│
+      <seam>│ <cloth>░      <seam>│      <cloth>░  <seam>│
+      <seam>│ <cloth>░      <seam>│      <cloth>░  <seam>│
+      <seam>│        <button>o         <seam>│
+      <seam>│ <cloth>░░░░░░ <seam>│ <cloth>░░░░░░  <seam>│
+      <highlight>└────────┴─────────┘

@@ -89,6 +89,8 @@ endfunction()
 add_library(cataclysmx_engine STATIC
     src/content/content.cpp src/content/content.h
     src/content/content_pack.cpp src/content/spawn_definition.h src/content/building_population.h
+    src/content/content_assets.cpp src/content/content_assets.h
+    src/content/definition_flags.cpp src/content/definition_flags.h
     src/content/item_definition.cpp src/content/item_definition.h
     src/content/text_art.cpp src/content/text_art.h
     src/content/object_definition.cpp src/content/object_definition.h
@@ -276,6 +278,9 @@ if(CATACLYSMX_BUILD_TESTS)
         tests/presentation_network_tests.cpp tests/presentation_tests.cpp
         tests/item_content_tests.cpp tests/item_state_tests.cpp tests/item_world_tests.cpp
         tests/item_presentation_content_tests.cpp tests/inventory_engine_tests.cpp tests/inventory_ui_tests.cpp
+        tests/text_art_file_tests.cpp tests/definition_flags_tests.cpp
+        tests/item_asset_content_tests.cpp tests/item_flags_content_tests.cpp
+        tests/item_pilot_tests.cpp
         tests/item_save_tests.cpp tests/item_network_tests.cpp tests/item_server_tests.cpp
         tests/item_behavior_tests.cpp
         tests/crafting_content_tests.cpp tests/crafting_world_tests.cpp tests/crafting_save_tests.cpp

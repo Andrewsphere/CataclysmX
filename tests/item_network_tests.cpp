@@ -451,6 +451,72 @@ TEST_CASE("Content fingerprint hashes canonical typed data and the complete beha
         ContentFingerprint(ItemCatalog({implicitDefaults.data(), implicitDefaults.size()})));
 }
 
+TEST_CASE("Content fingerprint hashes resolved art colors text and cell layout", "[network][item][fingerprint]") {
+    const auto fingerprint = [](const char* art) {
+        String source = "{format_version:1,definitions:[{type:'item',id:'art',name:'Art',mass_g:1,volume_ml:1,art:[";
+        source += art; source += "]}]}";
+        return ContentFingerprint(ItemCatalog({source.data(), source.size()}));
+    };
+    const auto red = fingerprint("'<red>MM'");
+    CHECK(fingerprint("'<r>MM'") == red);
+    CHECK(fingerprint("'<blue>MM'") != red);
+    CHECK(fingerprint("'<green>MM'") != red);
+    CHECK(fingerprint("'MM'") != red);
+    CHECK(fingerprint("'<red>MN'") != red);
+    CHECK(fingerprint("'<red>M M'") != red);
+    CHECK(fingerprint("'<red>M','<red>M'") != red);
+    CHECK(fingerprint("'<black>MM'") != fingerprint("'MM'"));
+    CHECK(fingerprint("'<grey>MM'") == fingerprint("'<gray>MM'"));
+    CHECK(fingerprint("'<reset>MM'") == fingerprint("'<default>MM'"));
+    // Legacy aliases and external local palettes resolve to the same RGB runs.
+    const String legacyLine = "<r>MM<reset>!";
+    const auto legacy = ParseTextArt({&legacyLine, 1}); REQUIRE(legacy);
+    const auto palette = ParseTextArtFile("@text-art 1\n@color ember #DC5353\n---\n<ember>MM<reset>!");
+    REQUIRE(palette); CHECK(*palette == *legacy);
+    const auto renamed = ParseTextArtFile("@text-art 1\n@color other #DC5353\n---\n<other>MM<reset>!");
+    REQUIRE(renamed); CHECK(*renamed == *palette);
+    const auto custom = ParseTextArtFile("@text-art 1\n@color custom #0D4FF1\n---\n<custom>M");
+    REQUIRE(custom); REQUIRE(custom->lines.size() == 1); REQUIRE(custom->lines[0].size() == 1);
+    CHECK(custom->lines[0][0].color == ArtColor::Rgb(13, 79, 241));
+}
+
+TEST_CASE("Content fingerprint includes flag vocabulary meaning and item attachments", "[network][item][fingerprint][flags]") {
+    const String source = R"({format_version:1,definitions:[
+        {type:'flag',id:'alpha',name:'Alpha',description:'First flag',domains:['item','monster'],kind:'property'},
+        {type:'flag',id:'beta',name:'Beta',description:'Second flag',domains:['item'],kind:'category'},
+        {type:'item',id:'probe',name:'Probe',mass_g:1,volume_ml:1,flags:['beta','alpha']}
+    ]})";
+    const auto baseline = ContentFingerprint(ItemCatalog({source.data(), source.size()}));
+    struct Change { const char* from; const char* to; };
+    for (const auto& change : {
+        Change{"name:'Alpha'", "name:'Other name'"},
+        Change{"description:'First flag'", "description:'Changed meaning'"},
+        Change{"kind:'property'", "kind:'category'"},
+        Change{"domains:['item','monster']", "domains:['item']"},
+        Change{"domains:['item','monster']", "domains:['item','terrain']"},
+        Change{"domains:['item','monster']", "domains:['item','object']"},
+        Change{"flags:['beta','alpha']", "flags:['alpha']"},
+        Change{"flags:['beta','alpha']", "flags:['beta']"},
+        Change{"flags:['beta','alpha']", "flags:[]"}}) {
+        CAPTURE(change.from, change.to);
+        String changed = source;
+        const auto offset = changed.find(change.from); REQUIRE(offset != String::npos);
+        changed.replace(offset, eastl::string_view(change.from).size(), change.to);
+        CHECK(ContentFingerprint(ItemCatalog({changed.data(), changed.size()})) != baseline);
+    }
+    const auto canonical = ItemCatalog(R"({format_version:1,definitions:[
+        {type:'item',id:'probe',name:'Probe',mass_g:1,volume_ml:1,flags:['alpha','beta']},
+        {type:'flag',id:'beta',name:'Beta',description:'Second flag',domains:['item'],kind:'category'},
+        {type:'flag',id:'alpha',name:'Alpha',description:'First flag',domains:['monster','item'],kind:'property'}
+    ]})");
+    CHECK(ContentFingerprint(canonical) == baseline);
+    // Unattached vocabulary still carries shared meaning and must be hashed.
+    const auto unattached = ItemCatalog(R"({format_version:1,definitions:[
+        {type:'flag',id:'unused',name:'Unused',description:'Vocabulary only',domains:['object'],kind:'property'}
+    ]})");
+    CHECK(ContentFingerprint(unattached) != ContentFingerprint(ItemCatalog("{format_version:1,definitions:[]}")));
+}
+
 TEST_CASE("Generic behavior metadata needs no networking registration", "[network][item][codec]") {
     const auto content = FingerprintCatalog("payload:{}");
     WorldView view;

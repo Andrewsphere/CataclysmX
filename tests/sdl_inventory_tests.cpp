@@ -98,8 +98,8 @@ TEST_CASE("SDL item examination preserves colored UTF8 cells clips wide art and 
     for (int i = 0; i < 1000000 && assets.Poll(display.renderer) == AssetState::Loading; ++i) { std::this_thread::yield(); }
     REQUIRE(assets.State() == AssetState::Ready);
     TextArt art;
-    art.lines = {{{"  /", ArtColor::Red, 3}, {"─\\  ", ArtColor::Cyan, 4}}}; art.width = 7;
-    for (int i = 0; i < 100; ++i) { art.lines[0].push_back({"─", ArtColor::Green, 1}); ++art.width; }
+    art.lines = {{{"  /", ArtColor::Rgb(37, 219, 143), 3}, {"─\\  ", ArtColor::Rgb(90, 200, 210), 4}}}; art.width = 7;
+    for (int i = 0; i < 100; ++i) { art.lines[0].push_back({"─", ArtColor::Rgb(88, 194, 132), 1}); ++art.width; }
     ItemUiFrame frame; frame.screen = ItemUiScreen::Examine; frame.title = "Examine";
     frame.examination.type = TestContent().FindItem("rock"); frame.examination.name = "Rock";
     frame.examination.description = "A description that wraps in a compact window.";
@@ -109,7 +109,7 @@ TEST_CASE("SDL item examination preserves colored UTF8 cells clips wide art and 
     REQUIRE(SDL_RenderPresent(display.renderer));
     // The run palette reaches actual pixels, not just metadata.
     bool red = false, cyan = false;
-    const auto redColor = ItemArtColor(ArtColor::Red), cyanColor = ItemArtColor(ArtColor::Cyan);
+    const auto redColor = ItemArtColor(ArtColor::Rgb(37, 219, 143)), cyanColor = ItemArtColor(ArtColor::Rgb(90, 200, 210));
     for (int y = 0; y < 360; ++y) {
         for (int x = 0; x < 480; ++x) {
             Uint8 r = 0, g = 0, b = 0, a = 0;
@@ -206,15 +206,15 @@ TEST_CASE("SDL colored art runs retain full monospaced widths and leading spaces
     SdlText text(display.renderer); REQUIRE(text.Ready());
     REQUIRE(text.Draw(125, "M", -10000, -10000, {255, 255, 255, 255}));
     const int cell = text.Width(125);
-    REQUIRE(text.Draw(126, "  /─\\", -10000, -10000, ItemArtColor(ArtColor::Red)));
+    REQUIRE(text.Draw(126, "  /─\\", -10000, -10000, ItemArtColor(ArtColor::Rgb(220, 83, 83))));
     const int firstWidth = text.Width(126);
-    REQUIRE(text.DrawCells(128, "  /─\\", 5, 20, 20, ItemArtColor(ArtColor::Red), cell));
+    REQUIRE(text.DrawCells(128, "  /─\\", 5, 20, 20, ItemArtColor(ArtColor::Rgb(220, 83, 83)), cell));
     CHECK(text.Width(128) == firstWidth); CHECK(firstWidth > cell * 2);
-    REQUIRE(text.Draw(126, "  []  ", -10000, -10000, ItemArtColor(ArtColor::Cyan)));
+    REQUIRE(text.Draw(126, "  []  ", -10000, -10000, ItemArtColor(ArtColor::Rgb(90, 200, 210))));
     const int secondWidth = text.Width(126);
-    REQUIRE(text.DrawCells(129, "  []  ", 6, float(20 + cell * 5), 20, ItemArtColor(ArtColor::Cyan), cell));
+    REQUIRE(text.DrawCells(129, "  []  ", 6, float(20 + cell * 5), 20, ItemArtColor(ArtColor::Rgb(90, 200, 210)), cell));
     CHECK(text.Width(129) == secondWidth); CHECK(secondWidth > cell * 4);
-    REQUIRE(text.DrawCells(128, "  /─\\", 5, 20, 20, ItemArtColor(ArtColor::Red), cell));
+    REQUIRE(text.DrawCells(128, "  /─\\", 5, 20, 20, ItemArtColor(ArtColor::Rgb(220, 83, 83)), cell));
     CHECK(text.Width(128) == firstWidth); CHECK(text.Width(129) == secondWidth);
 }
 
@@ -259,4 +259,118 @@ TEST_CASE("SDL real inventory screens render bundled sprites descriptions and ar
         ui.Close(); ui.Open(true); draw("advanced");
         CHECK_FALSE(ui.Frame().panes[0].rows.empty()); CHECK_FALSE(ui.Frame().panes[1].rows.empty());
     }
+}
+
+TEST_CASE("SDL art uses context default only when requested", "[sdl][inventory]") {
+    const auto normal = ItemArtColor({});
+    CHECK(normal.r == 210); CHECK(normal.g == 220); CHECK(normal.b == 218); CHECK(normal.a == 255);
+    const auto custom = ItemArtColor(ArtColor::Rgb(13, 79, 241));
+    CHECK(custom.r == 13); CHECK(custom.g == 79); CHECK(custom.b == 241); CHECK(custom.a == 255);
+    const auto black = ItemArtColor(ArtColor::Rgb(0, 0, 0));
+    CHECK(black.r == 0); CHECK(black.g == 0); CHECK(black.b == 0);
+    CHECK(ItemArtColor({13, 79, 241, true}).r == normal.r);
+}
+
+TEST_CASE("SDL item pilot renders five authored assets at compact and wide sizes", "[item-pilot][sdl][inventory][render]") {
+    Diagnostics diagnostics;
+    auto loaded = LoadContentPack(CATACLYSMX_CONTENT_PACK, &diagnostics);
+    INFO(FormatDiagnostics(diagnostics).c_str()); REQUIRE(loaded);
+    const auto& content = *loaded;
+    Server server(content);
+    for (const char* id : {"claw_hammer", "wood_scrap", "glass_bottle", "work_shirt", "arming_sword"}) {
+        REQUIRE(server.GetWorld().CreateItem(content.FindItem(id), ItemLocation::Carried(server.GetPlayer())));
+    }
+    const auto view = server.View(0);
+    Localization localization; REQUIRE(localization.Load(CATACLYSMX_LOC_DIRECTORY, "en"));
+    for (const auto size : {SDL_Point{480, 360}, SDL_Point{1120, 900}}) {
+        CAPTURE(size.x, size.y);
+        Display display(size.x, size.y); REQUIRE(display.renderer);
+        SdlText text(display.renderer); REQUIRE(text.Ready());
+        SdlAssets assets(&content);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (assets.Poll(display.renderer) == AssetState::Loading && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::yield();
+        }
+        REQUIRE(assets.State() == AssetState::Ready);
+        for (const char* id : {"claw_hammer", "wood_scrap", "glass_bottle", "work_shirt", "arming_sword"}) {
+            CAPTURE(id);
+            const auto type = content.FindItem(id); REQUIRE(type.value != 0);
+            ItemUiFrame frame; frame.screen = ItemUiScreen::Examine;
+            frame.title = "Examine"; frame.footer = "Up/Down scroll | Escape close";
+            bool found = false;
+            for (const auto& entry : view.inventory) {
+                if (entry.type != type) { continue; }
+                DescribeInventoryItem(entry, content, localization, frame.examination); found = true; break;
+            }
+            REQUIRE(found); REQUIRE(frame.examination.art == &content.GetItem(type).art);
+            REQUIRE_FALSE(frame.examination.description.empty()); REQUIRE_FALSE(frame.examination.stats.empty());
+            REQUIRE_FALSE(frame.examination.art->lines.empty());
+            const SDL_Rect originalClip{2, 3, 100, 80};
+            REQUIRE(SDL_SetRenderScale(display.renderer, 1.5f, 1.25f));
+            REQUIRE(SDL_SetRenderClipRect(display.renderer, &originalClip));
+            const auto draw = [&] {
+                REQUIRE(DrawInventoryScreen(display.renderer, text, assets, content, frame, size.x, size.y, 1));
+                REQUIRE(SDL_RenderPresent(display.renderer));
+                float x = 0, y = 0; REQUIRE(SDL_GetRenderScale(display.renderer, &x, &y));
+                CHECK(x == 1.5f); CHECK(y == 1.25f);
+                REQUIRE(SDL_RenderClipEnabled(display.renderer));
+                SDL_Rect clip{}; REQUIRE(SDL_GetRenderClipRect(display.renderer, &clip));
+                CHECK(clip.x == originalClip.x); CHECK(clip.y == originalClip.y);
+                CHECK(clip.w == originalClip.w); CHECK(clip.h == originalClip.h);
+            };
+            draw();
+            const auto top = SurfaceHash(display.surface);
+            if (const char* prefix = std::getenv("CATACLYSMX_ITEM_PILOT_PREVIEW")) {
+                const auto output = String(prefix) + "_" + id + "_" + NumberText(size.x) + ".png";
+                REQUIRE(SDL_SavePNG(display.surface, output.c_str()));
+            }
+            // Actual catalog art must reach pixels, including in the small pane.
+            const auto* art = frame.examination.art;
+            frame.examination.art = nullptr; draw();
+            CHECK(SurfaceHash(display.surface) != top);
+            frame.examination.art = art;
+            frame.examination.scroll = 9999; draw();
+            const int bottom = frame.examination.scroll;
+            CHECK(bottom >= 0); CHECK(bottom < 9999);
+            if (size.x == 480) { CHECK(bottom > 0); CHECK(SurfaceHash(display.surface) != top); }
+            const auto bottomPixels = SurfaceHash(display.surface);
+            frame.examination.scroll = 9999; draw();
+            CHECK(frame.examination.scroll == bottom); CHECK(SurfaceHash(display.surface) == bottomPixels);
+            frame.examination.scroll = 0; draw();
+            CHECK(frame.examination.scroll == 0); CHECK(SurfaceHash(display.surface) == top);
+        }
+    }
+}
+
+TEST_CASE("SDL larger colored artwork retains overflow runs and stable slots", "[sdl][inventory][render]") {
+    Display display(1120, 1200); REQUIRE(display.renderer);
+    SdlText text(display.renderer); REQUIRE(text.Ready());
+    SdlAssets assets;
+    for (int i = 0; i < 1000000 && assets.Poll(display.renderer) == AssetState::Loading; ++i) { std::this_thread::yield(); }
+    REQUIRE(assets.State() == AssetState::Ready);
+    TextArt art; art.width = 24;
+    for (int y = 0; y < 24; ++y) {
+        ArtLine line;
+        for (int x = 0; x < 24; ++x) {
+            line.push_back({"M", (x + y) % 2 ? ArtColor::Rgb(13, 79, 241) : ArtColor::Rgb(37, 219, 143), 1});
+        }
+        art.lines.push_back(eastl::move(line));
+    }
+    // Index 512 was the final overwrite of slot 128 with modulo run indexing.
+    art.lines[21][8].text = "MM"; art.lines[21][8].cells = 2; art.width = 25;
+    ItemUiFrame frame; frame.screen = ItemUiScreen::Examine; frame.title = "Examine";
+    frame.examination.type = TestContent().FindItem("rock"); frame.examination.name = "Rock";
+    frame.examination.art = &art;
+    REQUIRE(DrawInventoryScreen(display.renderer, text, assets, TestContent(), frame, 1120, 1200, 1));
+    REQUIRE(SDL_RenderPresent(display.renderer));
+    CHECK(text.Width(128) == text.Width(125)); // First run remains M, rather than overflow MM.
+    const auto original = SurfaceHash(display.surface);
+    // The final run is far beyond the stable-slot budget and must reach pixels.
+    art.lines.back().back().color = ArtColor::Rgb(247, 31, 173);
+    REQUIRE(DrawInventoryScreen(display.renderer, text, assets, TestContent(), frame, 1120, 1200, 1));
+    REQUIRE(SDL_RenderPresent(display.renderer));
+    CHECK(SurfaceHash(display.surface) != original);
+    frame.examination.scroll = 8;
+    REQUIRE(DrawInventoryScreen(display.renderer, text, assets, TestContent(), frame, 1120, 1200, 1));
+    CHECK(frame.examination.scroll == 0); // The complete 24-row artwork fits.
 }

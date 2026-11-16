@@ -1,0 +1,32 @@
+@text-art 1
+@color steel #AEBBC3
+@color shine #DCE4E5
+@color shadow #56646D
+@color wood #B58A55
+@color grain #7C5836
+@default steel
+---
+   <shine>_________
+  <shine>/________/<shadow>|____
+  <steel>|        |     \____
+  <steel>|  <shadow>░░░░<steel>  |  ___     \
+  <steel>|  <shadow>░░░░<steel>  | /   \__  \
+  <shadow>|________|/       \  |
+  <shadow>|________|         \ |
+       <wood>|  |           <shadow>\|
+       <wood>|  |
+       <wood>|<grain>░░<wood>|
+       <wood>|<grain>░░<wood>|
+       <wood>|<grain>░░<wood>|
+       <wood>|<grain>░░<wood>|
+       <wood>|<grain>░░<wood>|
+       <wood>|<grain>░░<wood>|
+       <wood>|<grain>░░<wood>|
+       <wood>|<grain>░░<wood>|
+       <wood>|<grain>░░<wood>|
+       <wood>|<grain>░░<wood>|
+       <wood>|<grain>░░<wood>|
+       <wood>|<grain>░░<wood>|
+      <wood>/<grain>░░░░<wood>\
+      <wood>|<grain>░░░░<wood>|
+      <grain>\____/

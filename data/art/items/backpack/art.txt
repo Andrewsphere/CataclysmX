@@ -1,0 +1,10 @@
+@text-art 1
+@color yellow #E1CC59
+@color green #58C284
+@default green
+---
+  <yellow>┌───┐
+ <green>┌┴───┴┐
+ <green>│<yellow>┌───┐<green>│
+ <green>│<yellow>└───┘<green>│
+ <green>└─────┘

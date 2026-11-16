@@ -617,12 +617,13 @@ ftxui::Element GameplayUi::Render(WorldView view, const ContentCatalog& content,
             ftxui::Elements detail{Text(frame.examination.name) | ftxui::bold};
             if (!frame.examination.description.empty()) { detail.push_back(Paragraph(frame.examination.description)); }
             if (frame.examination.art) {
-                const ftxui::Color colors[] = {ftxui::Color::Default, ftxui::Color::Black, ftxui::Color::Red,
-                    ftxui::Color::Green, ftxui::Color::Yellow, ftxui::Color::Blue, ftxui::Color::Magenta,
-                    ftxui::Color::Cyan, ftxui::Color::White, ftxui::Color::GrayLight, ftxui::Color::GrayDark};
                 for (const auto& line : frame.examination.art->lines) {
                     ftxui::Elements runs;
-                    for (const auto& run : line) { runs.push_back(Text(run.text) | ftxui::color(colors[static_cast<unsigned>(run.color)])); }
+                    for (const auto& run : line) {
+                        const auto color = run.color.useDefault ? ftxui::Color::Default
+                            : ftxui::Color::RGB(run.color.red, run.color.green, run.color.blue);
+                        runs.push_back(Text(run.text) | ftxui::color(color));
+                    }
                     if (runs.empty()) { runs.push_back(ftxui::text("")); }
                     detail.push_back(ftxui::hbox(std::move(runs)));
                 }

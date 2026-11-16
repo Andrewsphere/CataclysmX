@@ -1,10 +1,12 @@
 {format_version: 1, files: [
+  'flags/core.json5',
   'terrain/base.json5', 'items/demo.json5', 'crafting/demo.json5',
   'monsters/ai_profiles.json5', 'objects/demo.json5', 'worldgen/buildings/demo.json5',
   'items/household.json5', 'crafting/household.json5', 'objects/furniture.json5',
   'worldgen/loot/household.json5', 'monsters/cellar.json5',
   'worldgen/buildings/furnished_house.json5',
   'items/urban.json5', 'objects/urban.json5', 'crafting/urban.json5',
+  'items/low_tech.json5', 'crafting/low_tech.json5',
   'worldgen/loot/urban.json5', 'monsters/specialists.json5',
   'worldgen/buildings/bungalow.json5', 'worldgen/buildings/duplex.json5',
   'worldgen/buildings/row_house.json5', 'worldgen/buildings/farmhouse.json5',

@@ -40,7 +40,8 @@ The root requires `format_version` and accepts `definitions`, `objects`, and
 `ai_profiles`. At least one of those arrays must be present. Version
 must be an integer; an unsigned integer other than 1 returns `UnsupportedVersion`.
 Definitions, when present, is an array (possibly empty). Each definition requires `type` and
-`id`; types are `terrain`, `building_pattern`, and `item`. Terrain definitions require:
+`id`; supported types include `terrain`, `building_pattern`, `item`, and `flag`,
+along with crafting and world-population definitions. Terrain definitions require:
 
 | Field | Value |
 | --- | --- |
@@ -59,8 +60,9 @@ ordinary terrain, including walls, provides support. Stairs connect matching
 stairs one Y layer apart at the same X/Z. See [Y layers](y_layers.md) for
 movement, gravity, sight, and generation behavior.
 Unknown fields and duplicate keys are errors at every object level, even when
-duplicate values agree. Unknown definition types and duplicate IDs across any
-input sources and definition types are errors. `movement.cost` is intentionally unsupported until its
+duplicate values agree. Unknown definition types and duplicate ordinary definition
+IDs across input sources and types are errors. Flags have a separate namespace.
+`movement.cost` is intentionally unsupported until its
 gameplay meaning is defined. No ID prefixes are reserved or required.
 
 ### Appearance inheritance
@@ -147,8 +149,8 @@ required stable `id` (`[a-z][a-z0-9_]*`) and optional integer fields:
 | `switch_advantage` | 2 | 0–32 |
 
 Additionally, `dark_range <= dim_range <= sight_range` and `search_ticks <=
-memory_ticks`. Unknown or duplicate fields, invalid types, and duplicate IDs
-across sources or definition types are errors. Legacy sources need no profiles.
+memory_ticks`. Unknown or duplicate fields, invalid types, and duplicate ordinary
+definition IDs across sources or types are errors. Legacy sources need no profiles.
 The bundled `sighted_zombie` uses the defaults.
 
 `AiProfile` owns the effective values; `ValidAiProfile` checks their numeric
@@ -184,7 +186,7 @@ integer `x` and `z` coordinates within the pattern, on its boundary. The
 resolved entrance terrain must be passable or open to passable terrain. Optional
 `weight` is an integer from 1 to 1,000,000 (default 1). Pattern IDs, like terrain IDs, are
 sorted independently into stable catalog-local numeric IDs; duplicate strings
-are prohibited across all definition types.
+are prohibited across ordinary definition types, separately from flags.
 
 `FindBuildingPattern(string_view)` returns a typed `BuildingPatternId`, zero
 when absent. `TryGetBuildingPattern(id)` returns null for zero/out-of-range;
@@ -197,20 +199,37 @@ restrictions as terrain lookup.
 
 ## Items and capabilities
 
-An `item` requires exactly `type`, stable `id`, nonempty `name`, `mass_g`, and
+An `item` requires `type`, stable `id`, nonempty `name`, `mass_g`, and
 `volume_ml`, with an optional `capabilities` array (zero to sixteen entries).
 Mass is an unsigned 32-bit integer including zero; external volume is a positive
 unsigned 32-bit integer. Fractions, negative values, booleans, overflow, duplicate
 keys, and unknown fields are errors. Items do not inherit terrain appearance.
 
-Items also accept optional `description`, `art`, and `melee` fields. Description
-is plain text with authored fallback for `item.<id>.description`. Art is an array
-of UTF-8 lines parsed once into colored, single-cell runs. Melee specifies typed
+Items also accept optional `description`, `art`, `flags`, and `melee` fields,
+and the crafting fields described in [crafting content](crafting_content.md).
+Description is plain text with authored fallback for `item.<id>.description`.
+Art is a data-root path string such as `/art/items/rock/art.txt`, or a legacy
+array of UTF-8 lines; both parse into owned colored single-cell runs. Melee specifies typed
 damage packets in **hundredths of HP**, base attack cost, and one/two hands;
 missing melee uses the immutable 4 HP blunt improvised-item profile. Existing
 definitions without these fields remain valid. See [item presentation and melee
 content](item_presentation.md) for the closed schemas, color tags, exact Unicode
 ranges, bounds, errors, and API ownership.
+
+### Shared definition flags
+
+`data/flags/core.json5` defines 36 shared categories and properties. A flag has
+`type: 'flag'`, stable `id`, nonempty `name` and `description`, nonempty unique
+`domains` drawn from `item`, `monster`, `terrain`, and `object`, and `kind` of
+`property` or `category`. Items may attach `flags: ['salvage', ...]`; missing
+or empty means none. The loader rejects unknown, duplicate, and non-item-domain
+references. Only item attachments are integrated. Flags are descriptive metadata
+unless explicitly consumed, and do not themselves grant gameplay effects.
+
+Flag IDs are unique in their own namespace and may match an item or other ordinary
+definition ID. `FindFlag`, `TryGetFlag`, `GetFlag`, and `FlagCount` follow catalog
+lookup conventions; numeric IDs are catalog-local. See
+[definition flags](definition_flags.md) for set APIs and vocabulary semantics.
 
 ```json5
 {
@@ -348,6 +367,17 @@ binding identities, and behavior schemas, never shared-pointer identity.
   NUL-terminated. Empty paths and embedded NUL are I/O errors.
 - `LoadContentFile(const char*, Diagnostics* = nullptr)` is the single-path
   convenience entry point. A null path returns `Io`.
+- External art needs an asset source: `LoadContentFiles(paths, dataRoot, diagnostics)`
+  resolves files under an explicit root; `LoadContent(sources, assets, diagnostics)`
+  uses a `ContentAssetReader`. Its synchronous `read(context, path, diagnostics)`
+  callback returns `ContentResult<String>` with owned bytes; reader, context, and
+  input are borrowed only during loading. Overloads also accept a registry before
+  the reader or data root. The old no-reader/no-root entry points, including
+  `LoadContentFile`, reject external references. `LoadContentPack` uses the
+  manifest directory as data root. See [content packs](content_pack.md).
+- Each external asset path is loaded once per load and parsed values are owned by
+  the catalog. The network content fingerprint uses resolved art including RGB,
+  rather than the asset path.
 - Each loading entry point also accepts `const ItemBehaviorRegistry&` immediately
   before the optional diagnostics argument: `LoadContent(sources, registry, diagnostics)`,
   `LoadContentFiles(paths, registry, diagnostics)`, and

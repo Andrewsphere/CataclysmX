@@ -1,0 +1,35 @@
+@text-art 1
+@color glass #82B3B5
+@color shine #D8E9E8
+@color shadow #456D77
+@color rim #B1D0CD
+@default glass
+---
+         <rim>______
+        <rim>/ <shadow>____ <rim>\
+        <rim>\______/
+         <glass>|    |
+         <glass>| <shine>│<glass>  |
+         <glass>| <shine>│<glass>  |
+         <glass>| <shine>│<glass>  |
+         <glass>| <shine>│<glass>  |
+        <glass>/  <shine>│<glass>   \
+       <glass>/   <shine>│<glass>    \
+      <glass>/    <shine>│<glass>     \
+     <glass>/     <shine>│<glass>      \
+    <glass>/      <shine>│<glass>       \
+   <glass>/       <shine>│<glass>        \
+  <glass>|  <shine>│<glass>               |
+  <glass>|  <shine>│<glass>               |
+  <glass>|  <shine>│<glass>               |
+  <glass>|  <shine>│<glass>               |
+  <glass>|  <shine>│<glass>               |
+  <glass>|  <shine>│<glass>               |
+  <glass>|  <shine>│<glass>               |
+  <glass>|  <shine>│<glass>               |
+  <glass>|  <shine>│<glass>               |
+  <glass>|  <shine>│<glass>               |
+  <glass>|  <shine>│<glass>               |
+  <glass>|                  |
+  <rim>\__________________/
+   <shadow>\________________/

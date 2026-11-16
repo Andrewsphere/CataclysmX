@@ -63,8 +63,13 @@
   installed batteries, explicit use actions, charging and timed door controllers.
 - [Inventory and equipment](inventory_engine.md): wielding, weapon-based melee,
   nearby storage access, authoritative transfers, persistence and transport.
+- [Content asset loading](content_assets.md): data-root paths, synchronous readers,
+  file/memory loading, ownership, diagnostics, and distribution.
 - [Item presentation content](item_presentation.md): descriptions, colored UTF-8
-  art tags and single-cell character policy, melee profiles and defaults.
+  external and inline art, single-cell character policy, melee profiles and defaults.
+- [Item authoring](item_authoring.md): item, flags, art and progression workflows.
+- [Definition flags](definition_flags.md): shared vocabulary, domains and set API.
+- [Item content pilot](item_pilot.md): five-item roster, crafting and balance rationale.
 - [Runtime crafting and recycling](crafting.md): jobs, reservations, work,
   energy accounting and persistence.
 - [Integer ratios and bounded lists](ratios.md): the 10000-based project ratio
@@ -84,7 +89,7 @@
   speed-scaled input deadlines and idle policy.
 - [Content format and catalog](content_format.md): JSON5 terrain and item definitions,
   capabilities, IDs, building patterns, appearance inheritance, and loading APIs.
-- [Content packs](content_pack.md): manifest loading and source organization.
+- [Content packs](content_pack.md): manifest loading, asset roots and deployment.
 - [Urban content](urban_content.md): Town scenario, building roster, specialists,
   resources and current generation limits.
 - [Urban resources](urban_resources.md): detailed furniture, loot, monsters and recipes.

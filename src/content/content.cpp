@@ -513,10 +513,90 @@ bool ParseCrafting(yyjson_val* object, PendingCrafting& pending) {
 struct PendingItem {
     ItemDefinition definition;
     SmallVector<PendingTrait, 1> traits;
+    Vector<String> flags;
+    String artPath;
     String powerStore;
     std::size_t inputOrder = 0;
     Context context;
 };
+
+struct PendingFlag {
+    FlagDefinition definition;
+    std::size_t inputOrder = 0;
+    Context context;
+};
+
+bool ParseFlag(yyjson_val* object, PendingFlag& pending) {
+    auto& flag = pending.definition;
+    const auto& context = pending.context;
+    if (!CheckObject(object, {"type", "id", "name", "description", "domains", "kind"}, context)
+        || !ReadId(yyjson_obj_get(object, "id"), flag.id, context.Child("id"))
+        || !ReadString(yyjson_obj_get(object, "name"), flag.name, context.Child("name"))
+        || !ReadString(yyjson_obj_get(object, "description"), flag.description, context.Child("description"))) {
+        return false;
+    }
+    auto* kind = yyjson_obj_get(object, "kind");
+    if (!yyjson_is_str(kind)) { return context.Child("kind").Fail("expected category or property"); }
+    if (JsonString(kind) == "category") { flag.kind = FlagKind::Category; }
+    else if (JsonString(kind) == "property") { flag.kind = FlagKind::Property; }
+    else { return context.Child("kind").Fail("unknown flag kind"); }
+    auto* domains = yyjson_obj_get(object, "domains");
+    if (!yyjson_is_arr(domains) || yyjson_arr_size(domains) == 0 || yyjson_arr_size(domains) > 4) {
+        return context.Child("domains").Fail("expected one to four unique flag domains");
+    }
+    std::size_t index, count;
+    yyjson_val* value;
+    yyjson_arr_foreach(domains, index, count, value) {
+        const auto child = ArrayElement(context.Child("domains"), index);
+        if (!yyjson_is_str(value)) { return child.Fail("expected a flag domain name"); }
+        const auto name = JsonString(value);
+        FlagDomain domain;
+        if (name == "item") { domain = FlagDomain::Item; }
+        else if (name == "monster") { domain = FlagDomain::Monster; }
+        else if (name == "terrain") { domain = FlagDomain::Terrain; }
+        else if (name == "object") { domain = FlagDomain::Object; }
+        else { return child.Fail("unknown flag domain"); }
+        if (!flag.domains.Add(domain)) { return child.Fail("duplicate flag domain"); }
+    }
+    return true;
+}
+
+bool ParseItemFlags(yyjson_val* value, Vector<String>& flags, const Context& context) {
+    if (!yyjson_is_arr(value)) { return context.Fail("expected an array of flag ids"); }
+    std::size_t index, count;
+    yyjson_val* entry;
+    yyjson_arr_foreach(value, index, count, entry) {
+        String id;
+        if (!ReadId(entry, id, ArrayElement(context, index))) { return false; }
+        flags.push_back(eastl::move(id));
+    }
+    return true;
+}
+
+bool ResolveItemFlags(PendingItem& item, const ContentCatalog& catalog) {
+    Vector<FlagId> ids;
+    ids.reserve(item.flags.size());
+    for (std::size_t index = 0; index < item.flags.size(); ++index) {
+        const auto context = ArrayElement(item.context.Child("flags"), index);
+        const auto id = catalog.FindFlag(View(item.flags[index]));
+        if (!id.value) {
+            if (context.diagnostics) {
+                const String message = "unknown flag '" + item.flags[index] + "'";
+                context.Fail(View(message));
+            }
+            return false;
+        }
+        if (!catalog.GetFlag(id).domains.Contains(FlagDomain::Item)) {
+            return context.Fail("flag does not allow the item domain");
+        }
+        ids.push_back(id);
+    }
+    eastl::sort(ids.begin(), ids.end(), [](FlagId left, FlagId right) { return left.value < right.value; });
+    auto flags = FlagSet::FromSorted(eastl::move(ids));
+    if (!flags) { return item.context.Child("flags").Fail("duplicate item flag"); }
+    item.definition.flags = eastl::move(*flags);
+    return true;
+}
 
 struct PendingObject {
     ObjectDefinition definition;
@@ -818,6 +898,43 @@ bool ParseItemArt(yyjson_val* value, TextArt& art, const Context& context) {
     return true;
 }
 
+struct CachedArt {
+    String path;
+    TextArt art;
+};
+
+ContentResult<void> ResolveItemArt(PendingItem& item, const ContentAssetReader& assets,
+    Vector<CachedArt>& cache) {
+    if (item.artPath.empty()) { return {}; }
+    const auto context = item.context.Child("art");
+    if (!assets.read) {
+        context.Fail("external art requires an explicit asset reader or data root");
+        return eastl::unexpected(ContentError::InvalidData);
+    }
+    for (const auto& entry : cache) {
+        if (entry.path == item.artPath) { item.definition.art = entry.art; return {}; }
+    }
+    Diagnostics details;
+    auto bytes = assets.read(assets.context, View(item.artPath), context.diagnostics ? &details : nullptr);
+    const Context assetContext{context.diagnostics, View(item.artPath), {}};
+    AppendBehaviorDiagnostics(details, assetContext);
+    if (!bytes) {
+        if (details.Empty()) { assetContext.Fail("could not read text art asset"); }
+        context.Fail("while resolving item art reference");
+        return eastl::unexpected(bytes.error());
+    }
+    details.Clear();
+    auto parsed = ParseTextArtFile(View(*bytes), context.diagnostics ? &details : nullptr);
+    AppendBehaviorDiagnostics(details, assetContext);
+    if (!parsed) {
+        context.Fail("while resolving item art reference");
+        return eastl::unexpected(parsed.error());
+    }
+    cache.push_back({item.artPath, eastl::move(*parsed)});
+    item.definition.art = cache.back().art;
+    return {};
+}
+
 bool ParseItemMelee(yyjson_val* object, MeleeProfile& profile, const Context& context) {
     if (!CheckObject(object, {"damage", "attack_cost", "hands"}, context)) { return false; }
     if (auto* cost = yyjson_obj_get(object, "attack_cost")) {
@@ -870,7 +987,7 @@ bool ParseItemMelee(yyjson_val* object, MeleeProfile& profile, const Context& co
 bool ParseItem(yyjson_val* object, PendingItem& item, const ItemBehaviorRegistry& registry) {
     const auto& context = item.context;
     auto& definition = item.definition;
-    if (!CheckObject(object, {"type", "id", "name", "description", "art", "melee", "mass_g", "volume_ml", "capabilities", "tool_traits", "recovery_allowed", "crafting_power"}, context)
+    if (!CheckObject(object, {"type", "id", "name", "description", "art", "flags", "melee", "mass_g", "volume_ml", "capabilities", "tool_traits", "recovery_allowed", "crafting_power"}, context)
         || !ReadId(yyjson_obj_get(object, "id"), definition.id, context.Child("id"))
         || !ReadString(yyjson_obj_get(object, "name"), definition.name, context.Child("name"))
         || !ReadItemInteger(object, "mass_g", 0, definition.massGrams, context)
@@ -882,7 +999,15 @@ bool ParseItem(yyjson_val* object, PendingItem& item, const ItemBehaviorRegistry
         definition.description.assign(text.data(), text.size());
     }
     if (auto* art = yyjson_obj_get(object, "art")) {
-        if (!ParseItemArt(art, definition.art, context.Child("art"))) { return false; }
+        if (yyjson_is_str(art)) {
+            if (!ValidContentAssetPath(JsonString(art))) {
+                return context.Child("art").Fail("expected a canonical data-root path such as /art/items/example/art.txt");
+            }
+            item.artPath.assign(yyjson_get_str(art), yyjson_get_len(art));
+        } else if (!ParseItemArt(art, definition.art, context.Child("art"))) { return false; }
+    }
+    if (auto* flags = yyjson_obj_get(object, "flags")) {
+        if (!ParseItemFlags(flags, item.flags, context.Child("flags"))) { return false; }
     }
     if (auto* melee = yyjson_obj_get(object, "melee")) {
         MeleeProfile profile;
@@ -1387,7 +1512,7 @@ ContentResult<bool> ParseSource(const ContentSource& source, Vector<PendingTerra
                                 Vector<PendingObject>& objects, Vector<PendingAiProfile>& aiProfiles,
                                 Vector<PendingCrafting>& recipes, Vector<PendingRecycling>& recyclers,
                                 Vector<PendingToolTrait>& traits,
-                                PendingSpawns& spawns,
+                                PendingSpawns& spawns, Vector<PendingFlag>& flags,
                                 const ItemBehaviorRegistry& registry, Diagnostics* diagnostics) {
     Context context{diagnostics, source.name, {}};
     yyjson_alc allocator{JsonMalloc, JsonRealloc, JsonFree, nullptr};
@@ -1492,6 +1617,16 @@ ContentResult<bool> ParseSource(const ContentSource& source, Vector<PendingTerra
                 terrain.context.Child("type").Fail("expected a definition type string");
             } else if (JsonString(type) == "terrain") {
                 parsed = ParseTerrain(value, terrain);
+            } else if (JsonString(type) == "flag") {
+                PendingFlag flag;
+                flag.context = definitionContext;
+                flag.inputOrder = flags.size();
+                if (!ParseFlag(value, flag)) {
+                    flag.context.Fail("while loading flag definition");
+                    return eastl::unexpected(ContentError::InvalidData);
+                }
+                flags.push_back(eastl::move(flag));
+                continue;
             } else if (JsonString(type) == "item") {
                 PendingItem item;
                 item.context = definitionContext;
@@ -1576,7 +1711,7 @@ ContentResult<bool> ParseSource(const ContentSource& source, Vector<PendingTerra
                 String message = "unsupported definition type '";
                 const auto typeName = JsonString(type);
                 message.append(typeName.data(), typeName.size());
-                message += "' (expected terrain, building_pattern, item, tool_trait, recipe, recycling_recipe, loot_pool, monster, or monster_group)";
+                message += "' (expected terrain, building_pattern, item, flag, tool_trait, recipe, recycling_recipe, loot_pool, monster, or monster_group)";
                 terrain.context.Child("type").Fail(View(message));
             }
         }
@@ -2479,6 +2614,20 @@ const ToolTraitDefinition& ContentCatalog::GetToolTrait(ToolTraitId id) const {
 std::size_t ContentCatalog::ToolTraitCount() const { return toolTraits_.size(); }
 ItemTypeId ContentCatalog::UnfinishedCraftItem() const { return unfinishedCraftItem_; }
 
+FlagId ContentCatalog::FindFlag(eastl::string_view id) const {
+    return {static_cast<std::uint32_t>(FindDefinition(flags_, id))};
+}
+const FlagDefinition* ContentCatalog::TryGetFlag(FlagId id) const {
+    if (!id.value || id.value > flags_.size()) { return nullptr; }
+    return &flags_[id.value - 1];
+}
+const FlagDefinition& ContentCatalog::GetFlag(FlagId id) const {
+    const auto* definition = TryGetFlag(id);
+    if (!definition) { std::abort(); }
+    return *definition;
+}
+std::size_t ContentCatalog::FlagCount() const { return flags_.size(); }
+
 ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sources, Diagnostics* diagnostics) {
     ItemBehaviorRegistry registry;
     RegisterBuiltinItemBehaviors(registry);
@@ -2487,6 +2636,18 @@ ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sourc
 
 ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sources,
     const ItemBehaviorRegistry& registry, Diagnostics* diagnostics) {
+    return LoadContent(sources, registry, ContentAssetReader{}, diagnostics);
+}
+
+ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sources,
+    const ContentAssetReader& assets, Diagnostics* diagnostics) {
+    ItemBehaviorRegistry registry;
+    RegisterBuiltinItemBehaviors(registry);
+    return LoadContent(sources, registry, assets, diagnostics);
+}
+
+ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sources,
+    const ItemBehaviorRegistry& registry, const ContentAssetReader& assets, Diagnostics* diagnostics) {
     Vector<PendingTerrain> pending;
     Vector<PendingPattern> patterns;
     Vector<PendingItem> items;
@@ -2495,9 +2656,10 @@ ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sourc
     Vector<PendingCrafting> recipes;
     Vector<PendingRecycling> recyclers;
     Vector<PendingToolTrait> traits;
+    Vector<PendingFlag> flags;
     PendingSpawns spawns;
     for (const auto& source : sources) {
-        auto result = ParseSource(source, pending, patterns, items, objects, aiProfiles, recipes, recyclers, traits, spawns, registry, diagnostics);
+        auto result = ParseSource(source, pending, patterns, items, objects, aiProfiles, recipes, recyclers, traits, spawns, flags, registry, diagnostics);
         if (!result) {
             Context{diagnostics, source.name, {}}.Fail("could not load content source");
             return eastl::unexpected(result.error());
@@ -2530,7 +2692,7 @@ ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sourc
         || objects.size() > std::numeric_limits<std::uint32_t>::max()
         || spawns.pools.size() > UINT32_MAX || spawns.monsters.size() > UINT32_MAX || spawns.groups.size() > UINT32_MAX
         || aiProfiles.size() > std::numeric_limits<std::uint32_t>::max()
-        || recipes.size() > UINT32_MAX || recyclers.size() > UINT32_MAX || traits.size() > 255
+        || recipes.size() > UINT32_MAX || recyclers.size() > UINT32_MAX || traits.size() > 255 || flags.size() > UINT32_MAX
         || ((!recipes.empty() || !recyclers.empty()) && items.size() > maxRecipeItemId)) {
         Context{diagnostics, {}, {}}.Fail("too many content definitions");
         Context{diagnostics, {}, {}}.Fail("could not load content catalog");
@@ -2548,6 +2710,20 @@ ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sourc
         return eastl::unexpected(ContentError::InvalidData);
     }
     ContentCatalog catalog;
+    eastl::sort(flags.begin(), flags.end(), [](const PendingFlag& left, const PendingFlag& right) {
+        if (left.definition.id == right.definition.id) { return left.inputOrder < right.inputOrder; }
+        return left.definition.id < right.definition.id;
+    });
+    catalog.flags_.reserve(flags.size());
+    for (std::size_t index = 0; index < flags.size(); ++index) {
+        auto& flag = flags[index];
+        if (index && catalog.flags_.back().id == flag.definition.id) {
+            flag.context.Child("id").Fail("duplicate flag id");
+            flags[index - 1].context.Child("id").Fail("previous flag definition is here");
+            return eastl::unexpected(ContentError::InvalidData);
+        }
+        catalog.flags_.push_back(eastl::move(flag.definition));
+    }
     eastl::sort(traits.begin(), traits.end(), [](const PendingToolTrait& left, const PendingToolTrait& right) {
         return left.definition.id < right.definition.id;
     });
@@ -2561,7 +2737,11 @@ ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sourc
         return left.definition.id < right.definition.id;
     });
     catalog.items_.reserve(items.size());
+    Vector<CachedArt> artCache;
     for (auto& item : items) {
+        if (!ResolveItemFlags(item, catalog)) { return eastl::unexpected(ContentError::InvalidData); }
+        auto artResult = ResolveItemArt(item, assets, artCache);
+        if (!artResult) { return eastl::unexpected(artResult.error()); }
         if (!ResolveTraits(item.traits, item.definition.toolTraits, catalog, item.context.Child("tool_traits"))) {
             return eastl::unexpected(ContentError::InvalidData);
         }
@@ -2663,6 +2843,18 @@ ContentResult<ContentCatalog> LoadContentFiles(eastl::span<const eastl::string_v
 
 ContentResult<ContentCatalog> LoadContentFiles(eastl::span<const eastl::string_view> paths,
     const ItemBehaviorRegistry& registry, Diagnostics* diagnostics) {
+    return LoadContentFiles(paths, registry, eastl::string_view{}, diagnostics);
+}
+
+ContentResult<ContentCatalog> LoadContentFiles(eastl::span<const eastl::string_view> paths,
+    eastl::string_view dataRoot, Diagnostics* diagnostics) {
+    ItemBehaviorRegistry registry;
+    RegisterBuiltinItemBehaviors(registry);
+    return LoadContentFiles(paths, registry, dataRoot, diagnostics);
+}
+
+ContentResult<ContentCatalog> LoadContentFiles(eastl::span<const eastl::string_view> paths,
+    const ItemBehaviorRegistry& registry, eastl::string_view dataRoot, Diagnostics* diagnostics) {
     Vector<String> texts;
     texts.reserve(paths.size());
     for (auto path : paths) {
@@ -2701,7 +2893,14 @@ ContentResult<ContentCatalog> LoadContentFiles(eastl::span<const eastl::string_v
     Vector<ContentSource> sources;
     sources.reserve(paths.size());
     for (std::size_t i = 0; i < paths.size(); ++i) { sources.push_back({paths[i], View(texts[i])}); }
-    return LoadContent({sources.data(), sources.size()}, registry, diagnostics);
+    ContentAssetReader assets;
+    if (!dataRoot.empty()) {
+        assets.context = &dataRoot;
+        assets.read = [](void* context, eastl::string_view path, Diagnostics* output) {
+            return ReadContentAssetFile(*static_cast<eastl::string_view*>(context), path, output);
+        };
+    }
+    return LoadContent({sources.data(), sources.size()}, registry, assets, diagnostics);
 }
 
 ContentResult<ContentCatalog> LoadContentFile(const char* path, Diagnostics* diagnostics) {

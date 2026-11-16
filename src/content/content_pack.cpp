@@ -119,6 +119,8 @@ ContentResult<ContentCatalog> LoadContentPack(const char* path, const ItemBehavi
     Vector<eastl::string_view> views;
     views.reserve(paths.size());
     for (const auto& item : paths) { views.push_back({item.data(), item.size()}); }
-    return LoadContentFiles({views.data(), views.size()}, registry, diagnostics);
+    const eastl::string_view dataRoot = directory.empty() ? eastl::string_view(".")
+        : eastl::string_view(directory.data(), directory.size());
+    return LoadContentFiles({views.data(), views.size()}, registry, dataRoot, diagnostics);
 }
 }

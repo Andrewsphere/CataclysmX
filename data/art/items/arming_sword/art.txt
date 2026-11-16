@@ -1,0 +1,41 @@
+@text-art 1
+@color steel #A5B0B8
+@color edge #DAE0DF
+@color crease #627580
+@color guard #7E8C92
+@color wood #9E7449
+@color wire #B4A595
+@default steel
+---
+       <edge>/\
+       <edge>/\
+      <edge>/<crease>│ <steel>\
+      <edge>|<crease>│ <steel>|
+      <edge>|<crease>│ <steel>|
+      <edge>|<crease>│ <steel>|
+      <edge>|<crease>│ <steel>|
+      <edge>|<crease>│ <steel>|
+      <edge>|<crease>│ <steel>|
+      <edge>|<crease>│ <steel>|
+      <edge>|<crease>│ <steel>|
+      <edge>|<crease>│ <steel>|
+      <edge>|<crease>│ <steel>|
+      <edge>|<crease>│ <steel>|
+      <edge>|<crease>│ <steel>|
+      <edge>|<crease>│ <steel>|
+      <edge>|<crease>│ <steel>|
+      <edge>|<crease>│ <steel>|
+      <edge>|<crease>│ <steel>|
+      <edge>|<crease>│ <steel>|
+      <edge>|<crease>│ <steel>|
+      <edge>|<crease>│ <steel>|
+  <guard>____<edge>|<crease>│ <steel>|<guard>____
+ <guard>/____   _____\
+      <wood>|<wire>==<wood>|
+      <wood>|<wire>//<wood>|
+      <wood>|<wire>==<wood>|
+      <wood>|<wire>//<wood>|
+      <wood>|<wire>==<wood>|
+      <wood>|<wire>//<wood>|
+      <guard>/__\
+      <crease>\__/

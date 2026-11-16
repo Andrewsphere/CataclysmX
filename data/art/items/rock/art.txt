@@ -1,0 +1,8 @@
+@text-art 1
+@color gray #AAAAAA
+@color darkgray #5A5A5A
+@default gray
+---
+ <gray>▄▄▄
+<gray>▟███▙
+ <darkgray>▀▀▀

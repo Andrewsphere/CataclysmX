@@ -1,4 +1,5 @@
 {format_version: 1, files: [
+  'flags/core.json5',
   'terrain/base.json5', 'items/demo.json5', 'crafting/demo.json5',
   'monsters/ai_profiles.json5', 'objects/demo.json5', 'worldgen/buildings/demo.json5',
 ]}

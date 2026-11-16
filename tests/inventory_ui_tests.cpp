@@ -88,7 +88,7 @@ TEST_CASE("Examination localizes descriptions borrows colored art and preserves 
     DescribeInventoryItem(item, *content, loc, output);
     CHECK(output.description == "Authored prose"); REQUIRE(output.art);
     CHECK(output.art == &content->GetItem(item.type).art);
-    CHECK(output.art->lines[0][0].color == ArtColor::Red);
+    CHECK(output.art->lines[0][0].color == ArtColor::Rgb(220, 83, 83));
     bool precise = false;
     for (const auto& stat : output.stats) {
         precise |= stat.find("Piercing damage: 4.25 HP | Penetration: 1.25 HP | Normal player damage: 4.25 HP") != String::npos;

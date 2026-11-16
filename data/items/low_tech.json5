@@ -1,0 +1,11 @@
+{format_version: 1, definitions: [
+  {type:'item', id:'wood_scrap', name:'wood scrap', mass_g:200, volume_ml:300,
+   description:'One short offcut of unfinished wood, with rough grain and a squared end. Small enough to shape into a grip or use as stock for a simple repair.',
+   flags:['salvage','combustible','water_absorbent','opaque','rigid','porous','electrically_insulating'],
+   art:'/art/items/wood_scrap/art.txt'},
+  {type:'item', id:'arming_sword', name:'salvaged arming sword', mass_g:1800, volume_ml:2000,
+   description:'A crude one-handed sword shaped from a long salvaged steel strip, ground to an edge and point, with a bent scrap guard and wire-bound wooden grip. It borrows a historical outline, not a smith-made blade\'s temper or balance.',
+   flags:['melee_weapon','electrically_conductive','ferromagnetic','combustible','water_absorbent','sharp_edge','pointed','opaque','rigid','porous','thermally_conductive'],
+   art:'/art/items/arming_sword/art.txt',
+   melee:{damage:[{type:'slashing',amount:1800,penetration:0}],attack_cost:130,hands:1}},
+]}

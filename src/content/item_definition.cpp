@@ -52,7 +52,7 @@ const MeleeProfile& ItemMelee(const ItemDefinition& definition) {
 
 bool ItemDefinition::operator==(const ItemDefinition& other) const {
     if (id != other.id || name != other.name || massGrams != other.massGrams
-        || description != other.description || art != other.art || melee != other.melee
+        || description != other.description || art != other.art || flags != other.flags || melee != other.melee
         || volumeMl != other.volumeMl || capabilities != other.capabilities
         || container != other.container || energyStores != other.energyStores
         || behaviors.size() != other.behaviors.size() || toolTraits != other.toolTraits

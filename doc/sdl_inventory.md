@@ -50,18 +50,23 @@ Icons resolve a stable type-based tileset variant, use the first animation
 frame, and fit the sprite's actual crop with its aspect ratio preserved. Atlas
 extrusion is outside that crop. Map anchors and map zoom do not affect icons;
 missing artwork falls back to `%` (`?` for an unknown type). Icons remain
-present when an item has no text art. Art uses the `ArtColor` palette and draws
+present when an item has no text art. Art uses exact resolved `ArtColor` RGB
+channels, using the normal examination foreground only when `useDefault` is
+true. Legacy named colors retain their previous SDL RGB values. Art draws
 validated single-cell UTF-8 codepoints on an explicit grid, preserving spaces
 even with a user font. Oversized art is clipped horizontally, never wrapped.
 Description, art, and provided statistics share vertical scrolling; absent
 statistics add no invented values.
 
 The window uses fixed text slots 64–127 for rows and numeric columns, 128–255
-for stable colored art runs, and 256–319 for a bounded codepoint fallback cache
+for the first 128 stable colored art runs, and 256–319 for a bounded codepoint fallback cache
 (320 total `SdlText` slots). `SdlText::DrawCells` draws a full run at once when
 the monospaced font's measured width matches its cell extent. Proportional
 fonts or differently sized fallback glyphs use explicit cell advances and the
 bounded glyph cache, rather than overwriting one text slot for every character.
+Runs beyond the first 128 also use this glyph range with stack-only UTF-8
+scratch, so 24–32-cell multicolored artwork never overwrites stable run slots
+or silently drops excess runs. Cache size is independent of artwork run count.
 Run origins advance by `ArtRun::cells`, including spaces. No per-frame cache
 entries are created. Render scale and clipping are restored on return.
 Excessive UI scale is capped for compact windows to retain usable pane content.

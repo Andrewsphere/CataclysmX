@@ -12,6 +12,23 @@ later source. Errors in the manifest carry its path and field/index; errors in
 definitions carry their source path. `LoadContentFile` continues to load one
 definition document, not a manifest.
 
+The manifest directory is also the data root for item art references such as
+`/art/items/rock/art.txt`; the leading slash is virtual, not an OS root. Asset
+paths are canonical and confined to that root, including symlink resolution. Art
+files are dependencies referenced by item definitions, **not** entries in the
+manifest `files` array. Deploy the entire data tree with the manifest. Add
+`flags/core.json5` to each pack containing items that reference its flags, and
+include all item and recipe source dependencies required by that pack.
+
+For standalone definition files with external art use
+`LoadContentFiles(paths, dataRoot[, diagnostics])`; in-memory sources use
+`LoadContent(sources, ContentAssetReader[, diagnostics])`. The reader is a
+borrowed synchronous callback returning owned `String` bytes. No-reader and
+no-root overloads reject external references. Assets are read once per path per
+load and the catalog owns the resolved art; fingerprinting uses resolved RGB art,
+not paths. See [content format](content_format.md) and
+[item presentation](item_presentation.md) for details.
+
 | Manifest | Purpose and sources |
 | --- | --- |
 | `data/demo.json5` | Shared legacy definitions from `terrain/`, `items/`, `crafting/`, `monsters/`, `objects/`, and `worldgen/buildings/`. |

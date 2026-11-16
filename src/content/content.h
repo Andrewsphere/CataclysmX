@@ -9,6 +9,7 @@
 #include "content/object_definition.h"
 #include "content/building_population.h"
 #include "content/content_result.h"
+#include "content/content_assets.h"
 
 #include <EASTL/expected.h>
 #include <EASTL/span.h>
@@ -126,6 +127,10 @@ public:
     const ItemDefinition* TryGetItem(ItemTypeId id) const;
     const ItemDefinition& GetItem(ItemTypeId id) const;
     std::size_t ItemCount() const;
+    FlagId FindFlag(eastl::string_view id) const;
+    const FlagDefinition* TryGetFlag(FlagId id) const;
+    const FlagDefinition& GetFlag(FlagId id) const;
+    std::size_t FlagCount() const;
     ObjectTypeId FindObject(eastl::string_view id) const;
     const ObjectDefinition* TryGetObject(ObjectTypeId id) const;
     const ObjectDefinition& GetObject(ObjectTypeId id) const;
@@ -165,6 +170,7 @@ private:
     Vector<TerrainDefinition> definitions_;
     Vector<BuildingPattern> patterns_;
     Vector<ItemDefinition> items_;
+    Vector<FlagDefinition> flags_;
     Vector<ObjectDefinition> objects_;
     Vector<LootPoolDefinition> lootPools_;
     Vector<MonsterDefinition> monsters_;
@@ -176,6 +182,8 @@ private:
     ItemTypeId unfinishedCraftItem_{};
     friend ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource>, Diagnostics*);
     friend ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource>, const ItemBehaviorRegistry&, Diagnostics*);
+    friend ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource>, const ItemBehaviorRegistry&,
+        const ContentAssetReader&, Diagnostics*);
 };
 
 ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sources,
@@ -189,6 +197,20 @@ ContentResult<ContentCatalog> LoadContentFiles(eastl::span<const eastl::string_v
     const ItemBehaviorRegistry& registry, Diagnostics* diagnostics = nullptr);
 ContentResult<ContentCatalog> LoadContentFile(const char* path,
     const ItemBehaviorRegistry& registry, Diagnostics* diagnostics = nullptr);
+
+// Memory sources use an explicit synchronous asset reader. Existing overloads
+// still support inline art; an external reference without a reader is an error.
+ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sources,
+    const ContentAssetReader& assets, Diagnostics* diagnostics = nullptr);
+ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sources,
+    const ItemBehaviorRegistry& registry, const ContentAssetReader& assets,
+    Diagnostics* diagnostics = nullptr);
+// File-backed assets are resolved within dataRoot, not relative to definitions.
+ContentResult<ContentCatalog> LoadContentFiles(eastl::span<const eastl::string_view> paths,
+    eastl::string_view dataRoot, Diagnostics* diagnostics = nullptr);
+ContentResult<ContentCatalog> LoadContentFiles(eastl::span<const eastl::string_view> paths,
+    const ItemBehaviorRegistry& registry, eastl::string_view dataRoot,
+    Diagnostics* diagnostics = nullptr);
 
 // Explicit manifest loader. Definition-file loaders never discover siblings or
 // infer manifests. Paths are relative to the manifest; sources resolve together.

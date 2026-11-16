@@ -56,13 +56,13 @@ TEST_CASE("UTF-8 art preserves spaces and empty lines and resets colors per line
     REQUIRE(parsed->lines.size() == 3);
     CHECK(parsed->width == 7);
     REQUIRE(parsed->lines[0].size() == 3);
-    CHECK(parsed->lines[0][0] == ArtRun{" ", ArtColor::Default, 1});
-    CHECK(parsed->lines[0][1] == ArtRun{"éΩ", ArtColor::Red, 2});
-    CHECK(parsed->lines[0][2] == ArtRun{"< > ", ArtColor::Default, 4});
+    CHECK(parsed->lines[0][0] == ArtRun{" ", {}, 1});
+    CHECK(parsed->lines[0][1] == ArtRun{"éΩ", ArtColor::Rgb(220, 83, 83), 2});
+    CHECK(parsed->lines[0][2] == ArtRun{"< > ", {}, 4});
     CHECK(parsed->lines[1].empty());
     REQUIRE(parsed->lines[2].size() == 2);
-    CHECK(parsed->lines[2][0] == ArtRun{"Ж", ArtColor::Default, 1});
-    CHECK(parsed->lines[2][1] == ArtRun{"─█", ArtColor::Blue, 2});
+    CHECK(parsed->lines[2][0] == ArtRun{"Ж", {}, 1});
+    CHECK(parsed->lines[2][1] == ArtRun{"─█", ArtColor::Rgb(100, 140, 230), 2});
     const String canonical[] = {" <red>éΩ<default><< > ", "", "Ж<b>─█"};
     const auto equivalent = ParseTextArt({canonical, 3});
     REQUIRE(equivalent.has_value());
@@ -70,8 +70,8 @@ TEST_CASE("UTF-8 art preserves spaces and empty lines and resets colors per line
     const String resetLines[] = {"<red>a", "b"};
     const auto reset = ParseTextArt({resetLines, 2});
     REQUIRE(reset.has_value());
-    CHECK(reset->lines[0][0].color == ArtColor::Red);
-    CHECK(reset->lines[1][0].color == ArtColor::Default);
+    CHECK(reset->lines[0][0].color == ArtColor::Rgb(220, 83, 83));
+    CHECK(reset->lines[1][0].color == ArtColor{});
 }
 
 TEST_CASE("Art palette names and aliases produce typed runs", "[content][item-presentation]") {
@@ -79,9 +79,10 @@ TEST_CASE("Art palette names and aliases produce typed runs", "[content][item-pr
     const auto parsed = ParseTextArt({lines, 1});
     REQUIRE(parsed.has_value());
     REQUIRE(parsed->lines[0].size() == 11);
-    const ArtColor colors[] = {ArtColor::Black, ArtColor::Red, ArtColor::Green, ArtColor::Yellow,
-        ArtColor::Blue, ArtColor::Magenta, ArtColor::Cyan, ArtColor::White, ArtColor::Gray,
-        ArtColor::DarkGray, ArtColor::Default};
+    const ArtColor colors[] = {ArtColor::Rgb(0, 0, 0), ArtColor::Rgb(220, 83, 83),
+        ArtColor::Rgb(88, 194, 132), ArtColor::Rgb(225, 204, 89), ArtColor::Rgb(100, 140, 230),
+        ArtColor::Rgb(200, 110, 210), ArtColor::Rgb(90, 200, 210), ArtColor::Rgb(245, 245, 245),
+        ArtColor::Rgb(170, 170, 170), ArtColor::Rgb(90, 90, 90), {}};
     for (std::size_t i = 0; i < 11; ++i) {
         CHECK(parsed->lines[0][i].color == colors[i]);
         CHECK(parsed->lines[0][i].cells == 1);
@@ -171,7 +172,7 @@ TEST_CASE("Authored melee values and presentation participate in equality", "[co
     changed.description += '!';
     CHECK_FALSE(item == changed);
     changed = item;
-    changed.art.lines[0][0].color = ArtColor::Blue;
+    changed.art.lines[0][0].color = ArtColor::Rgb(100, 140, 230);
     CHECK_FALSE(item == changed);
     changed = item;
     changed.melee->attackCost = 151;
