@@ -303,7 +303,7 @@ TEST_CASE("AI inspection is paused owner work with identified owned captures", "
     request.kind = RequestKind::InspectAi; request.id = 3; request.generation = 10; request.cursor = player;
     REQUIRE(session.TrySubmit(request) == EnqueueResult::Accepted);
     REQUIRE(WaitForReply(session,wake,reply)); REQUIRE(reply.kind == ReplyKind::Stale);
-    CHECK(reply.generation == 11); CHECK(reply.id == 3);
+    CHECK(reply.generation == 10); CHECK(reply.id == 3);
     CHECK(reply.aiDebug.image.cells.empty());
 
     request.generation = 11; request.id = 4;
@@ -533,7 +533,7 @@ TEST_CASE("SDL item recovery rejects controls and replacement commands by receip
     request.kind = RequestKind::Pause; request.id = 6; request.generation = 22;
     REQUIRE(session.TrySubmit(request) == EnqueueResult::Accepted);
     for (std::uint64_t id = 3; id <= 6; ++id) {
-        REQUIRE(WaitForReply(session, wake, reply)); CHECK(reply.id == id); CHECK(reply.generation == 23);
+        REQUIRE(WaitForReply(session, wake, reply)); CHECK(reply.id == id); CHECK(reply.generation == (id == 6 ? 22 : 23));
         CHECK(reply.kind == (id == 6 ? ReplyKind::Stale : ReplyKind::Cancelled));
     }
     REQUIRE(session.TakeSnapshot(snapshot)); CHECK_FALSE(snapshot.paused);

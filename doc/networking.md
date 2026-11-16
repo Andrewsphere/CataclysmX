@@ -1,8 +1,15 @@
 # LAN networking API
 
-## Inventory protocol 17
+## Current protocol 18
 
-The current protocol constant is `0x43584e11`. Commands append two canonical
+The current protocol constant is `0x43584e12`. Peers need matching updated builds
+and content; protocol 18 is incompatible with protocol 17. It adds owned player
+presentation, remote typed inspection and expanded authoritative input context.
+See [network presentation](network_presentation.md) for the current contracts.
+
+## Inventory protocol 17 history
+
+Protocol 17 introduced commands with two canonical
 `ItemStorage` values (u8 kind, three i32 coordinates in X/Z/Y order, u64 ID).
 `wield_item` uses an explicit item ID or zero to unwield; `transfer_item` requires
 a nonzero item and exact source/destination. These two commands reject unused
@@ -88,7 +95,7 @@ assigning an actor. Joining has a five-second
 explicit-elapsed timeout. The server does not use wall time or RNG for gameplay;
 network-only tokens and discovery identifiers use OS entropy.
 
-## World, item and combat protocol (version 17, `0x43584e11`)
+## World, item and combat protocol history (version 17, `0x43584e11`)
 
 Version 17 is wire-incompatible with earlier versions and supports maps up to
 129×129 cells with lossless run-length encoding. Coordinates encode signed
@@ -172,8 +179,8 @@ Feedback is presentation-only and is not persisted. Commands also carry a target
 persistent ID and combat style; the server validates and resolves them
 authoritatively. See [combat API](combat_api.md).
 Locked/unlocked outcomes are part of protocol v12. Terrain locking references are
-included in content fingerprints. Selected-layer Examine views remain local and
-do not change the network snapshot origin contract.
+included in content fingerprints. Protocol 18 adds remote selected-layer Examine;
+its separate inspection view does not change the normal snapshot origin contract.
 
 Object kinds are fixed protocol constants, independent of content ordering.
 None descriptors must have North facing and false state flags. A live object ID

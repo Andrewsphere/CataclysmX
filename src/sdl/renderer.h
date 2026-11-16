@@ -24,6 +24,7 @@ struct GameplayHud {
     const MessageHistory* history = nullptr;
     const Keymap* keys = nullptr;
     const Localization* localization = nullptr;
+    eastl::string_view sessionLabel;
 };
 
 MapLayout MakeMapLayout(int outputWidth, int outputHeight, int columns, int rows,

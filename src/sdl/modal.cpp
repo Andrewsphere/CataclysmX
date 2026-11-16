@@ -27,6 +27,12 @@ void ModalController::Closed() {
     active_ = ModalScreen::None;
     requested_ = ModalScreen::None;
     pending_ = false;
+    cursor_ = {};
+    actionsCursor_.reset();
+    targetCursor_ = {};
+    selectedAction_ = 0;
+    targetScroll_ = 0;
+    actionScroll_ = 0;
     heldKey_.Reset();
 }
 

@@ -130,7 +130,7 @@ bool Poll(LanHost& host, LanClient& a, LanClient& b, Predicate predicate) {
 }
 
 TEST_CASE("Current protocol preserves signed six-axis commands and authoritative shapes", "[network][codec][3d]") {
-    CHECK(wire::protocol == 0x43584e11);
+    CHECK(wire::protocol == 0x43584e12);
     for (const auto kind : {CommandKind::move, CommandKind::interact}) {
         for (const TileCoord direction : {TileCoord{1, 0, 0}, {-1, 0, 0}, {0, 1, 0},
             {0, -1, 0}, {0, 0, 1}, {0, 0, -1}, {0, 0, 0}, {1, 0, 1}, {0, 1, -1}, {0, 0, INT_MIN}}) {
@@ -670,7 +670,8 @@ TEST_CASE("Host close cancels a partially sent large snapshot before disconnect 
                     REQUIRE(reader.U64(player)); REQUIRE(reader.U64(token)); REQUIRE(reader.U64(nonce));
                 } else if (type == static_cast<std::uint8_t>(wire::Type::Snapshot)) {
                     std::uint64_t receivedNonce; REQUIRE(reader.U64(receivedNonce)); REQUIRE(receivedNonce == nonce);
-                    WorldView view; REQUIRE(reader.View(view)); REQUIRE(reader.Done());
+                    WorldView view; REQUIRE(reader.View(view));
+                    PlayerPresentation presentation; REQUIRE(reader.Presentation(view, presentation)); REQUIRE(reader.Done());
                     wire::Writer ack; ack.U32(wire::protocol); ack.U8(static_cast<std::uint8_t>(wire::Type::SnapshotAck));
                     ack.U64(nonce); ack.U64(view.revision); send(event.peer, ack);
                     wire::Writer ready; ready.U32(wire::protocol); ready.U8(static_cast<std::uint8_t>(wire::Type::Ready));

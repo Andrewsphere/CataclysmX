@@ -50,9 +50,17 @@ out. See [shared controls](inventory_ui.md) and [SDL rendering/timing](sdl_inven
 
 ## Debug and options
 
+F9 opens [Multiplayer settings](sdl_multiplayer.md), also available from F2's
+Interface page. Arrows/Tab and Enter select hosting/joining actions and edit host
+tick rate, rate limiting and idle pause; Apply pacing changes applies the draft.
+P opens Players using the shared
+binding. The default gameplay save binding is **S** (Shift+s), when a local or
+host save is open. Guests cannot save or change host pacing.
+
 F11 ports the terminal's world-generation preview: arrows pan, Shift+arrows jump a
 region, Home/c recenter, 1–5 or Tab/Shift+Tab select the five layers, +/- zoom,
-and PageUp/PageDown scroll details. The surface preview excludes live entities
+and PageUp/PageDown scroll details. Debug is available locally and to hosts, not
+guests. The surface preview excludes live entities
 and saved edits. Unsupported generation versions show an explicit warning.
 
 Within F11, `a` toggles between world generation and the **AI inspector / live
@@ -77,9 +85,11 @@ Save binding performs Save and apply. Reset, append binding, unbind, and key
 inspection remain available. Number editing uses SDL text input; binding capture
 uses translated key events. Wide layouts place details alongside the list;
 compact layouts stack them. World overrides remain memory-only for temporary
-SDL worlds. Seed is a future-world default, never a live-world mutation.
+SDL worlds. Seed is a future-world default, never a live-world mutation. Guests
+can edit presentation preferences and bindings; world fields are host-owned.
 
-All these screens pause local simulation. Closing discards paused wall time.
+These screens pause local simulation. Closing discards paused wall time. While
+hosting or joined, menus own local input but the shared world continues running.
 
 ## API decisions
 
@@ -113,7 +123,7 @@ current settings for retry. Reopening clean options reloads persisted settings. 
 wall time and submits the selected command in one owner operation.
 
 `InspectAi` returns `AiInspected` with an owned `AiDebugView` captured on the
-paused session owner thread. The UI uses its `DebugMapView` image and detail
+session owner thread, while locally paused or hosting. The UI uses its `DebugMapView` image and detail
 strings directly, with no World access. One capture request may be in flight;
 cursor changes coalesce to the latest selection. Session ID, request ID,
 cursor, and selection/mode revision gate acceptance, so returning to the same
@@ -125,14 +135,14 @@ renderer without coupling either capture to SDL.
 `ScreenFrame` contains presentation values; `OptionsUi` owns drafts and editing
 state. SDL rendering consumes those values without a server dependency or a new
 widget library. See [settings](settings_api.md) for keybinding format v2 and
-[networking](networking.md) for protocol v12 compatibility.
+[network presentation](network_presentation.md) for protocol 18 inspection and compatibility.
 
 ## Zoom and held input
 
 Map zoom is a multiplier of native tileset dimensions: default 1x, steps of
 2^(step/4), bounded to 1/4x–8x. Resizing does not change tile scale. UI scale remains
-independent. The main view shows compact Help, Settings, and Debug shortcuts,
-Local session status, and an SDL-only health doll with labeled limb HP. Narrow
+independent. The main view shows compact Help, Settings, and Multiplayer shortcuts,
+session status, and an SDL-only health doll with labeled limb HP. Narrow
 windows omit lower-priority bar entries; all bindings remain in Help.
 
 All keyboard actions support holding through the central HeldKey controller,

@@ -13,8 +13,10 @@
 - [Vulkan builds](vulkan_build.md): shared Windows/Linux rendering, runtime GLSL compilation and dependencies.
 - [Default tileset artwork](tileset_artwork.md): individual Gen1 sprites, references,
   preparation, transparent overlays and lightbulb frames.
-- [SDL sprite client preparation](sdl_client.md): frontend integration points,
-  snapshot limits, and a first playable milestone.
+- [SDL frontend architecture](sdl_client.md): session ownership, snapshots,
+  local pause and live multiplayer menus.
+- [SDL multiplayer](sdl_multiplayer.md): hosting, joining, discovery, reconnect,
+  persistent host saves and cross-frontend launch commands.
 - [Sprite animation](sprite_animation.md): loop/once playback, visual activation,
   item overlays, and the three lightbulb demos.
 - [Gameplay UI](gameplay_ui.md): responsive map/status layout, on-demand inventory,
@@ -95,6 +97,8 @@
 - [Terrain rendering](terrain_rendering.md): UTF-8 symbols, colors, and frontend behavior.
 - [Save format](save_format.md): SQLite v11, equipment, snapshots, player memory, validation and checkpoints.
 - [LAN networking](networking.md): ENet hosting, joining, authoritative messages and discovery.
+- [Network presentation](network_presentation.md): owned map visuals, interaction
+  choices, filtered layer inspection and receipt-updated input context.
 - [LAN client profile](lan_profile.md): endpoint identities, typed errors and durability.
 - [Project README](../README.md): build instructions and dependencies.
 - [Running tests](testing.md): compact CTest runner and result-log behavior.
@@ -122,7 +126,7 @@ Profiles are local client credentials, separate from host SQLite game saves.
 Endpoints are bounded to 64; address/name to 255/64 bytes, preserving UTF-8 and
 forbidding control characters. Tokens are nonzero decimal unsigned 64-bit values.
 
-The terminal and live headless client load the saved token when connecting and
+The terminal, SDL and live headless clients load the saved token when connecting and
 persist a newly issued token as soon as the server accepts. A rejected token is
 kept, so an unavailable save cannot silently replace a character. The terminal
 LAN menu offers **X** for explicit new-character admission at its direct address.

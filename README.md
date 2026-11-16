@@ -1,7 +1,7 @@
 # CataclysmX
 
 C++23 roguelike with a deterministic world, chunk loading, an authoritative LAN
-server, FTXUI terminal client, and scriptable headless client.
+server, FTXUI terminal client, scriptable headless client, and optional SDL client.
 
 The optional SDL client (`win-msvc-sdl` preset) defaults to individual PNG graphics
 under `assets/tiles/gen1_32x32`, assembled into atlas pages at startup. See
@@ -66,6 +66,13 @@ numeric address to reconnect. A different world on the same endpoint may reject
 the old token; **X** starts a fresh character explicitly.
 Closing LAN/host exit parks guests so they can return when the same save is
 hosted again. Use matching content files at both ends.
+SDL also supports live hosting, joining, discovery and reconnect via **F9**;
+the same Multiplayer settings screen is available from **F2 → Interface**.
+Use arrows/Enter to host or join and adjust host tick rate, rate limiting and
+all-idle pause, then select **Apply pacing changes**.
+See [SDL multiplayer](doc/sdl_multiplayer.md) for controls, cross-frontend
+commands and persistent hosts. Peers require matching content and updated builds
+using protocol 18 (`0x43584e12`).
 Press **F11** in-game for the world-generation debug menu; arrows move its
 cursor, **Shift+arrows** jump by region, **1–5/Tab/Shift+Tab** change layers, **+/-** zoom,
 **Home/c** recenter, **PageUp/PageDown** browse details, and **F11/Escape/q** close.
@@ -128,7 +135,7 @@ door transitions. All three frontends accept `--content <path>` for exactly one
 definition document or `--content-pack <path>` for a manifest, never both.
 Bundled default paths point into this source checkout. `--seed <uint32>` overrides
 the configured new-game seed for this invocation without editing preferences;
-headless/terminal reject it with `--load`. Select the matching pack when loading:
+all frontends reject it with `--load`. Select the matching pack when loading:
 `--content-pack data/first_house.json5 --load <save>` for a first-house save or
 `--content-pack data/content.json5 --load <save>` for a town save. Alternatively,
 select the matching `--scenario` to choose its default pack. The save retains its
@@ -435,7 +442,11 @@ for the actual verification record and remaining checks.
 
 SDL uses **x** to examine and **e/o** to choose a reachable door/object and its
 explicit action. **F2** opens keyboard-only options; **F11** opens the existing
-world-generation debug viewer. These screens pause the local game.
+world-generation debug viewer. These screens pause local play; host and guest
+menus leave the shared world live. Debug is available locally and to hosts.
+Guests can edit local preferences and bindings, while world settings and pacing
+belong to the host. The default save key is **S** (Shift+s) for a local or host
+save; guests cannot save.
 **Alt+Up/Down** ascends/descends; **Ctrl+Left/Right** moves southwest/southeast;
 **Shift+Left/Right** moves northwest/northeast. Diagonals cost 141% of lateral
 movement and check only the destination. Melee and interaction also reach diagonal

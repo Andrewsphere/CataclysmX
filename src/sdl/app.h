@@ -1,6 +1,7 @@
 #pragma once
 
 #include "client/localization.h"
+#include "sdl/session.h"
 
 namespace cataclysmx::sdl {
 
@@ -12,6 +13,7 @@ struct AppOptions {
     float uiScale = 1.0f;
     NewGameScenario scenario = NewGameScenario::Town;
     eastl::optional<std::uint32_t> seedOverride;
+    SessionOptions session;
 };
 
 eastl::optional<Command> GameplayCommand(InputAction action, bool interacting);

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/server.h"
+#include "core/presentation.h"
 
 #include <EASTL/expected.h>
 #include <EASTL/unique_ptr.h>
@@ -12,12 +13,14 @@ namespace cataclysmx::network {
 enum class NetworkError {
     Initialization, SocketFailure, InvalidSettings, ConnectionFailed,
     Disconnected, Rejected, IncompatibleContent, Protocol, Timeout, Full,
-    UnknownToken, AlreadyConnected, InvalidCommand, SnapshotTooLarge, SlowPeer
+    UnknownToken, AlreadyConnected, InvalidCommand, SnapshotTooLarge, SlowPeer, Busy
 };
 template<class T> using NetworkResult = eastl::expected<T, NetworkError>;
 const char* NetworkErrorMessage(NetworkError error);
 
 // The runtime must outlive hosts, clients and discovery objects using it.
+// Independent runtimes may coexist on different threads. Each host/client/discovery
+// object is confined to its owning thread; do not change ENet global callbacks/time.
 class NetworkRuntime {
 public:
     static NetworkResult<eastl::unique_ptr<NetworkRuntime>> Create();
@@ -59,6 +62,7 @@ public:
     std::uint16_t GetPort() const;
     std::uint16_t GetDiscoveryPort() const;
     std::uint64_t QueueLocal(Command command);
+    std::uint64_t QueueLocal(Command command, std::uint64_t opportunity);
     HostUpdate Pump(std::uint64_t elapsedMicroseconds);
 private:
     class Impl;
@@ -75,6 +79,12 @@ public:
     void Disconnect();
     void Pump(std::uint64_t elapsedMicroseconds);
     NetworkResult<std::uint64_t> Submit(Command command);
+    NetworkResult<std::uint64_t> Submit(Command command, std::uint64_t opportunity);
+    PlayerInputContext GetInputContext() const;
+    const PlayerPresentation& Presentation() const;
+    // IDs must increase within a connection. One request/result slot; consume before requesting again.
+    NetworkResult<void> Inspect(std::uint64_t requestId, TileCoord cursor, int radius);
+    bool TryTakeInspection(PlayerInspection& output);
     ConnectionState GetState() const;
     NetworkError GetError() const;
     bool HasView() const;
@@ -95,6 +105,7 @@ struct DiscoveredSession {
     std::uint8_t maxPlayers = 4;
     std::uint64_t instanceId = 0;
     bool compatible = false;
+    bool operator==(const DiscoveredSession&) const = default;
 };
 
 class LanDiscovery {

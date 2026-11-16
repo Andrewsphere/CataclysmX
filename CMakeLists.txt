@@ -112,6 +112,7 @@ add_library(cataclysmx_engine STATIC
     src/core/data_object.cpp src/core/data_object.h src/core/item_state.cpp src/core/item_state.h
     src/core/state_result.h src/core/state_reader.cpp src/core/state_reader.h
     src/core/interaction.cpp src/core/interaction.h
+    src/core/presentation.cpp src/core/presentation.h
     src/core/inventory.cpp src/core/inventory.h
     src/core/world_types.h
     src/core/world_result.h src/content/content_result.h
@@ -226,6 +227,7 @@ if(CATACLYSMX_BUILD_SDL)
         src/content/tileset_source.cpp src/content/tileset_source.h
         src/sdl/atlas_builder.cpp src/sdl/atlas_builder.h
         src/sdl/screens.cpp src/sdl/screens.h
+        src/sdl/multiplayer_screen.cpp src/sdl/multiplayer_screen.h
         src/sdl/inventory_screen.cpp src/sdl/inventory_screen.h
         src/sdl/layout.cpp src/sdl/layout.h
         src/sdl/modal.cpp src/sdl/modal.h
@@ -236,13 +238,13 @@ if(CATACLYSMX_BUILD_SDL)
         src/sdl/assets.cpp src/sdl/assets.h
         src/sdl/text.cpp src/sdl/text.h
         src/sdl/map_packet.cpp src/sdl/map_packet.h
-        src/sdl/item_visual.cpp src/sdl/item_visual.h
+        src/sdl/item_visual.h
         src/sdl/animation.cpp src/sdl/animation.h
         src/sdl/renderer.cpp src/sdl/renderer.h
         src/sdl/gpu_renderer.cpp src/sdl/gpu_renderer.h
         src/sdl/sprite_shader.cpp src/sdl/sprite_shader.h
         src/sdl/app.cpp src/sdl/app.h)
-    target_link_libraries(cataclysmx_sdl PUBLIC cataclysmx_client SDL3::SDL3 SDL3_ttf::SDL3_ttf Threads::Threads
+    target_link_libraries(cataclysmx_sdl PUBLIC cataclysmx_client cataclysmx_network SDL3::SDL3 SDL3_ttf::SDL3_ttf Threads::Threads
         PRIVATE SDL3_image::SDL3_image yyjson::yyjson unofficial::shaderc::shaderc)
     target_compile_definitions(cataclysmx_sdl PRIVATE
         CATACLYSMX_DEFAULT_TILESET="${CMAKE_CURRENT_SOURCE_DIR}/assets/tiles/gen1_32x32"
@@ -271,6 +273,7 @@ if(CATACLYSMX_BUILD_TESTS)
         tests/worldgen_debug_tests.cpp tests/pacing_tests.cpp tests/scheduling_tests.cpp
         tests/multiplayer_session_tests.cpp tests/player_parking_tests.cpp tests/network_tests.cpp
         tests/lan_profile_tests.cpp
+        tests/presentation_network_tests.cpp tests/presentation_tests.cpp
         tests/item_content_tests.cpp tests/item_state_tests.cpp tests/item_world_tests.cpp
         tests/item_presentation_content_tests.cpp tests/inventory_engine_tests.cpp tests/inventory_ui_tests.cpp
         tests/item_save_tests.cpp tests/item_network_tests.cpp tests/item_server_tests.cpp
@@ -309,6 +312,8 @@ if(CATACLYSMX_BUILD_TESTS)
             tests/sdl_asset_tests.cpp tests/sdl_text_tests.cpp tests/sdl_map_tests.cpp tests/sdl_animation_tests.cpp)
         target_sources(cataclysmx_tests PRIVATE tests/sdl_source_tileset_tests.cpp)
         target_sources(cataclysmx_tests PRIVATE tests/sdl_ui_tests.cpp)
+        target_sources(cataclysmx_tests PRIVATE tests/sdl_network_session_tests.cpp
+            tests/sdl_multiplayer_ui_tests.cpp tests/sdl_guest_settings_tests.cpp tests/sdl_multiplayer_settings_tests.cpp)
         target_sources(cataclysmx_tests PRIVATE tests/sdl_inventory_tests.cpp)
         target_sources(cataclysmx_tests PRIVATE tests/sdl_shader_tests.cpp tests/sdl_shading_integration_tests.cpp)
         target_link_libraries(cataclysmx_tests PRIVATE cataclysmx_sdl)
@@ -375,6 +380,14 @@ if(CATACLYSMX_BUILD_TESTS)
             -Headless "$<TARGET_FILE:cataclysmx_headless>"
             -WorkDirectory "${CMAKE_CURRENT_BINARY_DIR}")
         set_tests_properties(headless_lan_roundtrip PROPERTIES TIMEOUT 45 LABELS "network;integration")
+        if(CATACLYSMX_BUILD_SDL)
+            add_test(NAME sdl_lan_roundtrip COMMAND "${CATACLYSMX_PWSH}" -NoProfile -File
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/run_sdl_lan_smoke.ps1"
+                -Headless "$<TARGET_FILE:cataclysmx_headless>"
+                -Sdl "$<TARGET_FILE:cataclysmx_sdl_game>"
+                -WorkDirectory "${CMAKE_CURRENT_BINARY_DIR}")
+            set_tests_properties(sdl_lan_roundtrip PROPERTIES TIMEOUT 100 LABELS "sdl;network;integration")
+        endif()
     endif()
     if(CATACLYSMX_BUILD_TERMINAL)
         add_test(NAME terminal_game_render COMMAND cataclysmx_game --user-dir "${CMAKE_CURRENT_BINARY_DIR}/test-user/terminal-render" --render)

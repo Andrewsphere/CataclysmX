@@ -17,6 +17,10 @@ constexpr unsigned categories[] = {0,0,0,0,1,1,1,1,1,2,2,2,3};
 static_assert(std::size(fields) == static_cast<std::size_t>(SettingsField::Count));
 static_assert(std::size(categories) == std::size(fields));
 constexpr const char* categoryNames[] = {"interface", "world", "timing", "saving"};
+bool HostField(SettingsField field) {
+    return field != SettingsField::Language && field != SettingsField::ViewRadius
+        && field != SettingsField::KeyboardRepeatRate && field != SettingsField::MessageHistorySize;
+}
 String Local(const Localization& loc, eastl::string_view prefix, eastl::string_view suffix) {
     String key(prefix.data(), prefix.size()); key.append(suffix.data(), suffix.size());
     return loc.Text({key.data(), key.size()}, suffix);
@@ -269,8 +273,9 @@ eastl::optional<std::size_t> SoleAvailableAction(const Vector<InteractionChoice>
     return found;
 }
 
-void OptionsUi::Open(const SettingsStore& store, const Settings& runtime) {
+void OptionsUi::Open(const SettingsStore& store, const Settings& runtime, bool remote) {
     runtime_ = runtime;
+    remote_ = remote;
     for (unsigned i = 0; i < 2; ++i) {
         const auto scope = i == 0 ? SettingsScope::Global : SettingsScope::World;
         drafts_[i] = store.Overrides(scope); keys_[i] = store.KeyOverrides(scope);
@@ -316,6 +321,7 @@ void OptionsUi::Begin(const SettingsStore& store, const char* directory, bool ap
     VisibleFieldList visible; Fields(visible);
     if (selected_ >= visible.Size()) { return; }
     const auto field = visible[selected_];
+    if (remote_ && HostField(field)) { return; }
     const auto preview = Preview(store);
     if (field == SettingsField::Seed && scope_ == SettingsScope::World) { return; }
     if (field == SettingsField::RateLimited || field == SettingsField::PauseWhenIdle) {
@@ -397,19 +403,26 @@ OptionsEvent OptionsUi::Key(const KeyChord& chord, const SettingsStore& store, c
         if (focus_ == 2) { const unsigned count = bindings_ ? std::size(contexts) : std::size(categoryNames); category_ = (category_ + count + (down ? 1 : -1)) % count; selected_ = 0; break; }
         VisibleFieldList visible; Keymap bindings;
         Fields(visible); Bindings(store,bindings);
-        const auto count = bindings_ ? bindings.size() : visible.Size();
+        const auto count = bindings_ ? bindings.size() : visible.Size() + (category_ == 0 ? 1 : 0);
         if (count) { selected_ = (selected_ + count + (down ? 1 : -1)) % count; }
         detailScroll_ = 0; break;
     }
-    case InputAction::Accept: if (focus_ != 3) { focus_ = 3; } else { Begin(store,directory,false); } break;
+    case InputAction::Accept:
+        if (focus_ != 3) { focus_ = 3; }
+        else if (!bindings_ && category_ == 0) {
+            VisibleFieldList visible; Fields(visible);
+            if (selected_ == visible.Size()) { return OptionsEvent::Multiplayer; }
+            Begin(store,directory,false);
+        } else { Begin(store,directory,false); }
+        break;
     case InputAction::AddBinding: if (bindings_) { Begin(store,directory,true); } break;
     case InputAction::Unbind: {
-        if (bindings_) { Keymap visible; Bindings(store,visible); auto binding = visible[selected_]; binding.keys.clear(); SetBinding(keys_[Index()],eastl::move(binding)); }
+        if (bindings_) { Keymap visible; Bindings(store,visible); if (selected_ < visible.size()) { auto binding = visible[selected_]; binding.keys.clear(); SetBinding(keys_[Index()],eastl::move(binding)); } }
         break;
     }
     case InputAction::Reset:
-        if (bindings_) { Keymap visible; Bindings(store,visible); ResetBinding(keys_[Index()],visible[selected_].context,visible[selected_].action); }
-        else { VisibleFieldList visible; Fields(visible); if (visible[selected_] != SettingsField::Seed || scope_ != SettingsScope::World) { ResetOverride(drafts_[Index()],visible[selected_]); } }
+        if (bindings_) { Keymap visible; Bindings(store,visible); if (selected_ < visible.size()) { ResetBinding(keys_[Index()],visible[selected_].context,visible[selected_].action); } }
+        else { VisibleFieldList visible; Fields(visible); if (selected_ < visible.Size() && (!remote_ || !HostField(visible[selected_])) && (visible[selected_] != SettingsField::Seed || scope_ != SettingsScope::World)) { ResetOverride(drafts_[Index()],visible[selected_]); } }
         break;
     case InputAction::Inspect: mode_ = Mode::Inspect; feedback_ = loc.Text("settings.inspecting","Press a key to inspect"); break;
     case InputAction::Apply: return OptionsEvent::Save;
@@ -453,18 +466,26 @@ void OptionsUi::Present(const SettingsStore& store, const Localization& loc, Scr
             String row = field == SettingsField::Seed && scope_ == SettingsScope::World
                 ? loc.Text("settings.ui.world_seed","World seed") : Local(loc,"settings.ui.label.",SettingName(field));
             row += "   ";
-            row += field == SettingsField::Seed && scope_ == SettingsScope::World ? UnsignedText(runtime_.seed) : SettingValue(preview,field);
+            const bool hostPacing = field == SettingsField::TicksPerSecond || field == SettingsField::RateLimited
+                || field == SettingsField::PauseWhenIdle;
+            row += remote_ && HostField(field) ? (hostPacing ? SettingValue(runtime_,field) : String("Host-owned"))
+                : field == SettingsField::Seed && scope_ == SettingsScope::World ? UnsignedText(runtime_.seed) : SettingValue(preview,field);
             row += HasOverride(drafts_[Index()],field) ? " [override]" : " [inherited]";
-            if ((field == SettingsField::ResidentRadius && preview.residencyMode == ResidencyMode::Circle)
-                || (field == SettingsField::ResidentRadiusTiles && preview.residencyMode == ResidencyMode::Square)) { row += " [inactive]"; }
-            frame.rows.push_back({eastl::move(row),field == SettingsField::Seed && scope_ == SettingsScope::World});
+            const auto residency = remote_ ? runtime_.residencyMode : preview.residencyMode;
+            if ((field == SettingsField::ResidentRadius && residency == ResidencyMode::Circle)
+                || (field == SettingsField::ResidentRadiusTiles && residency == ResidencyMode::Square)) { row += " [inactive]"; }
+            frame.rows.push_back({eastl::move(row),(remote_ && HostField(field)) || (field == SettingsField::Seed && scope_ == SettingsScope::World)});
         }
+        if (category_ == 0) { frame.rows.push_back({"Multiplayer settings..."}); }
         if (selected_ < visible.Size()) {
             const auto name = SettingName(visible[selected_]);
             frame.details.push_back(Local(loc,"settings.ui.description.",name));
             frame.details.push_back(Local(loc,"settings.ui.constraint.",name));
             frame.details.push_back(Local(loc,"settings.ui.effect.",name));
-            frame.details.push_back(visible[selected_] == SettingsField::Seed ? "Seed applies when creating a world." : "Takes effect after Save and apply.");
+            frame.details.push_back(remote_ && HostField(visible[selected_]) ? "Controlled by host"
+                : visible[selected_] == SettingsField::Seed ? "Seed applies when creating a world." : "Takes effect after Save and apply.");
+        } else if (category_ == 0 && selected_ == visible.Size()) {
+            frame.details.push_back("Open multiplayer settings to host or join a game and configure host speed. F9 also opens multiplayer settings.");
         }
     }
     if (focus_ == 4) { frame.details.insert(frame.details.begin(),String("> Details | Up/Down: scroll")); }
@@ -481,6 +502,6 @@ void OptionsUi::Present(const SettingsStore& store, const Localization& loc, Scr
         frame.footer += BindingHint(store.Keys(),InputContext::Menu,footerActions[i]); frame.footer += " ";
         frame.footer += footerLabels[i]; frame.footer += " | ";
     }
-    frame.footer += "Esc Close";
+    frame.footer += "F9 Multiplayer | Esc Close";
 }
 }

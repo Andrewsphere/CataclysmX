@@ -35,10 +35,10 @@ bool DrawScreen(SDL_Renderer* renderer, SdlText& text, ScreenFrame& frame,
 
 eastl::optional<std::size_t> SoleAvailableAction(const Vector<InteractionChoice>& actions);
 
-enum class OptionsEvent { None, Close, Save };
+enum class OptionsEvent { None, Close, Save, Multiplayer };
 class OptionsUi {
 public:
-    void Open(const SettingsStore& store, const Settings& runtime);
+    void Open(const SettingsStore& store, const Settings& runtime, bool remote = false);
     void Applied(const SettingsStore& store, const Settings& runtime, bool reloaded);
     OptionsEvent Key(const KeyChord& chord, const SettingsStore& store,
         const Localization& localization, const char* directory);
@@ -64,6 +64,7 @@ private:
     Settings runtime_;
     SettingsScope scope_ = SettingsScope::Global;
     bool bindings_ = false;
+    bool remote_ = false;
     unsigned category_ = 0;
     unsigned focus_ = 3; // Scope, section, category, list, details.
     std::size_t selected_ = 0;

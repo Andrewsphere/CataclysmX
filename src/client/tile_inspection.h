@@ -1,6 +1,6 @@
 #pragma once
 
-#include "core/server.h"
+#include "core/presentation.h"
 
 namespace cataclysmx {
 // Borrowed catalog name, "Player"/"Creature" for untyped visible actors, or
@@ -11,4 +11,6 @@ eastl::string_view VisibleActorName(const ContentCatalog& content, const ViewCel
 // Appends owned text; never loads chunks, teaches memories, or reveals unseen entities.
 // Empty lines separate terrain, actor, object (including contents), and ground items.
 void DescribeTile(const World& world, const WorldView& view, TileCoord cursor, Vector<String>& output);
+void DescribeTile(const ContentCatalog& content, const WorldView& view, TileCoord cursor,
+    const TileInspection& details, Vector<String>& output);
 }

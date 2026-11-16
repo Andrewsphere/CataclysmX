@@ -22,9 +22,9 @@ health and status/history alongside each other beneath the map.
 `SdlText::Width`, like `Height`, measures the current cached text slot. Call `Draw`
 offscreen to prepare a slot before measuring it. The top bar measures translated
 labels and resolved chords rather than allocating equal-width boxes.
-`MakeTopBarLayout` removes the project title, Debug, then Settings as space runs
-out; Help and the truthful Local session label have priority. SDL currently has
-no LAN session mode.
+`MakeTopBarLayout` removes the project title, Multiplayer, then Settings as space
+runs out; Help and the current Local/Host/Guest connection label have priority.
+The F9 Multiplayer entry also appears in F2's Interface preferences.
 
 ## Popup presentation
 

@@ -1,14 +1,17 @@
 # SDL frontend architecture
 
-This describes the implemented local SDL frontend. [Controls and APIs](sdl_controls.md)
+This describes the implemented local and LAN SDL frontend. [Controls and APIs](sdl_controls.md)
 cover gameplay screens; [options redesign](sdl_options_redesign.md) specifies the
 later visual rebuild and is not an implementation-status document.
+See [SDL multiplayer](sdl_multiplayer.md) for hosting, joining and persistence.
 
 ## Ownership and boundaries
 
 The SDL main thread owns the window, Vulkan renderer, text, assets, input,
 frontend settings, and screen state. It never borrows mutable World data.
-The session thread owns Server, simulation, elapsed-time pacing, and World.
+The session thread owns the local Server, simulation, elapsed-time pacing, World,
+LAN runtime, host/client, discovery and profile state. A startup guest creates no
+local Server until it returns to local play.
 Map preparation and asset preparation operate on owned input snapshots and
 immutable content. Neither worker controls gameplay activation time.
 
@@ -16,20 +19,42 @@ SessionChannels provides a bounded request/reply FIFO and a latest-snapshot
 mailbox. Each accepted request reserves enough reply capacity for admission and
 completion. Replies retain request/session identity. Snapshot replacement may
 skip intermediate views; reliable command results are never replaced with views. A command completion is
-published only after its new opportunity snapshot, so a frontend can safely submit
-the next action using that snapshot.
+published after the owner publishes authoritative input context. That context is
+separate from the rendered view: receipts can advance opportunity and last accepted
+sequence before the next network snapshot without predicting a view. Requests carry
+a generation and ID; connecting and returning locally change the epoch, cancel
+pending work and reject stale requests and replies. Gameplay sequences increase,
+commands retain their originating opportunity, and inspection request IDs increase.
+Local command completion still publishes its new view before its receipt. Guest
+completion publishes its newest input context without altering the older rendered
+view. The guest's view-radius preference crops the received map and its item visuals
+together; it does not alter authoritative sight or transport snapshot size.
+
+`SessionOptions` selects a new scenario or an existing save, startup host/join/browser
+mode, ports and profile path. `SessionRequest` carries identified controls and
+gameplay intent. `SessionSnapshot` exposes mode, connection state, menu ownership,
+input context, roster/view, discovery results, save availability and typed errors.
+`Session::Stop()` joins the owner and returns any final checkpoint error. It remains
+safe to drain accepted requests' terminal replies after stopping.
+
+Opening hosting, closing hosting, or joining another world while a local command is
+still outstanding returns `NetworkError::Busy`. The accepted command retains its
+authoritative outcome; callers can retry the control after its receipt. A local
+pause cannot strand a buffered command. Old-generation replies retain the original
+request generation, so neither commands nor selection IDs migrate to another world.
 
 Only the session owner mutates simulation. Commands carry the player's identity
 and current opportunity, use authoritative admission, and retain one pending
 intent. The frontend permits one outstanding gameplay command, preventing held
 input from filling a queue with future actions.
 
-## Paused screens
+## Menus and pause
 
-Help, Examine, interaction, options, and worldgen debug request Pause before
-initialization. Closing requests Resume; selected interactions use
-ResumeAndCommand to discard paused wall time and submit in one owner operation.
-Paused UI clocks, rendering, and keyboard repeats never advance simulation.
+Help, Examine, interaction, options, and worldgen debug request menu ownership
+before initialization. `menuOpen` controls frontend input; `paused` applies only
+to local play. Local screens pause simulation and closing discards paused wall
+time. Host and guest menus leave the shared world running; selected interactions
+use ResumeAndCommand. UI clocks and keyboard repeats are frontend state.
 
 An interaction snapshot contains visible doors and objects on the player's tile
 and eight neighboring tiles, on the same Y level. The UI groups actions by tile.
@@ -40,8 +65,9 @@ before mutation. A state change never substitutes a different action.
 
 Examine requests include an absolute cursor with Y. The owner builds
 `ViewForPlayerAtLayer(player, radius, layerY)`, a filtered projection using the
-player's actual perception and memories. Inspection replies carry the view,
-matching map item visuals, and descriptions. Terrain and overlays retain their
+player's actual perception and memories. Remote inspection requests return typed,
+filtered owned values, a view and matching map item visuals for client formatting.
+Terrain and overlays retain their
 independent downward projection depths. Inspection teaches no memories and
 acquires no chunks. Unknown tiles remain unknown on every selected layer.
 The frontend coalesces cursor requests and rejects replies for obsolete cursors.
@@ -100,7 +126,7 @@ Help, Options, and Debug. OptionsUi
 owns drafts, focus, numeric/language editors, and binding capture. No simulation
 entity pointers or third-party UI framework cross this boundary.
 
-The gameplay view shows compact Help/Settings/Debug labels, Local session status,
+The gameplay view shows compact Help/Settings/Multiplayer labels, session status,
 and a segmented health doll with limb values. ModalController owns modal input
 and lifecycle transitions. Full binding lists live in Help; windows show concise
 contextual instructions. See [SDL UI APIs and layout decisions](sdl_ui.md).
@@ -112,13 +138,20 @@ intact. Persistence failure retains applied settings and reports Applied, unsave
 retry remains available. Other-scope drafts survive saving. Temporary worlds have
 session-only world overrides and say so explicitly.
 
-Reopening clean options reloads persisted settings and applies them through the
+Reopening clean local/host options reloads persisted settings and applies them through the
 same owner handshake. Unsaved state is retained after a save failure. Seed remains
 a future-world default and cannot mutate the current world. Residency without an
 explicit override preserves the runtime policy. See [settings API](settings_api.md).
+Guests can edit presentation preferences and bindings; world and pacing settings
+remain host-owned. World-generation and AI debug are local/host-only.
+The F9 multiplayer editor is also available from F2's Interface page. It uses the
+same authoritative settings handshake for host pacing; see its
+[screen API and controls](sdl_multiplayer.md#screen-api).
 
 ## Shutdown and validation
 
+Host Close parks guests before checkpointing an open save. Shutdown closes the
+host and checkpoints an open local save; guests cannot save the host world.
 Session shutdown stops admission, drains/resolves outstanding replies, and joins
 its owner thread. Worker objects and textures are destroyed before the renderer;
 the window and SDL runtime outlive their dependent resources. Storage errors are
@@ -130,3 +163,10 @@ inspection, options staging, software/Vulkan rendering, assets, and map transfor
 The frontend smoke exercises actual screen input in an offscreen Vulkan window.
 Network integration tests require localhost sockets. Tooling harness tests are not
 part of gameplay verification.
+
+`sdl_lan_roundtrip` launches the actual SDL and headless executables in both
+directions. It covers directed discovery, rendered remote Players/Examine/inventory,
+an authoritative command, profile reconnect and SDL host save/load retaining guest
+identity. `--smoke --host` waits for an active peer and briefly keeps serving after
+its own checks so the peer can receive its results. The process test uses isolated
+profiles/settings/saves under its build-directory artifact folder.

@@ -252,17 +252,18 @@ bool DrawFrame(SDL_Renderer* renderer, SdlText& text, const SdlAssets& assets, c
     const SDL_Rect barClip = gameplay.topBar;
     if (!SDL_SetRenderClipRect(renderer, &barClip)
         || !text.Draw(0, "CataclysmX", -10000, -10000, TextColor(palette.hints))) { return false; }
-    const auto sessionLabel = hud.localization ? hud.localization->Text("sdl.ui.local", "Local") : String("Local");
+    const auto sessionLabel = !hud.sessionLabel.empty() ? String(hud.sessionLabel.data(), hud.sessionLabel.size())
+        : hud.localization ? hud.localization->Text("sdl.ui.local", "Local") : String("Local");
     if (!text.Draw(61, sessionLabel.c_str(), -10000, -10000, TextColor(palette.hints))) { return false; }
-    constexpr const char* defaultKeys[] = {"F1", "F2", "F11"};
-    constexpr const char* defaultLabels[] = {"Help", "Settings", "Debug"};
-    constexpr const char* labelKeys[] = {"game.ui.top_help", "game.ui.top_settings", "game.ui.top_debug"};
+    constexpr const char* defaultKeys[] = {"F1", "F2", "F9"};
+    constexpr const char* defaultLabels[] = {"Help", "Settings", "Multiplayer"};
+    constexpr const char* labelKeys[] = {"game.ui.top_help", "game.ui.top_settings", "sdl.ui.multiplayer"};
     String labels[3];
     int labelWidths[3]{};
     for (int i = 0; i < 3; ++i) {
-        labels[i] = hud.keys ? BindingHint(*hud.keys, InputContext::Gameplay, topActions[i]) : defaultKeys[i];
+        labels[i] = hud.keys && i != 2 ? BindingHint(*hud.keys, InputContext::Gameplay, topActions[i]) : defaultKeys[i];
         labels[i] += ' ';
-        labels[i] += hud.localization ? hud.localization->Text(labelKeys[i]) : String(defaultLabels[i]);
+        labels[i] += hud.localization ? hud.localization->Text(labelKeys[i], defaultLabels[i]) : String(defaultLabels[i]);
         if (!text.Draw(58 + i, labels[i].c_str(), -10000, -10000, TextColor(palette.text))) { return false; }
         labelWidths[i] = text.Width(58 + i);
     }

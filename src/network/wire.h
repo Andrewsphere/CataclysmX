@@ -6,9 +6,9 @@
 
 namespace cataclysmx::network::wire {
 
-// Version 17 adds exact inventory storage identities, equipment and nearby storage views.
-inline constexpr std::uint32_t protocol = 0x43584e11;
-inline constexpr int maxViewRadius = 64;
+// Version 18 adds snapshot presentation sidecars and read-only inspection queries.
+inline constexpr std::uint32_t protocol = 0x43584e12;
+inline constexpr int maxViewRadius = maxPresentationRadius;
 inline constexpr int maxViewDimension = 2 * maxViewRadius + 1;
 static_assert(maxViewDimension <= UINT8_MAX && maxViewDimension * maxViewDimension <= UINT16_MAX);
 // Worst-case 129 squared cells use 698922 bytes (one 42-byte run per cell),
@@ -25,7 +25,7 @@ bool ValidTerrainDefinitions(const WorldView& view, const ContentCatalog& conten
 bool ValidMonsterDefinitions(const WorldView& view, const ContentCatalog& content);
 enum class Type : std::uint8_t {
     Hello = 1, Accepted, Ready, Snapshot, Input, Receipt, Rejection,
-    Closing, Query, Advertisement, SnapshotAck
+    Closing, Query, Advertisement, SnapshotAck, Inspect, Inspection, InspectionAck
 };
 
 struct Writer {
@@ -37,7 +37,9 @@ struct Writer {
     void I32(std::int32_t v);
     bool Text(eastl::string_view v, std::size_t limit);
     // Expanded cell count, then (u16 run length, 40-byte cell payload) records.
-    bool View(const WorldView& v);
+    bool View(const WorldView& v, bool inspection = false);
+    bool Presentation(const WorldView& view, const PlayerPresentation& value);
+    bool Inspection(const PlayerInspection& value);
     bool CommandValue(const Command& v);
     bool Result(const PlayerCommandResult& v);
 };
@@ -50,10 +52,15 @@ struct Reader {
     bool U64(std::uint64_t& v);
     bool I32(std::int32_t& v);
     bool Text(String& v, std::size_t limit);
-    bool View(WorldView& v);
+    bool View(WorldView& v, bool inspection = false);
+    bool Presentation(const WorldView& view, PlayerPresentation& value);
+    bool Inspection(PlayerInspection& value);
     bool CommandValue(Command& v);
     bool Result(PlayerCommandResult& v);
     bool Done() const { return offset == bytes.size(); }
 };
+
+bool ValidPresentationDefinitions(const PlayerPresentation& value, const ContentCatalog& content);
+bool ValidInspectionDefinitions(const PlayerInspection& value, const ContentCatalog& content);
 
 }

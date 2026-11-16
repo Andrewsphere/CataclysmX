@@ -102,6 +102,7 @@ TEST_CASE("SDL item visual capture follows visibility overlay depth and persiste
     Server server(TestContent());
     auto& world = server.GetWorld();
     WorldView view;
+    view.playerId = server.GetHostPlayerId();
     view.width = view.height = 1;
     view.origin = {1, 1, 1};
     view.cells.resize(1);
@@ -143,6 +144,7 @@ TEST_CASE("SDL item visual capture follows visibility overlay depth and persiste
 TEST_CASE("map packets resolve item artwork and retain visual identity without world borrows", "[sdl][animation][map]") {
     Server server(TestContent());
     WorldView view;
+    view.playerId = server.GetHostPlayerId();
     view.width = view.height = 1;
     view.origin = {1, 1};
     view.cells.resize(1);

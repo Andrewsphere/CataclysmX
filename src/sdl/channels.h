@@ -4,6 +4,8 @@
 #include "client/settings.h"
 #include "client/ai_debug.h"
 #include "sdl/item_visual.h"
+#include "network/network.h"
+#include "client/lan_profile.h"
 
 #include <EASTL/array.h>
 #include <condition_variable>
@@ -11,7 +13,11 @@
 
 namespace cataclysmx::sdl {
 
-enum class RequestKind { Command, Pause, Resume, Inspect, ApplySettings, ResumeAndCommand, InspectAi, ItemCommand, PauseForItems };
+enum class SessionMode { Local, Host, Guest };
+enum class RequestKind {
+    Command, Pause, Resume, Inspect, ApplySettings, ResumeAndCommand, InspectAi, ItemCommand, PauseForItems,
+    OpenLan, CloseLan, Connect, Disconnect, RefreshDiscovery, StopDiscovery, Save
+};
 struct SessionRequest {
     RequestKind kind = RequestKind::Command;
     std::uint64_t generation = 0;
@@ -22,9 +28,16 @@ struct SessionRequest {
     TileCoord cursor{};
     SettingsOverrides globalSettings;
     SettingsOverrides worldSettings;
+    network::HostSettings hostSettings;
+    network::ConnectionSettings connectionSettings;
+    bool newCharacter = false;
+    String discoveryAddress;
 };
-enum class ReplyKind { Started, StartupFailed, Admission, Completed, Paused, Resumed, Stale, Cancelled, Inspected, SettingsApplied, SettingsFailed, AiInspected };
-enum class StartupError { None, InvalidContent, InvalidSettings };
+enum class ReplyKind {
+    Started, StartupFailed, Admission, Completed, Paused, Resumed, Stale, Cancelled, Inspected,
+    SettingsApplied, SettingsFailed, AiInspected, MenuOpened, ControlCompleted, ControlFailed
+};
+enum class StartupError { None, InvalidContent, InvalidSettings, Network, Storage };
 struct SessionReply {
     ReplyKind kind = ReplyKind::Started;
     std::uint64_t generation = 0;
@@ -36,6 +49,11 @@ struct SessionReply {
     Vector<MapItemVisual> inspectionItems;
     Settings runtimeSettings;
     AiDebugView aiDebug;
+    // Authoritative input context may be newer than the last rendered view.
+    PlayerInputContext input;
+    eastl::optional<network::NetworkError> networkError;
+    eastl::optional<client::ProfileError> profileError;
+    eastl::optional<SaveError> storageError;
 };
 struct SessionSnapshot {
     std::uint64_t generation = 0;
@@ -47,6 +65,18 @@ struct SessionSnapshot {
     Settings runtimeSettings;
     Vector<MapItemVisual> mapItems;
     eastl::optional<SaveError> storageError;
+    SessionMode mode = SessionMode::Local;
+    network::ConnectionState connectionState = network::ConnectionState::Disconnected;
+    PlayerInputContext input;
+    bool menuOpen = false; // Input ownership; only Local mode also pauses simulation.
+    bool hasSave = false; // Save authority belongs to Local/Host, never Guest.
+    std::uint16_t hostPort = 0;
+    std::uint16_t discoveryPort = 24681;
+    Vector<network::DiscoveredSession> sessions;
+    std::uint64_t statusVersion = 0;
+    String status;
+    eastl::optional<network::NetworkError> networkError;
+    eastl::optional<client::ProfileError> profileError;
 };
 
 enum class EnqueueResult { Accepted, Busy, Stopped };
