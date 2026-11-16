@@ -1,0 +1,10 @@
+@text-art 1
+@color steel #B7C6CA
+@color handle #B56C36
+@color grip #714A31
+@default steel
+---
+ <handle>┌────────────┐
+ <handle>│ <grip>▒▒▒▒▒▒▒▒▒▒<handle> ├<steel>────────────────┐
+ <handle>│ <grip>▒▒▒▒▒▒▒▒▒▒<handle> ├<steel>────────────────┘
+ <handle>└────────────┘

@@ -1,0 +1,18 @@
+@text-art 1
+@color glass #9ABBB0
+@color lid #A4A39A
+@color pickle #6A8D4D
+@default glass
+---
+       <lid>______________
+      <lid>/==============\
+      <lid>|==============|
+     /                \
+    |  ______________  |
+    | |<pickle>  ( )  ( )    <glass>| |
+    | |<pickle> (   )(   )   <glass>| |
+    | |<pickle>  ( )  ( )    <glass>| |
+    | |<pickle>   PICKLES    <glass>| |
+    | |______________| |
+    |                  |
+     \________________/

@@ -46,7 +46,7 @@
     u:{terrain:'floor_tile',object:'house_table',facing:'east'},
     v:{terrain:'floor_tile',object:'office_chair',facing:'west'},
     x:{terrain:'floor_tile',monsters:[{group:'monsters_office',chance:4500}]},
-    y:{terrain:'floor_tile',object:'bookcase',facing:'south',loot:[{pool:'loot_books',rolls:4,destination:'furniture'}]},
+    y:{terrain:'floor_tile',object:'bookcase',facing:'south',loot:[{pool:'loot_reading_room_supplies',rolls:4,destination:'furniture'}]},
     z:{terrain:'floor_tile',object:'bookcase',facing:'east',loot:[{pool:'loot_office',rolls:3,destination:'furniture'}]},
     A:{terrain:'floor_tile',object:'bookcase',facing:'east'},
     B:{terrain:'floor_tile',monsters:[{group:'monsters_police_station',chance:7000}]},

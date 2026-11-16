@@ -1,0 +1,11 @@
+@text-art 1
+@color wood #B88C60
+@color grain #785639
+@color light #DCB88B
+@default wood
+---
+ <light>╱────────────────────────╱<grain>│
+<wood>│  <grain>───╮  ───────  ╭───── <wood>│ <grain>│
+<wood>│ <grain>────╯ ──(──)─── ╰───── <wood>│ <grain>│
+<wood>│ <grain>────────────  ──────── <wood>│ <grain>╱
+╰────────────────────────╯─╯

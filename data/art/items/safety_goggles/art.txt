@@ -1,0 +1,11 @@
+@text-art 1
+@color frame #A6B4AF
+@color lens #93CBD1
+@color strap #777F7E
+@default frame
+---
+  ╭──────────╮  ╭──────────╮
+ <strap>─<frame>┤ ╭──────╮ ├──┤ ╭──────╮ ├<strap>─
+  <frame>│ │  <lens>╱<frame>   │ │  │ │  <lens>╱<frame>   │ │
+  │ │ <lens>╱<frame>    │ │  │ │ <lens>╱<frame>    │ │
+  ╰─┴──────┴─╯  ╰─┴──────┴─╯

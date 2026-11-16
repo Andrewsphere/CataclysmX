@@ -1,0 +1,17 @@
+@text-art 1
+@color jar #B88C52
+@color lid #805B49
+@color label #EEE0AD
+@default jar
+---
+      <lid>________________
+     <lid>/================\
+    <lid>|==================|
+    |                  |
+    |  ______________  |
+    | |<label>   PEANUT     <jar>| |
+    | |<label>   BUTTER     <jar>| |
+    | |<label>    (oo)      <jar>| |
+    | |______________| |
+    |                  |
+     \________________/

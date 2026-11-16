@@ -1,0 +1,13 @@
+@text-art 1
+@color steel #9DB0BB
+@color wood #CD985D
+@color grain #A87546
+@color highlight #D3DFE1
+@color action #718C9D
+@default steel
+---
+          ┌───────<highlight>═════════════╡
+     <wood>╭────<steel>┤ <action>━<steel> o  ├─<wood>┬<grain>=====<wood>┬<steel>────┘
+ <wood>╭───╯<grain>▒▒▒▒<steel>╰──┬───╯ <wood>╰─────╯
+ <wood>│<grain>▒▒▒▒▒▒<wood>╱    <steel>╰<highlight>o<steel>╯
+ <wood>╰─────╯

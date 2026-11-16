@@ -1,0 +1,12 @@
+@text-art 1
+@color steel #AAB5BE
+@color edge #596771
+@color shine #DBE0E1
+@default steel
+---
+       <edge>╱<shine>────────<edge>╲
+   ╱──╱  <shine>╱────╲<steel>  ╲<edge>────╲
+  ╱  <steel>╱  ╱      ╲      <edge>╲
+ ╱  <steel>╱──╱  <shine>──────<steel>╲      <edge>╲
+ ╲      <steel>╲        ╲   <edge>╱─╱
+  ╲──────╲────────╲─╱

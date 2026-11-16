@@ -1,0 +1,33 @@
+@text-art 1
+@color rim #BFCBD1
+@color metal #E5EBE6
+@color copper #D69C72
+@color gold #CFB259
+@color shade #8C784B
+@color ink #F1E5B8
+@default rim
+---
+    <metal>┌──┐
+    <metal>│+ │
+ ╭──┴──┴──╮
+╭┴────────┴╮
+│<metal>▐<copper>████████<shade>▒<rim>│
+│<metal>▐<copper>████████<shade>▒<rim>│
+├──────────┤
+│<metal>▐<gold>░░░░░░░░<shade>▒<rim>│
+│<metal>▐<gold>░░░░░░░░<shade>▒<rim>│
+│<metal>▐<ink>   AA   <shade>▒<rim>│
+│<metal>▐<gold>░░░░░░░░<shade>▒<rim>│
+│<metal>▐<ink> ALKALI <shade>▒<rim>│
+│<metal>▐<ink>  1.5V  <shade>▒<rim>│
+│<metal>▐<gold>░░░░░░░░<shade>▒<rim>│
+│<metal>▐<gold>░░░░░░░░<shade>▒<rim>│
+│<metal>▐<gold>░░░░░░░░<shade>▒<rim>│
+│<metal>▐<gold>░░░░░░░░<shade>▒<rim>│
+│<metal>▐<gold>░░░░░░░░<shade>▒<rim>│
+│<metal>▐<gold>░░░░░░░░<shade>▒<rim>│
+│<metal>▐<gold>░░░░░░░░<shade>▒<rim>│
+├──────────┤
+│<metal>▐<shade>████████▒<rim>│
+╰┬────────┬╯
+ ╰────────╯

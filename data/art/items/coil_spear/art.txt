@@ -1,0 +1,38 @@
+@text-art 1
+@color steel #B9C9D1
+@color edge #E3ECE7
+@color copper #E1A270
+@color wood #C69C67
+@color grain #977C59
+@default steel
+---
+    <edge>/\
+   /<edge>▐<steel> \
+  / <edge>▐<steel>  \
+ /  <edge>▐<steel>   \
+ \  <edge>▐<steel>   /
+  \ <edge>▐<steel>  /
+   \<edge>▐<steel> /
+    ║║
+   <copper>╭╫╫╮
+   <copper>╰╫╫╯
+   <copper>╭╫╫╮
+   <copper>╰╫╫╯
+    <wood>│<grain>▌
+    <wood>│<grain>▌
+    <wood>│<grain>▌
+    <wood>│<grain>▌
+    <wood>│<grain>▌
+    <wood>│<grain>▌
+    <wood>│<grain>▌
+    <wood>│<grain>▌
+    <wood>│<grain>▌
+    <wood>│<grain>▌
+    <wood>│<grain>▌
+    <wood>│<grain>▌
+    <wood>│<grain>▌
+    <wood>│<grain>▌
+    <wood>│<grain>▌
+    <wood>│<grain>▌
+    <wood>│<grain>▌
+    <wood>╰╯

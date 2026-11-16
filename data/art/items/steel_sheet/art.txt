@@ -1,0 +1,12 @@
+@text-art 1
+@color steel #AAB6C0
+@color light #DAE2E6
+@color edge #53616B
+@default steel
+---
+     <light>╱────────────────────<edge>╱│
+    <light>╱  ────────────────  <steel>╱ <edge>│
+   <light>╱   <steel>──────────────   ╱  <edge>│
+  <steel>╱    ────────────    ╱   <edge>│
+ ╱────────────────────╱    <edge>│
+ <edge>╲────────────────────╲────╯

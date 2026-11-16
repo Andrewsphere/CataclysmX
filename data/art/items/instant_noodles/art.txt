@@ -1,0 +1,15 @@
+@text-art 1
+@color pack #C87C55
+@color noodle #E9D5A2
+@default pack
+---
+  /\/\/\/\/\/\/\/\/\/\/\/\/\
+ |                            |
+ |<noodle>     INSTANT NOODLES        <pack>|
+ |       ____________         |
+ |      /<noodle> ~~~~~~~~~~ <pack>\        |
+ |     |<noodle> ~~~~~~~~~~~~ <pack>|       |
+ |      \____________/        |
+ |         \______/           |
+ |                            |
+  \/\/\/\/\/\/\/\/\/\/\/\/\/

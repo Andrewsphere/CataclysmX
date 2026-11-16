@@ -1,0 +1,18 @@
+@text-art 1
+@color bottle #B4A080
+@color cap #7F7266
+@color label #E8DFC5
+@default bottle
+---
+        <cap>__________
+       <cap>|==========|
+       <cap>|__________|
+      /            \
+     /______________\
+     |              |
+     |  __________  |
+     | |<label>    +     <bottle>| |
+     | |<label> ANTISEPTIC<bottle>| |
+     | |__________| |
+     |              |
+     \______________/

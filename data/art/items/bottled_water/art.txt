@@ -1,0 +1,18 @@
+@text-art 1
+@color plastic #A7CFD2
+@color water #6EABB9
+@color cap #6285A0
+@default plastic
+---
+        <cap>__________
+       <cap>|==========|
+       <cap>|__________|
+       /          \
+      /            \
+     |  __________  |
+     | |<water>  WATER   <plastic>| |
+     | |<water>  ~~~~~~  <plastic>| |
+     | |__________| |
+     |<water>  ~~~~~~~~~~  <plastic>|
+     |<water>  ~~~~~~~~~~  <plastic>|
+     |______________|

@@ -1,0 +1,11 @@
+@text-art 1
+@color steel #C6D2D4
+@color edge #E0E6E3
+@color handle #6C5142
+@color rivet #C4B99B
+@default steel
+---
+    ┌───────────────┐
+   /                ├<handle>─────────┐
+  /                 │ <handle>▒ <rivet>o <handle>▒ <rivet>o <handle>│
+ <edge>/__________________<steel>├<handle>─────────┘

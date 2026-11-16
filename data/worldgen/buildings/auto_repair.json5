@@ -4,7 +4,7 @@
   rows:[
     '##ww###########ww###',
     '#.a....b...c.#.d.e.#',
-    '#............#.....#',
+    '#....M.......#.....#',
     '#............+..f..#',
     '#g..h........#.ehi.#',
     '#j......k...l#.....#',
@@ -17,6 +17,7 @@
     '######.########ww###',
   ],
   palette:{'#':'wall_concrete', I:'wall_metal', w:'window', '.':'floor_concrete', '+':'closed_door',
+    M:{terrain:'floor_concrete',loot:[{pool:'loot_traction_motor_ground',destination:'ground'}]},
     a:{terrain:'floor_concrete',object:'industrial_workbench',facing:'south',loot:[{pool:'loot_auto_repair',rolls:4,destination:'furniture'}]},
     b:{terrain:'floor_concrete',object:'industrial_workbench',facing:'south',loot:[{pool:'loot_tools',rolls:3,destination:'furniture'}]},
     c:{terrain:'floor_concrete',object:'utility_cabinet',facing:'south',loot:[{pool:'loot_hardware',rolls:3,destination:'furniture'}]},

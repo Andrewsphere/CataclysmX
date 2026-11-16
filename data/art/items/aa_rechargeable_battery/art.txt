@@ -1,0 +1,33 @@
+@text-art 1
+@color rim #BFCBD1
+@color metal #E5EBE6
+@color silver #ABBFC8
+@color green #7ACA91
+@color shade #548C72
+@color ink #E6F2D7
+@default rim
+---
+    <metal>┌──┐
+    <metal>│+ │
+ ╭──┴──┴──╮
+╭┴────────┴╮
+│<metal>▐<silver>████████<shade>▒<rim>│
+│<metal>▐<silver>████████<shade>▒<rim>│
+├──────────┤
+│<metal>▐<green>░░░░░░░░<shade>▒<rim>│
+│<metal>▐<green>░░░░░░░░<shade>▒<rim>│
+│<metal>▐<ink>   AA   <shade>▒<rim>│
+│<metal>▐<green>░░░░░░░░<shade>▒<rim>│
+│<metal>▐<ink>  NiMH  <shade>▒<rim>│
+│<metal>▐<ink>  1.2V  <shade>▒<rim>│
+│<metal>▐<green>░░░░░░░░<shade>▒<rim>│
+│<metal>▐<ink>  ──>   <shade>▒<rim>│
+│<metal>▐<ink>   <<──  <shade>▒<rim>│
+│<metal>▐<green>░░░░░░░░<shade>▒<rim>│
+│<metal>▐<green>░░░░░░░░<shade>▒<rim>│
+│<metal>▐<green>░░░░░░░░<shade>▒<rim>│
+│<metal>▐<green>░░░░░░░░<shade>▒<rim>│
+├──────────┤
+│<metal>▐<silver>████████<shade>▒<rim>│
+╰┬────────┬╯
+ ╰────────╯

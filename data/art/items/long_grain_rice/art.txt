@@ -1,0 +1,16 @@
+@text-art 1
+@color bag #A8C6BB
+@color rice #E9DFBA
+@default bag
+---
+    ______________________
+   / / / / / / / / / / / /\
+  /                        \
+ |<rice>    LONG GRAIN RICE       <bag>|
+ |    ________________      |
+ |   |<rice>  -  -  -  -   <bag>|      |
+ |   |<rice> -  -  -  -  - <bag>|      |
+ |   |<rice>  -  -  -  -   <bag>|      |
+ |   |________________|      |
+  \                         /
+   \_______________________/

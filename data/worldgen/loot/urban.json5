@@ -1,87 +1,99 @@
 {format_version:1, definitions:[
   {type:'loot_pool', id:'loot_food', entries:[
-    {pool:'house_pantry',weight:4},{item:'dry_pasta',weight:3},{item:'rice_packet',weight:3},
-    {item:'cereal_box',weight:2},{item:'snack_packet',weight:3,count:{min:1,max:3}},
+    {pool:'house_pantry',weight:4},{item:'potato_chips',weight:3},
+    {item:'chocolate_bar',weight:3,count:{min:1,max:3}},{item:'bottled_water',weight:3},
   ]},
   {type:'loot_pool', id:'loot_kitchen', entries:[
-    {pool:'house_kitchen',weight:3},{item:'frying_pan',weight:2},{item:'serving_spoon',weight:3},
-    {item:'dish_towel',weight:3},{item:'cooking_pot',weight:2},{item:'cooking_oil',weight:2},
+    {item:'chef_knife',weight:4},{item:'dill_pickles',weight:2},
+    {item:'glass_bottle',weight:2},{item:'cloth_patch',weight:3},
   ]},
   {type:'loot_pool', id:'loot_cleaning', entries:[
-    {item:'soap',weight:4,count:{min:1,max:2}},{item:'detergent_box',weight:3},
-    {item:'scrub_brush',weight:3},{item:'plastic_bucket',weight:1},{pool:'house_linen',weight:2},
+    {item:'bar_soap',weight:5},{item:'cloth_patch',weight:3,count:{min:1,max:3}},
+    {item:'plastic_storage_box',weight:1},
   ]},
   {type:'loot_pool', id:'loot_medical', entries:[
-    {item:'bandage',weight:5,count:{min:1,max:3}},{item:'gauze_roll',weight:4,count:{min:1,max:3}},
-    {item:'medical_gloves',weight:3},{item:'medical_scissors',weight:2},{item:'first_aid_pouch',weight:2},
+    {item:'cloth_bandage',weight:5,count:{min:1,max:3}},
+    {item:'sterile_gauze',weight:4,count:{min:1,max:3}}, {item:'antiseptic',weight:3},
   ]},
   {type:'loot_pool', id:'loot_tools', entries:[
-    {pool:'house_tools',weight:5},{item:'wrench',weight:3},{item:'pliers',weight:3},
-    {item:'utility_knife',weight:2},{item:'claw_hammer',weight:2},
+    {pool:'house_tools',weight:4},{item:'adjustable_wrench',weight:3},
+    {item:'pry_bar',weight:2},{item:'metal_file',weight:2},{item:'claw_hammer',weight:3},
+    {item:'safety_goggles',weight:2},
+  ]},
+  // Low-weight compatibility sources for unchanged urban and pilot recipes only.
+  {type:'loot_pool', id:'loot_legacy_recipe', entries:[
+    {item:'electrical_cord',weight:1},{item:'wire_bundle',weight:1},
   ]},
   {type:'loot_pool', id:'loot_hardware', entries:[
-    {pool:'house_workshop',weight:4},{item:'bolts',weight:4,count:{min:1,max:3}},
-    {item:'duct_tape',weight:3},{item:'wire_bundle',weight:3},{item:'wood_handle',weight:2},
+    {pool:'house_workshop',weight:4},{item:'steel_sheet',weight:3},{item:'copper_tube',weight:3},
+    {item:'aluminum_scrap',weight:3},{item:'rigid_plastic_scrap',weight:3},
+    {item:'rubber_hose',weight:3},{item:'timber_plank',weight:3},{item:'glass_shard',weight:2},
+    {pool:'loot_legacy_recipe',weight:1},
   ]},
   {type:'loot_pool', id:'loot_electronics', entries:[
-    {item:'electrical_cord',weight:4},{item:'circuit_board',weight:4},
-    {item:'disposable_battery',weight:3,count:{min:1,max:4}},{item:'rechargeable_battery',weight:2},
-    {item:'field_charger',weight:1},
+    {item:'transistor',weight:4,count:{min:1,max:4}},{item:'diode',weight:4,count:{min:1,max:4}},
+    {item:'microcontroller_board',weight:3},{item:'desktop_motherboard',weight:2},
+    {item:'tiny_electric_motor',weight:3},{item:'servo',weight:3},{item:'soldering_iron',weight:2},
+    {item:'aa_alkaline_battery',weight:3,count:{min:1,max:4}},
+    {item:'aa_rechargeable_battery',weight:2},{item:'battery_charger',weight:2},
   ]},
   {type:'loot_pool', id:'loot_clothing', entries:[
-    {item:'work_shirt',weight:4},{item:'work_trousers',weight:4},{item:'apron',weight:2},
-    {item:'work_gloves',weight:3},{item:'sewing_kit',weight:1},
+    {item:'work_shirt',weight:4},{item:'cotton_tshirt',weight:4},{item:'denim_jeans',weight:4},
+    {item:'rain_jacket',weight:3},{item:'leather_work_gloves',weight:3},{item:'sewing_supplies',weight:2},
+    {item:'work_trousers',weight:1}, // Original recycler still has an obtainable target.
   ]},
-  {type:'loot_pool', id:'loot_books', entries:[
-    {item:'paperback_book',weight:5,count:{min:1,max:2}},{item:'reference_book',weight:3},
-    {item:'notebook',weight:2},
+  // Reading material is deferred. Reading rooms carry ordinary visitor supplies.
+  {type:'loot_pool', id:'loot_reading_room_supplies', entries:[
+    {item:'bottled_water',weight:4},{item:'chocolate_bar',weight:2},
+    {item:'aa_alkaline_battery',weight:2},{item:'cloth_patch',weight:1},
   ]},
   {type:'loot_pool', id:'loot_office', entries:[
-    {item:'notebook',weight:4},{item:'pencil',weight:4,count:{min:1,max:4}},
-    {item:'paper_stack',weight:3},{pool:'loot_books',weight:2},{pool:'loot_electronics',weight:1},
+    {pool:'loot_reading_room_supplies',weight:4},{pool:'loot_electronics',weight:1},
+    {item:'corrugated_cardboard',weight:2},
   ]},
   {type:'loot_pool', id:'loot_fire_station', entries:[
-    {pool:'loot_tools',weight:4},{pool:'loot_medical',weight:3},{item:'rope_coil',weight:3},
-    {item:'work_gloves',weight:2},{item:'canteen',weight:2},
+    {pool:'loot_tools',weight:4},{pool:'loot_medical',weight:3},{item:'nylon_rope',weight:3},
+    {item:'fire_axe',weight:3},{item:'leather_work_gloves',weight:2},{item:'steel_water_bottle',weight:2},
   ]},
   {type:'loot_pool', id:'loot_police_station', entries:[
-    {pool:'loot_office',weight:3},{pool:'loot_medical',weight:2},{item:'disposable_battery',weight:3,count:{min:1,max:3}},
-    {item:'work_gloves',weight:2},{item:'first_aid_pouch',weight:2},
+    {pool:'loot_office',weight:3},{pool:'loot_medical',weight:2},
+    {item:'police_baton',weight:3},{item:'pump_shotgun',weight:2},{item:'shotgun_shells',weight:3},
   ]},
   {type:'loot_pool', id:'loot_auto_repair', entries:[
-    {pool:'loot_tools',weight:4},{pool:'loot_hardware',weight:4},{item:'parts_box',weight:2},
-    {item:'work_gloves',weight:2},{item:'electrical_cord',weight:2},
+    {pool:'loot_tools',weight:4},{pool:'loot_hardware',weight:4},
+    {item:'plastic_storage_box',weight:2},{item:'leather_work_gloves',weight:2},
+    {item:'appliance_electric_motor',weight:2},{item:'water_pump',weight:2},
   ]},
+  // Never nest this in another pool: the 45-liter motor belongs on the garage floor.
+  {type:'loot_pool', id:'loot_traction_motor_ground', entries:[{item:'traction_electric_motor',weight:1}]},
   {type:'loot_pool', id:'loot_outdoors', entries:[
-    {item:'canteen',weight:4},{item:'rope_coil',weight:3},{item:'backpack',weight:2},
-    {item:'utility_knife',weight:2},{pool:'loot_food',weight:2},
+    {item:'steel_water_bottle',weight:4},{item:'nylon_rope',weight:3},{item:'camping_backpack',weight:2},
+    {item:'camping_tarp',weight:3},{item:'rain_jacket',weight:2},{pool:'loot_food',weight:2},
   ]},
   {type:'loot_pool', id:'loot_warehouse', entries:[
-    {pool:'loot_hardware',weight:4},{item:'parts_box',weight:3},{item:'duct_tape',weight:3},
-    {item:'work_gloves',weight:2},{pool:'loot_food',weight:2},
+    {pool:'loot_hardware',weight:4},{item:'plastic_storage_box',weight:3},
+    {item:'corrugated_cardboard',weight:3},{item:'cloth_repair_tape',weight:3},
+    {item:'leather_work_gloves',weight:2},{pool:'loot_food',weight:2},
   ]},
   {type:'loot_pool', id:'loot_school', entries:[
-    {pool:'loot_office',weight:4},{pool:'loot_books',weight:4},{item:'toy_blocks',weight:2},
-    {item:'snack_packet',weight:2,count:{min:1,max:2}},
+    {pool:'loot_office',weight:4},{pool:'loot_reading_room_supplies',weight:4},
+    {item:'potato_chips',weight:2},{item:'tiny_electric_motor',weight:1},
   ]},
   {type:'loot_pool', id:'loot_laundry', entries:[
-    {pool:'loot_cleaning',weight:4},{pool:'loot_clothing',weight:4},{pool:'house_linen',weight:3},
-    {item:'sewing_kit',weight:2},
+    {pool:'loot_cleaning',weight:4},{pool:'loot_clothing',weight:4},
+    {item:'cloth_patch',weight:3},{item:'sewing_supplies',weight:2},
   ]},
-  {type:'loot_pool', id:'loot_pantry', entries:[
-    {pool:'loot_food',weight:5},{item:'flour_bag',weight:3},{item:'cooking_oil',weight:2},
-    {item:'coffee_tin',weight:2},{item:'tea_box',weight:2},
-  ]},
+  {type:'loot_pool', id:'loot_pantry', entries:[{pool:'house_pantry',weight:5},{pool:'loot_food',weight:2}]},
   {type:'loot_pool', id:'loot_utility', entries:[
     {pool:'loot_tools',weight:3},{pool:'loot_cleaning',weight:3},{pool:'loot_electronics',weight:2},
-    {item:'duct_tape',weight:3},{item:'plastic_bottle',weight:2},
+    {item:'cloth_repair_tape',weight:3},{item:'rubber_hose',weight:2},
   ]},
   {type:'loot_pool', id:'loot_preparedness', entries:[
     {pool:'loot_medical',weight:3},{pool:'loot_outdoors',weight:3},{pool:'loot_food',weight:3},
-    {item:'disposable_battery',weight:2,count:{min:1,max:4}},{item:'backpack',weight:1},
+    {item:'aa_alkaline_battery',weight:2,count:{min:1,max:4}},{item:'camping_backpack',weight:1},
   ]},
   {type:'loot_pool', id:'loot_hobby', entries:[
-    {pool:'loot_books',weight:3},{item:'sewing_kit',weight:3},{item:'toy_blocks',weight:2},
-    {item:'notebook',weight:2},{pool:'loot_hardware',weight:2},
+    {item:'sewing_supplies',weight:3},{item:'tiny_electric_motor',weight:2},
+    {item:'servo',weight:2},{pool:'loot_electronics',weight:2},{pool:'loot_hardware',weight:2},
   ]},
 ]}

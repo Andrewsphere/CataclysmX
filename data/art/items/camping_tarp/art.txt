@@ -1,0 +1,15 @@
+@text-art 1
+@color tarp #718C75
+@color fold #4C685B
+@color eyelet #C0C1A0
+@default tarp
+---
+      ______________________
+    /  <eyelet>o<tarp>                 <eyelet>o <tarp>/|
+   /______________________/ |
+  |  <fold>____________________ <tarp>| |
+  | <fold>|                    |<tarp>| |
+  | <fold>|   FOLDED TARP      |<tarp>| |
+  | <fold>|____________________|<tarp>| /
+  |__<eyelet>o<tarp>_________________<eyelet>o<tarp>__|/
+     <fold>==================

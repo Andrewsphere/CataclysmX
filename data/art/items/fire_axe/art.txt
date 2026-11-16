@@ -1,0 +1,37 @@
+@text-art 1
+@color steel #BAC7CD
+@color edge #EAF0E9
+@color paint #D85E48
+@color wood #D1A36D
+@color grain #A97D51
+@color grip #82949D
+@default steel
+---
+    ╭──────┬───╮
+   ╱<edge>▐██<paint>▒▒▒▒<steel>│ o ├──╮
+  ╱<edge>▐██<paint>▒▒▒▒▒<steel>│   │<paint>▒▒<steel>╲
+  │<edge>▐██<paint>▒▒▒▒▒<steel>│   ├───>
+  │<edge>▐██<paint>▒▒▒▒▒<steel>├─┬─╯
+  ╲<edge>▐██<paint>▒▒▒▒<steel>╱<wood>│<grain>▐<wood>│
+   <steel>╰─────╯ <wood>│<grain>▐<wood>│
+           <wood>│<grain>▐<wood>│
+           <wood>│<grain>▐<wood>│
+           <wood>│<grain>▐<wood>│
+           <wood>│<grain>▐<wood>│
+           <wood>│<grain>▐<wood>│
+           <wood>│<grain>▐<wood>│
+           <wood>│<grain>▐<wood>│
+           <wood>│<grain>▐<wood>│
+           <wood>│<grain>▐<wood>│
+           <wood>│<grain>▐<wood>│
+           <wood>│<grain>▐<wood>│
+           <wood>│<grain>▐<wood>│
+           <wood>│<grain>▐<wood>│
+           <wood>│<grain>▐<wood>│
+          <wood>╭╯<grain>▐<wood>│
+          <grip>│▒▒│
+          <grip>│▒▒│
+          <grip>│▒▒│
+          <grip>│▒▒│
+          <grip>│▒▒│
+          <grip>╰──╯

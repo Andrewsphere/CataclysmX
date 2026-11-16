@@ -25,7 +25,7 @@
   palette:{g:'grass',T:'tree',':':'pavement',
     b:{terrain:'pavement',object:'park_bench',facing:'south'},
     B:{terrain:'pavement',object:'park_bench',facing:'north'},
-    a:{terrain:'pavement',object:'park_bench',facing:'south',loot:[{pool:'loot_books',destination:'furniture',chance:3500}]},
+    a:{terrain:'pavement',object:'park_bench',facing:'south',loot:[{pool:'loot_reading_room_supplies',destination:'furniture',chance:3500}]},
     c:{terrain:'grass',monsters:[{group:'monsters_outdoors',chance:3000}]},
   },
   entrance:{x:7,z:18},

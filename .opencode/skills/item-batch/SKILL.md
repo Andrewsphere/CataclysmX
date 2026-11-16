@@ -26,9 +26,24 @@ Use `item-create` and `text-art-create` for individual items and illustrations.
   Trace obtainable inputs and tools from early to later items; record gaps and
   unsupported steps instead of fabricating a mechanic.
 - [ ] Apply the item checklist to each roster entry: units and physical values,
-  concise practical prose, existing stat anchors, supported capabilities,
+  concise atmosphere-first prose, existing stat anchors, supported capabilities,
   tool traits and melee, shared flags, and canonical external RGB art. Flag
   intended unsupported behavior as metadata-only.
+- [ ] Plan and review the descriptions as a collection. Their primary purpose
+  is atmosphere and vibes, with visual/practical details serving that purpose.
+  Vary implied history, everyday familiarity, loss, survival ingenuity and dry humor;
+  avoid a catalog of specifications or the same apocalypse observation repeated
+  for every item. For a 60-item generation, aim for roughly **2–3 deliberately
+  humorous or satirical descriptions**, leaving the rest room for other moods.
+  Coordinate that target across subagents/sub-batches, not separately per agent;
+  a smaller batch need not force a joke. Record the selected humor IDs in the
+  batch report and check that prose never promises unsupported mechanics.
+- [ ] Give some descriptions **a survivor's perspective**: why an ordinary
+  object is worth carrying now, or a resourceful possibility its finder might
+  notice in a zombie-filled world. This is another atmospheric approach, not
+  another joke quota. Prefer an item-specific survival observation to a forced
+  punchline, and vary the needs it evokes instead of making everything a weapon.
+  Review practical hints against actual mechanics and obtainable crafting routes.
 - [ ] Respect actual recipe constraints including input and trait bounds, retained
   tools, quantities, work and unique recycling targets. Connect requested loot to
   plausible locations and placements independently of batch membership; include

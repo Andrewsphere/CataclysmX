@@ -1,0 +1,16 @@
+@text-art 1
+@color board #4F856B
+@color trace #B3C989
+@color chip #38464C
+@color metal #D4C28C
+@default board
+---
+  <trace>╭──────────────────────╮
+  <board>│ <metal>o <trace>──┬─────┬─── <metal>o o   <board>│
+  │ <trace>╭───┴─────┴──╮ ───   <board>│
+  │ <trace>│ <chip>▓▓▓▓▓▓▓▓▓▓ <trace>│ <metal>╭──╮  <board>│
+  │ <trace>│ <chip>▓▓▓▓▓▓▓▓▓▓ <trace>│ <metal>│██│  <board>│
+  │ <trace>╰───┬─────┬──╯ <metal>╰──╯  <board>│
+  │ <metal>o o <trace>┴ ─── ┴ <metal>o o o    <board>│
+  <trace>╰─┬─┬─┬─┬─┬─┬─┬─┬─┬────╯
+    <metal>│ │ │ │ │ │ │ │ │

@@ -1,0 +1,15 @@
+@text-art 1
+@color box #B99B70
+@color shell #B65042
+@color brass #D5B66E
+@color shadow #8B7355
+@default box
+---
+     ┌──────────────────────┐
+    / <brass>o  o  o  o  o<box>        /│
+   / <brass>o  o  o  o  o<box>        / │
+  ┌──────────────────────┐  │
+  │ <brass>════════════════════<box> │  │
+  │ <shell>▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒<box> │  │
+  │ <shadow>▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒<box> │ /
+  └──────────────────────┘

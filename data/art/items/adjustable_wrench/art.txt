@@ -1,0 +1,31 @@
+@text-art 1
+@color steel #AABBC5
+@color shine #E4EEF0
+@color bevel #7D98A8
+@color screw #D5BD88
+@default steel
+---
+ ╭──╮
+ │<shine>█▌<steel>│     ╭─╮
+ │<shine>█▌<steel>│     │<bevel>▐<steel>│
+ │<shine>█▌<steel>╰─────╯<bevel>▐<steel>│
+ │<shine>█▌<steel>       <bevel>▐<steel>│
+ ╰╮<shine>▌<steel> ┌<screw>═══<steel>┐ <bevel>▐<steel>│
+  │<shine>▌<steel> │<screw>===<steel>│ <bevel>▐<steel>│
+  ╰╮ └<screw>═══<steel>┘ ╭╯
+   ╰╮ <shine>▐▌<steel> ╭╯
+    │ <shine>▐▌<steel> │
+    │ <shine>▐▌<steel> │
+    │ <shine>▐▌<steel> │
+    │ <shine>▐▌<steel> │
+    │ <shine>▐▌<steel> │
+    │ <shine>▐▌<steel> │
+    │ <shine>▐▌<steel> │
+    │ <shine>▐▌<steel> │
+    │ <shine>▐▌<steel> │
+    │ <shine>▐▌<steel> │
+    │ <shine>▐▌<steel> │
+    │ <bevel>╭╮<steel> │
+    │ <bevel>││<steel> │
+    │ <bevel>╰╯<steel> │
+    ╰────╯

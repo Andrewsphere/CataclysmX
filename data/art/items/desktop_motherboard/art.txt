@@ -1,0 +1,18 @@
+@text-art 1
+@color board #467562
+@color trace #A9C68F
+@color socket #A6ADB0
+@color chip #37414A
+@color metal #D4C492
+@default board
+---
+ <trace>╭──────────────────────────╮
+ <board>│ <metal>o <socket>┌──────┐ <chip>║║║║  <socket>┌───┐ <metal>o <board>│
+ │   <socket>│░░░░░░│ <chip>║║║║  <socket>│<chip>███<socket>│   <board>│
+ │ <trace>──<socket>│░░░░░░│ <chip>║║║║  <socket>└───┘ <trace>─ <board>│
+ │   <socket>└──────┘ <chip>║║║║  <socket>┌─────┐ <board>│
+ │ <socket>═══════════════  │<chip>▓▓▓▓▓<socket>│ <board>│
+ │ <socket>═══════════════  │<chip>▓▓▓▓▓<socket>│ <board>│
+ │ <metal>o <trace>── <metal>o <trace>── <metal>o <trace>───  <socket>└─────┘ <board>│
+ <trace>╰─┬─┬─┬────────────────────╯
+   <metal>╵ ╵ ╵

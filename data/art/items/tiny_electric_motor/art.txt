@@ -1,0 +1,13 @@
+@text-art 1
+@color metal #A9B6B8
+@color light #DCE4E1
+@color shadow #586B70
+@color lead #BD8156
+@default metal
+---
+       <light>╭──────────────╮
+   <shadow>╭───┤ <metal>░░░░░░░░░░░░ <shadow>├──╮
+   │ <light>o <shadow>│ <metal>░░░░░░░░░░░░ <shadow>│ <light>o<shadow>├<metal>─────
+   <shadow>╰───┤ <metal>░░░░░░░░░░░░ <shadow>├──╯
+       ╰──────────────╯
+      <lead>╱                ╲

@@ -1,0 +1,10 @@
+@text-art 1
+@color steel #AAB4B7
+@color wear #D0D4CF
+@color shadow #6D797D
+@default steel
+---
+ ┌─┐
+ │ │  ┌──────────────────────┐
+ │ └──┘  <wear>════════════════════<steel>╧─┐
+ <shadow>└─────────────────────────────┘

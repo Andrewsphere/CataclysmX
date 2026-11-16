@@ -17,18 +17,76 @@ sources disagree. Unknown fields are errors.
    Set integer `mass_g` and positive external `volume_ml` for that entire unit,
    including packaging where appropriate. Container capacity is separate from its
    external volume; compare like units and existing items before changing stats.
-3. Write one to three concise sentences about appearance and practical use. A
-   little grim or dry humor is welcome occasionally, never at the expense of
-   clarity or an implied mechanic that does not exist.
+3. Write one to three concise sentences whose primary purpose is **atmosphere
+   and vibes**. Give the object a place in the world: implied history, human
+   habits, a lost everyday comfort, a survivor's new use for it, or a promise
+   that outlived its maker. Visual
+   details and practical use support that purpose; the description should offer
+   more than a verbal version of the illustration or stats. Keep its identity
+   clear and avoid implying unsupported mechanics.
 4. The setting is a futuristic apocalypse with plentiful advanced pre-collapse
    salvage. Historical or simple equipment is primarily accessible through
    plausible low-tech crafting without an operating civilization, rather than
    primarily museum loot. Make crafting inputs and tools obtainable along the path.
 
+## Description voice and restrained humor
+
+Prefer a specific, evocative detail over a list of materials, shapes and features.
+An ordinary object can feel familiar, comforting, neglected or absurd without a
+full backstory. Do not make every item tragic or append the same observation about
+the end of the world. Keep essential distinctions clear (such as full versus
+empty packaging or nonsterile cloth), while leaving numeric specifications to
+their fields and the inspection UI.
+
+Sprinkle in understated humor or satire about the world's end: roughly **2–3
+deliberately humorous descriptions in a 60-item generation** is the desired
+scale, not a punchline on every item. This is a shared editorial target across
+subagents and sub-batches, not a per-agent quota or loader rule. Smaller batches
+need not force a joke. Use object-specific irony, failed marketing promises or
+mundane bureaucracy; avoid repetitive quips and fourth-wall references.
+
+For example, the cloth repair tape's description is:
+
+> A roll of cloth repair tape, sold for temporary fixes. The temporary fixes are
+> now the infrastructure.
+
+Record the selected humor IDs in the batch report so the final tone pass can
+check the whole collection. Atmosphere remains the purpose of the non-humorous
+descriptions too; humor is only one available tone.
+
+### A survivor's perspective
+
+**Survival ingenuity** is another way to create atmosphere: suggest why an
+ordinary object suddenly matters, why it deserves space in a pack, or what a
+resourceful survivor might see in something others discarded. Ask: *What would
+someone living among the dead notice or save this for?*
+
+Use one concrete possibility or need rather than a feature list. Scarcity,
+preparation, improvised repairs, shelter, recovering useful parts and preserving
+small comforts can all supply a hook. An item need not become a weapon to be
+worth finding. This perspective can replace a forced joke while retaining
+personality and the sense of a changed world.
+
+Illustrative voice examples:
+
+- **Cloth patch:** "A clean scrap of cotton. Worth keeping for the day the
+  bandages run out."
+- **Appliance motor:** "The appliance is gone, but the copper inside still gives
+  you a reason to carry this home."
+- **Steel scrap:** "Someone once swept this off a workshop floor. You see a blade
+  that has not happened yet."
+
+These examples connect to existing bandage crafting, motor recycling and
+salvaged-blade crafting. Keep actionable suggestions grounded in supported
+behavior and obtainable recipes. An imagined use must not read as a promise of
+an available action, protection value or other unimplemented effect. The goal
+is to spark the player's imagination through the object's place in survival,
+not turn the description into a tutorial.
+
 ## Classification and actual behavior
 
 Classify each item using [definition flags](definition_flags.md) and
-`data/flags/core.json5`, which supplies 36 shared entries. A shared definition is
+`data/flags/core.json5`, which supplies 37 shared entries. A shared definition is
 `{type:'flag', id:'...', name:'...', description:'...', domains:['item', ...], kind:'property'|'category'}`;
 items use `flags:['stable_name', ...]`. Reuse applicable definitions, check their
 meaning and item domain, and define missing vocabulary deliberately. Unknown,
@@ -119,6 +177,11 @@ The five pilot definitions are `wood_scrap`, `claw_hammer`, `glass_bottle`,
 `data/items/low_tech.json5`; the others are in the household and urban item files.
 See [item pilot](item_pilot.md) for the crafted sword progression and balance
 rationale; consult the actual manifests for current pack inclusion.
+
+The [first broad slice](item_slice.md) adds 60 current definitions and explicitly
+retires the older non-pilot catalog. Remaining dependency definitions carry the
+descriptive `obsolete` category; new recipes should use current alternatives.
+Books and similar reading material are deferred until the skill system exists.
 
 ## Larger batch briefs
 

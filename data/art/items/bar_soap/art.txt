@@ -1,0 +1,14 @@
+@text-art 1
+@color wrapper #B4C2A8
+@color print #718C73
+@default wrapper
+---
+     ______________________
+   /                        \
+  /   ____________________   \
+ |   /                    \   |
+ |  |<print>        SOAP          <wrapper>|  |
+ |  |<print>     .  o  .          <wrapper>|  |
+ |   \____________________/   |
+  \                          /
+   \________________________/

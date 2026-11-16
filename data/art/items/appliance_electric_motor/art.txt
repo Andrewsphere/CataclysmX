@@ -1,0 +1,15 @@
+@text-art 1
+@color housing #74878A
+@color fin #A5B6B5
+@color shadow #405155
+@color shaft #D3D8D0
+@default housing
+---
+     <fin>╭─────────────────╮
+ <shadow>╭───┤ <fin>║║║║║║║║║║║║║║║ <shadow>├───╮
+ │ <shaft>o <shadow>│ <fin>║║║║║║║║║║║║║║║ <shadow>│ <shaft>o <shadow>├<shaft>───
+ <shadow>│   │ <fin>║║║║║║║║║║║║║║║ <shadow>│   ├<shaft>───
+ <shadow>╰───┤ <fin>║║║║║║║║║║║║║║║ <shadow>├───╯
+     ╰──┬───────────┬──╯
+    ╭───┴──╮     ╭──┴───╮
+    ╰──────╯     ╰──────╯

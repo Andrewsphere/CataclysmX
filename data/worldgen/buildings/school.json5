@@ -31,8 +31,8 @@
     j:{terrain:'floor_wood',object:'metal_locker',facing:'west'},
     k:{terrain:'floor_wood',monsters:[{group:'monsters_school',chance:6000}]},
     l:{terrain:'floor_wood',object:'school_desk',facing:'north'},
-    m:{terrain:'floor_wood',object:'bookcase',facing:'east',loot:[{pool:'loot_books',rolls:4,destination:'furniture'}]},
-    n:{terrain:'floor_wood',object:'bookcase',facing:'west',loot:[{pool:'loot_books',rolls:4,destination:'furniture'}]},
+    m:{terrain:'floor_wood',object:'bookcase',facing:'east',loot:[{pool:'loot_reading_room_supplies',rolls:4,destination:'furniture'}]},
+    n:{terrain:'floor_wood',object:'bookcase',facing:'west',loot:[{pool:'loot_reading_room_supplies',rolls:4,destination:'furniture'}]},
   },
   entrance:{x:9,z:14},
   // Pupils face the teaching wall; side aisles and the central hall remain open.

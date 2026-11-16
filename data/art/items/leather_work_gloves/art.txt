@@ -1,0 +1,13 @@
+@text-art 1
+@color seam #C4A477
+@color palm #876546
+@color cuff #A8855E
+@default seam
+---
+   ╭─╮╭─╮╭─╮      ╭─╮╭─╮╭─╮
+  ╭┤ ││ ││ ├╮    ╭┤ ││ ││ ├╮
+  ││ ││ ││ ││    ││ ││ ││ ││
+ ╭┤         │    │         ├╮
+ │ ╲ <palm>▒▒▒▒▒<seam>  │    │  <palm>▒▒▒▒▒<seam> ╱ │
+ ╰──┤<palm>▒▒▒▒▒<seam>├─╯    ╰─┤<palm>▒▒▒▒▒<seam>├──╯
+    <cuff>└─────┘        └─────┘

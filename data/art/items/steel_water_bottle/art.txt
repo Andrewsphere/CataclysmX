@@ -1,0 +1,19 @@
+@text-art 1
+@color steel #A8B8BC
+@color shine #D9E2E0
+@color cap #65787C
+@default steel
+---
+       <cap>____________
+      <cap>|============|
+      <cap>|____________|
+      /            \
+     /              \
+    |  <shine>|<steel>             |
+    |  <shine>|<steel>             |
+    |  <shine>|<steel>             |
+    |  <shine>|<steel>             |
+    |  <shine>|<steel>             |
+    |                |
+    |                |
+     \______________/

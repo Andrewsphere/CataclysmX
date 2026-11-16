@@ -1,0 +1,32 @@
+@text-art 1
+@color steel #BAC8CE
+@color grip #DF6955
+@color rubber #A84C43
+@color edge #E7EBDF
+@color joint #D6B57D
+@default steel
+---
+     ╭──┬──╮
+     │<edge>▐<steel> │ <edge>▌<steel>│
+     │<edge>▐<steel> │ <edge>▌<steel>│
+     │<edge>▐<steel> │ <edge>▌<steel>│
+    ╭╯╲ │╱ ╰╮
+    │<edge>▐<steel> ╲╱ <edge>▌<steel>│
+    │<edge>▐<steel> ╱╲ <edge>▌<steel>│
+    ╰╮  <joint>o<steel> ╭╯
+     ╰╮  ╭╯
+     ╱╱╲╲
+    ╱╱  ╲╲
+   ╱╱    ╲╲
+  <grip>╭─╮    ╭─╮
+  <grip>│<rubber>▒<grip>│    │<rubber>▒<grip>│
+  <grip>│<rubber>▒<grip>│    │<rubber>▒<grip>│
+  <grip>│<rubber>▒<grip>│    │<rubber>▒<grip>│
+  <grip>│<rubber>▒<grip>│    │<rubber>▒<grip>│
+  <grip>│<rubber>▒<grip>│    │<rubber>▒<grip>│
+  <grip>│<rubber>▒<grip>│    │<rubber>▒<grip>│
+  <grip>│<rubber>▒<grip>│    │<rubber>▒<grip>│
+  <grip>│<rubber>▒<grip>│    │<rubber>▒<grip>│
+  <grip>│<rubber>▒<grip>│    │<rubber>▒<grip>│
+  <grip>╰─╯    ╰─╯
+   <rubber>▀      ▀

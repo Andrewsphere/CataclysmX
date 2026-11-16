@@ -50,7 +50,7 @@
     v:{terrain:'floor_tile',monsters:[{group:'monsters_office',chance:4500}]},
     x:{terrain:'floor_tile',monsters:[{group:'monsters_medical',chance:7000}]},
     y:{terrain:'floor_tile',object:'examination_bed',facing:'east'},
-    z:{terrain:'floor_tile',object:'bookcase',facing:'south',loot:[{pool:'loot_books',rolls:3,destination:'furniture'}]},
+    z:{terrain:'floor_tile',object:'bookcase',facing:'south',loot:[{pool:'loot_reading_room_supplies',rolls:3,destination:'furniture'}]},
     A:{terrain:'floor_tile',object:'bookcase',facing:'south'},
     B:{terrain:'floor_tile',object:'kitchen_cabinet',facing:'south',loot:[{pool:'loot_kitchen',rolls:1,destination:'furniture'}]},
     C:{terrain:'floor_tile',object:'refrigerator',facing:'south',loot:[{pool:'loot_food',rolls:2,destination:'furniture'}]},

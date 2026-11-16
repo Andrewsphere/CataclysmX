@@ -33,13 +33,19 @@ changes stats, nor promises an implemented simulation effect. There is no
 implication, inheritance, category exclusivity, or automatic propagation.
 Future consumers should document which exact flags they interpret.
 
-The bundled vocabulary is `data/flags/core.json5`, with 36 entries. All are
+The bundled vocabulary is `data/flags/core.json5`, with 37 entries. All are
 currently descriptive. Absence means the property is not asserted; it does not
 establish a measured inverse property. New mechanics must define their fallback
 and audit older, unclassified content before treating missing flags as false.
 Authoring checklists should review each relevant property, including decisions
 to omit it. Mixed-material flag meanings describe the qualifying constituent
 explicitly rather than implying uniform whole-object behavior.
+
+The item-only category `obsolete` (display name **Obsolete**) marks legacy
+definitions retained for an existing recipe, machine, or demo/server dependency.
+It does not hide items, filter loot, disable recipes, or migrate saves. New
+authoring should use current definitions. See [item slice integration](item_slice_integration.md)
+for the remaining dependencies and deliberately retained compatibility loot.
 
 `ContentCatalog::FindFlag(name)`, `TryGetFlag(id)`, `GetFlag(id)`, and `FlagCount()`
 follow the existing catalog lookup contracts. For example:

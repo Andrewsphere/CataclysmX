@@ -1,0 +1,12 @@
+@text-art 1
+@color plastic #69847E
+@color light #9DB5A7
+@color shadow #364F4C
+@default plastic
+---
+      <light>╭──────────────╮
+  ╭───╯ <plastic>╭──────────╮ <light>╰──╮
+  <plastic>│  ╭──╯ <light>──────── <plastic>╰─╮  │
+  │  │  <shadow>╭────────╮   <plastic>│  <shadow>╱
+  ╰──╯  ╰────────╯  ╱──╯
+      ╲────────────╱

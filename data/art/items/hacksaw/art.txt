@@ -1,0 +1,14 @@
+@text-art 1
+@color frame #A6B4BA
+@color blade #D1D9D5
+@color handle #9E4939
+@default frame
+---
+   ┌───────────────────────┐
+  /                         \
+ │   ┌───────────────────┐  │
+ │   │                   │  │
+ └───┴─<blade>vvvvvvvvvvvvvvvvvv<frame>┴──┤
+                         <handle>╔═══╗
+                         ║▒▒▒║
+                         ╚═══╝

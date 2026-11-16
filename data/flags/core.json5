@@ -1,6 +1,7 @@
 {format_version: 1, definitions: [
   // Shared descriptive vocabulary. No flag grants behavior, a tool tier, or a state.
   // Flag IDs occupy their own namespace, separate from ordinary definition IDs.
+  {type:'flag', id:'obsolete', name:'Obsolete', description:'Legacy item retained for existing gameplay and recipe dependencies. Editorial metadata only; does not hide or filter the item automatically.', domains:['item'], kind:'category'},
   {type:'flag', id:'salvage', name:'salvage', description:'Material or a component kept primarily as feedstock for making or repairing other objects.', domains:['item','object'], kind:'category'},
   {type:'flag', id:'tool', name:'tool', description:'Equipment designed primarily to perform a practical task other than combat; specific capabilities require separate definitions.', domains:['item','object'], kind:'category'},
   {type:'flag', id:'melee_weapon', name:'melee weapon', description:'An implement designed or deliberately adapted for hand-held close combat, rather than merely usable as an improvised weapon.', domains:['item'], kind:'category'},

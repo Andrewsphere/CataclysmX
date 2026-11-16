@@ -47,7 +47,7 @@
     m:{terrain:'floor_wood',object:'bedroom_cabinet',facing:'south',loot:[{pool:'house_linen',rolls:2,destination:'furniture'}]},
     n:{terrain:'floor_wood',object:'office_desk',facing:'north',loot:[{pool:'loot_hobby',rolls:2,destination:'furniture'}]},
     o:{terrain:'floor_wood',object:'house_chair',facing:'west'},
-    p:{terrain:'floor_wood',object:'bookcase',facing:'north',loot:[{pool:'loot_books',rolls:3,destination:'furniture'}]},
+    p:{terrain:'floor_wood',object:'bookcase',facing:'north',loot:[{pool:'loot_reading_room_supplies',rolls:3,destination:'furniture'}]},
     x:{terrain:'floor_wood',object:'house_chair',facing:'north'},
     y:{terrain:'floor_wood',monsters:[{group:'monsters_residential',chance:3500}]},
     z:{terrain:'floor_wood',object:'office_desk',facing:'north',loot:[{pool:'loot_electronics',rolls:2,destination:'furniture'}]},

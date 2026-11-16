@@ -176,16 +176,19 @@ See [actors](actors_api.md), [save format](save_format.md), and
 
 ## Resources and crafting
 
-Furniture, themed loot pools and items support these sites. Food, clothing,
-books and medical supplies are mostly props or crafting inputs: their names do
-not add survival, eating, wearing, healing or armor mechanics. Some items are
-ordinary storage containers, and cutting tools provide the existing cutting
-trait. The urban recipes carve a wooden handle from a plank and salvage wire from
-electrical cord using a cutting tool; a handle, wire and scrap make a scrap knife
-that itself provides cutting. Cutting up a work shirt yields three clean rags,
-and trousers yield four. See [urban resources](urban_resources.md) for exact IDs,
-loot pools, tools and furniture and [crafting content](crafting_content.md) for
-recipe semantics.
+Furniture and themed loot now expose the [60-item broad slice](item_slice.md),
+including material stock, three motor sizes, tools, clothing, emergency equipment,
+food and medical supplies. Reading material is deferred until skills; reading
+rooms contain ordinary visitor supplies. Food, clothing, medical effects and
+ranged firearm use remain descriptive rather than implemented survival mechanics.
+Storage, charging, authored melee and cutting/crafting use their existing systems.
+
+Current recipes cut cloth bandages and wood scraps, shape the pilot sword from
+typed stock, and assemble a coil spear. Clothing, sheet steel, appliance motors
+and pumps have useful recycling returns. Original urban/pilot recipes remain as
+compatibility routes with explicitly obsolete dependency items. See
+[integration and acquisition](item_slice_integration.md),
+[urban resources](urban_resources.md) and [crafting content](crafting_content.md).
 
 ## Validation coverage
 

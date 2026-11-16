@@ -1,0 +1,15 @@
+@text-art 1
+@color case #7C8986
+@color slot #455A57
+@color light #A8C98B
+@default case
+---
+      ______________________
+     /_____________________/|
+    |  AA CHARGER          | |
+    |  <slot>________________    <case>| |
+    | <slot>| +            - |   <case>| |
+    | <slot>|________________|   <case>| |
+    |       (<light> o <case>)          | /
+    |______________________|/
+          \________/

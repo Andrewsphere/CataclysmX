@@ -1,0 +1,16 @@
+@text-art 1
+@color body #6D8C88
+@color light #B9CBC2
+@color dark #3D5858
+@color metal #D2D6C6
+@default body
+---
+        <light>╭──────╮
+        │  <dark>o   <light>│
+    ╭───┴──────┴──╮   <metal>╭──────╮
+  <dark>╭─┤  <light>╭──────╮   <dark>├───┤ <metal>║║║║ <dark>├─╮
+  │ │  <light>│  <dark>o   <light>│   <dark>│   │ <metal>║║║║ <dark>│ │
+  ╰─┤  <light>╰──────╯   <dark>├───┤ <metal>║║║║ <dark>├─╯
+    ╰──────┬──────╯   ╰──┬───╯
+       ╭───┴─────────────┴──╮
+       ╰────────────────────╯

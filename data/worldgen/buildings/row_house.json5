@@ -38,7 +38,7 @@
     l:{terrain:'floor_wood',object:'house_chair',facing:'south'},
     m:{terrain:'floor_wood',object:'house_chair',facing:'east'},
     n:{terrain:'floor_wood',object:'house_table'},
-    o:{terrain:'floor_wood',object:'bookcase',facing:'east',loot:[{pool:'loot_books',rolls:3,destination:'furniture'}]},
+    o:{terrain:'floor_wood',object:'bookcase',facing:'east',loot:[{pool:'loot_reading_room_supplies',rolls:3,destination:'furniture'}]},
     p:{terrain:'floor_wood',object:'store_shelf',loot:[{pool:'loot_pantry',rolls:4,destination:'furniture'}]},
     q:{terrain:'floor_wood',object:'store_shelf',facing:'south',loot:[{pool:'loot_food',rolls:3,destination:'furniture'}]},
     r:{terrain:'floor_wood',object:'washing_machine',facing:'east',loot:[{pool:'loot_laundry',rolls:3,destination:'furniture'}]},

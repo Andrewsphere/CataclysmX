@@ -1,0 +1,16 @@
+@text-art 1
+@color body #48535B
+@color light #84939B
+@color wire #C2CBCB
+@default body
+---
+       <light>╭──────────╮
+    ╭──╯ <body>░░░░░░░░ <light>╰──╮
+   │  <body>░░ <light>────── <body>░░  <light>│
+   │  <body>░░ <light>────── <body>░░  <light>│
+    ╰──┬────┬────┬──╯
+       <wire>│    │    │
+       │    │    │
+       │    │    ╰───────
+       │    ╰────────────
+       ╰─────────────────

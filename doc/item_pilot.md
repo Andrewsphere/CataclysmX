@@ -1,5 +1,10 @@
 # Item content pilot
 
+This records the original pilot. The later [broad item slice](item_slice.md)
+preserves all five definitions and original recipes, adds current-material
+crafting alternatives, replaces the original saw/knife loot with current tools,
+and marks retained older material dependencies `obsolete`.
+
 ## Scope and coverage
 
 Five-item target: **two new IDs**, **three existing-ID upgrades**, five large

@@ -37,7 +37,7 @@
     m:{terrain:'floor_wood',object:'house_chair',facing:'east'},
     n:{terrain:'floor_wood',object:'metal_locker',facing:'west',loot:[{pool:'loot_outdoors',rolls:3,destination:'furniture'}]},
     o:{terrain:'floor_wood',object:'bathroom_cabinet',facing:'south',loot:[{pool:'house_bathroom',rolls:2,destination:'furniture'}]},
-    p:{terrain:'floor_wood',object:'bookcase',facing:'east',loot:[{pool:'loot_books',rolls:3,destination:'furniture'}]},
+    p:{terrain:'floor_wood',object:'bookcase',facing:'east',loot:[{pool:'loot_reading_room_supplies',rolls:3,destination:'furniture'}]},
     q:{terrain:'floor_wood',monsters:[{group:'monsters_residential',chance:2500}]},
     r:{terrain:'floor_wood',object:'house_sofa',facing:'north'},
     v:{terrain:'floor_wood',object:'metal_locker',facing:'north',loot:[{pool:'loot_clothing',rolls:3,destination:'furniture'}]},

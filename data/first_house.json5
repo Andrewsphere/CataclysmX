@@ -3,6 +3,8 @@
   'terrain/base.json5', 'items/demo.json5', 'crafting/demo.json5',
   'monsters/ai_profiles.json5', 'objects/demo.json5', 'worldgen/buildings/demo.json5',
   'items/household.json5', 'crafting/household.json5', 'objects/furniture.json5',
+  'items/slice_materials.json5', 'items/slice_equipment.json5', 'items/slice_supplies.json5',
+  'items/low_tech.json5', 'crafting/slice.json5',
   'worldgen/loot/household.json5', 'monsters/cellar.json5',
   'worldgen/buildings/furnished_house.json5',
 ]}

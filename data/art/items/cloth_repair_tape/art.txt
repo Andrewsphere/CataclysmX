@@ -1,0 +1,13 @@
+@text-art 1
+@color cloth #A8B0A2
+@color shadow #758479
+@color core #D2C6A8
+@default cloth
+---
+        ╭──────────────╮
+     ╭──┤ <shadow>▒▒▒▒▒▒▒▒▒▒▒▒<cloth> ├──╮
+    / <shadow>▒<cloth> │  <core>╭────────╮<cloth>  │ <shadow>▒<cloth> \
+   │ <shadow>▒▒<cloth> │  <core>│        │<cloth>  │ <shadow>▒▒<cloth> │
+   │ <shadow>▒▒<cloth> │  <core>╰────────╯<cloth>  │ <shadow>▒▒<cloth> │
+    \ <shadow>▒<cloth> └──────────────┘ <shadow>▒<cloth> /
+     ╰────────────────────╯

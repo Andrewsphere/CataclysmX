@@ -1,0 +1,33 @@
+@text-art 1
+@color body #8B9DAA
+@color grip #738998
+@color rim #BBCAD1
+@color shine #ADC1CC
+@default body
+---
+ ╭─╮
+ │<shine>▌<body>│
+ │<shine>▌<body>│
+ │<shine>▌<body>│
+ │<shine>▌<body>│
+ │<shine>▌<body>│
+ │<shine>▌<body>│
+ │<shine>▌<body>│
+ │<shine>▌<body>│
+ │<shine>▌<body>│
+ │<shine>▌<body>│
+ │<shine>▌<body>│
+ │<shine>▌<body>│
+ │<shine>▌<body>│
+ │<shine>▌<body>│
+ │<shine>▌<body>│
+ │<shine>▌<body>│
+<rim>╭┴─┴╮
+<rim>╰┬─┬╯
+ │<grip>=<body>│
+ │<grip>=<body>│
+ │<grip>=<body>│
+ │<grip>=<body>│
+ │<grip>=<body>│
+ │<grip>=<body>│
+ <rim>╰─╯

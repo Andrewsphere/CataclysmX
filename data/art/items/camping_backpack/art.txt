@@ -1,0 +1,20 @@
+@text-art 1
+@color seam #A0AD88
+@color fabric #6E805F
+@color pocket #536A55
+@color strap #C0AD7E
+@default seam
+---
+         ╭──────────╮
+      ╭──┴──────────┴──╮
+     ╱  ╭────────────╮  ╲
+    │ <strap>╭─<seam>┤ <fabric>░░░░░░░░░░<seam> ├<strap>─╮<seam> │
+    │ <strap>│<seam> │ <fabric>░░░░░░░░░░<seam> │ <strap>│<seam> │
+    │ <strap>│<seam> ├────────────┤ <strap>│<seam> │
+    │ <strap>│<seam> │ ╭────────╮ │ <strap>│<seam> │
+    │ <strap>│<seam> │ │ <pocket>▒▒▒▒▒▒<seam> │ │ <strap>│<seam> │
+    │ <strap>│<seam> │ │ <pocket>▒▒▒▒▒▒<seam> │ │ <strap>│<seam> │
+    │ <strap>│<seam> │ ╰────────╯ │ <strap>│<seam> │
+    │ <strap>╰─<seam>┤ <fabric>░░░░░░░░░░<seam> ├<strap>─╯<seam> │
+     ╲  ╰────────────╯  ╱
+      ╰────────────────╯

@@ -1,26 +1,35 @@
 {format_version:1, definitions:[
-  {type:'loot_pool', id:'house_kitchen', entries:[{item:'kitchen_knife',weight:1,count:{min:1,max:1}}]},
-  {type:'loot_pool', id:'house_pantry', entries:[{item:'canned_food',weight:1,count:{min:1,max:2}}]},
-  {type:'loot_pool', id:'house_bathroom', entries:[
-    {item:'soap',weight:5}, {item:'bandage',weight:3,count:{min:1,max:3}},
-    {pool:'house_household_supplies',weight:1},
-  ]},
+  // A current knife preserves guaranteed cutting access for the FirstHouse tutorial.
+  {type:'loot_pool', id:'house_kitchen', entries:[{item:'chef_knife',weight:1}]},
   {type:'loot_pool', id:'house_linen', entries:[{item:'clean_rag',weight:1,count:{min:1,max:2}}]},
+  {type:'loot_pool', id:'house_pantry', entries:[
+    {item:'canned_beans',weight:3,count:{min:1,max:2}}, {item:'instant_noodles',weight:2},
+    {item:'long_grain_rice',weight:2}, {item:'peanut_butter',weight:2}, {item:'dill_pickles',weight:1},
+  ]},
+  {type:'loot_pool', id:'house_bathroom', entries:[
+    {item:'bar_soap',weight:5}, {item:'cloth_bandage',weight:3,count:{min:1,max:3}},
+    {item:'antiseptic',weight:2}, {item:'sterile_gauze',weight:2},
+  ]},
   {type:'loot_pool', id:'house_household_supplies', entries:[
-    {item:'glass_bottle',weight:4}, {item:'clean_rag',weight:4,count:{min:1,max:3}},
-    {item:'cooking_pot',weight:2}, {item:'disposable_battery',weight:1,count:{min:1,max:2}},
+    {item:'glass_bottle',weight:4}, {item:'cloth_patch',weight:4,count:{min:1,max:3}},
+    {item:'sewing_supplies',weight:2}, {item:'aa_alkaline_battery',weight:1,count:{min:1,max:2}},
+    {item:'plastic_storage_box',weight:1},
   ]},
   {type:'loot_pool', id:'house_storage', entries:[
     {pool:'house_household_supplies',weight:6},
-    {item:'wood_plank',weight:3,count:{min:2,max:4}},
-    {item:'backpack',weight:1},
+    {item:'timber_plank',weight:4,count:{min:2,max:4}},
+    {item:'wood_plank',weight:1,count:{min:2,max:4}}, // Original pilot recipe.
+    {item:'camping_backpack',weight:1},
   ]},
   {type:'loot_pool', id:'house_tools', entries:[
-    {item:'screwdriver',weight:5}, {item:'hand_saw',weight:3}, {item:'field_charger',weight:1},
+    {item:'flathead_screwdriver',weight:5}, {item:'hacksaw',weight:4},
+    {item:'chef_knife',weight:3}, {item:'combination_pliers',weight:3},
+    {item:'battery_charger',weight:1},
   ]},
   {type:'loot_pool', id:'house_hammer', entries:[{item:'claw_hammer',weight:1}]},
   {type:'loot_pool', id:'house_workshop', entries:[
-    {pool:'house_tools',weight:4}, {item:'nails',weight:4,count:{min:2,max:5}},
-    {item:'scrap',weight:2,count:{min:2,max:4}},
+    {pool:'house_tools',weight:4}, {item:'steel_scrap',weight:5,count:{min:2,max:5}},
+    {item:'copper_wire',weight:3}, {item:'cloth_repair_tape',weight:2},
+    {item:'scrap',weight:1,count:{min:2,max:4}}, // Original pilot recipe.
   ]},
 ]}

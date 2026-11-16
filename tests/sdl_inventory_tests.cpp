@@ -1,6 +1,7 @@
 #include "sdl/inventory_screen.h"
 #include "sdl/input.h"
 #include "sdl/modal.h"
+#include "client/item_browser.h"
 #include "content_fixture.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -339,6 +340,67 @@ TEST_CASE("SDL item pilot renders five authored assets at compact and wide sizes
             frame.examination.scroll = 0; draw();
             CHECK(frame.examination.scroll == 0); CHECK(SurfaceHash(display.surface) == top);
         }
+    }
+}
+
+TEST_CASE("SDL item slice renders sixty definitions through the item browser", "[item-slice][sdl][inventory][render]") {
+    Diagnostics diagnostics;
+    auto loaded = LoadContentPack(CATACLYSMX_CONTENT_PACK, &diagnostics);
+    INFO(FormatDiagnostics(diagnostics).c_str()); REQUIRE(loaded);
+    const auto& content = *loaded;
+    const auto obsolete = content.FindFlag("obsolete"); REQUIRE(obsolete.value);
+    Localization localization; REQUIRE(localization.Load(CATACLYSMX_LOC_DIRECTORY, "en"));
+    const auto keys = DefaultKeymap();
+    ItemBrowser browser; browser.Open(content, localization);
+    for (const auto size : {SDL_Point{480, 360}, SDL_Point{1120, 900}}) {
+        CAPTURE(size.x, size.y);
+        Display display(size.x, size.y); REQUIRE(display.renderer);
+        SdlText text(display.renderer); REQUIRE(text.Ready());
+        SdlAssets assets(&content);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (assets.Poll(display.renderer) == AssetState::Loading && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::yield();
+        }
+        REQUIRE(assets.State() == AssetState::Ready);
+        unsigned rendered = 0;
+        for (std::size_t index = 0; index < browser.Frame().matches.size(); ++index) {
+            const auto type = browser.Frame().matches[index];
+            const auto& item = content.GetItem(type);
+            if (item.flags.Contains(obsolete)) { continue; }
+            bool pilot = false;
+            for (const char* id : {"claw_hammer", "wood_scrap", "glass_bottle", "work_shirt", "arming_sword"}) {
+                pilot |= item.id == id;
+            }
+            if (pilot) { continue; }
+            CAPTURE(item.id.c_str());
+            browser.Frame().selected = index;
+            browser.Handle({"e"}, keys, content, localization);
+            REQUIRE(browser.Frame().screen == ItemBrowserScreen::Examine);
+            auto& frame = browser.Frame().examination;
+            REQUIRE(frame.examination.art == &item.art);
+            REQUIRE_FALSE(frame.examination.description.empty());
+            const auto draw = [&] {
+                REQUIRE(DrawInventoryScreen(display.renderer, text, assets, content, frame, size.x, size.y, 1));
+                REQUIRE(SDL_RenderPresent(display.renderer));
+            };
+            draw();
+            const auto top = SurfaceHash(display.surface);
+            if (const char* prefix = std::getenv("CATACLYSMX_ITEM_SLICE_PREVIEW")) {
+                const auto output = String(prefix) + "_" + item.id + "_" + NumberText(size.x) + ".png";
+                REQUIRE(SDL_SavePNG(display.surface, output.c_str()));
+            }
+            frame.examination.art = nullptr; draw();
+            CHECK(SurfaceHash(display.surface) != top);
+            frame.examination.art = &item.art;
+            frame.examination.scroll = 9999; draw();
+            CHECK(frame.examination.scroll >= 0); CHECK(frame.examination.scroll < 9999);
+            if (size.x == 480) { CHECK(frame.examination.scroll > 0); }
+            frame.examination.scroll = 0; draw();
+            CHECK(SurfaceHash(display.surface) == top);
+            browser.Handle({"Escape"}, keys, content, localization);
+            ++rendered;
+        }
+        CHECK(rendered == 60);
     }
 }
 

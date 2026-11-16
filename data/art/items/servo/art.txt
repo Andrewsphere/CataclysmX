@@ -1,0 +1,16 @@
+@text-art 1
+@color body #617989
+@color light #B8C8C5
+@color shadow #364C58
+@color lead #C9865B
+@default body
+---
+          <light>─────┬─────
+        o──────┼──────o
+          ─────┴─────
+       ╭───────┴──────╮
+   <shadow>╭───┤ <body>░░░░░░░░░░░░ <shadow>├───╮
+   │ <light>o <shadow>│ <body>░░░░░░░░░░░░ <shadow>│ <light>o <shadow>│
+   ╰───┤ <body>░░░░░░░░░░░░ <shadow>├───╯
+       ╰───────┬──────╯
+               <lead>╰──────────

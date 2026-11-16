@@ -1,0 +1,12 @@
+@text-art 1
+@color wire #B7C5C6
+@color glass #D88D55
+@color band #424F50
+@color light #F0BF8C
+@default wire
+---
+           <light>╭────────╮
+           <glass>│ ░░░ <band>▓▓ <glass>│
+<wire>───────────<glass>┤ ░░░ <band>▓▓ <glass>├<wire>───────────
+           <glass>│ ░░░ <band>▓▓ <glass>│
+           <glass>╰────────╯

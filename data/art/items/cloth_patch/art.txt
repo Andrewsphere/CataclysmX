@@ -1,0 +1,12 @@
+@text-art 1
+@color cloth #D5C9AB
+@color weave #A99A7C
+@color light #F2E8D0
+@default cloth
+---
+  <light>╭──────────────────────╮
+  <cloth>│ <weave>┆ ┆ ┆ ┆ ┆ ┆ ┆ ┆ ┆    <cloth>│
+  │<weave>┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄<cloth>│
+  │ <weave>┆ ┆ ┆ ┆ ┆ ┆ ┆ ┆ ┆    <cloth>│
+  │<weave>┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄<cloth>│
+  <weave>╰──────────────────────╯

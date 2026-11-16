@@ -1,0 +1,12 @@
+@text-art 1
+@color copper #BC7049
+@color light #E9A978
+@color shadow #704332
+@default copper
+---
+     <light>╭─────────────────────╮
+   ╭─╯ ─────────────────── <copper>│
+  │  <shadow>╭───────────────────╮ <copper>│
+  │  <shadow>╰───────────────────╯ <copper>│
+   <shadow>╰─╮ <copper>─────────────────── <shadow>│
+     ╰─────────────────────╯

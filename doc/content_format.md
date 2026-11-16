@@ -218,7 +218,7 @@ ranges, bounds, errors, and API ownership.
 
 ### Shared definition flags
 
-`data/flags/core.json5` defines 36 shared categories and properties. A flag has
+`data/flags/core.json5` defines 37 shared categories and properties. A flag has
 `type: 'flag'`, stable `id`, nonempty `name` and `description`, nonempty unique
 `domains` drawn from `item`, `monster`, `terrain`, and `object`, and `kind` of
 `property` or `category`. Items may attach `flags: ['salvage', ...]`; missing

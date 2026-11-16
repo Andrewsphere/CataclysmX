@@ -1,0 +1,15 @@
+@text-art 1
+@color case #9B7770
+@color thread #D8BCA1
+@color needle #CED5D0
+@default case
+---
+    ______________________
+   /_____________________/|
+  |  __________________  | |
+  | |<thread>  OOO     <needle>/        <case>| | |
+  | |<thread>  OOO    <needle>/  . . .  <case>| | |
+  | |<thread>  OOO   <needle>/          <case>| | |
+  | |___________SEW_____| | /
+  |______________________|/
+         [______]

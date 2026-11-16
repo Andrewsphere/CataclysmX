@@ -1,0 +1,13 @@
+@text-art 1
+@color rubber #52605B
+@color light #8B9B8D
+@color shadow #303B39
+@default rubber
+---
+     <light>╭──────────────╮
+  ╭──╯ <rubber>╭──────────╮ <light>╰──╮
+ ╱  <rubber>╭──╯          ╰──╮  <light>╲
+<rubber>│  │                  │  │
+ <shadow>╲  <rubber>╰──╮          ╭──╯  <shadow>╱
+  ╰────╯          ╰──╮ ╱
+                      ╰<light>O<shadow>╯

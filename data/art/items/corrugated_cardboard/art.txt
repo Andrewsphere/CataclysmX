@@ -1,0 +1,12 @@
+@text-art 1
+@color board #BA8E5D
+@color light #DEC095
+@color edge #795633
+@default board
+---
+   <light>╱──────────────────────╱<edge>│
+  <light>╱  <board>────  ────────────  <light>╱ <edge>│
+ <light>╱  <board>──────────────────  <light>╱  <edge>│
+<board>╱──────────────────────╱   <edge>│
+│<light>~~~~~~~~~~~~~~~~~~~~~~<edge>│  ╱
+╰──────────────────────╯─╯

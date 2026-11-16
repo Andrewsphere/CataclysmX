@@ -1,0 +1,13 @@
+@text-art 1
+@color copper #C87947
+@color highlight #F0AC6F
+@color shadow #805039
+@default copper
+---
+        <highlight>╭──────────╮
+    ╭───╯ <copper>╭──────╮ <highlight>╰───╮
+  ╭─╯ <copper>╭───╯      ╰───╮ <highlight>╰─╮
+  <copper>│  │  <shadow>╭────────╮  <copper>│  │
+  │  │  <shadow>╰────────╯  <copper>│  │
+  <shadow>╰─╮ <copper>╰───╮      ╭───╯ <shadow>╭─╯
+    ╰─────╰──────╯─────╯<highlight>───

@@ -1,0 +1,11 @@
+@text-art 1
+@color steel #AAB6BC
+@color teeth #D1D8D6
+@color wood #A7794E
+@color dark #76583F
+@default steel
+---
+                  <wood>┌──────────┐
+ ┌────────────────┤ <dark>▒▒▒▒▒▒▒▒<wood> │
+ │<teeth>////////////////<steel>├<wood>──────────┘
+ └────────────────┘

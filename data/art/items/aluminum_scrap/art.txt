@@ -1,0 +1,12 @@
+@text-art 1
+@color metal #BCC9CC
+@color light #EFF3ED
+@color shadow #66777B
+@default metal
+---
+      <light>╱──────────╲
+  <shadow>╱──╱  <light>╱────╲    <metal>╲<shadow>────╲
+ ╱   <metal>╲ <light>╱      ╲    <metal>╲   <shadow>╱
+ ╲    <light>╳────────<metal>╲────<shadow>╳─╱
+  ╲──╱ <metal>╲        ╲  <shadow>╱
+    ╲───╲────────╲╱

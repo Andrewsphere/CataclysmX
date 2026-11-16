@@ -1,0 +1,12 @@
+@text-art 1
+@color glass #9AC7CC
+@color shine #E4F6EF
+@color edge #59838E
+@default glass
+---
+             <shine>╱╲
+        ╱───╱  <glass>╲
+   <shine>╱───╱   <glass>╱    ╲<edge>──────╲
+  ╱       <shine>╱  ╱──╲      <edge>╱
+ ╱   <glass>╱───╱  ╱    ╲    <edge>╱
+ ╲──╱      ╱──────╲──╱

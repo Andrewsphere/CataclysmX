@@ -7,6 +7,8 @@
   'worldgen/buildings/furnished_house.json5',
   'items/urban.json5', 'objects/urban.json5', 'crafting/urban.json5',
   'items/low_tech.json5', 'crafting/low_tech.json5',
+  'items/slice_materials.json5', 'items/slice_equipment.json5', 'items/slice_supplies.json5',
+  'crafting/slice.json5',
   'worldgen/loot/urban.json5', 'monsters/specialists.json5',
   'worldgen/buildings/bungalow.json5', 'worldgen/buildings/duplex.json5',
   'worldgen/buildings/row_house.json5', 'worldgen/buildings/farmhouse.json5',

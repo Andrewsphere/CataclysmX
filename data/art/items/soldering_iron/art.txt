@@ -1,0 +1,13 @@
+@text-art 1
+@color cord #777D7D
+@color handle #455D66
+@color grip #A7794D
+@color tip #C4CBCD
+@default cord
+---
+  ╭─────────────────╮
+  │  cord  ──────╮  │
+  ╰──────────────┼──╯
+ <handle>┌────────────┐  <cord>│
+ <handle>│ <grip>▒▒▒▒▒▒▒▒▒▒<handle> ├<cord>──┴<tip>───────────>
+ <handle>└────────────┘

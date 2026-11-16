@@ -82,7 +82,7 @@ TEST_CASE("Town item pilot loads five authored items with meaningful flag bounda
 
 TEST_CASE("Town item pilot crafting inputs and tools have authored loot placements", "[item-pilot][content][crafting]") {
     const auto content = PilotContent();
-    for (const char* name : {"claw_hammer", "hand_saw", "wood_plank", "scrap"}) {
+    for (const char* name : {"claw_hammer", "hacksaw", "wood_plank", "scrap"}) {
         CAPTURE(name);
         const auto type = content.FindItem(name); REQUIRE(type.value != 0);
         CHECK(HasPlacement(content, type));
@@ -141,7 +141,7 @@ TEST_CASE("Town item pilot crafts plank scraps into a salvaged sword through ser
     const auto plank = add("wood_plank");
     refused("cut_wood_scrap");
     REQUIRE(world.GetItem(plank)); CHECK_FALSE(world.IsReservedItem(plank));
-    const auto saw = add("hand_saw");
+    const auto saw = add("hacksaw"); // Current tool supplies the original cutting requirement.
     REQUIRE(craft("cut_wood_scrap").outcome == Outcome::craft_started);
     finish();
     CHECK_FALSE(world.GetItem(plank)); CHECK(count("wood_scrap") == 10); REQUIRE(world.GetItem(saw));
