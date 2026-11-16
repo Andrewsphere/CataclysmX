@@ -198,6 +198,25 @@ carrying selected IDs into a different world.
 The F9 LAN interface occupies the World panel, retaining its existing commands
 and editors. Its controls appear within that panel and in Controls.
 
+## Debug item browser
+
+In the local or hosting game, F11 opens the debug view. From either world
+generation or AI inspection, the Debug inventory binding (default **i**) opens
+the item catalog. Up/down selects a catalog entry; **/** edits a search, **e**
+examines the selected item, Enter gives one, and **m** prompts for a count.
+Enter confirms a search or count. Escape returns from an editor or examination
+to the list, then returns to the previous debug view; F11 closes the entire menu.
+The list and examination scroll to keep the selection or inspection position
+visible. Feedback reports invalid counts and grant results.
+
+`CreateWorldgenDebugMenu` accepts an optional final
+`std::function<DebugGiveResult(DebugItemGrant)>` callback. The frontend drains
+the shared browser's request on the UI thread and supplies the result to the
+browser; omitting the callback leaves the catalog read-only with feedback.
+The terminal application invokes the authoritative grant for the host player on
+that same thread. Guests cannot open this local debug menu. The world and catalog
+must outlive the component, as must any localization and keymap pointers.
+
 ## Frontend API and ownership
 
 `terminal/gameplay_screen.h` provides `GameplayUi`, `GameplayPresentation`, and

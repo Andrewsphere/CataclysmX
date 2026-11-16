@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/server.h"
+#include "core/debug_items.h"
 #include "client/settings.h"
 #include "client/ai_debug.h"
 #include "sdl/item_visual.h"
@@ -16,7 +17,7 @@ namespace cataclysmx::sdl {
 enum class SessionMode { Local, Host, Guest };
 enum class RequestKind {
     Command, Pause, Resume, Inspect, ApplySettings, ResumeAndCommand, InspectAi, ItemCommand, PauseForItems,
-    OpenLan, CloseLan, Connect, Disconnect, RefreshDiscovery, StopDiscovery, Save
+    OpenLan, CloseLan, Connect, Disconnect, RefreshDiscovery, StopDiscovery, Save, DebugGiveItems
 };
 struct SessionRequest {
     RequestKind kind = RequestKind::Command;
@@ -32,10 +33,11 @@ struct SessionRequest {
     network::ConnectionSettings connectionSettings;
     bool newCharacter = false;
     String discoveryAddress;
+    DebugItemGrant grant;
 };
 enum class ReplyKind {
     Started, StartupFailed, Admission, Completed, Paused, Resumed, Stale, Cancelled, Inspected,
-    SettingsApplied, SettingsFailed, AiInspected, MenuOpened, ControlCompleted, ControlFailed
+    SettingsApplied, SettingsFailed, AiInspected, MenuOpened, ControlCompleted, ControlFailed, ItemsGiven
 };
 enum class StartupError { None, InvalidContent, InvalidSettings, Network, Storage };
 struct SessionReply {
@@ -54,6 +56,7 @@ struct SessionReply {
     eastl::optional<network::NetworkError> networkError;
     eastl::optional<client::ProfileError> profileError;
     eastl::optional<SaveError> storageError;
+    DebugGiveResult debugGive;
 };
 struct SessionSnapshot {
     std::uint64_t generation = 0;

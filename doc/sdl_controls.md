@@ -70,6 +70,23 @@ Arrows move one tile; Alt+Up/Down or `>`/`<` change Y within world bounds.
 Home/c resets to the player; PageUp/PageDown scroll capture details. Escape or
 F11 resumes. Each new F11 opening starts with the world-generation preview.
 
+Within F11, **i** opens the catalog item browser. Menu navigation selects a row;
+labels contain the localized name and stable content ID. **/** edits a search,
+**e** opens the ordinary item examination sheet (including colored art), **Enter**
+gives one item, and **m** edits a batch amount from 1 to 1000. Search and amount
+editors use SDL committed text; Enter accepts and Escape returns to the list.
+Escape from examination also returns to the list; Escape from the list returns
+to world-generation debug. **F11** closes the entire debug modal at any layer.
+Browser input is exclusive: while editing, printable q/a/i bindings are text,
+and F9 cannot open another screen. Outside text editing, the configured Debug
+shortcut also closes the entire modal; F11 always closes it.
+
+Giving is local/host-only administrative work. The owner checks carry capacity
+for the complete batch before creating anything and reports typed failures in
+the browser. Local browsing and grants remain paused and cost no ticks; hosting
+continues running. A pending grant blocks another grant even after closing and
+reopening the browser, until its identified reply arrives.
+
 The AI inspector displays the captured 17×17 resident map and the actor under
 the cursor. It is explicit debug access to current resident state, independent
 of player knowledge. It does not load chunks, update memory, or run AI scans.

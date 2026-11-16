@@ -25,6 +25,8 @@
   inventory, exact selections and interruptible quantity transfers.
 - [SDL inventory](sdl_inventory.md): scaled item icons, colored art rendering,
   pane layout and pause/paid-action handoff.
+- [Debug item browser](item_browser.md): F11 catalog search, examination,
+  single/batch giving, and the authoritative local/host grant API.
 - [UI navigation controls](ui_navigation.md): baseline keyboard controls, focus,
   selection, cancellation, and modal input behavior.
 - [Settings, input, and localization](settings_api.md): sparse global/world

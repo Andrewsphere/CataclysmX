@@ -142,7 +142,7 @@ TEST_CASE("Worldgen debug modal consumes gameplay events and never mutates the s
     }
     int closed = 0;
     auto menu = CreateWorldgenDebugMenu(server.GetWorld(), before.player_position, [&closed] { ++closed; });
-    for (const char key : std::string("god.Si ")) { Key(menu, key); }
+    for (const char key : std::string("god.S ")) { Key(menu, key); }
     CHECK(menu->OnEvent(ftxui::Event::Return));
     CHECK(menu->OnEvent(ftxui::Event::Special("\x1b[1;2C"))); // Inspect an unexplored region as well.
     Key(menu, '5');
@@ -265,6 +265,64 @@ TEST_CASE("AI inspector displays the selected resident actor capture", "[termina
     rendered = Draw(menu, 140, 50);
     std::erase(rendered, ' ');
     CHECK(rendered.find(actorLabel) != std::string::npos);
+}
+
+TEST_CASE("Debug item browser routes editing, examination and grants", "[terminal][item-browser]") {
+    World world(TestContent());
+    int closed = 0;
+    Vector<DebugItemGrant> grants;
+    Localization localization;
+    REQUIRE(localization.Load(CATACLYSMX_LOC_DIRECTORY, "en"));
+    auto menu = CreateWorldgenDebugMenu(world, {0, 0}, [&] { ++closed; }, &localization, nullptr,
+        [&](DebugItemGrant grant) {
+            grants.push_back(grant);
+            return DebugGiveResult{DebugGiveOutcome::Given, grant.count};
+        });
+    Key(menu, 'a');
+    Key(menu, 'i');
+    Has(menu, "Item browser");
+    Key(menu, '/');
+    Key(menu, 'q');
+    Has(menu, "q_");
+    CHECK(closed == 0);
+    CHECK(menu->OnEvent(ftxui::Event::Escape));
+    Key(menu, '/');
+    for (const char c : std::string("field_charger")) { Key(menu, c); }
+    CHECK(menu->OnEvent(ftxui::Event::Return));
+    Has(menu, "field_charger");
+    Key(menu, 'e');
+    Has(menu, "field charger");
+    CHECK(menu->OnEvent(ftxui::Event::Escape));
+    CHECK(menu->OnEvent(ftxui::Event::Return));
+    REQUIRE(grants.size() == 1);
+    CHECK(grants[0].type == TestItem("field_charger"));
+    CHECK(grants[0].count == 1);
+    Key(menu, 'm');
+    for (int i = 0; i < 8; ++i) { CHECK(menu->OnEvent(ftxui::Event::Backspace)); }
+    Key(menu, '0');
+    CHECK(menu->OnEvent(ftxui::Event::Return));
+    CHECK(grants.size() == 1);
+    CHECK(menu->OnEvent(ftxui::Event::Backspace));
+    Key(menu, '3');
+    CHECK(menu->OnEvent(ftxui::Event::Return));
+    REQUIRE(grants.size() == 2);
+    CHECK(grants[1].type == TestItem("field_charger"));
+    CHECK(grants[1].count == 3);
+    CHECK(menu->OnEvent(ftxui::Event::Escape));
+    Has(menu, "AI inspector");
+    CHECK(closed == 0);
+    Key(menu, 'i');
+    CHECK(menu->OnEvent(ftxui::Event::F11));
+    CHECK(closed == 1);
+}
+
+TEST_CASE("Debug item browser without grant callback reports unavailable", "[terminal][item-browser]") {
+    World world(TestContent());
+    auto menu = CreateWorldgenDebugMenu(world, {0, 0}, [] {});
+    Key(menu, 'i');
+    CHECK(menu->OnEvent(ftxui::Event::Return));
+    Has(menu, "unavailable");
+    CHECK(world.LoadedChunks().empty());
 }
 
 TEST_CASE("Zoomed debug map keeps the selected tile visible in a small terminal", "[terminal][worldgen-debug]") {

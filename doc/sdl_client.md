@@ -56,6 +56,28 @@ to local play. Local screens pause simulation and closing discards paused wall
 time. Host and guest menus leave the shared world running; selected interactions
 use ResumeAndCommand. UI clocks and keyboard repeats are frontend state.
 
+The F11 item browser uses the shared `ItemBrowser` catalog controller. It routes
+keys and committed SDL text before generic Debug/global shortcuts. Text input
+starts on entry to search/amount and stops on exit, keeping the opening shortcut
+out of the editor as in Options. Accept and screen transitions reset held input
+so a confirmation cannot repeat a give. Browser lists use `ScreenFrame` rows,
+selection, details and renderer-clamped scrolling, synchronized back to the shared
+browser frame. Examination passes the browser's `ItemUiFrame` to the inventory
+renderer; gameplay `ItemUi` remains independently owned.
+
+`SessionRequest::grant` carries `DebugItemGrant` with dedicated kind
+`DebugGiveItems`; `SessionReply::debugGive` returns `DebugGiveResult` under
+`ItemsGiven`. These fields are appended to preserve existing aggregate callers.
+This is owner-thread administrative work, with no gameplay command or network
+wire addition. The owner rejects guests, wrong players, pending gameplay/item
+recovery, and requests without local pause or host menu ownership. The shared
+core helper preflights the entire bounded batch and uses ordinary item creation.
+The owner forces a snapshot publication before replying without changing pause
+state or advancing local time. The frontend matches one dedicated request ID,
+including cancellation/stale replies and queue rejection. Close/open preserves
+the shared outstanding flag until the reply finishes; a session/endpoint epoch
+reset instead assigns a fresh browser and clears the ID.
+
 An interaction snapshot contains visible doors and objects on the player's tile
 and eight neighboring tiles, on the same Y level. The UI groups actions by tile.
 Direction input immediately opens that tile's choices; one available action
@@ -161,6 +183,14 @@ The linux-gcc-sdl preset builds terminal, SDL, and shared engine tests. Existing
 SDL tests cover key translation/repeats, channels and pause semantics, filtered
 inspection, options staging, software/Vulkan rendering, assets, and map transforms.
 The frontend smoke exercises actual screen input in an offscreen Vulkan window.
+The Demo F11 smoke retains AI capture checks, then renders the item-browser list
+and examination sheet. Separate key/text events verify that q stays in search;
+committing a rock search must select one definition without granting anything.
+Give-one and give-three wait for their identified replies and published inventory
+counts; zero amount must remain an editing error without queuing owner work.
+Both grants retain local pause and the captured tick. Layered Escape returns to
+worldgen before the existing modal resume handshake proceeds to Options. Success
+requires both browser presentations to have completed an actual draw.
 Network integration tests require localhost sockets. Tooling harness tests are not
 part of gameplay verification.
 

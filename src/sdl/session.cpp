@@ -575,6 +575,16 @@ void SessionOwner::Request(SessionRequest request) {
     const bool lan = mode_ != SessionMode::Local;
     SessionReply reply{ReplyKind::ControlFailed, generation_, request.id};
     switch (request.kind) {
+    case RequestKind::DebugGiveItems:
+        if (mode_ == SessionMode::Guest || !server_ || pending_ || itemRecovery_
+            || request.player != server_->GetHostPlayerId()
+            || (mode_ == SessionMode::Local ? !paused_ : !menuOpen_)) {
+            reply.kind = ReplyKind::Cancelled; break;
+        }
+        reply.kind = ReplyKind::ItemsGiven;
+        reply.debugGive = cataclysmx::DebugGiveItems(*server_, request.player, request.grant);
+        forcePublish_ = true; // Publish the mutated inventory before its terminal receipt.
+        break;
     case RequestKind::OpenLan:
         if (Open(eastl::move(request.hostSettings), reply)) { reply.kind = ReplyKind::ControlCompleted; }
         break;

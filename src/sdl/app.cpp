@@ -3,6 +3,7 @@
 #include "client/message_history.h"
 #include "client/crafting_menu.h"
 #include "client/item_ui.h"
+#include "client/item_browser.h"
 
 #include "sdl/assets.h"
 #include "sdl/gpu_renderer.h"
@@ -167,6 +168,8 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
     ScreenFrame frame;
     OptionsUi optionsUi;
     ItemUi itemUi;
+    ItemBrowser itemBrowser;
+    eastl::optional<std::uint64_t> browserRequest;
     bool itemAdvanced = false, itemUse = false;
     eastl::optional<std::uint64_t> itemRequest;
     eastl::optional<std::uint64_t> modalRequest;
@@ -212,6 +215,10 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
     unsigned smokeItemAction = 0;
     std::uint64_t smokeModalTick = 0;
     unsigned int smokeAiStep = 0;
+    bool smokeBrowserListDrawn = false, smokeBrowserExamineDrawn = false;
+    bool smokeBrowserGrantsVerified = false;
+    std::size_t smokeBrowserRockCount = 0;
+    std::uint64_t smokeBrowserTick = 0, smokeBrowserRevision = 0;
     std::uint64_t smokeOpportunity = 0;
     MessageHistory messageHistory;
     String message;
@@ -272,6 +279,8 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
         return accepted;
     };
     const auto close = [&] {
+        itemBrowser.Close();
+        heldKey.Reset();
         if (modal.Active() == Screen::Lan) { submit(RequestKind::StopDiscovery); }
         if (modal.Active() == Screen::Lan && !snapshot.menuOpen) {
             modal.Closed(); frame.visible = false; SDL_StopTextInput(platform.window); return;
@@ -408,6 +417,45 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             prepareMap();
             dirty = true;
         }
+        if (modal.Active() == Screen::Debug && itemBrowser.IsOpen()) {
+            if (event.type == SDL_EVENT_TEXT_INPUT) {
+                if (!modal.Pending()) { itemBrowser.Text(event.text.text); dirty = true; }
+                return;
+            }
+            if (event.type != SDL_EVENT_KEY_DOWN) { return; }
+            if (event.key.repeat || modal.Pending()) { return; }
+            const auto key = TranslateKey(event.key);
+            if (!key) { return; }
+            // Default q remains text in editors; only an explicit Debug binding
+            // (and the physical F11 shortcut) may leave the entire debug modal.
+            if (key->key == "F11" || (!itemBrowser.EditingText()
+                && ResolveAction(keys, InputContext::Debug, *key) == InputAction::Debug)) {
+                close(); dirty = true; return;
+            }
+            const auto previous = itemBrowser.Frame().screen;
+            const bool editing = itemBrowser.EditingText();
+            itemBrowser.Handle(*key, keys, content, localization);
+            if (editing != itemBrowser.EditingText()) {
+                if (itemBrowser.EditingText()) { SDL_StartTextInput(platform.window); }
+                else { SDL_StopTextInput(platform.window); }
+            }
+            if (previous != itemBrowser.Frame().screen
+                || ResolveAction(keys, InputContext::Menu, *key) == InputAction::Accept) { heldKey.Reset(); }
+            if (!itemBrowser.IsOpen()) {
+                debugAi = false; frame.scroll = 0; frame.detailScroll = 0;
+                rebuildDebug(); heldKey.Reset();
+            }
+            if (!browserRequest) {
+                if (const auto grant = itemBrowser.TakeGiveRequest()) {
+                    SessionRequest request; request.kind = RequestKind::DebugGiveItems; request.grant = *grant;
+                    const auto id = nextId;
+                    if (enqueue(eastl::move(request))) { browserRequest = id; }
+                    else { itemBrowser.GiveRejected("Session busy; try again."); }
+                    heldKey.Reset();
+                }
+            }
+            dirty = true; return; // Every browser chord is modal, including F9.
+        }
         if (event.type == SDL_EVENT_TEXT_INPUT && modal.Active() == Screen::Options && !settingsId && !modal.Pending()) {
             optionsUi.Text(event.text.text); dirty = true; return;
         }
@@ -526,6 +574,12 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 return;
             }
             if (modal.Active() == Screen::Debug) {
+                if (*action == InputAction::Inventory) {
+                    itemBrowser.Open(content, localization);
+                    debugAi = false; ++aiRevision; aiNeeded = false; aiValid = false;
+                    frame.scroll = 0; frame.detailScroll = 0; frame.debugImage = nullptr;
+                    heldKey.Reset(); return;
+                }
                 if (*action == InputAction::Inspect) {
                     debugAi = !debugAi; ++aiRevision; aiNeeded = false; aiValid = false;
                     frame.detailScroll = 0;
@@ -690,6 +744,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
         modal.Closed(); initializeScreen = false; frame = {};
         SDL_StopTextInput(platform.window); lanRequest.reset();
         itemUi = {}; itemRequest.reset(); modalRequest.reset(); commandRequest.reset();
+        itemBrowser = ItemBrowser{}; browserRequest.reset();
         commandPending = false; choosingGrab = false;
         craftingRows.clear(); craftingSelection.reset(); craftingRequest.reset(); craftingFeedback.clear();
         actions.clear(); inspection.clear(); inspectionView = {}; inspectionItems.clear();
@@ -783,6 +838,12 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             if (reply.generation < snapshot.generation) { continue; }
             if (reply.generation > snapshot.generation) { resetGeneration(reply.generation); }
             consumeInput(reply.generation, reply.input);
+            if (browserRequest && reply.id == *browserRequest) {
+                if (reply.kind == ReplyKind::ItemsGiven) { itemBrowser.GiveFinished(reply.debugGive); }
+                else { itemBrowser.GiveRejected(reply.kind == ReplyKind::Stale ? "Request expired." : "Request cancelled."); }
+                browserRequest.reset(); heldKey.Reset(); dirty = true;
+                continue;
+            }
             if (reply.kind == ReplyKind::Stale || reply.kind == ReplyKind::Cancelled || reply.kind == ReplyKind::ControlFailed) {
                 if (inspectionId && reply.id == *inspectionId) {
                     if (modal.Active() == Screen::Examine && cursor == requestedCursor) {
@@ -915,7 +976,8 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                     inspectionId.reset();
                 }
                 break;
-            case ReplyKind::AiInspected: break; // Obsolete capture from a previous selection.
+            case ReplyKind::AiInspected: // Obsolete capture from a previous selection.
+            case ReplyKind::ItemsGiven: break;
             case ReplyKind::SettingsApplied:
                 if (settingsId && *settingsId == reply.id && candidateSettings) {
                     store = eastl::move(*candidateSettings);
@@ -997,6 +1059,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             }
             if (modal.Active() == Screen::Examine) { inspectionNeeded = true; }
             if (modal.Active() == Screen::Debug) {
+                itemBrowser.Close();
                 debugAi = false; ++aiRevision; aiNeeded = false; aiValid = false; rebuildDebug();
             }
             if (modal.Active() == Screen::Targets && !snapshot.interactions.empty()) {
@@ -1076,8 +1139,8 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             return 1;
         }
         if (smokeFailed) {
-            std::fprintf(stderr,"SDL %s smoke step %u: %s\n",multiplayerSmoke ? "multiplayer" : "local",
-                multiplayerSmoke ? static_cast<unsigned>(multiplayerSmokeStep) : smokeStep,message.c_str()); return 1;
+            std::fprintf(stderr,"SDL %s smoke step %u (F11 substep %u): %s\n",multiplayerSmoke ? "multiplayer" : "local",
+                multiplayerSmoke ? static_cast<unsigned>(multiplayerSmokeStep) : smokeStep,smokeAiStep,message.c_str()); return 1;
         }
         if (localSmoke && snapshot.paused && (modal.Active() == Screen::Examine || modal.Active() == Screen::Targets || modal.Active() == Screen::Actions)
             && snapshot.view.tick != smokeModalTick) { std::fputs("SDL modal advanced simulation.\n", stderr); return 1; }
@@ -1118,20 +1181,117 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             }
             else if (smokeStep == 7) { press(SDLK_F11); smokeWaiting = modal.Pending(); }
             else if (smokeStep == 8) {
-                if (smokeAiStep == 0) { press(SDLK_A); ++smokeAiStep; }
-                else if (aiValid && !aiRequestId && !aiNeeded) {
-                    if (smokeAiStep == 1) {
-                        if (!debugAi || cursor != snapshot.view.player_position) { smokeFailed = true; }
-                        const auto before = cursor;
-                        press(SDLK_RIGHT); press(SDLK_UP,SDL_KMOD_ALT);
-                        if (cursor != TileCoord{before.x+1,before.z,std::min(world_max_y,before.y+1)} || aiValid) { smokeFailed = true; }
-                        ++smokeAiStep;
-                    } else {
-                        if (aiView.cursor != cursor || aiView.tick != snapshot.view.tick) { smokeFailed = true; }
-                        press(SDLK_A);
-                        if (debugAi || aiValid) { smokeFailed = true; }
-                        press(SDLK_ESCAPE); smokeWaiting = modal.Pending();
-                    }
+                const auto textInput = [&](const char* value) {
+                    SDL_Event entry{}; entry.type = SDL_EVENT_TEXT_INPUT; entry.text.text = value;
+                    handleEvent(entry);
+                };
+                const auto rock = content.FindItem("rock");
+                const auto rockCount = [&] {
+                    std::size_t count = 0;
+                    for (const auto& item : snapshot.view.inventory) { if (item.type == rock) { ++count; } }
+                    return count;
+                };
+                const auto requireSmoke = [&](bool condition, const char* reason) {
+                    if (!condition) { SetMessage(reason); smokeFailed = true; }
+                    return condition;
+                };
+                switch (smokeAiStep) {
+                case 0:
+                    press(SDLK_A); ++smokeAiStep; break;
+                case 1: {
+                    if (!aiValid || aiRequestId || aiNeeded) { break; }
+                    if (!requireSmoke(debugAi && cursor == snapshot.view.player_position, "Smoke AI entry cursor mismatch.")) { break; }
+                    const auto before = cursor;
+                    press(SDLK_RIGHT); press(SDLK_UP,SDL_KMOD_ALT);
+                    requireSmoke(cursor == TileCoord{before.x+1,before.z,std::min(world_max_y,before.y+1)} && !aiValid,
+                        "Smoke AI movement did not invalidate capture.");
+                    ++smokeAiStep; break;
+                }
+                case 2:
+                    if (!aiValid || aiRequestId || aiNeeded) { break; }
+                    if (!requireSmoke(aiView.cursor == cursor && aiView.tick == snapshot.view.tick, "Smoke AI capture mismatch.")) { break; }
+                    press(SDLK_A);
+                    requireSmoke(!debugAi && !aiValid, "Smoke AI exit retained a live capture.");
+                    ++smokeAiStep; break;
+                case 3:
+                    press(SDLK_I);
+                    requireSmoke(itemBrowser.Frame().screen == ItemBrowserScreen::List && !modal.Pending(),
+                        "Smoke i did not open the debug item browser.");
+                    ++smokeAiStep; break;
+                case 4: {
+                    if (!smokeBrowserListDrawn) { break; }
+                    const auto requestBefore = nextId;
+                    press(SDLK_SLASH);
+                    if (!requireSmoke(itemBrowser.Frame().screen == ItemBrowserScreen::Search && itemBrowser.Frame().input.empty()
+                        && SDL_TextInputActive(platform.window),
+                        "Smoke search did not start with an empty text draft.")) { break; }
+                    press(SDLK_Q); // The key chord and committed text must take separate routes.
+                    if (!requireSmoke(itemBrowser.EditingText() && modal.Active() == Screen::Debug && !modal.Pending(),
+                        "Smoke q key closed browser search.")) { break; }
+                    textInput("q");
+                    if (!requireSmoke(itemBrowser.Frame().screen == ItemBrowserScreen::Search && itemBrowser.Frame().input == "q",
+                        "Smoke q text did not reach browser search exactly once.")) { break; }
+                    press(SDLK_BACKSPACE); textInput("rock"); press(SDLK_RETURN);
+                    const auto& browser = itemBrowser.Frame();
+                    if (!requireSmoke(browser.screen == ItemBrowserScreen::List && browser.query == "rock"
+                        && browser.matches.size() == 1 && browser.matches.front() == rock && !browserRequest
+                        && !browser.busy && nextId == requestBefore && !SDL_TextInputActive(platform.window),
+                        "Smoke search committed an unexpected match or give, or retained text input.")) { break; }
+                    press(SDLK_E);
+                    requireSmoke(itemBrowser.Frame().screen == ItemBrowserScreen::Examine
+                        && itemBrowser.Frame().examination.screen == ItemUiScreen::Examine,
+                        "Smoke browser examine did not open the item sheet.");
+                    ++smokeAiStep; break;
+                }
+                case 5:
+                    if (!smokeBrowserExamineDrawn) { break; }
+                    press(SDLK_ESCAPE);
+                    if (!requireSmoke(itemBrowser.Frame().screen == ItemBrowserScreen::List,
+                        "Smoke browser examine Escape did not return to list.")) { break; }
+                    smokeBrowserRockCount = rockCount(); smokeBrowserTick = snapshot.view.tick;
+                    smokeBrowserRevision = snapshot.view.revision;
+                    press(SDLK_RETURN);
+                    requireSmoke(browserRequest.has_value() && itemBrowser.Frame().busy,
+                        "Smoke browser give-one was not enqueued.");
+                    ++smokeAiStep; break;
+                case 6: {
+                    if (browserRequest) { break; }
+                    // Completion publishes first; drain its mailbox before checking quantities.
+                    consumeSnapshot();
+                    if (!requireSmoke(!itemBrowser.Frame().busy && snapshot.view.revision > smokeBrowserRevision
+                        && rockCount() == smokeBrowserRockCount + 1 && snapshot.paused && snapshot.menuOpen
+                        && snapshot.view.tick == smokeBrowserTick, "Smoke give-one snapshot/count/pause mismatch.")) { break; }
+                    const auto requestBefore = nextId;
+                    press(SDLK_M); textInput("0"); press(SDLK_RETURN);
+                    if (!requireSmoke(itemBrowser.Frame().screen == ItemBrowserScreen::Amount && itemBrowser.Frame().input == "0"
+                        && !itemBrowser.Frame().feedback.empty() && !browserRequest && !itemBrowser.Frame().busy
+                        && nextId == requestBefore && SDL_TextInputActive(platform.window),
+                        "Smoke invalid zero amount queued a give or left the editor.")) { break; }
+                    smokeBrowserRevision = snapshot.view.revision;
+                    press(SDLK_U,SDL_KMOD_CTRL);
+                    if (!requireSmoke(itemBrowser.Frame().input.empty(), "Smoke Ctrl+U did not clear amount.")) { break; }
+                    textInput("3"); press(SDLK_RETURN);
+                    requireSmoke(browserRequest.has_value() && itemBrowser.Frame().busy
+                        && itemBrowser.Frame().screen == ItemBrowserScreen::List, "Smoke browser batch-three was not enqueued.");
+                    ++smokeAiStep; break;
+                }
+                case 7:
+                    if (browserRequest) { break; }
+                    consumeSnapshot();
+                    if (!requireSmoke(!itemBrowser.Frame().busy && snapshot.view.revision > smokeBrowserRevision
+                        && rockCount() == smokeBrowserRockCount + 4 && snapshot.paused && snapshot.menuOpen
+                        && snapshot.view.tick == smokeBrowserTick, "Smoke batch-three snapshot/count/pause mismatch.")) { break; }
+                    smokeBrowserGrantsVerified = true;
+                    press(SDLK_ESCAPE);
+                    requireSmoke(!itemBrowser.IsOpen() && modal.Active() == Screen::Debug && !modal.Pending() && !debugAi,
+                        "Smoke browser list Escape did not return to worldgen.");
+                    ++smokeAiStep; break;
+                case 8:
+                    press(SDLK_ESCAPE); smokeWaiting = modal.Pending();
+                    requireSmoke(smokeWaiting, "Smoke worldgen Escape did not request modal close.");
+                    ++smokeAiStep; break;
+                default:
+                    requireSmoke(false, "Smoke F11 reached an unexpected substep."); break;
                 }
             }
             else if (smokeStep == 9) { press(SDLK_F2); smokeWaiting = modal.Pending(); }
@@ -1202,7 +1362,8 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             }
             else if (smokeStep > 22 && modal.Active() == Screen::None) {
                 if (!smokeExamineDrawn || !smokeActionsDrawn || !smokeHealthDrawn
-                    || !smokeInventoryDrawn || !smokeItemExamineDrawn || !smokeAdvancedDrawn) { smokeFailed = true; }
+                    || !smokeInventoryDrawn || !smokeItemExamineDrawn || !smokeAdvancedDrawn
+                    || !smokeBrowserListDrawn || !smokeBrowserExamineDrawn || !smokeBrowserGrantsVerified) { smokeFailed = true; }
                 running = false;
             }
             if (smokeWaiting) { ++smokeStep; }
@@ -1437,14 +1598,32 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 }
             }
             if (modal.Active() == Screen::Debug) {
-                if (debugAi) {
+                if (itemBrowser.IsOpen()) {
+                    const auto& browser = itemBrowser.Frame();
+                    frame.title = String(snapshot.paused ? "Item browser | Local session paused" : "Item browser | Host world live");
+                    frame.title += "\n" + UnsignedText(browser.matches.empty() ? 0 : browser.selected + 1)
+                        + " / " + UnsignedText(browser.matches.size()) + " matches | Search: " + browser.query;
+                    frame.scroll = browser.scroll;
+                    frame.selected = browser.matches.empty() ? -1 : static_cast<int>(browser.selected);
+                    for (const auto type : browser.matches) { frame.rows.push_back({itemBrowser.Label(type)}); }
+                    if (browser.matches.empty()) { frame.rows.push_back({"No matching items."}); }
+                    if (browser.screen == ItemBrowserScreen::Search) { frame.details.push_back("Search: " + browser.input); }
+                    if (browser.screen == ItemBrowserScreen::Amount) { frame.details.push_back("Amount (1-1000): " + browser.input); }
+                    if (browser.busy) { frame.details.push_back("Giving items..."); }
+                    if (!browser.feedback.empty()) { frame.details.push_back(browser.feedback); }
+                    frame.footer = "/: search | e: examine | Enter: give 1 | m: amount\nArrows: choose | Escape: back | F11: close debug";
+                    if (browser.screen == ItemBrowserScreen::Search || browser.screen == ItemBrowserScreen::Amount) {
+                        frame.footer = "Type text | Enter: accept | Escape: list | F11: close debug";
+                    }
+                    if (browser.screen == ItemBrowserScreen::Examine) { frame.visible = false; }
+                } else if (debugAi) {
                     frame.title = String(snapshot.paused ? "AI inspector | Local session paused\nX " : "AI inspector | Host world live\nX ") + NumberText(cursor.x)
                         + " Z " + NumberText(cursor.z) + " Y " + NumberText(cursor.y);
                     if (aiValid) { frame.title += " | Tick " + UnsignedText(aiView.tick); }
                     frame.title += "\nLast-decision snapshots, not fresh scans";
                     if (aiValid) { frame.debugImage = &aiView.image; frame.cursor = cursor; frame.details = aiView.details; }
                     else { frame.rows.push_back({"Loading live resident AI capture..."}); }
-                    frame.footer = "a: worldgen | Escape/F11: close\nGreen: candidates | Red: blocked | Yellow: chosen";
+                    frame.footer = "i: item browser | a: worldgen | Escape/F11: close\nGreen: candidates | Red: blocked | Yellow: chosen";
                     frame.footer += "\nBlue: origin | Purple: goal | Orange: backtracking";
                     frame.footer += "\nArrows: tile | Alt+Up/Down, >/<: Y\nHome/c: player | PgUp/PgDn: details";
                 } else {
@@ -1457,7 +1636,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                         frame.title += "\nSurface baseline: excludes saved edits and entities";
                         frame.debugImage = &debugImage; frame.cursor = cursor; frame.details = debugDetails;
                     }
-                    frame.footer = "a: AI inspector | Escape/F11: close\n";
+                    frame.footer = "i: item browser | a: AI inspector | Escape/F11: close\n";
                     frame.footer += WorldgenDebugLegend(debugLayer);
                     frame.footer += "\nArrows: move | Shift+arrows: region | Home: recenter | 1-5/Tab: layers | +/-: zoom | PgUp/PgDn: details";
                 }
@@ -1468,7 +1647,11 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 content, display.c_str(), hints.c_str(), elapsedMilliseconds, mapValid ? &mapPacket : nullptr,
                 zoom, options.uiScale, {}, &playback, &shader, &frame,
                 {&messageHistory, &store.Keys(), &localization, sessionLabel},
-                modal.Active() == Screen::ItemInventory ? &itemUi.Frame() : nullptr)) { return SdlFailure(); }
+                modal.Active() == Screen::ItemInventory ? &itemUi.Frame()
+                    : modal.Active() == Screen::Debug && itemBrowser.Frame().screen == ItemBrowserScreen::Examine
+                        ? &itemBrowser.Frame().examination : nullptr)) { return SdlFailure(); }
+            if (modal.Active() == Screen::Debug && itemBrowser.IsOpen()
+                && itemBrowser.Frame().screen != ItemBrowserScreen::Examine) { itemBrowser.Frame().scroll = frame.scroll; }
             if (multiplayerSmoke && mapValid) { multiplayerRendered = true; }
             if (multiplayerSmoke && !modal.Pending() && !initializeScreen) {
                 multiplayerPlayersDrawn |= modal.Active() == Screen::Players && frame.visible;
@@ -1490,6 +1673,11 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 smokeInventoryDrawn |= modal.Active() == Screen::ItemInventory && itemUi.Frame().screen == ItemUiScreen::Inventory;
                 smokeItemExamineDrawn |= modal.Active() == Screen::ItemInventory && itemUi.Frame().screen == ItemUiScreen::Examine;
                 smokeAdvancedDrawn |= modal.Active() == Screen::ItemInventory && itemUi.Frame().screen == ItemUiScreen::Advanced;
+                smokeBrowserListDrawn |= modal.Active() == Screen::Debug && !modal.Pending() && frame.visible
+                    && itemBrowser.Frame().screen == ItemBrowserScreen::List && !frame.rows.empty() && !frame.debugImage;
+                smokeBrowserExamineDrawn |= modal.Active() == Screen::Debug && !modal.Pending()
+                    && itemBrowser.Frame().screen == ItemBrowserScreen::Examine
+                    && itemBrowser.Frame().examination.screen == ItemUiScreen::Examine && !frame.visible;
             }
             dirty = false;
             animationDeadline.reset();
@@ -1503,9 +1691,9 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             }
         }
         if (options.smoke && std::chrono::steady_clock::now() >= smokeDeadline) {
-            std::fprintf(stderr,"SDL %s smoke timed out at step %u: %s\n",
+            std::fprintf(stderr,"SDL %s smoke timed out at step %u (F11 substep %u): %s\n",
                 discoverySmoke ? "discovery" : multiplayerSmoke ? "multiplayer" : "local",
-                multiplayerSmoke ? static_cast<unsigned>(multiplayerSmokeStep) : smokeStep,message.c_str()); return 1;
+                multiplayerSmoke ? static_cast<unsigned>(multiplayerSmokeStep) : smokeStep,smokeAiStep,message.c_str()); return 1;
         }
         consumeSnapshot();
         if (const auto repeated = heldKey.Poll(inputTime(),store.Effective().keyboardRepeatRate)) {
@@ -1514,7 +1702,8 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             handleEvent(held);
             if (!committed.empty() && !(repeated->mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI))
                 && ((modal.Active() == Screen::Options && optionsUi.EditingText() && !settingsId)
-                    || (modal.Active() == Screen::Lan && multiplayerUi.EditingText() && !settingsId && !lanRequest))) {
+                    || (modal.Active() == Screen::Lan && multiplayerUi.EditingText() && !settingsId && !lanRequest)
+                    || (modal.Active() == Screen::Debug && itemBrowser.EditingText() && !modal.Pending()))) {
                 held.type = SDL_EVENT_TEXT_INPUT; held.text.text = committed.c_str(); handleEvent(held);
             }
         }
@@ -1555,7 +1744,12 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 static_cast<unsigned long long>(snapshot.view.playerId),static_cast<unsigned long long>(input.opportunity));
         }
         std::fflush(stdout);
-    } else if (options.smoke) { std::fputs("SDL smoke: ok\n", stdout); }
+    } else if (options.smoke) {
+        if (options.scenario == NewGameScenario::Demo) {
+            std::fputs("SDL item browser smoke: list_drawn=1 examine_drawn=1 search_q=ok give_one=1 give_batch=3 paused_tick=unchanged\n", stdout);
+        }
+        std::fputs("SDL smoke: ok\n", stdout);
+    }
     return 0;
 }
 

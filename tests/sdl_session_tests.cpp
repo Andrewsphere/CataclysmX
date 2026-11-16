@@ -8,6 +8,8 @@
 #include <condition_variable>
 #include <mutex>
 #include <latch>
+#include <filesystem>
+#include <string>
 
 using namespace cataclysmx;
 using namespace cataclysmx::sdl;
@@ -98,6 +100,21 @@ bool WaitForItemPause(Session& session, WakeState& wake, SessionSnapshot& snapsh
         if (wake.condition.wait_until(lock, deadline) == std::cv_status::timeout) { return false; }
     }
 }
+
+struct DebugGuestProfile {
+    std::filesystem::path path;
+    DebugGuestProfile() {
+        std::error_code error;
+        const auto parent = std::filesystem::temp_directory_path(error);
+        REQUIRE_FALSE(error);
+        path = parent / ("cataclysmx-sdl-debug-guest-"
+            + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".txt");
+    }
+    ~DebugGuestProfile() {
+        std::error_code error;
+        std::filesystem::remove(path, error);
+    }
+};
 }
 
 TEST_CASE("Session acknowledges controls and drains accepted work on stop", "[sdl][session]") {
@@ -360,6 +377,111 @@ TEST_CASE("First-house session rejects a demo-only catalog before construction",
     CHECK_FALSE(session.TakeSnapshot(snapshot));
 }
 
+TEST_CASE("SDL debug grants publish complete batches without leaving local pause", "[sdl][session][debug-items]") {
+    WakeState wake;
+    Session session(TestContent(), 31, {}, Wake, &wake);
+    SessionReply reply;
+    REQUIRE(WaitForReply(session, wake, reply)); REQUIRE(reply.kind == ReplyKind::Started);
+    SessionRequest request; request.generation = 31; request.id = 1; request.kind = RequestKind::Pause;
+    REQUIRE(session.TrySubmit(request) == EnqueueResult::Accepted);
+    REQUIRE(WaitForReply(session, wake, reply)); REQUIRE(reply.kind == ReplyKind::Paused);
+    SessionSnapshot snapshot; REQUIRE(session.TakeSnapshot(snapshot)); REQUIRE(snapshot.paused);
+    const auto tick = snapshot.view.tick;
+    const auto opportunity = snapshot.input.opportunity;
+    const auto sequence = snapshot.input.lastInputSequence;
+    auto inventorySize = snapshot.view.inventory.size();
+    auto revision = snapshot.view.revision;
+    request.player = snapshot.view.playerId; request.kind = RequestKind::DebugGiveItems;
+    request.grant.type = TestItem("rock");
+    for (const std::uint32_t count : {1U, 3U}) {
+        ++request.id; request.grant.count = count;
+        REQUIRE(session.TrySubmit(request) == EnqueueResult::Accepted);
+        REQUIRE(WaitForReply(session, wake, reply)); REQUIRE(reply.kind == ReplyKind::ItemsGiven);
+        CHECK(reply.id == request.id); CHECK(reply.generation == 31);
+        CHECK(reply.debugGive.outcome == DebugGiveOutcome::Given); CHECK(reply.debugGive.count == count);
+        // The new inventory must already be in the mailbox when its reply arrives.
+        REQUIRE(session.TakeSnapshot(snapshot)); CHECK(snapshot.paused); CHECK(snapshot.menuOpen);
+        inventorySize += count;
+        CHECK(snapshot.view.inventory.size() == inventorySize);
+        CHECK(snapshot.view.revision > revision); revision = snapshot.view.revision;
+        CHECK(snapshot.view.tick == tick); CHECK(snapshot.input.opportunity == opportunity);
+        CHECK(snapshot.input.lastInputSequence == sequence);
+    }
+    for (const auto count : {0U, maxDebugGiveItems + 1, maxDebugGiveItems}) {
+        ++request.id; request.grant.count = count;
+        REQUIRE(session.TrySubmit(request) == EnqueueResult::Accepted);
+        REQUIRE(WaitForReply(session, wake, reply)); REQUIRE(reply.kind == ReplyKind::ItemsGiven);
+        CHECK(reply.debugGive.outcome == (count == maxDebugGiveItems
+            ? DebugGiveOutcome::CapacityExceeded : DebugGiveOutcome::InvalidCount));
+        CHECK(reply.debugGive.count == 0);
+        REQUIRE(session.TakeSnapshot(snapshot)); CHECK(snapshot.paused);
+        CHECK(snapshot.view.inventory.size() == inventorySize); CHECK(snapshot.view.revision == revision);
+        CHECK(snapshot.view.tick == tick);
+    }
+    ++request.id; request.grant = {};
+    REQUIRE(session.TrySubmit(request) == EnqueueResult::Accepted);
+    REQUIRE(WaitForReply(session, wake, reply)); REQUIRE(reply.kind == ReplyKind::ItemsGiven);
+    CHECK(reply.debugGive.outcome == DebugGiveOutcome::InvalidItem);
+    request.grant = {TestItem("rock"), 1};
+    ++request.id; request.generation = 30;
+    REQUIRE(session.TrySubmit(request) == EnqueueResult::Accepted);
+    REQUIRE(WaitForReply(session, wake, reply)); CHECK(reply.kind == ReplyKind::Stale); CHECK(reply.id == request.id);
+    request.generation = 31; ++request.id; request.player = 0;
+    REQUIRE(session.TrySubmit(request) == EnqueueResult::Accepted);
+    REQUIRE(WaitForReply(session, wake, reply)); CHECK(reply.kind == ReplyKind::Cancelled); CHECK(reply.id == request.id);
+    request.player = snapshot.view.playerId; ++request.id; request.kind = RequestKind::Resume;
+    REQUIRE(session.TrySubmit(request) == EnqueueResult::Accepted);
+    REQUIRE(WaitForReply(session, wake, reply)); REQUIRE(reply.kind == ReplyKind::Resumed);
+    ++request.id; request.kind = RequestKind::DebugGiveItems;
+    REQUIRE(session.TrySubmit(request) == EnqueueResult::Accepted);
+    REQUIRE(WaitForReply(session, wake, reply)); CHECK(reply.kind == ReplyKind::Cancelled); CHECK(reply.id == request.id);
+    ++request.id; request.kind = RequestKind::Pause;
+    REQUIRE(session.TrySubmit(request) == EnqueueResult::Accepted);
+    REQUIRE(WaitForReply(session, wake, reply)); REQUIRE(reply.kind == ReplyKind::Paused);
+    REQUIRE(session.TakeSnapshot(snapshot)); CHECK(snapshot.view.inventory.size() == inventorySize);
+}
+
+TEST_CASE("SDL host debug grants require menu ownership and retain live mode", "[sdl][session][network][debug-items]") {
+    WakeState wake; SessionOptions options;
+    options.host = true; options.hostSettings = {0, 0, "SDL debug grants"};
+    Session session(TestContent(), 32, options, Wake, &wake);
+    SessionReply reply;
+    REQUIRE(WaitForReply(session, wake, reply)); REQUIRE(reply.kind == ReplyKind::Started);
+    SessionRequest request; request.generation = 32; request.id = 1; request.kind = RequestKind::Pause;
+    REQUIRE(session.TrySubmit(request) == EnqueueResult::Accepted);
+    REQUIRE(WaitForReply(session, wake, reply)); REQUIRE(reply.kind == ReplyKind::MenuOpened);
+    SessionSnapshot snapshot; REQUIRE(session.TakeSnapshot(snapshot)); REQUIRE(snapshot.mode == SessionMode::Host);
+    const auto inventorySize = snapshot.view.inventory.size();
+    request.player = snapshot.view.playerId; request.grant = {TestItem("rock"), 2};
+    request.kind = RequestKind::DebugGiveItems; ++request.id;
+    REQUIRE(session.TrySubmit(request) == EnqueueResult::Accepted);
+    REQUIRE(WaitForReply(session, wake, reply)); REQUIRE(reply.kind == ReplyKind::ItemsGiven);
+    CHECK(reply.debugGive.outcome == DebugGiveOutcome::Given); CHECK(reply.debugGive.count == 2);
+    REQUIRE(session.TakeSnapshot(snapshot)); CHECK(snapshot.mode == SessionMode::Host);
+    CHECK(snapshot.menuOpen); CHECK_FALSE(snapshot.paused); CHECK(snapshot.view.inventory.size() == inventorySize + 2);
+    {
+        DebugGuestProfile profile;
+        WakeState guestWake; SessionOptions guestOptions;
+        guestOptions.join = true;
+        const auto profilePath = profile.path.string(); guestOptions.profilePath = profilePath.c_str();
+        guestOptions.connectionSettings = {"127.0.0.1", snapshot.hostPort, "Debug guest", 0};
+        Session guest(TestContent(), 33, guestOptions, Wake, &guestWake);
+        SessionReply guestReply;
+        REQUIRE(WaitForReply(guest, guestWake, guestReply)); REQUIRE(guestReply.kind == ReplyKind::Started);
+        SessionRequest give = request; give.generation = guestReply.generation; give.id = 1;
+        // Even the host's persistent identity cannot turn a guest control into owner work.
+        REQUIRE(guest.TrySubmit(give) == EnqueueResult::Accepted);
+        REQUIRE(WaitForReply(guest, guestWake, guestReply)); CHECK(guestReply.kind == ReplyKind::Cancelled);
+        CHECK(guestReply.id == give.id);
+    }
+    request.kind = RequestKind::Resume; ++request.id;
+    REQUIRE(session.TrySubmit(request) == EnqueueResult::Accepted);
+    REQUIRE(WaitForReply(session, wake, reply)); REQUIRE(reply.kind == ReplyKind::Resumed);
+    request.kind = RequestKind::DebugGiveItems; ++request.id;
+    REQUIRE(session.TrySubmit(request) == EnqueueResult::Accepted);
+    REQUIRE(WaitForReply(session, wake, reply)); CHECK(reply.kind == ReplyKind::Cancelled);
+}
+
 TEST_CASE("First-house session publishes the selected seed and planned start", "[sdl][session][house]") {
     const auto content = LoadContentPack(CATACLYSMX_FIRST_HOUSE_PACK);
     REQUIRE(content);
@@ -536,6 +658,10 @@ TEST_CASE("SDL item recovery rejects controls and replacement commands by receip
         REQUIRE(WaitForReply(session, wake, reply)); CHECK(reply.id == id); CHECK(reply.generation == (id == 6 ? 22 : 23));
         CHECK(reply.kind == (id == 6 ? ReplyKind::Stale : ReplyKind::Cancelled));
     }
+    request.kind = RequestKind::DebugGiveItems; request.id = 7; request.generation = 23;
+    request.grant = {TestItem("rock"), 1};
+    REQUIRE(session.TrySubmit(request) == EnqueueResult::Accepted);
+    REQUIRE(WaitForReply(session, wake, reply)); CHECK(reply.kind == ReplyKind::Cancelled); CHECK(reply.id == 7);
     REQUIRE(session.TakeSnapshot(snapshot)); CHECK_FALSE(snapshot.paused);
     CHECK(snapshot.view.remainingTicks > 0);
     session.Stop();

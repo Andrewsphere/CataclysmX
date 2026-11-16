@@ -175,6 +175,7 @@ Keymap DefaultKeymap() {
     add(InputContext::Items, InputAction::MoveUp, {">"});
     add(InputContext::Menu, InputAction::Reset, {"Backspace"});
     const auto debug = InputContext::Debug;
+    add(debug, InputAction::Inventory, {"i"});
     add(debug, InputAction::Inspect, {"a"});
     add(debug, InputAction::MoveUp, {">"});
     map.back().keys.push_back({"Up", false, true});

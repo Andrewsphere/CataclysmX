@@ -504,7 +504,8 @@ int main(int argc, char** argv) {
             interacting = false; lastUpdate = now;
             const auto position = server.GetWorld().GetActor(server.GetPlayer())->position;
             debugMenu = CreateWorldgenDebugMenu(server.GetWorld(), position,
-                [&] { debugOpen = false; lastUpdate = std::chrono::steady_clock::now(); }, &localization, &settings.Keys());
+                [&] { debugOpen = false; lastUpdate = std::chrono::steady_clock::now(); }, &localization, &settings.Keys(),
+                [&](DebugItemGrant grant) { return cataclysmx::DebugGiveItems(server, server.GetHostPlayerId(), grant); });
             debugOpen = true; return true;
         }
         if (choosingGrab && action == InputAction::Cancel) { choosingGrab = false; return true; }

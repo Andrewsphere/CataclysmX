@@ -1,6 +1,7 @@
 #include "terminal/debug_menu.h"
 
 #include "client/ai_debug.h"
+#include "client/item_browser.h"
 #include "client/worldgen_debug.h"
 #include "terminal/render.h"
 #include "terminal/keyboard.h"
@@ -29,15 +30,16 @@ std::string Coordinates(TileCoord position) {
 class WorldgenDebugMenu final : public ftxui::ComponentBase {
 public:
     WorldgenDebugMenu(const World& world, TileCoord playerPosition, std::function<void()> onClose,
-        const Localization* localization, const Keymap* keymap)
+        const Localization* localization, const Keymap* keymap, std::function<DebugGiveResult(DebugItemGrant)> giveItems)
         : world_(world), initialPosition_(ClampPosition(playerPosition)), cursor_(initialPosition_),
           aiInitialPosition_{initialPosition_.x, initialPosition_.z, std::clamp(playerPosition.y, world_min_y, world_max_y)},
           aiCursor_(aiInitialPosition_),
-          onClose_(std::move(onClose)), localization_(localization), keymap_(keymap) {
+          onClose_(std::move(onClose)), localization_(localization), keymap_(keymap), giveItems_(std::move(giveItems)) {
         if (Available()) { RebuildPlan(); }
     }
 
     ftxui::Element OnRender() override {
+        if (browser_.IsOpen()) { return RenderBrowser(); }
         if (aiMode_) { return RenderAi(); }
         ftxui::Elements lines{
             ftxui::text(T("debug.title", "Debug menu | World generation")) | ftxui::bold,
@@ -112,8 +114,30 @@ public:
         const auto chord = DecodeTerminalInput({event.input().data(), event.input().size()});
         const auto action = chord ? ResolveAction(keymap_ ? *keymap_ : defaultKeys_, InputContext::Debug, *chord)
             : eastl::optional<InputAction>{};
+        if (browser_.IsOpen()) {
+            if ((!browser_.EditingText() && action == InputAction::Debug) || event == ftxui::Event::F11) {
+                if (onClose_) { onClose_(); }
+                return true;
+            }
+            const bool editing = browser_.EditingText();
+            if (editing && event.is_character() && (!chord || (!chord->ctrl && !chord->alt))) {
+                const auto text = event.character();
+                browser_.Text({text.data(), text.size()});
+            } else if (chord) {
+                browser_.Handle(*chord, Keys(), world_.GetContent(), BrowserLocalization());
+            }
+            if (const auto request = browser_.TakeGiveRequest()) {
+                if (giveItems_) { browser_.GiveFinished(giveItems_(*request)); }
+                else { browser_.GiveRejected("Item giving is unavailable."); }
+            }
+            return true;
+        }
         if (action == InputAction::Debug || action == InputAction::Cancel) {
             if (onClose_) { onClose_(); }
+            return true;
+        }
+        if (action == InputAction::Inventory) {
+            browser_.Open(world_.GetContent(), BrowserLocalization());
             return true;
         }
         if (action == InputAction::Inspect) {
@@ -158,8 +182,55 @@ public:
     }
 
 private:
+    const Keymap& Keys() const { return keymap_ ? *keymap_ : defaultKeys_; }
+    const Localization& BrowserLocalization() const { return localization_ ? *localization_ : defaultLocalization_; }
+    static std::string Frontend(const String& text) { return {text.data(), text.size()}; }
+    ftxui::Element RenderBrowser() const {
+        const auto& frame = browser_.Frame();
+        ftxui::Elements lines{ftxui::text("Debug menu | Item browser") | ftxui::bold};
+        if (frame.screen == ItemBrowserScreen::Examine) {
+            const auto& item = frame.examination.examination;
+            ftxui::Elements details;
+            details.push_back(ftxui::text(Frontend(item.name)) | ftxui::bold);
+            if (!item.description.empty()) { details.push_back(ftxui::paragraph(Frontend(item.description))); }
+            if (item.art) {
+                for (const auto& line : item.art->lines) {
+                    ftxui::Elements runs;
+                    for (const auto& run : line) {
+                        const auto color = run.color.useDefault ? ftxui::Color::Default
+                            : ftxui::Color::RGB(run.color.red, run.color.green, run.color.blue);
+                        runs.push_back(ftxui::text(Frontend(run.text)) | ftxui::color(color));
+                    }
+                    if (runs.empty()) { runs.push_back(ftxui::text("")); }
+                    details.push_back(ftxui::hbox(std::move(runs)));
+                }
+            }
+            for (const auto& stat : item.stats) { details.push_back(ftxui::paragraph(Frontend(stat))); }
+            const auto selected = std::min<std::size_t>(static_cast<std::size_t>(std::max(0, item.scroll)), details.size() - 1);
+            details[selected] = details[selected] | ftxui::focus;
+            lines.push_back(ftxui::vbox(std::move(details)) | ftxui::yframe | ftxui::flex);
+        } else {
+            lines.push_back(ftxui::text("Search: " + Frontend(frame.query) + " | " + std::to_string(frame.matches.size()) + " items"));
+            ftxui::Elements rows;
+            for (std::size_t i = 0; i < frame.matches.size(); ++i) {
+                auto row = ftxui::text(Frontend(browser_.Label(frame.matches[i])));
+                if (i == frame.selected) { row = row | ftxui::inverted | ftxui::focus; }
+                rows.push_back(std::move(row));
+            }
+            if (rows.empty()) { rows.push_back(ftxui::text("No matching items.")); }
+            lines.push_back(ftxui::vbox(std::move(rows)) | ftxui::yframe | ftxui::flex);
+            if (frame.screen == ItemBrowserScreen::Search || frame.screen == ItemBrowserScreen::Amount) {
+                lines.push_back(ftxui::text(std::string(frame.screen == ItemBrowserScreen::Search ? "Search: " : "Amount: ")
+                    + Frontend(frame.input) + "_ | Enter confirms"));
+            }
+        }
+        if (!frame.feedback.empty()) { lines.push_back(ftxui::paragraph(Frontend(frame.feedback))); }
+        lines.push_back(ftxui::text("/ search | e examine | Enter give | m give multiple | Esc back"));
+        return ftxui::vbox(std::move(lines)) | ftxui::border;
+    }
     std::string ToggleHint() const {
-        return (keymap_ ? Hint(InputAction::Inspect) : "a") + ": AI / world generation";
+        return (keymap_ ? Hint(InputAction::Inspect) : "a") + ": AI / world generation | "
+            + (keymap_ ? Hint(InputAction::Inventory) : "i") + ": items";
     }
     ftxui::Element RenderAi() const {
         ftxui::Elements lines{
@@ -293,13 +364,17 @@ private:
     const Localization* localization_ = nullptr;
     const Keymap* keymap_ = nullptr;
     Keymap defaultKeys_ = DefaultKeymap();
+    Localization defaultLocalization_;
+    ItemBrowser browser_;
+    std::function<DebugGiveResult(DebugItemGrant)> giveItems_;
 };
 
 }
 
 ftxui::Component CreateWorldgenDebugMenu(const World& world, TileCoord playerPosition,
-    std::function<void()> onClose, const Localization* localization, const Keymap* keymap) {
-    return ftxui::Make<WorldgenDebugMenu>(world, playerPosition, std::move(onClose), localization, keymap);
+    std::function<void()> onClose, const Localization* localization, const Keymap* keymap,
+    std::function<DebugGiveResult(DebugItemGrant)> giveItems) {
+    return ftxui::Make<WorldgenDebugMenu>(world, playerPosition, std::move(onClose), localization, keymap, std::move(giveItems));
 }
 
 }

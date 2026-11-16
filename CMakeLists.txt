@@ -116,6 +116,7 @@ add_library(cataclysmx_engine STATIC
     src/core/interaction.cpp src/core/interaction.h
     src/core/presentation.cpp src/core/presentation.h
     src/core/inventory.cpp src/core/inventory.h
+    src/core/debug_items.cpp src/core/debug_items.h
     src/core/world_types.h
     src/core/world_result.h src/content/content_result.h
     src/items/item_types.h src/items/item_types.cpp
@@ -155,6 +156,7 @@ cataclysmx_no_exceptions(cataclysmx_network)
 
 add_library(cataclysmx_client STATIC src/client/text.cpp src/client/text.h
     src/client/item_ui.cpp src/client/item_ui.h
+    src/client/item_browser.cpp src/client/item_browser.h
     src/client/crafting_menu.cpp src/client/crafting_menu.h
     src/client/message_history.cpp src/client/message_history.h
     src/client/tile_inspection.cpp src/client/tile_inspection.h
@@ -281,6 +283,7 @@ if(CATACLYSMX_BUILD_TESTS)
         tests/text_art_file_tests.cpp tests/definition_flags_tests.cpp
         tests/item_asset_content_tests.cpp tests/item_flags_content_tests.cpp
         tests/item_pilot_tests.cpp
+        tests/item_browser_tests.cpp tests/debug_items_tests.cpp
         tests/item_save_tests.cpp tests/item_network_tests.cpp tests/item_server_tests.cpp
         tests/item_behavior_tests.cpp
         tests/crafting_content_tests.cpp tests/crafting_world_tests.cpp tests/crafting_save_tests.cpp
