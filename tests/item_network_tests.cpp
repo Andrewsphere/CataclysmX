@@ -41,6 +41,7 @@ WorldView ItemView(const ContentCatalog& content) {
     bag.massGrams = 125; bag.volumeMl = 10; bag.capacityVolumeMl = 1000; bag.usedVolumeMl = 50;
     InventoryEntry device;
     device.id = 20; device.type = content.FindItem("device"); device.parent = 10;
+    device.storage = {ItemStorageKind::Container, {}, 10};
     device.contained_items = 1; device.massGrams = 120; device.volumeMl = 50;
     const auto& definition = content.GetItem(device.type);
     const auto charger = FindItemCapability(definition, "charger");
@@ -61,11 +62,14 @@ WorldView ItemView(const ContentCatalog& content) {
     append(timer, "disarm");
     InventoryEntry battery;
     battery.id = 30; battery.type = content.FindItem("battery"); battery.parent = 20;
+    battery.storage = {ItemStorageKind::Container, {}, 20};
     battery.installation = charger; battery.massGrams = 20; battery.volumeMl = 10;
     battery.energy.push_back({{1}, 17, 100});
     view.inventory = {bag, device, battery};
     bag.id = 40; bag.contained_items = 1; bag.massGrams = 25; bag.usedVolumeMl = 10;
+    bag.storage = {ItemStorageKind::Ground, {}};
     battery.id = 50; battery.parent = 40; battery.installation = {};
+    battery.storage = {ItemStorageKind::Container, {}, 40};
     view.groundItems = {bag, battery};
     view.carriedMassGrams = 125; view.carryCapacityGrams = 500;
     return view;
@@ -264,6 +268,7 @@ TEST_CASE("Item snapshot rejects broken trees, ordering and packet budget", "[ne
         // Keep every individual entry valid and stay below the entry-count cap,
         // but include enough bounded action text to exceed the total byte cap.
         auto entry = baseline.inventory[1]; entry.parent = 0; entry.contained_items = 0;
+        entry.storage = {};
         for (auto& action : entry.actions) { action.label.fallback.assign(maxItemText, 'a'); }
         for (unsigned i = 1; i <= 2000; ++i) { entry.id = i; invalid.inventory.push_back(entry); }
         REQUIRE(invalid.inventory.size() < wire::maxItemEntries);
@@ -287,6 +292,7 @@ TEST_CASE("Item decoder rejects malformed bounded fields before catalog lookup",
     const auto content = ItemCatalog();
     auto view = ItemView(content);
     view.inventory = {view.inventory[1]}; view.inventory[0].parent = 0;
+    view.inventory[0].storage = {};
     view.groundItems.clear();
     wire::Writer writer; REQUIRE(writer.View(view));
     // Walk the encoded fields to locate variable-length metadata boundaries.
@@ -307,6 +313,9 @@ TEST_CASE("Item decoder rejects malformed bounded fields before catalog lookup",
     REQUIRE(cursor.U64(wide)); REQUIRE(cursor.U32(number)); REQUIRE(cursor.U32(number));
     REQUIRE(cursor.U64(wide)); REQUIRE(cursor.U16(shortValue)); REQUIRE(cursor.U64(wide));
     REQUIRE(cursor.U32(number)); REQUIRE(cursor.U32(number)); REQUIRE(cursor.U64(wide));
+    REQUIRE(cursor.U8(byte));
+    for (int i = 0; i < 3; ++i) REQUIRE(cursor.I32(coordinate));
+    REQUIRE(cursor.U64(wide)); REQUIRE(cursor.U8(byte)); REQUIRE(cursor.U8(byte));
     const auto energyOffset = cursor.offset;
     REQUIRE(cursor.U8(byte)); REQUIRE(byte == 1);
     REQUIRE(cursor.U16(shortValue)); REQUIRE(cursor.U32(number)); REQUIRE(cursor.U32(number));

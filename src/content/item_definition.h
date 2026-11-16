@@ -2,6 +2,8 @@
 
 #include "core/data_object.h"
 #include "content/crafting_definition.h"
+#include "content/text_art.h"
+#include "combat/melee_profile.h"
 #include "items/item_types.h"
 #include <EASTL/optional.h>
 #include <EASTL/shared_ptr.h>
@@ -45,6 +47,9 @@ struct ItemBehaviorBinding {
 struct ItemDefinition {
     String id;
     String name;
+    String description;
+    TextArt art;
+    eastl::optional<MeleeProfile> melee;
     std::uint32_t massGrams = 0;
     std::uint32_t volumeMl = 0;
     SmallVector<ItemCapabilityDefinition, 2> capabilities; // Sorted by stable name.
@@ -64,5 +69,7 @@ const ItemCapabilityDefinition* TryGetItemCapability(const ItemDefinition& defin
 const ContainerDefinition* ItemContainer(const ItemDefinition& definition);
 const EnergyStoreDefinition* ItemEnergyStore(const ItemDefinition& definition, ItemCapabilityId id);
 const ItemBehaviorDefinition* ItemBehaviorConfig(const ItemDefinition& definition, ItemCapabilityId id);
+// Missing authored melee data uses a modest one-handed improvised profile.
+const MeleeProfile& ItemMelee(const ItemDefinition& definition);
 
 }

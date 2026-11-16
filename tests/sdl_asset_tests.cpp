@@ -92,8 +92,18 @@ TEST_CASE("SDL asset loading reports failures and uses bundled default", "[sdl][
         const auto& definition = assets.Definition();
         CHECK(definition.id == "gen1_32x32");
         CHECK(definition.cellWidth == 32); CHECK(definition.cellHeight == 32);
-        REQUIRE(definition.atlases.size() == 1); REQUIRE(definition.sprites.size() == 20);
-        CHECK(definition.sourceImages.size() == 20); CHECK(definition.animations.size() == 2);
+        REQUIRE(definition.atlases.size() == 1);
+        REQUIRE_FALSE(definition.sourceImages.empty());
+        // This source pack also discovers optional showcase/architecture art.
+        // Verify complete frame coverage rather than pinning its growing PNG count.
+        std::uint64_t frames = 0;
+        for (const auto& source : definition.sourceImages) {
+            REQUIRE(source.frameCount > 0);
+            CHECK(source.firstSprite == frames);
+            frames += source.frameCount;
+        }
+        CHECK(definition.sprites.size() == frames);
+        CHECK(definition.animations.size() == 2);
         const auto road = definition.terrain[TestTerrain("road").value];
         REQUIRE(road.kind == TilesetMappingKind::Sprite);
         CHECK(definition.sprites[road.index].id == "tile.world.road.asphalt");

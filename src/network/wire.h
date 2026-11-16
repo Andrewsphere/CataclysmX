@@ -6,8 +6,8 @@
 
 namespace cataclysmx::network::wire {
 
-// Version 16 adds grab commands, named grab receipts and the current grip in views.
-inline constexpr std::uint32_t protocol = 0x43584e10;
+// Version 17 adds exact inventory storage identities, equipment and nearby storage views.
+inline constexpr std::uint32_t protocol = 0x43584e11;
 inline constexpr int maxViewRadius = 64;
 inline constexpr int maxViewDimension = 2 * maxViewRadius + 1;
 static_assert(maxViewDimension <= UINT8_MAX && maxViewDimension * maxViewDimension <= UINT16_MAX);
@@ -15,6 +15,9 @@ static_assert(maxViewDimension <= UINT8_MAX && maxViewDimension * maxViewDimensi
 // before inventory and session metadata. Repeated cells use one run instead.
 inline constexpr std::size_t maxPacket = 1024 * 1024;
 inline constexpr std::size_t maxItemEntries = 2048;
+// Containers can occur independently in inventory and nearby entries, plus
+// inventory itself, nine floors and up to nine furniture sources.
+inline constexpr std::size_t maxItemStorages = 2 * maxItemEntries + 19;
 inline constexpr std::size_t maxItemActions = maxItemActionsPerItem;
 // Validate definition-dependent metadata after structural decoding, before publication.
 bool ValidItemDefinitions(const WorldView& view, const ContentCatalog& content);

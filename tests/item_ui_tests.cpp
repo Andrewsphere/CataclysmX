@@ -46,7 +46,14 @@ struct ItemUiFixture {
     }
     void Event(const ftxui::Event& event) {
         REQUIRE(ui.HandleEvent(event, view, localization, keys, [&](Command command) {
-            commands.push_back(command); return accepted;
+            commands.push_back(command);
+            if (accepted) {
+                CommandResult result; result.advanced = true;
+                result.outcome = command.kind == CommandKind::drop ? Outcome::dropped
+                    : command.kind == CommandKind::store_item ? Outcome::stored_item : Outcome::used_item;
+                ui.ItemCommandFinished(result);
+            }
+            return accepted;
         }, {}, &TestContent()));
     }
     void Open(InputAction action = InputAction::Inventory) { REQUIRE(ui.Open(action)); Draw(); }
@@ -109,7 +116,7 @@ TEST_CASE("Snapshots cannot replace an inventory source even when rendered befor
     f.view.inventory.erase(f.view.inventory.begin());
     f.Draw(); f.Event(ftxui::Event::Return); f.Event(ftxui::Event::Character('u'));
     CHECK(f.commands.empty());
-    f.Event(ftxui::Event::ArrowDown); f.Event(ftxui::Event::Return);
+    f.Event(ftxui::Event::ArrowDown); f.Event(ftxui::Event::Character('d'));
     REQUIRE(f.commands.size() == 1);
     CHECK(f.commands[0].kind == CommandKind::drop);
     CHECK(f.commands[0].item == 11);
@@ -209,13 +216,13 @@ TEST_CASE("Inventory selection belongs to the viewed player rather than a previo
     ItemUiFixture f;
     f.view.playerId = 1;
     f.view.inventory = {f.Item(70, "rock")};
-    f.Open(); f.Event(ftxui::Event::Return);
+    f.Open(); f.Event(ftxui::Event::Character('d'));
     REQUIRE(f.commands.size() == 1);
     CHECK(f.commands[0].item == 70);
     f.view.playerId = 2;
     f.view.inventory = {f.Item(71, "backpack")};
     f.view.groundItems = {f.Item(70, "rock")};
-    f.Open(); f.Event(ftxui::Event::Return);
+    f.Open(); f.Event(ftxui::Event::Character('d'));
     REQUIRE(f.commands.size() == 2);
     CHECK(f.commands[1].item == 71);
 }

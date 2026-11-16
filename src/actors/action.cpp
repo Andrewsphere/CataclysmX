@@ -23,6 +23,7 @@ std::uint32_t ActorStepBaseCost(std::uint32_t baseCost, TileCoord direction) {
 }
 
 bool ValidateAction(const ActorActionState& state) {
+    if (state.kind != ActorActionKind::MeleeWindup && state.weapon != 0) { return false; }
     if (state.accuracyPenalty > 30) { return false; }
     switch (state.kind) {
     case ActorActionKind::None:

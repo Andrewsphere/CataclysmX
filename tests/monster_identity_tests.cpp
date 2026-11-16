@@ -182,7 +182,7 @@ TEST_CASE("Monster archive and disk reload preserve identity and changed state a
     }
     {
         RawDatabase raw(file.path.c_str());
-        CHECK(raw.Text("SELECT format_version FROM metadata") == "10");
+        CHECK(raw.Text("SELECT format_version FROM metadata") == "11");
         CHECK(raw.Text("SELECT json_extract(payload,'$.actors[0].monster_type') FROM chunks WHERE x=0 AND z=0 AND y=0") == "walker");
     }
     {
@@ -319,7 +319,7 @@ TEST_CASE("Legacy v7 through v9 actors remain untyped and reject the optional v1
         Populate(content, file.path.c_str());
         {
             RawDatabase raw(file.path.c_str());
-            raw.Exec("UPDATE chunks SET payload=json_set(payload,'$.actors',json((SELECT json_group_array(json_remove(value,'$.combat','$.monster_type')) FROM json_each(chunks.payload,'$.actors'))))");
+            raw.Exec("UPDATE chunks SET payload=json_set(payload,'$.actors',json((SELECT json_group_array(json_remove(value,'$.combat','$.monster_type','$.wielded_item')) FROM json_each(chunks.payload,'$.actors'))))");
             if (version < 9) {
                 raw.Exec("UPDATE chunks SET payload=json_set(payload,'$.actors',json((SELECT json_group_array(json_remove(value,'$.controller')) FROM json_each(chunks.payload,'$.actors'))))");
             }

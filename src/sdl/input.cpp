@@ -19,6 +19,16 @@ eastl::optional<KeyChord> TranslateKey(const SDL_KeyboardEvent& event) {
     case SDLK_DOWN: name = "Down"; break;
     case SDLK_ESCAPE: name = "Escape"; break;
     case SDLK_RETURN: case SDLK_KP_ENTER: name = "Enter"; break;
+    case SDLK_KP_0: name = "0"; break;
+    case SDLK_KP_1: name = "1"; break;
+    case SDLK_KP_2: name = "2"; break;
+    case SDLK_KP_3: name = "3"; break;
+    case SDLK_KP_4: name = "4"; break;
+    case SDLK_KP_5: name = "5"; break;
+    case SDLK_KP_6: name = "6"; break;
+    case SDLK_KP_7: name = "7"; break;
+    case SDLK_KP_8: name = "8"; break;
+    case SDLK_KP_9: name = "9"; break;
     case SDLK_TAB: name = shift ? "BackTab" : "Tab"; break;
     case SDLK_BACKSPACE: name = "Backspace"; break;
     case SDLK_DELETE: name = "Delete"; break;

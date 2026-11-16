@@ -1,5 +1,27 @@
 # LAN networking API
 
+## Inventory protocol 17
+
+The current protocol constant is `0x43584e11`. Commands append two canonical
+`ItemStorage` values (u8 kind, three i32 coordinates in X/Z/Y order, u64 ID).
+`wield_item` uses an explicit item ID or zero to unwield; `transfer_item` requires
+a nonzero item and exact source/destination. These two commands reject unused
+fields. Legacy commands preserve their prior unused-field behavior but reject
+nondefault source/destination fields. The
+connection remains the sole authority for the acting actor identity.
+
+Receipts append the bounded `InventoryOutcome` enum. Views append wielded item
+ID, nearby flattened entries, and bounded storage metadata. Every item entry
+adds immediate storage identity plus boolean wielded/stackable flags. Storage
+metadata contains accessibility/reason, recursive mass/direct volume, optional
+actual mass/volume limits, a bounded name and object X/Z/Y coordinates (zero for
+non-object sources). Object coordinates are independent of viewport radius and
+must stay in the player's same-layer neighborhood. Each entry list is capped at 2048,
+storage metadata at 4115, and the complete packet at 1 MiB. Decoders validate
+canonical storage shapes, parent links, unique equipment identity and booleans.
+Content fingerprints include description, parsed art runs and effective melee
+profiles in canonical order. No runtime entity handles cross this boundary.
+
 `network/network.h` exposes `NetworkRuntime`, `LanHost`, `LanClient` and
 `LanDiscovery`. The content catalog and server must outlive their network peers;
 keep the runtime alive until all peers are destroyed. All methods are called on
@@ -66,9 +88,9 @@ assigning an actor. Joining has a five-second
 explicit-elapsed timeout. The server does not use wall time or RNG for gameplay;
 network-only tokens and discovery identifiers use OS entropy.
 
-## World, item and combat protocol (version 16, `0x43584e10`)
+## World, item and combat protocol (version 17, `0x43584e11`)
 
-Version 16 is wire-incompatible with earlier versions and supports maps up to
+Version 17 is wire-incompatible with earlier versions and supports maps up to
 129×129 cells with lossless run-length encoding. Coordinates encode signed
 32-bit X/Z/Y. Commands append signed `dy` after their item arguments; movement,
 and directional item use accept six axial directions. Movement also accepts the

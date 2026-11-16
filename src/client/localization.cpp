@@ -163,6 +163,10 @@ String Localization::OutcomeText(Outcome outcome) const {
     case Outcome::duplicate_input: return Text("outcome.duplicate_input", OutcomeMessage(outcome));
     case Outcome::used_item: return Text("outcome.used_item", OutcomeMessage(outcome));
     case Outcome::stored_item: return Text("outcome.stored_item", OutcomeMessage(outcome));
+    case Outcome::wielded: return Text("outcome.wielded", OutcomeMessage(outcome));
+    case Outcome::unwielded: return Text("outcome.unwielded", OutcomeMessage(outcome));
+    case Outcome::transferred: return Text("outcome.transferred", OutcomeMessage(outcome));
+    case Outcome::inventory_refused: return Text("outcome.inventory_refused", OutcomeMessage(outcome));
     case Outcome::item_use_failed: return Text("outcome.item_use_failed", OutcomeMessage(outcome));
     case Outcome::capacity_exceeded: return Text("outcome.capacity_exceeded", OutcomeMessage(outcome));
     case Outcome::invalid_container: return Text("outcome.invalid_container", OutcomeMessage(outcome));
@@ -184,6 +188,7 @@ String Localization::OutcomeText(Outcome outcome) const {
     std::abort();
 }
 String Localization::ResultText(const CommandResult& result) const {
+    if (result.outcome == Outcome::inventory_refused) { return CommandResultMessage(result); }
     if (result.outcome == Outcome::grabbed || result.outcome == Outcome::released || result.outcome == Outcome::grab_blocked) {
         const auto key = result.outcome == Outcome::grabbed ? "grab.started"
             : result.outcome == Outcome::released ? "grab.released" : "grab.blocked";

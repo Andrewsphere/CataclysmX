@@ -77,7 +77,7 @@ bool ValidateCombatState(const CombatState& state) {
 DataObject CaptureCombatState(const CombatState& state) {
     if (!ValidateCombatState(state)) { std::abort(); }
     DataObject data;
-    data.SetUnsigned("version", 1);
+    data.SetUnsigned("version", 2);
     DataObject body;
     body.SetUnsigned("kind", static_cast<std::uint8_t>(state.body.kind));
     DataObject parts = DataObject::List();
@@ -108,6 +108,7 @@ DataObject CaptureCombatState(const CombatState& state) {
     action.SetUnsigned("move", state.action.move);
     action.SetUnsigned("recoveryTicks", state.action.recoveryTicks);
     action.SetUnsigned("accuracyPenalty", state.action.accuracyPenalty);
+    action.SetUnsigned("weapon", state.action.weapon);
     data.Set("action", eastl::move(action));
     data.SetUnsigned("style", static_cast<std::uint8_t>(state.style));
     data.SetUnsigned("faction", static_cast<std::uint8_t>(state.faction));
@@ -134,7 +135,7 @@ StateResult<CombatState> ReadCombatState(const DataObject& data, Diagnostics* di
     };
     const auto version = data.GetUnsigned("version");
     if (!version) { return invalid(); }
-    if (*version != 1) { return invalid(StateError::UnsupportedVersion); }
+    if (*version != 1 && *version != 2) { return invalid(StateError::UnsupportedVersion); }
     if (!Fields(data, {"version", "body", "profile", "action", "style", "faction", "protection",
         "attackDamage", "accuracy", "stamina", "staminaElapsed", "reactionCooldown", "heavyCooldown"})) {
         return invalid();
@@ -171,7 +172,11 @@ StateResult<CombatState> ReadCombatState(const DataObject& data, Diagnostics* di
     if (!regeneration) { return invalid(); }
     state.injury.regeneration = *regeneration;
     const auto& action = *data.Find("action");
-    if (!Fields(action, {"kind", "target", "move", "recoveryTicks", "accuracyPenalty"})
+    const bool actionFields = *version == 1
+        ? Fields(action, {"kind", "target", "move", "recoveryTicks", "accuracyPenalty"})
+        : Fields(action, {"kind", "target", "move", "recoveryTicks", "accuracyPenalty", "weapon"});
+    if (*version == 2 && !Number(action, "weapon", UINT64_MAX, state.action.weapon)) { return invalid(); }
+    if (!actionFields
         || !Number(action, "kind", static_cast<unsigned>(ActorActionKind::DisruptionRecovery), number)) { return invalid(); }
     state.action.kind = static_cast<ActorActionKind>(number);
     if (!Number(action, "target", UINT64_MAX, state.action.target)

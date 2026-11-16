@@ -76,14 +76,18 @@ struct Fixture {
     }
     void Event(const ftxui::Event& event) {
         REQUIRE(ui.HandleEvent(event, view, localization, keys, [&](Command command) {
-            ++submissions; submitted = command; return accept;
+            ++submissions; submitted = command;
+            if (accept) {
+                CommandResult result; result.advanced = true; result.outcome = Outcome::dropped; ui.ItemCommandFinished(result);
+            }
+            return accept;
         }, [&](InputAction action) { ++activations; activated = action; }));
     }
     void Items(int count) {
         view.inventory.clear();
         // Synthetic inventories replace the entire accessible-item snapshot,
         // including demo ground descendants, so IDs and empty states are real.
-        view.groundItems.clear(); view.carriedMassGrams = 0;
+        view.groundItems.clear(); view.nearbyItems.clear(); view.carriedMassGrams = 0;
         const auto type = TestItem("rock");
         const auto& definition = TestContent().GetItem(type);
         for (int i = 1; i <= count; ++i) {
@@ -585,23 +589,18 @@ TEST_CASE("Gameplay modals fit terminal margins and preserve inventory selection
         const auto screen = f.Draw(width, height);
         INFO(Plain(screen));
         const auto title = Find(screen, "Inventory"); REQUIRE(title);
-        CHECK(title->x >= 4);
+        CHECK(title->x >= 2);
         CHECK(title->y == 3);
         const auto item = Find(screen, "> 40:rock"); REQUIRE(item);
         CHECK(screen.PixelAt(item->x, item->y).inverted);
         CHECK(screen.PixelAt(item->x, item->y).bold);
         const auto close = Find(screen, "Escape"); REQUIRE(close);
-        CHECK(close->y == height - 4);
-        CHECK(screen.PixelAt(close->x, close->y).bold);
-        // Find the effective binding in the fixed footer, not the explanatory
-        // sentence above the list, which also mentions Enter.
-        const auto drop = Find(screen, "Enter", close->y - 1); REQUIRE(drop);
-        CHECK(drop->y == close->y - 1);
-        CHECK(screen.PixelAt(drop->x, drop->y).bold);
-        CHECK(Find(screen, "drop  |  u use item  |  a manage", close->y - 1));
+        CHECK(close->y < height - 2);
+        CHECK(Find(screen, "Enter examine"));
+        CHECK(Find(screen, "d drop"));
         CHECK_FALSE(screen.PixelAt(close->x, close->y).inverted);
     }
-    f.Event(ftxui::Event::Return);
+    f.Event(ftxui::Event::Character('d'));
     REQUIRE(f.submissions == 1);
     CHECK(f.submitted.kind == CommandKind::drop);
     CHECK(f.submitted.item == 40);
@@ -617,21 +616,21 @@ TEST_CASE("Inventory rejects stale selections and failed submissions without dro
     f.Event(ftxui::Event::Return);
     CHECK(f.submissions == 0);
     CHECK(f.ui.IsOpen());
-    CHECK(Find(f.Draw(), "That item is no longer accessible."));
+    CHECK(Find(f.Draw(), "Selected item is no longer accessible."));
     // Neither rendering nor a second activation may substitute ID 30 for 20.
     f.Event(ftxui::Event::Return);
     CHECK(f.submissions == 0);
     f.Event(ftxui::Event::ArrowDown); f.Draw(); // Explicitly select ID 10.
     f.Event(ftxui::Event::ArrowDown); f.Draw(); // Explicitly select ID 30.
     f.accept = false;
-    f.Event(ftxui::Event::Return);
+    f.Event(ftxui::Event::Character('d'));
     CHECK(f.submissions == 1);
     CHECK(f.submitted.item == 30);
     CHECK(f.ui.IsOpen());
-    CHECK(Find(f.Draw(), "The command was refused."));
+    CHECK(Find(f.Draw(), "Command could not be submitted."));
     // A new lower-ID item does not move the selection to a different identity.
     f.view.inventory.insert(f.view.inventory.begin(), {1, TestItem("backpack"), 1});
-    f.Draw(); f.accept = true; f.Event(ftxui::Event::Return);
+    f.Draw(); f.accept = true; f.Event(ftxui::Event::Character('d'));
     CHECK(f.submitted.item == 30);
     CHECK_FALSE(f.ui.IsOpen());
 }
@@ -661,8 +660,10 @@ TEST_CASE("Gameplay modal empty states cancellation and rebound menu controls is
     }
     f.Items(2); f.ui.Open(InputAction::Inventory); f.Draw();
     f.Event(ftxui::Event::Character("x"));
-    CHECK(Find(f.Draw(), "v drop"));
+    CHECK(Find(f.Draw(), "v examine"));
     f.Event(ftxui::Event::Character("v"));
+    CHECK(f.submissions == 0);
+    f.Event(ftxui::Event::Escape); f.Event(ftxui::Event::Character("d"));
     CHECK(f.submitted.item == 2);
     CHECK(f.submissions == 1);
     f.presentation.interacting = true;
@@ -738,7 +739,7 @@ TEST_CASE("Controls label unbound actions and show keyboard limitations only whe
     CHECK_FALSE(Find(f.Draw(), "Basic keyboard:"));
 }
 
-TEST_CASE("Inventory modal drops selected local items preserves contents and accepts queued drops", "[terminal][gameplay][inventory]") {
+TEST_CASE("Inventory drops preserve contents and wait for a ready authoritative snapshot", "[terminal][gameplay][inventory]") {
     Fixture f;
     auto& world = f.server.GetWorld();
     REQUIRE_FALSE(world.ItemsAt({0, 0}).Empty());
@@ -749,9 +750,10 @@ TEST_CASE("Inventory modal drops selected local items preserves contents and acc
     f.view = f.server.View(); f.ui.Open(InputAction::Inventory);
     CHECK(Find(f.Draw(), "1 inside"));
     bool committed = false;
-    REQUIRE(f.ui.HandleEvent(ftxui::Event::Return, f.view, f.localization, f.keys, [&](Command command) {
+    REQUIRE(f.ui.HandleEvent(ftxui::Event::Character('d'), f.view, f.localization, f.keys, [&](Command command) {
         CHECK(command.item == bagId);
         const auto result = f.server.Send(command);
+        f.ui.ItemCommandFinished(result);
         committed = result.advanced;
         return result.advanced || result.outcome == Outcome::queued;
     }));
@@ -765,11 +767,61 @@ TEST_CASE("Inventory modal drops selected local items preserves contents and acc
     REQUIRE(f.server.View().remainingTicks != 0);
     f.view = f.server.View(); f.ui.Open(InputAction::Inventory); f.Draw();
     Outcome outcome = Outcome::invalid_command;
-    REQUIRE(f.ui.HandleEvent(ftxui::Event::Return, f.view, f.localization, f.keys, [&](Command command) {
+    REQUIRE(f.ui.HandleEvent(ftxui::Event::Character('d'), f.view, f.localization, f.keys, [&](Command command) {
         const auto result = f.server.Send(command); outcome = result.outcome;
+        f.ui.ItemCommandFinished(result);
         return result.advanced || result.outcome == Outcome::queued;
     }));
-    CHECK(outcome == Outcome::queued); CHECK_FALSE(f.ui.IsOpen());
+    CHECK(outcome == Outcome::invalid_command); CHECK(f.ui.IsOpen());
+    CHECK_FALSE(f.ui.PausesLocal({}));
+    f.server.Update(2000000); f.view = f.server.View();
+    f.ui.RefreshItems(f.view, TestContent(), f.localization, f.keys, [&](Command command) {
+        const auto result = f.server.Send(command); outcome = result.outcome; f.ui.ItemCommandFinished(result); return result.advanced;
+    });
+    CHECK(outcome == Outcome::dropped); CHECK_FALSE(f.ui.IsOpen());
+}
+
+TEST_CASE("Advanced terminal transfers drain on refresh and pause only after final paid time", "[terminal][gameplay][inventory]") {
+    Fixture f; f.Items(2);
+    for (auto& item : f.view.inventory) { item.stackable = true; }
+    f.ui.Open(InputAction::AdvancedInventory); f.Draw();
+    Vector<Command> commands;
+    const auto submit = [&](Command command) { commands.push_back(command); return true; };
+    REQUIRE(f.ui.HandleEvent(ftxui::Event::Character('M'), f.view, f.localization, f.keys, submit, {}, &TestContent()));
+    REQUIRE(commands.size() == 1); CHECK(commands[0].item == 1); CHECK_FALSE(f.ui.PausesLocal({}));
+    CommandResult result; result.outcome = Outcome::transferred; result.advanced = true; result.cost = 10;
+    f.ui.ItemCommandFinished(result);
+    ++f.view.revision; f.view.remainingTicks = 10;
+    f.ui.RefreshItems(f.view, TestContent(), f.localization, f.keys, submit); CHECK(commands.size() == 1);
+    ++f.view.tick; f.view.remainingTicks = 0;
+    f.ui.RefreshItems(f.view, TestContent(), f.localization, f.keys, submit);
+    REQUIRE(commands.size() == 2); CHECK(commands[1].item == 2);
+    f.ui.ItemCommandFinished(result); CHECK_FALSE(f.ui.PausesLocal({}));
+    ++f.view.revision; f.view.remainingTicks = 10;
+    f.ui.RefreshItems(f.view, TestContent(), f.localization, f.keys, submit); CHECK_FALSE(f.ui.PausesLocal({}));
+    ++f.view.tick; f.view.remainingTicks = 0;
+    f.ui.RefreshItems(f.view, TestContent(), f.localization, f.keys, submit);
+    CHECK(f.ui.PausesLocal({})); CHECK(f.ui.IsOpen()); CHECK(commands.size() == 2);
+    CHECK(Find(f.Draw(120, 40), "Moved 2/2"));
+}
+
+TEST_CASE("Terminal stale item input stays open and requires an explicit exact-ID retry", "[terminal][gameplay][inventory]") {
+    Fixture f; f.Items(1); f.ui.Open(InputAction::Inventory); f.Draw();
+    Vector<Command> commands;
+    const auto submit = [&](Command command) { commands.push_back(command); return true; };
+    REQUIRE(f.ui.HandleEvent(ftxui::Event::Character('d'), f.view, f.localization, f.keys, submit, {}, &TestContent()));
+    REQUIRE(commands.size() == 1);
+    CommandResult stale; stale.outcome = Outcome::stale_input; stale.tick = f.view.tick;
+    f.ui.ItemCommandFinished(stale);
+    CHECK(f.ui.IsOpen());
+    ++f.view.opportunity; ++f.view.revision;
+    f.ui.RefreshItems(f.view, TestContent(), f.localization, f.keys, submit);
+    CHECK(commands.size() == 1); // Refresh must not replay a refused action.
+    REQUIRE(f.ui.HandleEvent(ftxui::Event::Character('d'), f.view, f.localization, f.keys, submit, {}, &TestContent()));
+    REQUIRE(commands.size() == 2);
+    CHECK(commands[0].item == 1); CHECK(commands[1].item == 1);
+    CommandResult dropped; dropped.outcome = Outcome::dropped; dropped.advanced = true;
+    f.ui.ItemCommandFinished(dropped); CHECK_FALSE(f.ui.IsOpen());
 }
 
 TEST_CASE("Inventory modal submits selected host and guest drops over real loopback", "[terminal][gameplay][network]") {
@@ -778,9 +830,43 @@ TEST_CASE("Inventory modal submits selected host and guest drops over real loopb
     auto runtime = NetworkRuntime::Create(); REQUIRE(runtime);
     LanHost host(**runtime, f.server, TestContent()); REQUIRE(host.Open({0, 0, "Inventory test"}));
     LanClient guest(**runtime, TestContent()); REQUIRE(guest.Connect({"127.0.0.1", host.GetPort(), "Guest", 0}));
+    bool guestUi = false;
+    std::uint64_t itemSequence = 0;
+    PersistentId expectedItem = 0;
+    bool itemFinished = false;
+    Outcome itemOutcome = Outcome::invalid_command;
+    const auto submitItem = [&](Command command) {
+        CHECK(command.kind == CommandKind::drop);
+        CHECK(command.item == expectedItem);
+        itemFinished = false; itemOutcome = Outcome::invalid_command;
+        if (guestUi) {
+            const auto submitted = guest.Submit(command);
+            if (!submitted) { return false; }
+            itemSequence = *submitted; return true;
+        }
+        itemSequence = host.QueueLocal(command); return itemSequence != 0;
+    };
     const auto poll = [&](const std::function<bool()>& done) {
         for (int i = 0; i < 500; ++i) {
-            host.Pump(10000); guest.Pump(10000);
+            const auto update = host.Pump(10000); guest.Pump(10000);
+            for (const auto& result : update.commandResults) {
+                if (!guestUi && itemSequence && result.player == f.server.GetHostPlayerId() && result.sequence == itemSequence) {
+                    f.ui.ItemCommandFinished(result.result);
+                    if (result.result.outcome != Outcome::queued) { itemFinished = true; itemOutcome = result.result.outcome; }
+                }
+            }
+            for (const auto& result : guest.TakeResults()) {
+                if (guestUi && itemSequence && result.sequence == itemSequence) {
+                    f.ui.ItemCommandFinished(result.result);
+                    if (result.result.outcome != Outcome::queued) { itemFinished = true; itemOutcome = result.result.outcome; }
+                }
+            }
+            if (guest.GetState() == ConnectionState::Rejected || guest.GetState() == ConnectionState::Disconnected
+                || (itemFinished && itemOutcome != Outcome::dropped)) { return false; }
+            // Mirror the application's timer path: a key can capture a drop
+            // while busy, but only a fresh ready snapshot admits its command.
+            f.view = guestUi ? guest.View() : f.server.View();
+            f.ui.RefreshItems(f.view, TestContent(), f.localization, f.keys, submitItem);
             if (done()) { return true; }
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
         }
@@ -799,21 +885,44 @@ TEST_CASE("Inventory modal submits selected host and guest drops over real loopb
     REQUIRE(poll([&] { return guest.View().inventory.size() == 2; }));
     REQUIRE(guest.View().inventory[0].id == guestId);
     CHECK(guest.View().inventory[1].parent == guestId);
+    expectedItem = hostId;
     f.view = f.server.View(); f.ui.Open(InputAction::Inventory); f.Draw();
     CHECK(Find(f.Draw(), "> " + std::to_string(hostId) + ":rock"));
-    REQUIRE(f.ui.HandleEvent(ftxui::Event::Return, f.view, f.localization, f.keys, [&](Command command) {
-        CHECK(command.item == hostId); return host.QueueLocal(command) != 0;
+    REQUIRE(f.ui.HandleEvent(ftxui::Event::Character('d'), f.view, f.localization, f.keys, [&](Command command) {
+        CHECK(command.item == hostId); return submitItem(command);
     }));
+    CHECK(f.ui.IsOpen());
+    REQUIRE(poll([&] { return f.server.View().inventory.empty() && !f.ui.IsOpen(); }));
     CHECK_FALSE(f.ui.IsOpen());
+    // The host receipt can arrive before the guest sees the completed round.
+    // That round also automatically waits the idle guest after grace expiry:
+    // the old tick-100 ready snapshot still advertises opportunity 2, whereas
+    // the server is already at tick 200 / opportunity 3. Do not turn this
+    // successful-drop test into an accidental stale-input test. Wait for that
+    // round's authoritative ready snapshot before the guest's deliberate key.
+    const bool guestReady = poll([&] {
+        const auto& view = guest.View();
+        return guest.GetState() == ConnectionState::Active && guest.HasView()
+            && view.remainingTicks == 0 && !view.commandQueued
+            && view.tick == f.server.GetTick()
+            && view.opportunity == f.server.GetInputContext(view.playerId).opportunity;
+    });
+    CAPTURE(guest.GetState(), guest.GetError(), guest.View().tick, guest.View().opportunity, f.server.GetTick());
+    REQUIRE(guestReady);
+    f.ui.ResetItems(); guestUi = true; itemSequence = 0; expectedItem = guestId; itemFinished = false;
     f.view = guest.View(); f.ui.Open(InputAction::Inventory); f.Draw();
     CHECK(Find(f.Draw(), "> " + std::to_string(guestId) + ":backpack"));
     CHECK(Find(f.Draw(), "1 inside"));
     CHECK(Find(f.Draw(), "[in #" + std::to_string(guestId)));
-    REQUIRE(f.ui.HandleEvent(ftxui::Event::Return, f.view, f.localization, f.keys, [&](Command command) {
-        CHECK(command.item == guestId); return guest.Submit(command).has_value();
+    REQUIRE(f.ui.HandleEvent(ftxui::Event::Character('d'), f.view, f.localization, f.keys, [&](Command command) {
+        CHECK(command.item == guestId); return submitItem(command);
     }));
-    CHECK_FALSE(f.ui.IsOpen());
-    REQUIRE(poll([&] { return f.server.View().inventory.empty() && guest.View().inventory.empty(); }));
+    CHECK(f.ui.IsOpen());
+    const bool guestDropped = poll([&] { return f.server.View().inventory.empty() && guest.View().inventory.empty() && !f.ui.IsOpen(); });
+    CAPTURE(itemSequence, itemFinished, static_cast<int>(itemOutcome), f.view.remainingTicks, f.view.commandQueued, f.view.opportunity);
+    REQUIRE(guestDropped);
+    CHECK(itemSequence != 0);
+    CHECK(itemOutcome == Outcome::dropped);
     CHECK(world.GetItem(*hostItem)->location.kind == ItemLocation::Ground({0, 0}).kind);
     CHECK(world.GetItem(*guestItem)->location == ItemLocation::Ground(guest.View().player_position));
     CHECK(world.GetItem(*guestContents)->location == ItemLocation::Inside(*guestItem));

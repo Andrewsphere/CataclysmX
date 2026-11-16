@@ -28,6 +28,7 @@ public:
     bool player = false;
     std::uint64_t turns = 0;
     Vector<ItemHandle> inventory;
+    ItemHandle wieldedItem{};
     std::uint32_t speed = 100;
     ActionDeadline actionDeadline{};
     bool parked = false;

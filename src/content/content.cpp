@@ -792,14 +792,103 @@ bool ParseSharedCapability(PendingCapability& pending, ItemDefinition& item, Ite
     return true;
 }
 
+bool ParseItemArt(yyjson_val* value, TextArt& art, const Context& context) {
+    if (!yyjson_is_arr(value) || yyjson_arr_size(value) > 128) {
+        return context.Fail("expected an art array of at most 128 UTF-8 lines");
+    }
+    Vector<String> lines;
+    std::size_t totalBytes = 0;
+    std::size_t index, count;
+    yyjson_val* line;
+    yyjson_arr_foreach(value, index, count, line) {
+        const auto child = ArrayElement(context, index);
+        if (!yyjson_is_str(line)) { return child.Fail("expected an art line string"); }
+        const auto text = JsonString(line);
+        if (text.size() > 4096 || text.size() > 131072 - totalBytes) {
+            return child.Fail("art source exceeds 4096 bytes per line or 131072 bytes total");
+        }
+        totalBytes += text.size();
+        lines.emplace_back(text.data(), text.size());
+    }
+    Diagnostics details;
+    auto parsed = ParseTextArt({lines.data(), lines.size()}, context.diagnostics ? &details : nullptr);
+    AppendBehaviorDiagnostics(details, context);
+    if (!parsed) { return false; }
+    art = eastl::move(*parsed);
+    return true;
+}
+
+bool ParseItemMelee(yyjson_val* object, MeleeProfile& profile, const Context& context) {
+    if (!CheckObject(object, {"damage", "attack_cost", "hands"}, context)) { return false; }
+    if (auto* cost = yyjson_obj_get(object, "attack_cost")) {
+        if (!ReadBoundedInteger(cost, 1, 1000000, profile.attackCost, context.Child("attack_cost"))) { return false; }
+    }
+    if (auto* hands = yyjson_obj_get(object, "hands")) {
+        std::uint32_t amount = 0;
+        if (!ReadBoundedInteger(hands, 1, 2, amount, context.Child("hands"))) { return false; }
+        profile.hands = static_cast<std::uint8_t>(amount);
+    }
+    auto* damage = yyjson_obj_get(object, "damage");
+    const auto damageContext = context.Child("damage");
+    if (!yyjson_is_arr(damage) || yyjson_arr_size(damage) == 0 || yyjson_arr_size(damage) > damage_type_count) {
+        return damageContext.Fail("expected nonempty melee damage with at most one packet per damage type");
+    }
+    struct NamedType { eastl::string_view name; DamageType type; };
+    static constexpr NamedType types[] = {
+        {"blunt", DamageType::Blunt}, {"slashing", DamageType::Slashing},
+        {"piercing", DamageType::Piercing}, {"ballistic", DamageType::Ballistic},
+        {"heat", DamageType::Heat}, {"chemical", DamageType::Chemical}, {"choking", DamageType::Choking},
+    };
+    std::size_t index, count;
+    yyjson_val* value;
+    yyjson_arr_foreach(damage, index, count, value) {
+        const auto child = ArrayElement(damageContext, index);
+        DamagePacket packet;
+        if (!CheckObject(value, {"type", "amount", "penetration"}, child)) { return false; }
+        auto* type = yyjson_obj_get(value, "type");
+        if (!yyjson_is_str(type)) { return child.Child("type").Fail("expected a damage type name"); }
+        bool found = false;
+        for (const auto& entry : types) {
+            if (JsonString(type) == entry.name) { packet.type = entry.type; found = true; break; }
+        }
+        if (!found) { return child.Child("type").Fail("unknown damage type name"); }
+        for (const auto& previous : profile.damage) {
+            if (previous.type == packet.type) { return child.Child("type").Fail("duplicate melee damage type"); }
+        }
+        if (!ReadBoundedInteger(yyjson_obj_get(value, "amount"), 1, 1000000, packet.amount, child.Child("amount"))) {
+            return false;
+        }
+        if (auto* penetration = yyjson_obj_get(value, "penetration")) {
+            if (!ReadBoundedInteger(penetration, 0, 1000000, packet.penetration, child.Child("penetration"))) { return false; }
+        }
+        profile.damage.push_back(packet);
+    }
+    // Packet order is retained: damage application may be order-sensitive.
+    return true;
+}
+
 bool ParseItem(yyjson_val* object, PendingItem& item, const ItemBehaviorRegistry& registry) {
     const auto& context = item.context;
     auto& definition = item.definition;
-    if (!CheckObject(object, {"type", "id", "name", "mass_g", "volume_ml", "capabilities", "tool_traits", "recovery_allowed", "crafting_power"}, context)
+    if (!CheckObject(object, {"type", "id", "name", "description", "art", "melee", "mass_g", "volume_ml", "capabilities", "tool_traits", "recovery_allowed", "crafting_power"}, context)
         || !ReadId(yyjson_obj_get(object, "id"), definition.id, context.Child("id"))
         || !ReadString(yyjson_obj_get(object, "name"), definition.name, context.Child("name"))
         || !ReadItemInteger(object, "mass_g", 0, definition.massGrams, context)
         || !ReadItemInteger(object, "volume_ml", 1, definition.volumeMl, context)) { return false; }
+    if (auto* description = yyjson_obj_get(object, "description")) {
+        if (!yyjson_is_str(description)) { return context.Child("description").Fail("expected a description string"); }
+        const auto text = JsonString(description);
+        if (std::memchr(text.data(), 0, text.size())) { return context.Child("description").Fail("embedded NUL is not allowed"); }
+        definition.description.assign(text.data(), text.size());
+    }
+    if (auto* art = yyjson_obj_get(object, "art")) {
+        if (!ParseItemArt(art, definition.art, context.Child("art"))) { return false; }
+    }
+    if (auto* melee = yyjson_obj_get(object, "melee")) {
+        MeleeProfile profile;
+        if (!ParseItemMelee(melee, profile, context.Child("melee"))) { return false; }
+        definition.melee = eastl::move(profile);
+    }
     if (!ParseTraits(yyjson_obj_get(object, "tool_traits"), item.traits, context.Child("tool_traits"))) { return false; }
     if (auto* recovery = yyjson_obj_get(object, "recovery_allowed")) {
         if (!ReadBool(recovery, definition.recoveryAllowed, context.Child("recovery_allowed"))) { return false; }

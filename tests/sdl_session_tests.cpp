@@ -1,6 +1,7 @@
 #include "sdl/session.h"
 #include "content_fixture.h"
 #include "core/first_house_scenario.h"
+#include "client/item_ui.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <chrono>
@@ -83,6 +84,17 @@ bool WaitForReply(Session& session, WakeState& wake, SessionReply& reply) {
     std::unique_lock lock(wake.mutex);
     for (;;) {
         if (session.TryPopReply(reply)) { return true; }
+        if (wake.condition.wait_until(lock, deadline) == std::cv_status::timeout) { return false; }
+    }
+}
+}
+
+namespace {
+bool WaitForItemPause(Session& session, WakeState& wake, SessionSnapshot& snapshot) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    std::unique_lock lock(wake.mutex);
+    for (;;) {
+        if (session.TakeSnapshot(snapshot) && snapshot.paused && !snapshot.view.remainingTicks && !snapshot.view.commandQueued) { return true; }
         if (wake.condition.wait_until(lock, deadline) == std::cv_status::timeout) { return false; }
     }
 }
@@ -335,7 +347,6 @@ TEST_CASE("AI inspection is paused owner work with identified owned captures", "
     CHECK(retained.image.cells[0].symbol == firstSymbol);
     CHECK(retained.details[0] == firstDetail);
 }
-
 TEST_CASE("First-house session rejects a demo-only catalog before construction", "[sdl][session][house]") {
     WakeState wake;
     SessionOptions options;
@@ -394,4 +405,138 @@ TEST_CASE("Session completion publishes the next opportunity before accepting an
         CHECK(snapshot.view.lastInputSequence == i+1);
         opportunity = snapshot.view.opportunity;
     }
+}
+
+TEST_CASE("SDL item owner consumes transfer recovery then pauses with the window retained", "[sdl][session][inventory]") {
+    WakeState wake; SessionOptions options;
+    options.settings.viewRadius = 4;
+    options.settings.pacing.rateLimited = true;
+    options.settings.pacing.pauseWhenIdle = false; // Browsing must still pause.
+    options.settings.pacing.ticksPerSecond = 1000;
+    Session session(TestContent(), 21, options, Wake, &wake);
+    SessionReply reply; REQUIRE(WaitForReply(session, wake, reply)); REQUIRE(reply.kind == ReplyKind::Started);
+    SessionRequest request; request.kind = RequestKind::Pause; request.generation = 21; request.id = 1;
+    REQUIRE(session.TrySubmit(request) == EnqueueResult::Accepted);
+    REQUIRE(WaitForReply(session, wake, reply)); REQUIRE(reply.kind == ReplyKind::Paused);
+    SessionSnapshot snapshot; REQUIRE(session.TakeSnapshot(snapshot));
+    request.kind = RequestKind::PauseForItems; request.id = 10; request.player = snapshot.view.playerId;
+    REQUIRE(session.TrySubmit(request) == EnqueueResult::Accepted);
+    REQUIRE(WaitForReply(session, wake, reply)); REQUIRE(reply.kind == ReplyKind::Paused); REQUIRE(reply.id == 10);
+    REQUIRE(session.TakeSnapshot(snapshot)); REQUIRE(snapshot.view.remainingTicks == 0);
+    Localization localization; REQUIRE(localization.Load(CATACLYSMX_LOC_DIRECTORY, "en"));
+    const auto keys = DefaultKeymap();
+    ItemUi ui; ui.Open(true); ui.Refresh(snapshot.view, TestContent(), localization, keys);
+    ui.Handle({"Tab"}, keys, snapshot.view, TestContent(), localization);
+    REQUIRE(ui.Frame().activePane == 1);
+    REQUIRE_FALSE(ui.Frame().panes[1].rows.empty());
+    ui.Handle({"Enter"}, keys, snapshot.view, TestContent(), localization);
+    const auto transfer = ui.TakeCommand(snapshot.view); REQUIRE(transfer);
+    REQUIRE(transfer->kind == CommandKind::transfer_item);
+    const auto tick = snapshot.view.tick;
+    request.kind = RequestKind::ItemCommand; request.id = 2; request.player = snapshot.view.playerId;
+    request.opportunity = snapshot.view.opportunity; request.command = *transfer;
+    REQUIRE(session.TrySubmit(request) == EnqueueResult::Accepted);
+    REQUIRE(WaitForReply(session, wake, reply)); REQUIRE(reply.kind == ReplyKind::Admission);
+    CHECK(ui.NeedsTime()); CHECK(ui.IsOpen());
+    // Escape cancels the remainder, not the authoritative admitted item.
+    ui.Handle({"Escape"}, keys, snapshot.view, TestContent(), localization);
+    REQUIRE(WaitForReply(session, wake, reply)); REQUIRE(reply.kind == ReplyKind::Completed);
+    REQUIRE(reply.id == 2); REQUIRE(reply.result.outcome == Outcome::transferred);
+    REQUIRE(reply.result.cost > 0);
+    const auto cost = reply.result.cost;
+    ui.CommandFinished(reply.result);
+    CHECK(ui.IsOpen()); CHECK(ui.IsAdvanced()); CHECK(ui.NeedsTime());
+    REQUIRE(WaitForItemPause(session, wake, snapshot));
+    CHECK(snapshot.view.tick >= tick + cost);
+    CHECK(snapshot.runtimeSettings.pacing.pauseWhenIdle == false);
+    CHECK(snapshot.view.remainingTicks == 0);
+    ui.Refresh(snapshot.view, TestContent(), localization, keys);
+    CHECK_FALSE(ui.NeedsTime()); CHECK_FALSE(ui.TakeCommand(snapshot.view));
+    const auto paidTick = snapshot.view.tick;
+    // An identified read round-trip proves the retained modal stays paused.
+    request.kind = RequestKind::Inspect; request.id = 3; request.cursor = snapshot.view.player_position;
+    REQUIRE(session.TrySubmit(request) == EnqueueResult::Accepted);
+    REQUIRE(WaitForReply(session, wake, reply)); REQUIRE(reply.kind == ReplyKind::Inspected);
+    CHECK(reply.inspectionView.tick == paidTick);
+
+    ui.Close(); ui.Open(); ui.Refresh(snapshot.view, TestContent(), localization, keys);
+    REQUIRE_FALSE(ui.Frame().panes[0].rows.empty());
+    ui.Handle({"d"}, keys, snapshot.view, TestContent(), localization);
+    const auto drop = ui.TakeCommand(snapshot.view); REQUIRE(drop);
+    request.kind = RequestKind::ItemCommand; request.id = 4; request.command = *drop;
+    request.opportunity = snapshot.view.opportunity;
+    REQUIRE(session.TrySubmit(request) == EnqueueResult::Accepted);
+    REQUIRE(WaitForReply(session, wake, reply)); REQUIRE(reply.kind == ReplyKind::Admission);
+    REQUIRE(WaitForReply(session, wake, reply)); REQUIRE(reply.kind == ReplyKind::Completed);
+    REQUIRE(reply.result.outcome == Outcome::dropped);
+    ui.CommandFinished(reply.result);
+    CHECK_FALSE(ui.IsOpen()); CHECK(ui.NeedsTime());
+    REQUIRE(WaitForItemPause(session, wake, snapshot));
+    ui.Refresh(snapshot.view, TestContent(), localization, keys);
+    CHECK_FALSE(ui.NeedsTime()); CHECK(snapshot.view.tick > paidTick);
+
+    // Stale opportunities and wrong players never leave browsing running.
+    request.id = 5; request.opportunity = 0;
+    REQUIRE(session.TrySubmit(request) == EnqueueResult::Accepted);
+    REQUIRE(WaitForReply(session, wake, reply)); REQUIRE(reply.kind == ReplyKind::Completed);
+    CHECK(reply.result.outcome == Outcome::stale_input); CHECK(reply.id == 5);
+    REQUIRE(session.TakeSnapshot(snapshot)); CHECK(snapshot.paused);
+    request.id = 6; request.player = 0;
+    REQUIRE(session.TrySubmit(request) == EnqueueResult::Accepted);
+    REQUIRE(WaitForReply(session, wake, reply)); CHECK(reply.kind == ReplyKind::Cancelled); CHECK(reply.id == 6);
+}
+
+TEST_CASE("Opening an SDL item window waits for an already paid action before acknowledging pause", "[sdl][session][inventory]") {
+    WakeState wake; SessionOptions options;
+    options.settings.pacing.rateLimited = true; options.settings.pacing.ticksPerSecond = 1000;
+    Session session(TestContent(), 22, options, Wake, &wake);
+    SessionReply reply; REQUIRE(WaitForReply(session, wake, reply)); REQUIRE(reply.kind == ReplyKind::Started);
+    SessionRequest request; request.kind = RequestKind::Pause; request.generation = 22; request.id = 1;
+    REQUIRE(session.TrySubmit(request) == EnqueueResult::Accepted);
+    REQUIRE(WaitForReply(session, wake, reply)); REQUIRE(reply.kind == ReplyKind::Paused);
+    SessionSnapshot snapshot; REQUIRE(session.TakeSnapshot(snapshot));
+    request.kind = RequestKind::ResumeAndCommand; request.id = 2;
+    request.player = snapshot.view.playerId; request.opportunity = snapshot.view.opportunity;
+    const auto tick = snapshot.view.tick;
+    REQUIRE(session.TrySubmit(request) == EnqueueResult::Accepted);
+    REQUIRE(WaitForReply(session, wake, reply)); REQUIRE(reply.kind == ReplyKind::Admission);
+    REQUIRE(WaitForReply(session, wake, reply)); REQUIRE(reply.kind == ReplyKind::Completed);
+    REQUIRE(reply.result.cost > 0); const auto cost = reply.result.cost;
+    request.kind = RequestKind::PauseForItems; request.id = 3;
+    REQUIRE(session.TrySubmit(request) == EnqueueResult::Accepted);
+    REQUIRE(WaitForReply(session, wake, reply)); REQUIRE(reply.kind == ReplyKind::Paused); CHECK(reply.id == 3);
+    REQUIRE(session.TakeSnapshot(snapshot)); CHECK(snapshot.paused);
+    CHECK(snapshot.view.remainingTicks == 0); CHECK(snapshot.view.tick >= tick + cost);
+}
+
+TEST_CASE("SDL item recovery rejects controls and replacement commands by receipt identity", "[sdl][session][inventory]") {
+    WakeState wake; SessionOptions options;
+    options.settings.pacing.rateLimited = true; options.settings.pacing.ticksPerSecond = 1;
+    Session session(TestContent(), 23, options, Wake, &wake);
+    SessionReply reply; REQUIRE(WaitForReply(session, wake, reply)); REQUIRE(reply.kind == ReplyKind::Started);
+    SessionRequest request; request.generation = 23; request.kind = RequestKind::Pause; request.id = 1;
+    REQUIRE(session.TrySubmit(request) == EnqueueResult::Accepted);
+    REQUIRE(WaitForReply(session, wake, reply)); REQUIRE(reply.kind == ReplyKind::Paused);
+    SessionSnapshot snapshot; REQUIRE(session.TakeSnapshot(snapshot));
+    request.player = snapshot.view.playerId; request.opportunity = snapshot.view.opportunity;
+    request.kind = RequestKind::ItemCommand; request.id = 2; // A long paid wait isolates recovery from admission.
+    REQUIRE(session.TrySubmit(request) == EnqueueResult::Accepted);
+    REQUIRE(WaitForReply(session, wake, reply)); REQUIRE(reply.kind == ReplyKind::Admission); CHECK(reply.id == 2);
+    REQUIRE(WaitForReply(session, wake, reply)); REQUIRE(reply.kind == ReplyKind::Completed); CHECK(reply.id == 2);
+    REQUIRE(reply.result.cost == ticks_per_turn);
+    request.kind = RequestKind::Pause; request.id = 3;
+    REQUIRE(session.TrySubmit(request) == EnqueueResult::Accepted);
+    request.kind = RequestKind::Resume; request.id = 4;
+    REQUIRE(session.TrySubmit(request) == EnqueueResult::Accepted);
+    request.kind = RequestKind::ItemCommand; request.id = 5;
+    REQUIRE(session.TrySubmit(request) == EnqueueResult::Accepted);
+    request.kind = RequestKind::Pause; request.id = 6; request.generation = 22;
+    REQUIRE(session.TrySubmit(request) == EnqueueResult::Accepted);
+    for (std::uint64_t id = 3; id <= 6; ++id) {
+        REQUIRE(WaitForReply(session, wake, reply)); CHECK(reply.id == id); CHECK(reply.generation == 23);
+        CHECK(reply.kind == (id == 6 ? ReplyKind::Stale : ReplyKind::Cancelled));
+    }
+    REQUIRE(session.TakeSnapshot(snapshot)); CHECK_FALSE(snapshot.paused);
+    CHECK(snapshot.view.remainingTicks > 0);
+    session.Stop();
 }

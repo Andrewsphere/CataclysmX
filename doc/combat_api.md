@@ -25,6 +25,21 @@ the scheduling/execution path remain responsible for validating an actual attack
 
 ## Body and recovery
 
+### Wielded melee contacts
+
+Equipment belongs to World inventory ownership (`inventory_engine.md`). A wielded
+item replaces unarmed `attackDamage` with `ItemMelee` packets and scales attack
+timing from its attack cost. Required hands gate use but disability does not drop
+equipment. Heavy actions capture persistent weapon identity with their recovery
+duration; execution cannot substitute a replacement weapon or unarmed attack.
+
+`DamageContact(actor, source, part, span<const DamagePacket>)` applies protection
+and penetration independently to each component, sums remaining hundredths, then
+rounds once to whole HP and calls injury/disruption once. `Damage` delegates a
+single component to this path. A strike draws accuracy, parry and hit location
+once, irrespective of component count. This prevents duplicated reactions and
+fractional rounding loss in mixed damage profiles.
+
 Initial balancing defaults, subject to tuning, are 100 HP per detailed head, torso,
 hand and leg; simple attack apparatus and locomotion have 60 each, and Core 100.
 HP above zero is fully functional; detailed extremities at zero are broken. The

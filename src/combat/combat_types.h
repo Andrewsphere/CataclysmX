@@ -21,6 +21,7 @@ struct DamagePacket {
     DamageType type = DamageType::Blunt;
     std::uint32_t amount = 0;
     std::uint32_t penetration = 0;
+    bool operator==(const DamagePacket&) const = default;
 };
 
 struct CombatState {

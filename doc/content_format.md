@@ -203,6 +203,15 @@ Mass is an unsigned 32-bit integer including zero; external volume is a positive
 unsigned 32-bit integer. Fractions, negative values, booleans, overflow, duplicate
 keys, and unknown fields are errors. Items do not inherit terrain appearance.
 
+Items also accept optional `description`, `art`, and `melee` fields. Description
+is plain text with authored fallback for `item.<id>.description`. Art is an array
+of UTF-8 lines parsed once into colored, single-cell runs. Melee specifies typed
+damage packets in **hundredths of HP**, base attack cost, and one/two hands;
+missing melee uses the immutable 4 HP blunt improvised-item profile. Existing
+definitions without these fields remain valid. See [item presentation and melee
+content](item_presentation.md) for the closed schemas, color tags, exact Unicode
+ranges, bounds, errors, and API ownership.
+
 ```json5
 {
   type: 'item', id: 'field_charger', name: 'field charger', mass_g: 500, volume_ml: 500,
@@ -325,9 +334,9 @@ Behavior bindings use `shared_ptr<const ItemBehaviorDefinition>` so catalog
 copies can share immutable parsed definitions and action schemas without cloning
 runtime behavior. Each live item creates its own mutable behavior state. Catalogs
 retain no registry pointers; a registry and the input buffers may be destroyed as
-soon as loading returns. Definition equality compares physical values, capability
-metadata/config values, typed resources, binding identities, and behavior schemas,
-never shared-pointer identity.
+soon as loading returns. Definition equality compares description, parsed art,
+optional melee, physical values, capability metadata/config values, typed resources,
+binding identities, and behavior schemas, never shared-pointer identity.
 
 ## API, ownership, and errors
 

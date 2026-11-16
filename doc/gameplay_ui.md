@@ -73,6 +73,7 @@ the terminal is small; history uses at most half the gameplay height.
 | --- | --- | --- |
 | `inventory` | `i` | Carried descendants and accessible ground items, selected by persistent ID |
 | `use` | `u` | Same item list with Enter-to-use |
+| `advanced_inventory` | `/` | Two exact-storage panes and quantity transfers |
 | `players` | `P` | Player connection, readiness, queue and grace status |
 | `help` | `F1` | Shortcut reference, interaction bindings and fixed LAN keys |
 | `quick_actions` | `a` | Select common gameplay commands and windows with arrows |
@@ -84,7 +85,7 @@ new bindings never silently steal a user-configured key.
 
 Windows overlay a subdued gameplay screen. Their height follows the content,
 so empty or short lists do not produce a nearly empty full-height window.
-Preferred widths are 72 columns for Inventory, 80 for Players, 84 for Controls,
+Preferred widths are 90 columns for Inventory, 116 for advanced inventory, 80 for Players, 84 for Controls,
 and 64 for Quick actions; all clamp to the terminal with at least two cells of
 exterior margin. A narrow clear gutter separates the modal from background
 borders. Titles, instructions and two-row footers stay fixed while content
@@ -94,25 +95,32 @@ roster count. Up/down markers indicate content outside the viewport:
 ```text
         ┌─────────────────────────────────────────────────┐
         │ Inventory                                1 / 2  │
-        │ Select a carried item to drop it.                │
+        │ Carried mass / capacity                         │
         ├─────────────────────────────────────────────────┤
         │ > 7:backpack (1 inside)                          │
         │   12:rock                                        │
         │                                                 │
         ├─────────────────────────────────────────────────┤
-        │ Up/k/Down/j select | Enter drop                  │
+        │ Enter examine | d drop | u use | a contents      │
         │ Escape close                                    │
         └─────────────────────────────────────────────────┘
 ```
 
-Inventory uses Menu up/down to select with wrapping and Menu accept to drop.
-Selection and scrolling survive resize and reopening. Carried descendants and
-ground items on the player's tile follow the carried list, with location and
-parent/installation IDs. Enter drops only directly carried roots. Dropping a
-container drops its contents with it.
+Inventory uses the shared `client/item_ui.h` controller. Menu up/down selects with
+wrapping; Menu accept or Items Examine opens examination. Items Drop drops only
+directly carried roots, including their contents. Trees, stack grouping, physical
+columns, descriptions, colored art, wielding and advanced inventory are described
+in [shared item UI](inventory_ui.md). Selection and scroll survive resize and
+submodal cancellation.
 
-Accept is a commit boundary: successful submission, including a queued command,
-closes Inventory. Escape cannot undo a submitted command. Rejected submissions
+Each pane has a fixed **Name / Count / Volume / Mass** heading above its scrolling
+rows. Numeric columns are right-aligned using widths shared by every row and the
+heading; the name column takes the remaining space. Names retain persistent IDs,
+contents/parent annotations and the shared controller's ground marker. The
+terminal does not add a second ground suffix.
+
+The final authoritative successful result closes ordinary Inventory; admission
+and queued receipts leave it awaiting resolution. Escape cannot undo a submitted command. Rejected submissions
 keep the modal open with feedback. If the selected ID disappears between drawing
 and activation, no command is sent; review the reconciled selection and activate
 again. A vanished selection stays invalid until explicit navigation, even if
@@ -126,7 +134,7 @@ actions selected by `ItemActionInfo::category == Operate`. Contents-management
 actions do not turn a single-function device into a multi-use menu. One
 functional action submits immediately, or enters its argument prompt; multiple
 functional actions open a selectable menu. `gameplay/use` and `interaction/use`
-(default **u**) open item selection, where Enter invokes use instead of drop.
+(default **u**) open item selection, where Enter invokes use instead of examination.
 
 `items/apply` (default **a**, labelled Manage) opens actions categorized as
 `ManageContents`, followed by **Store in container** and **Extract to direct inventory**.
@@ -146,9 +154,9 @@ Menu up/down and accept navigate action and target lists. Target IDs remain
 fixed for that prompt: disappearance does not select another target. Navigate
 explicitly to another listed target, or cancel and reopen for a refreshed list.
 
-The selected item's mass (including descendants), volume, ordinary storage
-usage/capacity, charge per capability, activity mode and remaining ticks are
-shown above the list; the header shows total carried mass/carry capacity.
+The selected item's storage usage/capacity, charge per capability, activity mode
+and remaining ticks are shown in examination; rows show mass/volume/count and
+the header shows total carried mass/carry capacity.
 Action labels, optional activity status, and refusal messages use `ItemText`
 localization keys with their authored fallback text. Availability refusals are
 localized and shown before submission. Actual server
@@ -179,9 +187,10 @@ All modals consume unknown keys and close with Menu
 cancel or physical Escape. Closing never also cancels a direction prompt or
 quits gameplay. Ctrl+c remains the application's reserved exit shortcut.
 
-Opening, browsing and cancelling send no simulation commands. Local time is
-discarded while a modal is open, including opening and closing events, so there
-is no catch-up update. Open LAN hosts continue serving guests and guest snapshots
+Opening, browsing and cancelling send no simulation commands. Uncommitted browsing
+discards local elapsed time, including opening and closing events, so there is no
+catch-up update. Item UI `NeedsTime` allows ordinary timing during committed work
+and through the final paid action delay. Open LAN hosts continue serving guests and guest snapshots
 keep refreshing. Explicit drops use the ordinary authoritative command pipeline
 and action costs. A network endpoint transition closes the modal to avoid
 carrying selected IDs into a different world.
@@ -197,7 +206,7 @@ localization, effective keys, and presentation values. Its DOM owns rendered
 text and cells, but scroll panes reference UI state: draw the returned element
 before the next render or destruction of that `GameplayUi`.
 
-`Open` accepts Inventory, Use, Players, Help and QuickActions. `PausesLocal` identifies an open modal
+`Open` accepts Inventory, AdvancedInventory, Use, Crafting, Players, Help and QuickActions. `PausesLocal` identifies an open modal
 or its opening action; the application combines it with existing modal and host
 timing rules. `HandleEvent` consumes all events while open and accepts a
 `bool(Command)` submission callback for drops, item use and storage. Return true only for an
@@ -207,8 +216,22 @@ runs; omitting it keeps external choices open with feedback. Typed actions avoid
 synthetic keyboard events, re-decoding, and a second elapsed-time update. The
 application owns local/host/guest routing and diagnostics. No server,
 networking object, clock, or entity pointer is retained by this UI. The optional
-final catalog pointer to `HandleEvent` is retained for call-site compatibility;
-generic item selection does not inspect definitions.
+final catalog pointer to `HandleEvent` can supply the immutable item catalog;
+otherwise the catalog from the last render is used. `RefreshItems` refreshes the
+shared controller and drains at most one ready request on timer events as well
+as input. `ItemCommandFinished` forwards exact final results from local sends,
+host updates and guest receipts. `ResetItems` clears state on endpoint changes.
+`Render` refreshes the controller while the snapshot still contains its cells,
+before transferring map cell ownership into the viewport. Network test harnesses
+must mirror the timer path: pumping transport and forwarding matching receipts
+alone cannot dispatch a command captured while the viewed player was busy.
+Readiness in a received snapshot does not guarantee admission: its input
+opportunity can expire while another player resolves a round. A final
+`stale_input` leaves ordinary inventory open with feedback and retains the exact
+selection. Refreshes do not retry refused actions; the player deliberately
+activates the action again. A loopback success test that switches from the host
+to the guest must first receive the guest's current ready opportunity after the
+host's round, rather than act on its previous ready snapshot.
 Selections, action choices and pending commands are owned values. On execution,
 the exact source/target IDs and capability/action pair are checked against the
 current snapshot before dispatch. This keeps snapshot refreshes independent of

@@ -1,10 +1,10 @@
 # Save format
 
-CataclysmX saves are SQLite database files. The strict v10 format is governed by
-one authoritative `metadata.format_version = 10` for both SQL and JSON. The
+CataclysmX saves are SQLite database files. The strict v11 format is governed by
+one authoritative `metadata.format_version = 11` for both SQL and JSON. The
 `metadata` columns are `singleton INTEGER PRIMARY KEY CHECK(singleton=1)`,
 `format_version INTEGER NOT NULL`, and `game_version TEXT NOT NULL`; its single
-row is `(1, 10, "0.1.0")`. The other tables are
+row is `(1, 11, "0.1.0")`. The other tables are
 `world_state(singleton INTEGER PRIMARY KEY CHECK(singleton=1), payload TEXT NOT
 NULL)` and `chunks(x INTEGER NOT NULL, z INTEGER NOT NULL, y INTEGER NOT NULL,
 payload TEXT NOT NULL, PRIMARY KEY(x,z,y))`, and
@@ -14,13 +14,23 @@ Extra application tables/schema objects are rejected.
 
 ## JSON payloads
 
+Version 11 adds required actor `wielded_item`, a canonical unsigned decimal-string
+persistent item ID (zero means unarmed). It must refer to the actor's direct
+inventory. Runtime handles are never serialized. Combat envelope version 2 adds
+unsigned `action.weapon`, zero outside melee windup and otherwise the exact
+committed weapon ID (zero for unarmed). A nonzero pending weapon must match the
+equipped item. Restoration binds equipment after all items have been restored;
+ownership validation rejects inconsistent selections before materialization.
+Formats 7–10 remain readable and upgrade transactionally on write; they default
+to unarmed. Combat envelope version 1 remains readable with a zero weapon ID.
+
 The single `world_state.payload` object has exactly `seed`,
 `generation_version`, `next_id`, `sky_light`, and `session`. `sky_light` is a
 required integer in 0–255: the fixed environment illumination (new-world default
 192), independent of wall-clock time. The session object has exactly
 `tick`, `rng_state`, `player`, `position` (`x`, `z`, `y`), `active_radius`,
 `resident_radius`, `autosave_interval`, `pacing`, `players`, and `circle_residency`.
-`circle_residency` is required in v8/v9/v10 and is either JSON `null` (legacy square
+`circle_residency` is required in v8/v9/v10/v11 and is either JSON `null` (legacy square
 residency) or an exact object `{ "radius_tiles": integer }` with radius in
 0–128 inclusive. Zero is a valid circle radius; the default `CircleResidency`
 value is 78 tiles. Missing, duplicate, unknown, noninteger or out-of-range fields
@@ -145,7 +155,7 @@ tree directly. The controller target is a world position and includes its Y
 coordinate in the v6 state representation. `ValidateItemSnapshot` is the shared item-state and ownership-tree
 validator for both archive paths, dispatching behavior-owned local and relational
 validation. Installation names resolve against the parent definition and its
-  `AcceptsInstallation` policy. Metadata is version 10. Energy and charger state
+  `AcceptsInstallation` policy. Metadata is version 11. Energy and charger state
 remain version 1; door state version 2 adds required signed Y. These schemas use
 unsigned JSON numbers and signed `$i64` target
 coordinates. No capacity clamping or implicit state migration is introduced.
@@ -175,7 +185,7 @@ version 4 introduced authored layers and population. Regeneration depends on the
 supplied immutable content: changed patterns or palettes can change ungenerated
 chunks even when the saved generation version is unchanged. Region plans are
 regenerated, not serialized, and v6 does not itself change the save schema.
-The SQL/JSON save schema is version 10; strict v7/v8/v9 saves are also
+The SQL/JSON save schema is version 11; strict v7/v8/v9/v10 saves are also
 accepted as described below. Save formats v1 through v6 and all other schema
 versions are rejected. In particular, v2 command-count ticks are not silently reinterpreted as
 simulation ticks. Content's own format version is independent of both versions.
@@ -221,13 +231,13 @@ relabeling modern chunks as legacy is invalid.
 `SaveDatabase::Begin` starts the first checkpoint with `BEGIN IMMEDIATE`, checks
 that metadata still matches the opened durable version, and validates the old
 database. Before returning to the caller it rewrites **every** legacy chunk and
-the snapshot, then sets metadata to 10, all inside that transaction. A coordinate
+the snapshot, then sets metadata to 11, all inside that transaction. A coordinate
 list allows decoding/writing one chunk at a time without modifying an active
 chunk scan. Each old row is decoded exactly once during the rewrite; newly
-written v10 rows are never decoded as legacy. Memory rows are unchanged by the
+written v11 rows are never decoded as legacy. Memory rows are unchanged by the
 migration itself. Generation versions 1, 2 and 3 are preserved.
 
-A separate transaction-local effective version switches to 10 only after the
+A separate transaction-local effective version switches to 11 only after the
 full rewrite. Reads and commit validation use this effective version, including
 new caller `WriteChunk` rows; the durable version advances only after SQLite
 commits. Snapshot-only, chunk-only and empty checkpoints all migrate the full

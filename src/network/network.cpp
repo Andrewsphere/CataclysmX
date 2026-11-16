@@ -181,6 +181,19 @@ std::uint64_t ContentFingerprint(const ContentCatalog& content) {
     for (std::size_t i = 0; i < content.ItemCount(); ++i) {
         const auto& item = content.GetItem({static_cast<std::uint32_t>(i + 1)});
         HashString(hash, item.id); HashString(hash, item.name);
+        HashString(hash, item.description);
+        HashNumber(hash, item.art.width); HashNumber(hash, item.art.lines.size());
+        for (const auto& line : item.art.lines) {
+            HashNumber(hash, line.size());
+            for (const auto& run : line) {
+                HashString(hash, run.text); HashNumber(hash, static_cast<std::uint8_t>(run.color)); HashNumber(hash, run.cells);
+            }
+        }
+        const auto& melee = ItemMelee(item);
+        HashNumber(hash, melee.attackCost); HashNumber(hash, melee.hands); HashNumber(hash, melee.damage.size());
+        for (const auto& packet : melee.damage) {
+            HashNumber(hash, static_cast<std::uint8_t>(packet.type)); HashNumber(hash, packet.amount); HashNumber(hash, packet.penetration);
+        }
         HashNumber(hash, item.massGrams); HashNumber(hash, item.volumeMl);
         HashTraits(hash, item.toolTraits);
         HashNumber(hash, item.craftingPower.value); HashNumber(hash, item.craftingEnergyPerWork);

@@ -262,6 +262,7 @@ int main(int argc, char** argv) {
             else { accepted = true; pendingSequence = submitted; pending = actionDescription + " #" + std::to_string(submitted); SetMessage("Action pending."); }
         } else {
             const auto result = server.Send(command);
+            gameplayUi.ItemCommandFinished(result);
             accepted = result.advanced || result.outcome == Outcome::queued || result.outcome == Outcome::craft_paused
                 || result.outcome == Outcome::craft_cancelled;
             SetMessage(Frontend(localization.ResultText(result)));
@@ -380,7 +381,9 @@ int main(int argc, char** argv) {
         }
         for (const auto& result : guest.TakeResults()) {
             SetMessage("Receipt #" + std::to_string(result.sequence) + ": " + Frontend(localization.ResultText(result.result)));
-            if (result.sequence == pendingSequence && result.result.outcome != cataclysmx::Outcome::queued) { pending.clear(); }
+            if (result.sequence == pendingSequence && result.result.outcome != cataclysmx::Outcome::queued) {
+                gameplayUi.ItemCommandFinished(result.result); pending.clear();
+            }
         }
         if (guest.GetState() != cataclysmx::network::ConnectionState::Active
             && guest.GetState() != cataclysmx::network::ConnectionState::Connecting
@@ -390,7 +393,9 @@ int main(int argc, char** argv) {
                 for (const auto& result : update.commandResults) {
                     if (result.player == server.GetHostPlayerId()) {
                         SetMessage(Frontend(localization.ResultText(result.result)));
-                        if (result.sequence == pendingSequence && result.result.outcome != cataclysmx::Outcome::queued) { pending.clear(); }
+                        if (result.sequence == pendingSequence && result.result.outcome != cataclysmx::Outcome::queued) {
+                            gameplayUi.ItemCommandFinished(result.result); pending.clear();
+                        }
                     }
                 }
                 if (update.storageError) {
@@ -404,9 +409,10 @@ int main(int argc, char** argv) {
             }
         }
         // A changed endpoint must not reuse selected persistent IDs from another world.
-        if (stateBefore != guest.GetState() && gameplayUi.IsOpen()) {
-            gameplayUi.Close(); lastUpdate = std::chrono::steady_clock::now(); return true;
+        if (stateBefore != guest.GetState()) {
+            gameplayUi.Close(); gameplayUi.ResetItems(); lastUpdate = std::chrono::steady_clock::now(); return true;
         }
+        gameplayUi.RefreshItems(CurrentView(), *content, localization, settings.Keys(), SubmitCommand);
         if (gameplayUi.IsOpen()) {
             eastl::optional<InputAction> activated;
             gameplayUi.HandleEvent(event, CurrentView(), localization, settings.Keys(), SubmitCommand,
@@ -475,15 +481,15 @@ int main(int argc, char** argv) {
                 return true;
             }
             if (event == ftxui::Event::Character('C')) { host.Close(); SetMessage("LAN closed; guests parked."); return true; }
-            if (event == ftxui::Event::Character('D')) { guest.Disconnect(); pending.clear(); SetMessage("Left LAN session; local game resumed."); return true; }
-            if (event == ftxui::Event::Character('X')) { Connect(directAddress, true); return true; }
-            if (event == ftxui::Event::Return) { Connect(directAddress, false); return true; }
+            if (event == ftxui::Event::Character('D')) { guest.Disconnect(); gameplayUi.ResetItems(); pending.clear(); SetMessage("Left LAN session; local game resumed."); return true; }
+            if (event == ftxui::Event::Character('X')) { gameplayUi.ResetItems(); Connect(directAddress, true); return true; }
+            if (event == ftxui::Event::Return) { gameplayUi.ResetItems(); Connect(directAddress, false); return true; }
             for (int i = 1; i <= 9; ++i) {
                 if (event == ftxui::Event::Character(static_cast<char>('0' + i))
                     && discovery.Sessions().size() >= static_cast<std::size_t>(i)) {
                     const auto& found = discovery.Sessions()[i - 1];
                     if (!found.compatible) { SetMessage("Incompatible content."); }
-                    else { directAddress = std::string(found.address.c_str()) + ":" + std::to_string(found.gamePort); Connect(directAddress, false); }
+                    else { directAddress = std::string(found.address.c_str()) + ":" + std::to_string(found.gamePort); gameplayUi.ResetItems(); Connect(directAddress, false); }
                     return true;
                 }
             }

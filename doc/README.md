@@ -19,6 +19,10 @@
   item overlays, and the three lightbulb demos.
 - [Gameplay UI](gameplay_ui.md): responsive map/status layout, on-demand inventory,
   players and controls, selected-item drops and terminal presentation API.
+- [Shared item UI](inventory_ui.md): inventory tables, examination, two-pane advanced
+  inventory, exact selections and interruptible quantity transfers.
+- [SDL inventory](sdl_inventory.md): scaled item icons, colored art rendering,
+  pane layout and pause/paid-action handoff.
 - [UI navigation controls](ui_navigation.md): baseline keyboard controls, focus,
   selection, cancellation, and modal input behavior.
 - [Settings, input, and localization](settings_api.md): sparse global/world
@@ -55,6 +59,10 @@
   2022, full symbols, optimized or Debug builds, and reproducible captures.
 - [Items API](items_api.md): physical properties, volume-limited containment,
   installed batteries, explicit use actions, charging and timed door controllers.
+- [Inventory and equipment](inventory_engine.md): wielding, weapon-based melee,
+  nearby storage access, authoritative transfers, persistence and transport.
+- [Item presentation content](item_presentation.md): descriptions, colored UTF-8
+  art tags and single-cell character policy, melee profiles and defaults.
 - [Runtime crafting and recycling](crafting.md): jobs, reservations, work,
   energy accounting and persistence.
 - [Integer ratios and bounded lists](ratios.md): the 10000-based project ratio
@@ -85,7 +93,7 @@
   crossings, parcels/buildings, terrain materialization and debug inspection.
 - [Diagnostics](diagnostics.md): structured error causes and contextual frames.
 - [Terrain rendering](terrain_rendering.md): UTF-8 symbols, colors, and frontend behavior.
-- [Save format](save_format.md): SQLite v10, snapshots, player memory, validation and checkpoints.
+- [Save format](save_format.md): SQLite v11, equipment, snapshots, player memory, validation and checkpoints.
 - [LAN networking](networking.md): ENet hosting, joining, authoritative messages and discovery.
 - [LAN client profile](lan_profile.md): endpoint identities, typed errors and durability.
 - [Project README](../README.md): build instructions and dependencies.

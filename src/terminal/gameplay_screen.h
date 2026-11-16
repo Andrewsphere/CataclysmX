@@ -3,6 +3,7 @@
 #include "client/localization.h"
 #include "client/message_history.h"
 #include "client/crafting_menu.h"
+#include "client/item_ui.h"
 
 #include <ftxui/component/event.hpp>
 #include <ftxui/dom/elements.hpp>
@@ -45,6 +46,10 @@ public:
     bool IsOpen() const;
     void Close();
     bool PausesLocal(eastl::optional<InputAction> action) const;
+    void RefreshItems(const WorldView& view, const ContentCatalog& content,
+        const Localization& localization, const Keymap& keys, const std::function<bool(Command)>& submit);
+    void ItemCommandFinished(const CommandResult& result);
+    void ResetItems(); // Call when switching worlds/endpoints, even when closed.
     // Temporary snapshots transfer their cells into the node; lvalues are copied.
     ftxui::Element Render(WorldView view, const ContentCatalog& content,
         const Localization& localization, const Keymap& keys, const GameplayPresentation& presentation);
@@ -54,8 +59,9 @@ public:
     std::size_t MapRasterizedCells() const;
     // Appearance resolutions in the last draw; always bounded by rasterized cells.
     std::size_t MapResolvedCells() const;
-    // Consumes every event while open. Submit returns true only when accepted;
-    // failures keep Inventory open. The application owns routing and timing.
+    // Consumes every event while open. Submit reports admission; item requests
+    // also need ItemCommandFinished with their final authoritative result.
+    // Call RefreshItems on timer/snapshot updates as well as keyboard events.
     // Quick actions open UI-owned windows directly; other choices close the
     // modal and call Activate once. Omitting Activate leaves those choices open.
     bool HandleEvent(const ftxui::Event& event, const WorldView& view, const Localization& localization,
@@ -63,26 +69,16 @@ public:
         const std::function<void(InputAction)>& activate = {}, const ContentCatalog* content = nullptr);
 
 private:
+    ItemUi items_;
+    const ContentCatalog* itemContent_ = nullptr;
     std::shared_ptr<TerminalMapCache> mapCache_;
     enum class Modal { None, Inventory, Players, Controls, QuickActions, Crafting };
     Vector<CraftingMenuRow> craftingRows_;
     eastl::optional<Command> craftingSelection_;
     std::size_t craftingIndex_ = 0;
     int craftingScroll_ = 0;
-    enum class ItemStage { Browse, Actions, Item, Container, Direction };
-    ItemStage itemStage_ = ItemStage::Browse;
-    bool useSelection_ = false;
-    bool managingContents_ = false;
-    PersistentId sourceItem_ = 0;
-    ItemActionList itemActions_;
-    Vector<PersistentId> itemTargets_;
-    std::size_t itemChoice_ = 0;
-    Command itemCommand_;
-    void ReconcileInventory(const WorldView& view);
     Modal modal_ = Modal::None;
     PersistentId selectionPlayer_ = 0;
-    PersistentId selectedItem_ = 0;
-    std::size_t selectedIndex_ = 0;
     int inventoryScroll_ = 0;
     int playersScroll_ = 0;
     int controlsScroll_ = 0;

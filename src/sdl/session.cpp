@@ -43,6 +43,12 @@ void Session::Run(const ContentCatalog& content, std::uint64_t generation, Sessi
     }
     SessionSnapshot building;
     bool paused = false;
+    // Item windows retain ownership through admission and paid recovery. Idle
+    // pacing prevents an automatic wait at the recovery boundary, even when the
+    // user's ordinary gameplay pacing does not pause while idle.
+    bool itemRecovery = false;
+    PacingSettings itemPacing{};
+    eastl::optional<std::uint64_t> itemPauseId;
     bool forcePublish = false;
     std::uint64_t sequence = 0;
     eastl::optional<std::uint64_t> pendingId;
@@ -98,12 +104,32 @@ void Session::Run(const ContentCatalog& content, std::uint64_t generation, Sessi
     publish();
     using Clock = std::chrono::steady_clock;
     auto baseline = Clock::now();
+    const auto finishItemRecovery = [&] {
+        if (!itemRecovery || pendingId) { return; }
+        const auto players = server.GetPlayers();
+        bool ready = false;
+        for (const auto& player : players) {
+            if (player.id == server.GetHostPlayerId()) { ready = player.ready; }
+        }
+        if (!ready) { return; }
+        itemRecovery = false;
+        paused = true;
+        server.SetPacing(itemPacing);
+        forcePublish = true;
+        if (itemPauseId) {
+            publish();
+            channels_.PublishReply({ReplyKind::Paused, generation, *itemPauseId}, true);
+            itemPauseId.reset();
+            Notify();
+        }
+    };
     auto settle = [&] {
         const auto now = Clock::now();
         if (!paused) {
             const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(now - baseline).count();
             if (elapsed > 0) {
                 complete(server.Update(static_cast<std::uint64_t>(elapsed)));
+                finishItemRecovery();
                 baseline += std::chrono::microseconds(elapsed);
             }
         } else { baseline = now; }
@@ -139,15 +165,40 @@ void Session::Run(const ContentCatalog& content, std::uint64_t generation, Sessi
                     forcePublish = true;
                 } else { reply.details.push_back(FormatDiagnostics(diagnostics)); }
                 channels_.PublishReply(eastl::move(reply), true);
+            } else if (request.kind == RequestKind::PauseForItems) {
+                if (itemRecovery || pendingId || request.player != server.GetHostPlayerId()) {
+                    channels_.PublishReply({ReplyKind::Cancelled, generation, request.id}, true);
+                } else {
+                    itemPacing = server.GetPacing();
+                    auto pacing = itemPacing;
+                    pacing.pauseWhenIdle = true;
+                    server.SetPacing(pacing);
+                    itemRecovery = true; itemPauseId = request.id; paused = false;
+                    baseline = Clock::now();
+                    finishItemRecovery();
+                }
+            } else if ((request.kind == RequestKind::Pause || request.kind == RequestKind::Resume) && itemRecovery) {
+                // A frontend cannot erase already purchased simulation time.
+                channels_.PublishReply({ReplyKind::Cancelled, generation, request.id}, true);
             } else if (request.kind == RequestKind::Pause || request.kind == RequestKind::Resume) {
                 paused = request.kind == RequestKind::Pause;
                 baseline = Clock::now();
                 publish();
                 channels_.PublishReply({paused ? ReplyKind::Paused : ReplyKind::Resumed, generation, request.id}, true);
-            } else if ((paused && request.kind != RequestKind::ResumeAndCommand) || request.player != server.GetHostPlayerId()) {
+            } else if ((request.kind == RequestKind::ItemCommand && (!paused || pendingId || itemRecovery))
+                || itemRecovery
+                || (paused && request.kind != RequestKind::ResumeAndCommand && request.kind != RequestKind::ItemCommand)
+                || request.player != server.GetHostPlayerId()) {
                 channels_.PublishReply({ReplyKind::Cancelled, generation, request.id}, true);
             } else {
-                if (request.kind == RequestKind::ResumeAndCommand) {
+                if (request.kind == RequestKind::ItemCommand) {
+                    itemPacing = server.GetPacing();
+                    auto pacing = itemPacing;
+                    pacing.pauseWhenIdle = true;
+                    server.SetPacing(pacing);
+                    itemRecovery = true;
+                }
+                if (request.kind == RequestKind::ResumeAndCommand || request.kind == RequestKind::ItemCommand) {
                     paused = false;
                     baseline = Clock::now();
                 }
@@ -159,8 +210,12 @@ void Session::Run(const ContentCatalog& content, std::uint64_t generation, Sessi
                     channels_.PublishReply({ReplyKind::Admission, generation, request.id, result});
                     complete(server.Update(0));
                 } else {
+                    finishItemRecovery();
+                    forcePublish = true;
+                    publish();
                     channels_.PublishReply({ReplyKind::Completed, generation, request.id, result}, true);
                 }
+                finishItemRecovery();
             }
             publish();
             Notify();
@@ -171,6 +226,7 @@ void Session::Run(const ContentCatalog& content, std::uint64_t generation, Sessi
         channels_.Wait();
     }
     if (pendingId) { channels_.PublishReply({ReplyKind::Cancelled, generation, *pendingId}); }
+    if (itemPauseId) { channels_.PublishReply({ReplyKind::Cancelled, generation, *itemPauseId}, true); }
     Notify();
 }
 }

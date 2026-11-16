@@ -11,7 +11,7 @@
 
 namespace cataclysmx::sdl {
 
-enum class RequestKind { Command, Pause, Resume, Inspect, ApplySettings, ResumeAndCommand, InspectAi };
+enum class RequestKind { Command, Pause, Resume, Inspect, ApplySettings, ResumeAndCommand, InspectAi, ItemCommand, PauseForItems };
 struct SessionRequest {
     RequestKind kind = RequestKind::Command;
     std::uint64_t generation = 0;

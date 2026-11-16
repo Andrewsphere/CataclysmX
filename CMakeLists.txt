@@ -90,6 +90,7 @@ add_library(cataclysmx_engine STATIC
     src/content/content.cpp src/content/content.h
     src/content/content_pack.cpp src/content/spawn_definition.h src/content/building_population.h
     src/content/item_definition.cpp src/content/item_definition.h
+    src/content/text_art.cpp src/content/text_art.h
     src/content/object_definition.cpp src/content/object_definition.h
     src/content/ai_definition.cpp src/content/ai_definition.h
     src/content/crafting_definition.h src/core/static_list.h src/core/ratio.h
@@ -104,12 +105,14 @@ add_library(cataclysmx_engine STATIC
     src/combat/body.cpp src/combat/body.h
     src/combat/combat_types.cpp src/combat/combat_types.h
     src/combat/combat_system.cpp src/combat/combat_system.h
+    src/combat/melee_profile.h
     src/objects/interactive_object.cpp src/objects/interactive_object.h
     src/objects/object_behavior.cpp src/objects/object_behavior.h
     src/objects/storage_access.cpp src/objects/storage_access.h src/objects/object_movement.h
     src/core/data_object.cpp src/core/data_object.h src/core/item_state.cpp src/core/item_state.h
     src/core/state_result.h src/core/state_reader.cpp src/core/state_reader.h
     src/core/interaction.cpp src/core/interaction.h
+    src/core/inventory.cpp src/core/inventory.h
     src/core/world_types.h
     src/core/world_result.h src/content/content_result.h
     src/items/item_types.h src/items/item_types.cpp
@@ -148,6 +151,7 @@ endif()
 cataclysmx_no_exceptions(cataclysmx_network)
 
 add_library(cataclysmx_client STATIC src/client/text.cpp src/client/text.h
+    src/client/item_ui.cpp src/client/item_ui.h
     src/client/crafting_menu.cpp src/client/crafting_menu.h
     src/client/message_history.cpp src/client/message_history.h
     src/client/tile_inspection.cpp src/client/tile_inspection.h
@@ -222,6 +226,7 @@ if(CATACLYSMX_BUILD_SDL)
         src/content/tileset_source.cpp src/content/tileset_source.h
         src/sdl/atlas_builder.cpp src/sdl/atlas_builder.h
         src/sdl/screens.cpp src/sdl/screens.h
+        src/sdl/inventory_screen.cpp src/sdl/inventory_screen.h
         src/sdl/layout.cpp src/sdl/layout.h
         src/sdl/modal.cpp src/sdl/modal.h
         src/sdl/health.cpp src/sdl/health.h
@@ -267,6 +272,7 @@ if(CATACLYSMX_BUILD_TESTS)
         tests/multiplayer_session_tests.cpp tests/player_parking_tests.cpp tests/network_tests.cpp
         tests/lan_profile_tests.cpp
         tests/item_content_tests.cpp tests/item_state_tests.cpp tests/item_world_tests.cpp
+        tests/item_presentation_content_tests.cpp tests/inventory_engine_tests.cpp tests/inventory_ui_tests.cpp
         tests/item_save_tests.cpp tests/item_network_tests.cpp tests/item_server_tests.cpp
         tests/item_behavior_tests.cpp
         tests/crafting_content_tests.cpp tests/crafting_world_tests.cpp tests/crafting_save_tests.cpp
@@ -303,6 +309,7 @@ if(CATACLYSMX_BUILD_TESTS)
             tests/sdl_asset_tests.cpp tests/sdl_text_tests.cpp tests/sdl_map_tests.cpp tests/sdl_animation_tests.cpp)
         target_sources(cataclysmx_tests PRIVATE tests/sdl_source_tileset_tests.cpp)
         target_sources(cataclysmx_tests PRIVATE tests/sdl_ui_tests.cpp)
+        target_sources(cataclysmx_tests PRIVATE tests/sdl_inventory_tests.cpp)
         target_sources(cataclysmx_tests PRIVATE tests/sdl_shader_tests.cpp tests/sdl_shading_integration_tests.cpp)
         target_link_libraries(cataclysmx_tests PRIVATE cataclysmx_sdl)
         add_test(NAME sdl_frontend_smoke COMMAND cataclysmx_sdl_game --smoke --scenario demo

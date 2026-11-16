@@ -5,6 +5,26 @@
 
 namespace cataclysmx::network::wire {
 namespace {
+void WriteStorage(Writer& w, const ItemStorage& storage) {
+    w.U8(static_cast<std::uint8_t>(storage.kind));
+    w.I32(storage.position.x); w.I32(storage.position.z); w.I32(storage.position.y); w.U64(storage.id);
+}
+bool ReadStorage(Reader& r, ItemStorage& storage) {
+    std::uint8_t kind;
+    if (!r.U8(kind) || !r.I32(storage.position.x) || !r.I32(storage.position.z)
+        || !r.I32(storage.position.y) || !r.U64(storage.id)) return false;
+    storage.kind = static_cast<ItemStorageKind>(kind);
+    return ValidItemStorage(storage);
+}
+bool ValidInventoryResult(const CommandResult& result) {
+    if (static_cast<unsigned>(result.inventoryOutcome) > static_cast<unsigned>(InventoryOutcome::Busy)) return false;
+    if (result.outcome == Outcome::inventory_refused)
+        return result.inventoryOutcome != InventoryOutcome::Succeeded && !result.advanced && !result.cost;
+    if (result.inventoryOutcome != InventoryOutcome::Succeeded) return false;
+    if (result.outcome == Outcome::wielded || result.outcome == Outcome::unwielded || result.outcome == Outcome::transferred)
+        return result.advanced && result.cost != 0;
+    return true;
+}
 // Semantic object kinds are fixed protocol constants, never content indices.
 static_assert(static_cast<unsigned>(ObjectKind::None) == 0 && static_cast<unsigned>(ObjectKind::Generic) == 1 &&
     static_cast<unsigned>(ObjectKind::Chair) == 2 && static_cast<unsigned>(ObjectKind::Table) == 3 &&
@@ -126,6 +146,12 @@ bool ValidEntries(const Vector<InventoryEntry>& entries) {
     if (entries.size() > maxItemEntries) return false;
     PersistentId last = 0;
     for (const auto& entry : entries) {
+        if (!ValidItemStorage(entry.storage)
+            || (entry.parent && (entry.storage.kind != ItemStorageKind::Container || entry.storage.id != entry.parent))
+            || (!entry.parent && entry.storage.kind == ItemStorageKind::Container)
+            || (entry.wielded && (entry.parent || entry.storage.kind != ItemStorageKind::Inventory))
+            || (entry.stackable && (entry.wielded || entry.contained_items || entry.capacityVolumeMl
+                || !entry.energy.empty() || !entry.activities.empty() || !entry.actions.empty()))) return false;
         if (entry.id <= last || !entry.type.value || entry.contained_items > maxItemEntries ||
             entry.installation.value > maxItemCapabilities || (!entry.parent && entry.installation.value) ||
             entry.usedVolumeMl > entry.capacityVolumeMl || entry.energy.size() > maxItemCapabilities ||
@@ -154,7 +180,7 @@ bool ValidEntries(const Vector<InventoryEntry>& entries) {
         const InventoryEntry* current = &entry;
         unsigned depth = 0;
         while (current->parent) {
-            if (++depth > 64) return false;
+            if (++depth >= 64) return false;
             current = FindEntry(entries, current->parent);
             if (!current || current == &entry) return false;
         }
@@ -162,7 +188,49 @@ bool ValidEntries(const Vector<InventoryEntry>& entries) {
     return true;
 }
 bool ValidLists(const WorldView& view) {
-    if (!ValidEntries(view.inventory) || !ValidEntries(view.groundItems)) return false;
+    if (!ValidEntries(view.inventory) || !ValidEntries(view.groundItems) || !ValidEntries(view.nearbyItems)
+        || view.itemStorages.size() > maxItemStorages) return false;
+    PersistentId wielded = 0;
+    for (const auto& entry : view.inventory) {
+        if (entry.wielded) { if (wielded) return false; wielded = entry.id; }
+        if (!entry.parent && entry.storage.kind != ItemStorageKind::Inventory) return false;
+        if (FindEntry(view.nearbyItems, entry.id)) return false;
+    }
+    if (wielded != view.wieldedItem) return false;
+    for (const auto& entry : view.groundItems) {
+        if (entry.wielded || (!entry.parent && (entry.storage.kind != ItemStorageKind::Ground
+            || entry.storage.position != view.player_position))) return false;
+        const auto* nearby = FindEntry(view.nearbyItems, entry.id);
+        if (nearby && *nearby != entry) return false;
+    }
+    for (const auto& entry : view.nearbyItems) {
+        if (entry.wielded || (!entry.parent && entry.storage.kind != ItemStorageKind::Ground
+            && entry.storage.kind != ItemStorageKind::Object)) return false;
+    }
+    for (std::size_t i = 0; i < view.itemStorages.size(); ++i) {
+        const auto& storage = view.itemStorages[i];
+        if (!ValidItemStorage(storage.storage) || storage.reason > InventoryOutcome::Busy
+            || storage.accessible != (storage.reason == InventoryOutcome::Succeeded)
+            || (storage.massLimitGrams && storage.massGrams > *storage.massLimitGrams)
+            || (storage.volumeLimitMl && storage.volumeMl > *storage.volumeLimitMl)) return false;
+        if (storage.storage.kind == ItemStorageKind::Ground) {
+            const auto position = storage.storage.position;
+            const auto dx = std::int64_t{position.x} - view.player_position.x;
+            const auto dz = std::int64_t{position.z} - view.player_position.z;
+            if (position.y != view.player_position.y || dx < -1 || dx > 1 || dz < -1 || dz > 1
+                || storage.massLimitGrams || storage.volumeLimitMl
+                || (!storage.accessible && (storage.massGrams || storage.volumeMl))) return false;
+        }
+        if (storage.storage.kind == ItemStorageKind::Inventory && storage.volumeLimitMl) return false;
+        if (storage.storage.kind == ItemStorageKind::Object) {
+            const auto position = storage.objectPosition;
+            const auto dx = std::int64_t{position.x} - view.player_position.x;
+            const auto dz = std::int64_t{position.z} - view.player_position.z;
+            if (!ValidPosition(position) || position.y != view.player_position.y
+                || dx < -1 || dx > 1 || dz < -1 || dz > 1) return false;
+        } else if (storage.objectPosition != TileCoord{}) return false;
+        for (std::size_t j = 0; j < i; ++j) if (storage.storage == view.itemStorages[j].storage) return false;
+    }
     for (const auto& entry : view.inventory)
         if (FindEntry(view.groundItems, entry.id)) return false;
     return true;
@@ -212,6 +280,7 @@ bool WriteEntries(Writer& writer, const Vector<InventoryEntry>& entries) {
         writer.U64(entry.id); writer.U32(entry.type.value); writer.U32(entry.contained_items);
         writer.U64(entry.parent); writer.U16(entry.installation.value); writer.U64(entry.massGrams);
         writer.U32(entry.volumeMl); writer.U32(entry.capacityVolumeMl); writer.U64(entry.usedVolumeMl);
+        WriteStorage(writer, entry.storage); writer.U8(entry.wielded); writer.U8(entry.stackable);
         writer.U8(static_cast<std::uint8_t>(entry.energy.size()));
         for (const auto& energy : entry.energy) {
             writer.U16(energy.capability.value); writer.U32(energy.energy); writer.U32(energy.capacity);
@@ -244,6 +313,10 @@ bool ReadEntries(Reader& reader, Vector<InventoryEntry>& entries) {
             !reader.U64(entry.parent) || !reader.U16(entry.installation.value) || !reader.U64(entry.massGrams) ||
             !reader.U32(entry.volumeMl) || !reader.U32(entry.capacityVolumeMl) || !reader.U64(entry.usedVolumeMl)) return false;
         std::uint8_t n;
+        std::uint8_t wielded, stackable;
+        if (!ReadStorage(reader, entry.storage) || !reader.U8(wielded) || wielded > 1
+            || !reader.U8(stackable) || stackable > 1) return false;
+        entry.wielded = wielded != 0; entry.stackable = stackable != 0;
         if (!reader.U8(n) || n > maxItemCapabilities) return false;
         for (unsigned j = 0; j < n; ++j) {
             ItemEnergyView energy;
@@ -299,10 +372,11 @@ bool ValidItemDefinitions(const WorldView& view, const ContentCatalog& content) 
             if (!recipe || recipe->work != job.totalWork) return false;
         }
     }
-    for (const auto* entries : {&view.inventory, &view.groundItems}) {
+    for (const auto* entries : {&view.inventory, &view.groundItems, &view.nearbyItems}) {
         for (const auto& entry : *entries) {
             const auto* definition = content.TryGetItem(entry.type);
             if (!definition || (!definition->unfinishedCraft && entry.volumeMl != definition->volumeMl)) return false;
+            if (entry.stackable && (!definition->capabilities.empty() || definition->unfinishedCraft)) return false;
             const auto* container = ItemContainer(*definition);
             if (definition->unfinishedCraft) {
                 if (!container || entry.volumeMl > container->capacityVolumeMl || entry.contained_items
@@ -381,11 +455,12 @@ bool Writer::CommandValue(const Command& v) {
     U64(v.interaction.object); U32(v.interaction.terrain.value);
     U8(static_cast<std::uint8_t>(v.interaction.kind)); U8(static_cast<std::uint8_t>(v.interaction.action));
     U32(v.recipe.value);
+    WriteStorage(*this, v.source); WriteStorage(*this, v.destination);
     return bytes.size() <= maxPacket;
 }
 bool Writer::Result(const PlayerCommandResult& v) {
     if (!v.player || !v.sequence || !v.opportunity || v.result.outcome < Outcome::waited ||
-        v.result.outcome > Outcome::grab_blocked || !ValidCraftingResult(v.result) ||
+        v.result.outcome > Outcome::inventory_refused || !ValidCraftingResult(v.result) || !ValidInventoryResult(v.result) ||
         (v.result.storageError && (*v.result.storageError < SaveError::Io || *v.result.storageError > SaveError::NotOpen)) ||
         !ValidItemUseReason(v.result.itemOutcome, v.result.itemReason)) return false;
     U64(v.player); U64(v.sequence); U64(v.opportunity);
@@ -397,6 +472,7 @@ bool Writer::Result(const PlayerCommandResult& v) {
     if (!WriteReason(*this, v.result.itemReason)) return false;
     U8(static_cast<std::uint8_t>(v.result.craftingOutcome));
     if (!Text(v.result.objectName, 255)) return false;
+    U8(static_cast<std::uint8_t>(v.result.inventoryOutcome));
     return bytes.size() <= maxPacket;
 }
 bool Writer::View(const WorldView& v) {
@@ -451,6 +527,17 @@ bool Writer::View(const WorldView& v) {
         U8(job.pauseRequested ? 1 : 0);
     }
     U64(v.grabbedObject);
+    U64(v.wieldedItem);
+    if (!WriteEntries(*this, v.nearbyItems)) return false;
+    U16(static_cast<std::uint16_t>(v.itemStorages.size()));
+    for (const auto& storage : v.itemStorages) {
+        WriteStorage(*this, storage.storage); U8(storage.accessible); U8(static_cast<std::uint8_t>(storage.reason));
+        U64(storage.massGrams); U64(storage.volumeMl);
+        U8(storage.massLimitGrams.has_value()); if (storage.massLimitGrams) U64(*storage.massLimitGrams);
+        U8(storage.volumeLimitMl.has_value()); if (storage.volumeLimitMl) U64(*storage.volumeLimitMl);
+        if (!Text(storage.name, 255)) return false;
+        I32(storage.objectPosition.x); I32(storage.objectPosition.z); I32(storage.objectPosition.y);
+    }
     return bytes.size() <= maxPacket;
 }
 bool Reader::U8(std::uint8_t& v) { if (offset >= bytes.size()) return false; v = bytes[offset++]; return true; }
@@ -467,7 +554,7 @@ bool Reader::Text(String& v, std::size_t limit) {
 }
 bool Reader::CommandValue(Command& v) {
     std::uint8_t kind, style, interactionKind, objectAction;
-    if (bytes.size() > maxPacket || !U8(kind) || kind > static_cast<std::uint8_t>(CommandKind::release_grab) ||
+    if (bytes.size() > maxPacket || !U8(kind) || kind > static_cast<std::uint8_t>(CommandKind::transfer_item) ||
         !I32(v.dx) || !I32(v.dz) || !U64(v.item) || !U32(v.waitCost) ||
         !U16(v.capability.value) || v.capability.value > maxItemCapabilities ||
         !Text(v.itemAction, maxItemActionName) || !U64(v.otherItem) || !I32(v.dy) ||
@@ -481,13 +568,14 @@ bool Reader::CommandValue(Command& v) {
     v.interaction.action = static_cast<ObjectAction>(objectAction);
     v.kind = static_cast<CommandKind>(kind);
     v.style = static_cast<CombatStyle>(style);
+    if (!ReadStorage(*this, v.source) || !ReadStorage(*this, v.destination)) return false;
     return (v.itemAction.empty() || ValidItemActionId(v.itemAction)) && ValidCommandShape(v);
 }
 bool Reader::Result(PlayerCommandResult& v) {
     std::uint8_t outcome, advanced;
     if (bytes.size() > maxPacket || !U64(v.player) || !v.player || !U64(v.sequence) || !v.sequence ||
         !U64(v.opportunity) || !v.opportunity || !U8(outcome) ||
-        outcome > static_cast<std::uint8_t>(Outcome::grab_blocked) || !U8(advanced) || advanced > 1 ||
+        outcome > static_cast<std::uint8_t>(Outcome::inventory_refused) || !U8(advanced) || advanced > 1 ||
         !U64(v.result.tick) || !U64(v.result.cost)) return false;
     std::uint8_t hasError;
     if (!U8(hasError) || hasError > 1) return false;
@@ -506,7 +594,10 @@ bool Reader::Result(PlayerCommandResult& v) {
     v.result.craftingOutcome = static_cast<CraftingOutcome>(craftingOutcome);
     if (!ValidItemUseReason(v.result.itemOutcome, v.result.itemReason)) return false;
     v.result.outcome = static_cast<Outcome>(outcome); v.result.advanced = advanced != 0;
-    return ValidCraftingResult(v.result);
+    std::uint8_t inventoryOutcome;
+    if (!U8(inventoryOutcome)) return false;
+    v.result.inventoryOutcome = static_cast<InventoryOutcome>(inventoryOutcome);
+    return ValidCraftingResult(v.result) && ValidInventoryResult(v.result);
 }
 bool Reader::View(WorldView& v) {
     if (bytes.size() > maxPacket) return false;
@@ -549,7 +640,7 @@ bool Reader::View(WorldView& v) {
             v.cells.push_back(c);
         }
     }
-    if (!ReadEntries(*this, v.inventory) || !ReadEntries(*this, v.groundItems) || !ValidLists(v) ||
+    if (!ReadEntries(*this, v.inventory) || !ReadEntries(*this, v.groundItems) ||
         !U64(v.carriedMassGrams) || !U64(v.carryCapacityGrams)) return false;
     std::uint8_t n; if (!U8(n) || n > 32) return false;
     v.players.clear();
@@ -579,7 +670,24 @@ bool Reader::View(WorldView& v) {
         job.pauseRequested = pauseRequested != 0;
         v.craftingJobs.push_back(job);
     }
-    return U64(v.grabbedObject) && ValidCraftingJobs(v.craftingJobs);
+    if (!U64(v.grabbedObject) || !U64(v.wieldedItem) || !ReadEntries(*this, v.nearbyItems)
+        || !U16(count) || count > maxItemStorages) return false;
+    v.itemStorages.clear();
+    for (unsigned i = 0; i < count; ++i) {
+        ItemStorageView storage;
+        std::uint8_t accessible, reason, present;
+        std::uint64_t limit;
+        if (!ReadStorage(*this, storage.storage) || !U8(accessible) || accessible > 1 || !U8(reason)
+            || !U64(storage.massGrams) || !U64(storage.volumeMl) || !U8(present) || present > 1) return false;
+        storage.accessible = accessible != 0; storage.reason = static_cast<InventoryOutcome>(reason);
+        if (present) { if (!U64(limit)) return false; storage.massLimitGrams = limit; }
+        if (!U8(present) || present > 1) return false;
+        if (present) { if (!U64(limit)) return false; storage.volumeLimitMl = limit; }
+        if (!Text(storage.name, 255)) return false;
+        if (!I32(storage.objectPosition.x) || !I32(storage.objectPosition.z) || !I32(storage.objectPosition.y)) return false;
+        v.itemStorages.push_back(eastl::move(storage));
+    }
+    return ValidCraftingJobs(v.craftingJobs) && ValidLists(v);
 }
 
 }

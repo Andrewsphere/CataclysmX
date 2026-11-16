@@ -112,8 +112,11 @@ TEST_CASE("Server creates the deterministic demo and advances only successful co
     CHECK(world.GetItem(*bulbs.begin())->type == TestItem("blinking_lightbulb"));
     CHECK(world.GetItem(*bulbs.begin())->id > table->id);
     CHECK(world.GetRememberedTile(server.GetHostPlayerId(), {1, 1}).terrain == TestTerrain("floor"));
-    // Keep command outcome checks independent of the NPC's chosen route.
-    for (TileCoord position : {TileCoord{4, 5}, TileCoord{6, 5}, TileCoord{5, 4}, TileCoord{5, 6}}) {
+    // Keep command outcome checks independent of the NPC's chosen route. Sighted
+    // AI can take diagonals (141 base ticks), so all eight exits must be blocked
+    // for the fixed 100-tick boxed-in waits asserted below.
+    for (TileCoord position : {TileCoord{4, 5}, TileCoord{6, 5}, TileCoord{5, 4}, TileCoord{5, 6},
+             TileCoord{4, 4}, TileCoord{6, 4}, TileCoord{4, 6}, TileCoord{6, 6}}) {
         REQUIRE(world.SetTile(position, {TestTerrain("wall"), 0}));
     }
 
@@ -148,6 +151,7 @@ TEST_CASE("Server creates the deterministic demo and advances only successful co
     expect(server, {CommandKind::move, 1, 0}, Outcome::moved, true);
     expect(server, {CommandKind::move, 0, 1}, Outcome::blocked, false);
     expect(server, {CommandKind::interact, 0, 1}, Outcome::nothing_here, false);
+    CHECK(world.GetActor(npc)->position == TileCoord{5, 5});
     CHECK(world.GetActor(npc)->turns == server.GetTick() / 100);
 }
 

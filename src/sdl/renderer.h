@@ -8,6 +8,7 @@
 #include "sdl/layout.h"
 #include "client/localization.h"
 #include "client/message_history.h"
+#include "client/item_ui.h"
 
 namespace cataclysmx::sdl {
 
@@ -41,6 +42,6 @@ bool DrawFrame(SDL_Renderer* renderer, SdlText& text, const SdlAssets& assets, c
     std::uint64_t elapsedMilliseconds = 0, const MapPacket* packet = nullptr,
     int zoom = 0, float uiScale = 1.0f, UiPalette palette = {},
     const SpritePlaybackController* playback = nullptr, SpriteShader* shader = nullptr, ScreenFrame* screen = nullptr,
-    GameplayHud hud = {});
+    GameplayHud hud = {}, ItemUiFrame* inventory = nullptr);
 
 }

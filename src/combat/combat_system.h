@@ -2,6 +2,7 @@
 
 #include "combat/combat_types.h"
 #include "core/world_result.h"
+#include <EASTL/span.h>
 
 namespace cataclysmx {
 
@@ -22,6 +23,8 @@ public:
     WorldResult<void> StartAiming(ActorHandle actor, ActorHandle target, std::uint32_t baseCost);
     DisruptionResult Disrupt(ActorHandle actor, const Disruption& disruption);
     AttackResult Damage(ActorHandle actor, ActorHandle source, BodyPart part, DamagePacket damage);
+    AttackResult DamageContact(ActorHandle actor, ActorHandle source, BodyPart part,
+        eastl::span<const DamagePacket> damage);
     void Elapse(Tick elapsed);
     void ProcessEvents(std::uint32_t& rng);
     eastl::optional<Tick> NextEventIn() const;

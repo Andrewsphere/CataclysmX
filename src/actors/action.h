@@ -18,6 +18,7 @@ struct ActorActionState {
     // Windup captures positive post-strike recovery at the original speed.
     Tick recoveryTicks = 0;
     std::uint8_t accuracyPenalty = 0;
+    PersistentId weapon = 0;
     bool operator==(const ActorActionState&) const = default;
 };
 

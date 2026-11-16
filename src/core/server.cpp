@@ -167,6 +167,10 @@ void AppendItemTreeDescription(const World& world, ActorHandle actor, ItemHandle
     Require(item != nullptr);
     const ItemDefinition& definition = world.GetContent().GetItem(item->type);
     InventoryEntry entry{item->id, item->type, static_cast<unsigned int>(item->contents.size())};
+    entry.storage = world.GetItemStorage(handle);
+    entry.wielded = world.GetActor(actor)->wieldedItem == handle;
+    entry.stackable = !entry.wielded && !item->location.installation.value && item->contents.empty() && !definition.unfinishedCraft
+        && definition.capabilities.empty();
     if (item->location.kind == LocationKind::item) {
         entry.parent = world.GetItem(item->location.item)->id;
         entry.installation = item->location.installation;
@@ -292,6 +296,18 @@ Outcome CombatOutcome(AttackOutcome outcome) {
 }
 
 bool ValidCommandShape(const Command& command) {
+    if (command.kind == CommandKind::wield_item || command.kind == CommandKind::transfer_item) {
+        return command.dx == 0 && command.dz == 0 && command.dy == 0 && command.waitCost == ticks_per_turn
+            && command.capability.value == 0 && command.itemAction.empty() && command.otherItem == 0
+            && command.target == 0 && command.style == CombatStyle::Balanced && command.recipe.value == 0
+            && command.interaction == InteractionRequest{}
+            && (command.kind == CommandKind::wield_item
+                ? command.source == ItemStorage{} && command.destination == ItemStorage{}
+                : command.item != 0 && ValidItemStorage(command.source) && ValidItemStorage(command.destination));
+    }
+    // Legacy commands retain their established treatment of unused legacy
+    // fields; only the newly introduced storage fields must stay default.
+    if (command.source != ItemStorage{} || command.destination != ItemStorage{}) { return false; }
     if (command.style > CombatStyle::Defensive) { return false; }
     if (command.kind >= CommandKind::craft && command.kind <= CommandKind::cancel_craft) {
         return command.dx == 0 && command.dz == 0 && command.dy == 0
@@ -334,6 +350,10 @@ bool ValidCommandShape(const Command& command) {
 
 const char* OutcomeMessage(Outcome outcome) {
     switch (outcome) {
+    case Outcome::wielded: return "You wield the item.";
+    case Outcome::unwielded: return "You put away your weapon.";
+    case Outcome::transferred: return "You move the item.";
+    case Outcome::inventory_refused: return "You cannot move that item.";
     case Outcome::waited: return "You wait.";
     case Outcome::moved: return "You move.";
     case Outcome::picked_up: return "You pick up the item.";
@@ -384,6 +404,7 @@ const char* OutcomeMessage(Outcome outcome) {
 }
 
 String CommandResultMessage(const CommandResult& result) {
+    if (result.outcome == Outcome::inventory_refused) { return InventoryOutcomeMessage(result.inventoryOutcome); }
     if (!result.objectName.empty()) {
         if (result.outcome == Outcome::grabbed) { return String("You take hold of the ") + result.objectName + "."; }
         if (result.outcome == Outcome::released) { return String("You let go of the ") + result.objectName + "."; }
@@ -663,6 +684,23 @@ CommandResult Server::Execute(ActorHandle handle, PlayerSlot& slot, Command comm
     case CommandKind::combat_style:
         if (!world_.Combat().SetStyle(handle, command.style)) { return failed(Outcome::invalid_command); }
         return {Outcome::combat_style_changed, false, GetTick()};
+    case CommandKind::wield_item:
+    case CommandKind::transfer_item: {
+        const auto selected = world_.FindItem(command.item);
+        const auto moved = command.kind == CommandKind::transfer_item
+            ? world_.TransferInventoryItem(handle, command.item, command.source, command.destination)
+            : command.item && !selected.value ? InventoryResult{InventoryOutcome::InvalidItem}
+            : world_.WieldItem(handle, selected);
+        if (moved.outcome != InventoryOutcome::Succeeded) {
+            auto result = failed(Outcome::inventory_refused);
+            result.inventoryOutcome = moved.outcome;
+            return result;
+        }
+        baseCost = static_cast<std::uint32_t>(moved.baseCost);
+        outcome = command.kind == CommandKind::transfer_item ? Outcome::transferred
+            : command.item ? Outcome::wielded : Outcome::unwielded;
+        break;
+    }
     case CommandKind::wait:
         if (command.waitCost == 0) { return failed(Outcome::invalid_command); }
         outcome = Outcome::waited;
@@ -791,12 +829,15 @@ CommandResult Server::Execute(ActorHandle handle, PlayerSlot& slot, Command comm
     case CommandKind::store_item: {
         const ItemHandle item = world_.FindItem(command.item);
         if (!world_.CanAccessItem(handle, item)) { return failed(Outcome::not_carried); }
+        if (world_.GetItem(item)->location.installation.value) { return failed(Outcome::invalid_container); }
+        if (!world_.CanAccessStorage(handle, world_.GetItemStorage(item))) { return failed(Outcome::invalid_container); }
         ItemLocation destination = ItemLocation::Carried(handle);
         if (command.otherItem != 0) {
             const ItemHandle container = world_.FindItem(command.otherItem);
-            if (!world_.CanAccessItem(handle, container)) { return failed(Outcome::invalid_container); }
+            if (!world_.CanAccessStorage(handle, {ItemStorageKind::Container, {}, command.otherItem})) { return failed(Outcome::invalid_container); }
             destination = ItemLocation::Inside(container);
         }
+        if (world_.GetItem(item)->location == destination) { return failed(Outcome::nothing_here); }
         if (const auto moved = world_.TransferItem(item, destination); !moved) {
             return failed(TransferFailure(moved.error()));
         }
@@ -1434,6 +1475,66 @@ WorldView Server::ViewForPlayerAtLayer(PersistentId id, int radius, int layerY) 
         }
     }
     result.inventory = DescribeItems(world_, player, actor->inventory);
+    result.wieldedItem = actor->wieldedItem.value ? world_.GetItem(actor->wieldedItem)->id : 0;
+    ItemStorageView carried;
+    carried.accessible = observing;
+    carried.reason = observing ? InventoryOutcome::Succeeded : InventoryOutcome::Inaccessible;
+    carried.massGrams = world_.GetCarriedMass(player);
+    carried.massLimitGrams = actor->carryCapacityGrams;
+    for (const auto handle : actor->inventory) { carried.volumeMl += world_.GetItemVolume(handle); }
+    result.itemStorages.push_back(eastl::move(carried));
+    for (int dz = -1; dz <= 1; ++dz) {
+        for (int dx = -1; dx <= 1; ++dx) {
+            const TileCoord position{actor->position.x + dx, actor->position.z + dz, actor->position.y};
+            ItemStorageView floor;
+            floor.storage = {ItemStorageKind::Ground, position};
+            floor.accessible = observing && world_.CanAccessGroundStorage(player, position);
+            floor.reason = floor.accessible ? InventoryOutcome::Succeeded : InventoryOutcome::Inaccessible;
+            if (floor.accessible) {
+                for (const auto handle : world_.ItemsAt(position)) {
+                    floor.massGrams += world_.GetItemMass(handle);
+                    floor.volumeMl += world_.GetItemVolume(handle);
+                    AppendItemTreeDescription(world_, player, handle, result.nearbyItems);
+                }
+            }
+            result.itemStorages.push_back(eastl::move(floor));
+            const auto objectHandle = world_.ObjectAt(position);
+            const auto* object = world_.GetObject(objectHandle);
+            if (!object || !observing) { continue; }
+            ItemStorageView storage;
+            storage.storage = {ItemStorageKind::Object, {}, object->id};
+            if (!world_.CanAccessStorage(player, storage.storage)) { continue; }
+            const auto& definition = world_.GetContent().GetObject(object->type);
+            storage.name = definition.name;
+            storage.objectPosition = object->position;
+            storage.accessible = true;
+            storage.reason = InventoryOutcome::Succeeded;
+            storage.volumeLimitMl = *definition.capacityVolumeMl;
+            storage.volumeMl = world_.GetObjectUsedVolume(objectHandle);
+            for (const auto handle : object->contents) {
+                storage.massGrams += world_.GetItemMass(handle);
+                AppendItemTreeDescription(world_, player, handle, result.nearbyItems);
+            }
+            result.itemStorages.push_back(eastl::move(storage));
+        }
+    }
+    eastl::sort(result.nearbyItems.begin(), result.nearbyItems.end(),
+        [](const InventoryEntry& a, const InventoryEntry& b) { return a.id < b.id; });
+    for (const auto* entries : {&result.inventory, &result.nearbyItems}) {
+        for (const auto& entry : *entries) {
+            if (!entry.capacityVolumeMl || entry.installation.value) { continue; }
+            ItemStorageView storage;
+            storage.storage = {ItemStorageKind::Container, {}, entry.id};
+            storage.accessible = observing && world_.CanAccessStorage(player, storage.storage);
+            storage.reason = storage.accessible ? InventoryOutcome::Succeeded : InventoryOutcome::Inaccessible;
+            storage.name = world_.GetContent().GetItem(entry.type).name;
+            storage.volumeMl = entry.usedVolumeMl;
+            storage.volumeLimitMl = entry.capacityVolumeMl;
+            const auto* item = world_.GetItem(world_.FindItem(entry.id));
+            for (const auto child : item->contents) { storage.massGrams += world_.GetItemMass(child); }
+            result.itemStorages.push_back(eastl::move(storage));
+        }
+    }
     Vector<CraftingJobView> jobs;
     world_.CollectCraftingJobs(player, jobs);
     result.craftingJobs.reserve(jobs.size());

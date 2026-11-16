@@ -18,6 +18,19 @@ constexpr std::size_t combatViewWireSize = 128;
 constexpr std::size_t emptyCraftingJobsWireSize = 2; // Protocol 13 appends a u16 job count.
 constexpr std::size_t grabWireSize = 8; // Protocol 16 appends the grabbed object's persistent ID.
 
+// Protocol 17 appends a variable-sized inventory tail after the grip. Measure
+// that suffix independently so byte-corruption tests still target earlier fields.
+std::size_t InventoryTailWireSize(const WorldView& view, std::size_t encodedSize) {
+    auto withoutLists = view;
+    withoutLists.nearbyItems.clear();
+    withoutLists.itemStorages.clear();
+    wire::Writer writer;
+    REQUIRE(writer.View(withoutLists));
+    constexpr std::size_t emptyTail = 8 + 2 + 2; // Wielded ID and two u16 counts.
+    REQUIRE(encodedSize >= writer.bytes.size());
+    return encodedSize - writer.bytes.size() + emptyTail;
+}
+
 TEST_CASE("Network wire rejects truncated values, invalid enums and oversized snapshots", "[network][codec]") {
     CHECK(NetworkErrorMessage(NetworkError::UnknownToken) != nullptr);
     wire::Writer w;
@@ -68,8 +81,9 @@ TEST_CASE("Network wire rejects truncated values, invalid enums and oversized sn
     wire::Reader badSpeed{{bad.data(), bad.size()}};
     CHECK_FALSE(badSpeed.View(result));
     bad = snapshot.bytes;
-    // State is followed by player fields, player light, combat, the empty job list and grip.
-    bad[bad.size() - (20 + combatViewWireSize + emptyCraftingJobsWireSize + grabWireSize)] = 255;
+    // State is followed by player fields, light, combat, jobs, grip and inventory.
+    bad[bad.size() - (20 + combatViewWireSize + emptyCraftingJobsWireSize + grabWireSize
+        + InventoryTailWireSize(view, bad.size()))] = 255;
     wire::Reader badState{{bad.data(), bad.size()}};
     CHECK_FALSE(badState.View(result));
     wire::Writer commandBytes;
@@ -82,6 +96,10 @@ TEST_CASE("Network wire rejects truncated values, invalid enums and oversized sn
     CHECK_FALSE(text.Text("bad\nname", 32));
     // This synthetic inventory replaces the snapshot's real item identities.
     view.groundItems.clear();
+    view.nearbyItems.clear();
+    view.itemStorages.clear();
+    view.wieldedItem = 0;
+    view.inventory.clear();
     view.inventory.resize(129);
     for (std::size_t i = 0; i < view.inventory.size(); ++i) {
         view.inventory[i].id = i + 1;
@@ -112,7 +130,7 @@ bool Poll(LanHost& host, LanClient& a, LanClient& b, Predicate predicate) {
 }
 
 TEST_CASE("Current protocol preserves signed six-axis commands and authoritative shapes", "[network][codec][3d]") {
-    CHECK(wire::protocol == 0x43584e0f);
+    CHECK(wire::protocol == 0x43584e11);
     for (const auto kind : {CommandKind::move, CommandKind::interact}) {
         for (const TileCoord direction : {TileCoord{1, 0, 0}, {-1, 0, 0}, {0, 1, 0},
             {0, -1, 0}, {0, 0, 1}, {0, 0, -1}, {0, 0, 0}, {1, 0, 1}, {0, 1, -1}, {0, 0, INT_MIN}}) {
@@ -186,7 +204,8 @@ TEST_CASE("Combat snapshot roundtrips and validates all fields", "[network][code
     wire::Writer writer; REQUIRE(writer.View(view));
     wire::Reader reader{{writer.bytes.data(), writer.bytes.size()}};
     WorldView decoded; REQUIRE(reader.View(decoded)); CHECK(reader.Done()); CHECK(decoded.combat == combat);
-    const auto start = writer.bytes.size() - combatViewWireSize - emptyCraftingJobsWireSize - grabWireSize;
+    const auto start = writer.bytes.size() - combatViewWireSize - emptyCraftingJobsWireSize - grabWireSize
+        - InventoryTailWireSize(view, writer.bytes.size());
     // Each entry names an invalid byte: enums, limits, flags, and absent simple-body parts.
     for (const auto [offset, value] : {eastl::pair<std::size_t, std::uint8_t>{0, 2}, {1, 3}, {2, 5},
         {6, 101}, {7, 31}, {16, 2}, {89, 11}, {93, 5}, {102, 10},
@@ -216,6 +235,7 @@ TEST_CASE("Combat snapshot roundtrips and validates all fields", "[network][code
 TEST_CASE("Radius 64 snapshots roundtrip and reject oversized dimensions counts packets and coordinate overflow", "[network][codec][view]") {
     Server server(TestContent());
     auto view = server.View(0);
+    wire::Writer singleCell; REQUIRE(singleCell.View(view));
     const auto player = view.cells[0];
     view.width = 129; view.height = 129;
     view.origin = {-64, -64, view.player_position.y};
@@ -223,7 +243,8 @@ TEST_CASE("Radius 64 snapshots roundtrip and reject oversized dimensions counts 
     view.cells[64 * 129 + 64] = player;
     wire::Writer writer;
     REQUIRE(writer.View(view));
-    CHECK(writer.bytes.size() < 1024); // Two unknown runs around the player cell.
+    // Same metadata and player run, with exactly two additional unknown runs.
+    CHECK(writer.bytes.size() == singleCell.bytes.size() + 2 * 42);
     CHECK(writer.bytes.size() < wire::maxPacket);
     wire::Reader reader{{writer.bytes.data(), writer.bytes.size()}};
     WorldView decoded;
@@ -256,10 +277,11 @@ TEST_CASE("Radius 64 snapshots roundtrip and reject oversized dimensions counts 
 TEST_CASE("Run encoded snapshots bound expansion and preserve repeated and varying cells", "[network][codec][view]") {
     Server server(TestContent());
     auto view = server.View(0);
+    wire::Writer singleCell; REQUIRE(singleCell.View(view));
     view.width = 129; view.height = 129; view.origin = {-64, -64};
     view.cells.assign(129 * 129, ViewCell{});
     wire::Writer compact; REQUIRE(compact.View(view));
-    CHECK(compact.bytes.size() < 1024);
+    CHECK(compact.bytes.size() == singleCell.bytes.size()); // One run regardless of expanded area.
     WorldView decoded;
     wire::Reader reader{{compact.bytes.data(), compact.bytes.size()}};
     REQUIRE(reader.View(decoded)); REQUIRE(reader.Done());
@@ -473,7 +495,8 @@ TEST_CASE("Snapshot runs reject hidden information and malformed perception stat
 TEST_CASE("Snapshot runs validate the appended player light band", "[network][codec][perception]") {
     auto view = SingleCellView();
     wire::Writer writer; REQUIRE(writer.View(view));
-    writer.bytes[writer.bytes.size() - (1 + combatViewWireSize + emptyCraftingJobsWireSize + grabWireSize)] = 4;
+    writer.bytes[writer.bytes.size() - (1 + combatViewWireSize + emptyCraftingJobsWireSize + grabWireSize
+        + InventoryTailWireSize(view, writer.bytes.size()))] = 4;
     wire::Reader reader{{writer.bytes.data(), writer.bytes.size()}};
     WorldView decoded; CHECK_FALSE(reader.View(decoded));
     view.playerLight = static_cast<LightBand>(4);

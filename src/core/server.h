@@ -3,6 +3,7 @@
 #include "core/world.h"
 #include "core/interaction.h"
 #include "core/pacing.h"
+#include "core/inventory.h"
 
 #include <EASTL/optional.h>
 #include <EASTL/span.h>
@@ -13,7 +14,8 @@ enum class NewGameScenario { Demo, FirstHouse, Town, ZombieShowcase };
 
 enum class CommandKind {
     wait, move, pick_up, drop, interact, use_item, store_item, attack, combat_style, interact_action,
-    craft, recycle, resume_craft, pause_craft, cancel_craft, grab, release_grab
+    craft, recycle, resume_craft, pause_craft, cancel_craft, grab, release_grab,
+    wield_item, transfer_item
 };
 struct Command {
     CommandKind kind = CommandKind::wait;
@@ -33,6 +35,9 @@ struct Command {
     CombatStyle style = CombatStyle::Balanced;
     InteractionRequest interaction;
     CraftingRecipeId recipe{}; // Craft only. Recycling resolves the unique recipe from item.
+    // transfer_item checks the exact source before moving to destination.
+    ItemStorage source;
+    ItemStorage destination;
 };
 bool ValidCommandShape(const Command& command);
 enum class Outcome {
@@ -43,7 +48,8 @@ enum class Outcome {
     attacked, attack_missed, attack_parried, attack_blocked, attack_windup,
     target_defeated, no_target, no_combat_move, combat_style_changed, locked, unlocked,
     craft_started, recycling_started, craft_resumed, craft_paused, craft_cancelled, crafting_refused,
-    object_moved, grabbed, released, nothing_to_grab, grab_lost, grab_blocked
+    object_moved, grabbed, released, nothing_to_grab, grab_lost, grab_blocked,
+    wielded, unwielded, transferred, inventory_refused
 };
 const char* OutcomeMessage(Outcome outcome);
 // The demo requires floor, wall, and closed_door; floor must be passable.
@@ -62,6 +68,7 @@ struct CommandResult {
     ItemUseReason itemReason;
     CraftingOutcome craftingOutcome = CraftingOutcome::ActorUnavailable;
     String objectName; // Grab feedback; captured before deletion/movement can invalidate the target.
+    InventoryOutcome inventoryOutcome = InventoryOutcome::Succeeded;
 };
 String CommandResultMessage(const CommandResult& result);
 
@@ -147,6 +154,10 @@ struct InventoryEntry {
     SmallVector<ItemEnergyView, 1> energy;
     SmallVector<ItemBehaviorView, 1> activities;
     ItemActionList actions;
+    ItemStorage storage;
+    bool wielded = false;
+    // Only state-free, interchangeable leaf instances may form a UI stack.
+    bool stackable = false;
     bool operator==(const InventoryEntry&) const = default;
 };
 // Transport/presentation values contain persistent identities, never runtime handles.
@@ -189,6 +200,11 @@ struct WorldView {
     CombatView combat;
     Vector<CraftingEntry> craftingJobs; // Reachable wrappers, persistent-ID order.
     PersistentId grabbedObject = 0; // Transient session grip, released on disconnect/load.
+    PersistentId wieldedItem = 0;
+    // All accessible nearby ground/object trees; groundItems above retains its
+    // historical current-tile projection for existing callers.
+    Vector<InventoryEntry> nearbyItems;
+    Vector<ItemStorageView> itemStorages;
 };
 
 // Authoritative deterministic endpoint. No transport or clock access.

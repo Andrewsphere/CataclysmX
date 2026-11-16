@@ -1,6 +1,7 @@
 #include "sdl/renderer.h"
 #include "sdl/screens.h"
 #include "sdl/health.h"
+#include "sdl/inventory_screen.h"
 
 #include "client/text.h"
 
@@ -165,7 +166,7 @@ TerminalAppearance MapAppearance(const ViewCell& cell, PersistentId playerId, co
 bool DrawFrame(SDL_Renderer* renderer, SdlText& text, const SdlAssets& assets, const WorldView* view,
     const ContentCatalog& content, const char* status, const char* /*hints*/,
     std::uint64_t elapsedMilliseconds, const MapPacket* packet, int zoom, float uiScale, UiPalette palette,
-    const SpritePlaybackController* playback, SpriteShader* shader, ScreenFrame* screen, GameplayHud hud) {
+    const SpritePlaybackController* playback, SpriteShader* shader, ScreenFrame* screen, GameplayHud hud, ItemUiFrame* inventory) {
     if (!SDL_IsMainThread()) { std::abort(); }
     int width = 0, height = 0;
     if (!SDL_GetCurrentRenderOutputSize(renderer, &width, &height)
@@ -328,6 +329,7 @@ bool DrawFrame(SDL_Renderer* renderer, SdlText& text, const SdlAssets& assets, c
     }
     if (screen && !DrawScreen(renderer, text, *screen, width, height, view,
         assets.Definition().cellWidth, assets.Definition().cellHeight, zoom, uiScale, &gameplay)) { return false; }
+    if (inventory && !DrawInventoryScreen(renderer, text, assets, content, *inventory, width, height, uiScale, true)) { return false; }
     return SDL_SetRenderClipRect(renderer, nullptr) && SDL_SetRenderScale(renderer, 1, 1) && SDL_RenderPresent(renderer);
 }
 

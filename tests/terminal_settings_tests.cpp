@@ -310,7 +310,7 @@ TEST_CASE("Settings expose gameplay modal bindings in both gameplay and interact
         bool found = false;
         for (const auto& binding : DefaultKeymap()) {
             if (binding.context != context) { continue; }
-            if (DrawSettings(f.menu).find("Open Inventory.") != std::string::npos) { found = true; break; }
+            if (DrawSettings(f.menu).find("Open Inventory") != std::string::npos) { found = true; break; }
             Event(f.menu, ftxui::Event::ArrowDown);
         }
         REQUIRE(found);
@@ -319,6 +319,7 @@ TEST_CASE("Settings expose gameplay modal bindings in both gameplay and interact
         CHECK_FALSE(ResolveAction(f.store.Keys(), context, {"i", false}));
         CHECK(ResolveAction(f.store.Keys(), context, {"P", false}) == InputAction::Players);
         CHECK(ResolveAction(f.store.Keys(), context, {"F1", false}) == InputAction::Help);
+        CHECK(ResolveAction(f.store.Keys(), context, {"/", false}) == InputAction::AdvancedInventory);
         if (context == InputContext::Gameplay) { NextCategory(f.menu); }
     }
     CHECK(f.server.GetTick() == 0);

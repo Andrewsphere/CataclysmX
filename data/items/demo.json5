@@ -1,13 +1,25 @@
 {format_version: 1, definitions: [
-    {type: 'item', id: 'rock', name: 'rock', mass_g: 500, volume_ml: 250},
+    {
+      type: 'item', id: 'rock', name: 'rock', mass_g: 500, volume_ml: 250,
+      description: 'A fist-sized stone with a rough, weathered surface. Heavy enough to make a serviceable improvised weapon.',
+      art: [' <gray>▄▄▄', '<gray>▟███▙', ' <darkgray>▀▀▀'],
+      melee: {damage: [{type: 'blunt', amount: 600}], attack_cost: 110, hands: 1},
+    },
     {type: 'item', id: 'stone_marker', name: 'stone marker', mass_g: 500, volume_ml: 250},
     {
       type: 'item', id: 'backpack', name: 'backpack', mass_g: 1000, volume_ml: 2000,
+      description: 'A sturdy fabric backpack with a roomy main compartment. Its worn straps still look ready for a long walk.',
+      art: ['  <yellow>┌───┐', ' <green>┌┴───┴┐', ' <green>│<yellow>┌───┐<green>│', ' <green>│<yellow>└───┘<green>│', ' <green>└─────┘'],
       capabilities: [{type: 'container', id: 'storage', capacity_volume_ml: 20000}],
     },
     {type: 'item', id: 'bandage', name: 'bandage', mass_g: 20, volume_ml: 50},
     {type: 'item', id: 'scrap', name: 'scrap', mass_g: 100, volume_ml: 100},
-    {type: 'item', id: 'metal_pipe', name: 'metal pipe', mass_g: 1500, volume_ml: 1000},
+    {
+      type: 'item', id: 'metal_pipe', name: 'metal pipe', mass_g: 1500, volume_ml: 1000,
+      description: 'A length of heavy metal pipe, scarred by rust and old tool marks. A two-handed swing puts considerable weight behind it.',
+      art: ['<darkgray>╔═<gray>════════════<darkgray>═╗', '<darkgray>╚═<gray>════════════<darkgray>═╝'],
+      melee: {damage: [{type: 'blunt', amount: 2000, penetration: 0}], attack_cost: 150, hands: 2},
+    },
     {type: 'item', id: 'wood_plank', name: 'wood plank', mass_g: 2000, volume_ml: 3000},
     {type: 'item', id: 'blinking_lightbulb', name: 'blinking lightbulb', mass_g: 50, volume_ml: 100},
     {type: 'item', id: 'toggle_lightbulb', name: 'toggle lightbulb', mass_g: 50, volume_ml: 100},

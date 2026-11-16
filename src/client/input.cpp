@@ -17,7 +17,8 @@ constexpr eastl::string_view actionNames[] = {
     "details_up", "details_down", "apply", "save_settings", "reload", "inspect", "add_binding", "unbind", "reset",
     "inventory", "players", "help", "quick_actions", "use", "move_down", "move_up", "attack",
     "style_balanced", "style_aggressive", "style_defensive", "examine",
-    "northwest", "northeast", "southwest", "southeast", "crafting", "grab"
+    "northwest", "northeast", "southwest", "southeast", "crafting", "grab",
+    "advanced_inventory", "wield", "transfer_amount", "transfer_stack", "open_container", "parent_storage", "toggle_storage"
 };
 constexpr eastl::string_view contextNames[] = {"gameplay", "interaction", "menu", "debug", "items"};
 constexpr eastl::string_view namedKeys[] = {
@@ -140,6 +141,7 @@ Keymap DefaultKeymap() {
         map[map.size() - 2].keys.push_back({"Down", false, true});
         map.back().keys.push_back({"Up", false, true});
         add(context, InputAction::Inventory, {"i"});
+        add(context, InputAction::AdvancedInventory, {"/"});
         add(context, InputAction::Crafting, {"&"});
         add(context, InputAction::Use, {"u"});
         add(context, InputAction::Players, {"P"});
@@ -160,6 +162,15 @@ Keymap DefaultKeymap() {
     add(InputContext::Menu, InputAction::Unbind, {"u"});
     add(InputContext::Items, InputAction::Use, {"u"});
     add(InputContext::Items, InputAction::Apply, {"a"});
+    add(InputContext::Items, InputAction::Examine, {"e"});
+    add(InputContext::Items, InputAction::Wield, {"w"});
+    add(InputContext::Items, InputAction::Drop, {"d"});
+    add(InputContext::Items, InputAction::Inventory, {"I"});
+    add(InputContext::Items, InputAction::TransferAmount, {"m"});
+    add(InputContext::Items, InputAction::TransferStack, {"M"});
+    add(InputContext::Items, InputAction::OpenContainer, {"o"});
+    add(InputContext::Items, InputAction::ParentStorage, {"Backspace"});
+    add(InputContext::Items, InputAction::ToggleStorage, {"f"});
     add(InputContext::Items, InputAction::MoveDown, {"<"});
     add(InputContext::Items, InputAction::MoveUp, {">"});
     add(InputContext::Menu, InputAction::Reset, {"Backspace"});
@@ -206,7 +217,10 @@ Keymap ResolveKeymap(const Keymap& global, const Keymap& world) {
         }
         if (explicitAction) { continue; }
         for (auto it = binding.keys.begin(); it != binding.keys.end();) {
-            const bool introduced = binding.action == InputAction::Grab || binding.action == InputAction::Examine || binding.action == InputAction::Northwest
+            const bool introduced = binding.action >= InputAction::AdvancedInventory
+                || (binding.context == InputContext::Items && (binding.action == InputAction::Examine
+                    || binding.action == InputAction::Drop || binding.action == InputAction::Inventory))
+                || binding.action == InputAction::Grab || binding.action == InputAction::Examine || binding.action == InputAction::Northwest
                 || binding.action == InputAction::Northeast || binding.action == InputAction::Southwest || binding.action == InputAction::Southeast
                 || (binding.action == InputAction::Interact && it->key == "e")
                 || ((binding.action == InputAction::MoveUp || binding.action == InputAction::MoveDown) && it->alt)

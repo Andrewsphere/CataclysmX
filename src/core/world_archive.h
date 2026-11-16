@@ -26,6 +26,7 @@ struct SavedActor {
     // Stable MonsterDefinition::id, empty for untyped actors; never a catalog index.
     // Restore identity without reapplying the definition's spawn defaults.
     String monsterType;
+    PersistentId wieldedItem = 0;
 };
 
 struct SavedObject {

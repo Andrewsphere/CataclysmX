@@ -63,6 +63,18 @@ TEST_CASE("SDL Tab resolves by input context", "[sdl][input]") {
     CHECK(ResolveAction(keys, InputContext::Debug, *one) == InputAction::Layer1);
 }
 
+TEST_CASE("SDL inventory entry bindings and keypad locations retain modal chords", "[sdl][input]") {
+    const auto keys = DefaultKeymap();
+    CHECK(ResolveAction(keys, InputContext::Gameplay, *sdl::TranslateKey(Key(SDLK_I))) == InputAction::Inventory);
+    CHECK(ResolveAction(keys, InputContext::Gameplay, *sdl::TranslateKey(Key(SDLK_U))) == InputAction::Use);
+    CHECK(ResolveAction(keys, InputContext::Gameplay, *sdl::TranslateKey(Key(SDLK_SLASH))) == InputAction::AdvancedInventory);
+    const SDL_Keycode keypad[]{SDLK_KP_1, SDLK_KP_2, SDLK_KP_3, SDLK_KP_4, SDLK_KP_5, SDLK_KP_6, SDLK_KP_7, SDLK_KP_8, SDLK_KP_9};
+    for (int i = 0; i < 9; ++i) {
+        String digit; digit += static_cast<char>('1' + i);
+        CHECK(sdl::TranslateKey(Key(keypad[i])) == KeyChord{digit});
+    }
+}
+
 TEST_CASE("SDL debug region jumps resolve Shift arrows", "[sdl][input]") {
     const auto keys = DefaultKeymap();
     for (const auto binding : {std::pair{SDLK_LEFT, InputAction::JumpWest},

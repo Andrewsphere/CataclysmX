@@ -182,7 +182,11 @@ bool ValidateArchive(const ContentCatalog& content, const Archive& saved,
         const auto controller = ReadAiController(actor.controller);
         if (!controller || (actor.player && *controller)) { return false; }
         if (!ValidateAiControllerContent(actor.controller, content)) { return false; }
-        if (!ReadCombatState(actor.combat)) { return false; }
+        const auto combat = ReadCombatState(actor.combat);
+        if (!combat || (combat->action.kind == ActorActionKind::MeleeWindup && combat->action.weapon != actor.wieldedItem)) { return false; }
+        if (actor.wieldedItem && eastl::none_of(saved.items.begin(), saved.items.end(), [&actor](const SavedItem& item) {
+            return item.id == actor.wieldedItem && item.location == LocationKind::actor && item.owner == actor.id;
+        })) { return false; }
         if (!ValidLightEmission(actor.light) || actor.speed == 0 || (actor.parked && !actor.player) || !addId(actor.id)
             || !ValidPosition(actor.position) || ChunkOf(actor.position) != saved.position
             || (!actor.parked && Occurrences(positions, actor.position))) {
@@ -1254,7 +1258,8 @@ public:
             saved.actors.push_back({actor->id, actor->position, actor->player, actor->turns,
                 actor->speed, actor->actionDeadline.Remaining(tick), actor->parked, actor->carryCapacityGrams, actor->light,
                 CaptureAiController(actor->controller_.get()), CaptureCombatState(actor->combat),
-                actor->monsterType.value ? content.GetMonster(actor->monsterType).id : String{}});
+                actor->monsterType.value ? content.GetMonster(actor->monsterType).id : String{},
+                actor->wieldedItem.value ? Live(items, actor->wieldedItem)->id : 0});
             for (ItemHandle item : actor->inventory) {
                 pending.push_back(item);
             }
@@ -1374,6 +1379,12 @@ public:
             Require(itemSystem.Initialize(restored, &item.state).has_value());
             const auto key = items.emplace(eastl::move(restored));
             Collection(location).push_back({key.raw});
+        }
+        for (const auto& actor : saved.actors) {
+            const auto handle = FindActor(actor.id);
+            const auto item = FindItem(actor.wieldedItem);
+            Require(!actor.wieldedItem || (Live(items, item) && Live(items, item)->location == ItemLocation::Carried(handle)));
+            Live(actors, handle)->wieldedItem = item;
         }
     }
 
@@ -2406,6 +2417,59 @@ WorldResult<ItemHandle> World::CreateItem(ItemTypeId type, ItemLocation location
     return handle;
 }
 
+bool World::CanUseWieldedItem(ActorHandle handle) const {
+    const auto* actor = GetActor(handle);
+    if (!actor) { return false; }
+    if (!actor->wieldedItem.value) { return true; }
+    const auto* item = GetItem(actor->wieldedItem);
+    if (!item || item->location != ItemLocation::Carried(handle)) { return false; }
+    const auto& body = actor->combat.body;
+    if (body.kind == BodyKind::Simple) { return Functional(body, BodyPart::AttackApparatus); }
+    const unsigned hands = unsigned(Functional(body, BodyPart::LeftHand)) + unsigned(Functional(body, BodyPart::RightHand));
+    return hands >= ItemMelee(impl_->content.GetItem(item->type)).hands;
+}
+
+void World::ClearWieldedItem(ItemHandle handle) {
+    const auto* item = GetItem(handle);
+    if (!item || item->location.kind != LocationKind::actor) { return; }
+    const auto owner = item->location.actor;
+    auto* actor = MutableActor(owner);
+    if (actor->wieldedItem != handle) { return; }
+    actor->wieldedItem = {};
+    if (actor->combat.action.kind == ActorActionKind::MeleeWindup) {
+        Combat().Disrupt(owner, {DisruptionCause::RequiredCapabilityLost});
+    }
+    ActorChanged(owner);
+}
+
+InventoryResult World::WieldItem(ActorHandle handle, ItemHandle selected) {
+    auto* actor = MutableActor(handle);
+    if (!actor || actor->parked || !IsActive(actor->position)) { return {InventoryOutcome::Inaccessible}; }
+    if (GetActorRemainingTicks(handle) || actor->combat.action.kind != ActorActionKind::None) { return {InventoryOutcome::Busy}; }
+    if (actor->wieldedItem == selected) { return {InventoryOutcome::AlreadyThere}; }
+    if (selected.value) {
+        const auto* item = GetItem(selected);
+        if (!item) { return {InventoryOutcome::InvalidItem}; }
+        if (IsReservedItem(selected) || item->location.installation.value
+            || impl_->content.GetItem(item->type).unfinishedCraft) { return {InventoryOutcome::Reserved}; }
+        for (const auto* current = item; current->location.kind == LocationKind::item; current = GetItem(current->location.item)) {
+            if (current->location.installation.value) { return {InventoryOutcome::Reserved}; }
+        }
+        const auto root = impl_->Root(item->location);
+        if (root.kind != LocationKind::actor || root.actor != handle || !CanAccessItem(handle, selected)) { return {InventoryOutcome::Inaccessible}; }
+        const auto& body = actor->combat.body;
+        const auto hands = ItemMelee(impl_->content.GetItem(item->type)).hands;
+        if (body.kind == BodyKind::Detailed && unsigned(Functional(body, BodyPart::LeftHand))
+            + unsigned(Functional(body, BodyPart::RightHand)) < hands) { return {InventoryOutcome::NeedsHands}; }
+        if (body.kind == BodyKind::Simple && !Functional(body, BodyPart::AttackApparatus)) { return {InventoryOutcome::NeedsHands}; }
+        const auto moved = TransferItem(selected, ItemLocation::Carried(handle));
+        if (!moved) { return {InventoryOutcome::NoCapacity}; }
+    }
+    MutableActor(handle)->wieldedItem = selected;
+    ActorChanged(handle);
+    return {InventoryOutcome::Succeeded, 100};
+}
+
 WorldResult<void> World::TransferItem(ItemHandle handle, ItemLocation location) {
     Impl::GravityBatch batch(*this);
     if (!impl_->craftingMutationDepth && (IsReservedItem(handle)
@@ -2438,6 +2502,7 @@ WorldResult<void> World::TransferItem(ItemHandle handle, ItemLocation location) 
     for (std::size_t i = 0; i < moved.size(); ++i) {
         for (ItemHandle child : GetItem(moved[i])->contents) { moved.push_back(child); }
     }
+    ClearWieldedItem(handle);
     EraseOne(impl_->Collection(value->location), handle);
     impl_->Collection(*destination).push_back(handle);
     value->location = *destination;
@@ -2456,6 +2521,7 @@ WorldResult<void> World::DestroyItem(ItemHandle handle) {
     if (!value) {
         return eastl::unexpected(WorldError::invalid_handle);
     }
+    ClearWieldedItem(handle);
     impl_->MarkDirty(impl_->RootChunk(value->location), value->location.kind == LocationKind::ground);
     const ItemLocation old = value->location;
     const auto root = impl_->Root(old);
@@ -3527,6 +3593,10 @@ bool World::CheckInvariants() const {
         if (!controller || (value.player && value.controller_)) { return false; }
         if (!ValidateAiControllerContent(CaptureAiController(value.controller_.get()), state.content)) { return false; }
         if (!ValidateCombatState(value.combat)) { return false; }
+        const auto* wielded = GetItem(value.wieldedItem);
+        if (value.wieldedItem.value && (!wielded || wielded->location != ItemLocation::Carried(handle))) { return false; }
+        if (value.combat.action.kind == ActorActionKind::MeleeWindup
+            && value.combat.action.weapon != (wielded ? wielded->id : 0)) { return false; }
         const bool running = !value.parked && IsActive(value.position) && (value.player || value.controller_);
         if (value.actionDeadline.suspended == running) { return false; }
         if (!ValidLightEmission(value.light) || value.speed == 0 || !add_id(value.id) || Occurrences(indexed_actors, handle) != 1

@@ -2,6 +2,7 @@
 #include "client/combat_text.h"
 #include "client/message_history.h"
 #include "client/crafting_menu.h"
+#include "client/item_ui.h"
 
 #include "sdl/assets.h"
 #include "sdl/gpu_renderer.h"
@@ -11,6 +12,7 @@
 #include "sdl/screens.h"
 #include "sdl/modal.h"
 #include "sdl/health.h"
+#include "sdl/inventory_screen.h"
 
 #include <SDL3/SDL.h>
 #include <EASTL/unique_ptr.h>
@@ -69,6 +71,10 @@ String Hints(const Keymap& keys) {
         text.append(name.data(), name.size()); text += "\n";
     }
     text += "z zoom in (also Examine/Interact)\nZ zoom out (also Examine/Interact)\nInteract: directions open actions; . selects current tile\nExamine: directions move cursor; layer bindings change viewed Y\nExamine: PgUp/PgDn or Ctrl+Up/Down scroll details\n";
+    for (auto action : {InputAction::Inventory, InputAction::Use, InputAction::AdvancedInventory}) {
+        text += BindingHint(keys, InputContext::Gameplay, action); text += " ";
+        const auto name = ActionName(action); text.append(name.data(), name.size()); text += '\n';
+    }
     return text;
 }
 int SdlFailure() {
@@ -141,6 +147,11 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
     bool initializeScreen = false;
     ScreenFrame frame;
     OptionsUi optionsUi;
+    ItemUi itemUi;
+    bool itemAdvanced = false, itemUse = false;
+    eastl::optional<std::uint64_t> itemRequest;
+    eastl::optional<std::uint64_t> modalRequest;
+    eastl::optional<std::uint64_t> commandRequest;
     auto& cursor = modal.Cursor();
     Vector<String> inspection;
     eastl::optional<std::uint64_t> inspectionId;
@@ -172,6 +183,9 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
     bool smokeFailed = false;
     bool smokeExamined = false;
     bool smokeExamineDrawn = false, smokeActionsDrawn = false, smokeHealthDrawn = false;
+    bool smokeInventoryDrawn = false, smokeItemExamineDrawn = false, smokeAdvancedDrawn = false;
+    unsigned smokeItemStep = 0;
+    unsigned smokeItemAction = 0;
     std::uint64_t smokeModalTick = 0;
     unsigned int smokeAiStep = 0;
     std::uint64_t smokeOpportunity = 0;
@@ -194,19 +208,23 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
     eastl::optional<std::uint64_t> animationDeadline;
     const auto smokeDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
     const auto enqueue = [&](SessionRequest request) {
-        const bool isCommand = request.kind == RequestKind::Command || request.kind == RequestKind::ResumeAndCommand;
+        const bool isCommand = request.kind == RequestKind::Command || request.kind == RequestKind::ResumeAndCommand
+            || request.kind == RequestKind::ItemCommand;
         if (isCommand && commandPending) { return false; }
         request.generation = snapshot.generation; request.id = nextId;
         request.player = snapshot.view.playerId; request.opportunity = snapshot.view.opportunity;
         if (session.TrySubmit(eastl::move(request)) != EnqueueResult::Accepted) {
             SetMessage("Session busy; try again."); dirty = true; return false;
         }
-        if (isCommand) { commandPending = true; }
+        if (isCommand) { commandPending = true; commandRequest = nextId; }
         ++nextId; return true;
     };
     const auto submit = [&](RequestKind kind, Command command = {}) {
         SessionRequest request; request.kind = kind; request.command = eastl::move(command);
-        return enqueue(eastl::move(request));
+        const auto id = nextId;
+        const bool accepted = enqueue(eastl::move(request));
+        if (accepted && (kind == RequestKind::Pause || kind == RequestKind::Resume || kind == RequestKind::PauseForItems)) { modalRequest = id; }
+        return accepted;
     };
     const auto close = [&] {
         if (submit(RequestKind::Resume)) { modal.BeginClose(); SetMessage("Resuming..."); SDL_StopTextInput(platform.window);
@@ -285,6 +303,10 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
         }
         dirty = true;
         if (modal.Pending() || settingsId || craftingRequest) { return; }
+        if (modal.Active() == Screen::ItemInventory) {
+            HandleInventoryKey(itemUi, heldKey, *chord, keys, snapshot.view, content, localization);
+            return; // All contextual keys, including unbound keys, belong to ItemUi.
+        }
         if (modal.Active() == Screen::Options) {
             const bool capturing = optionsUi.Capturing();
             const auto result = optionsUi.Key(*chord,store,localization,localizationDirectory);
@@ -437,6 +459,16 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
         }
         if (*action == InputAction::Quit || *action == InputAction::Cancel) { running = false; return; }
         if (!started || assetState != AssetState::Ready || !mapValid) { return; }
+        if (*action == InputAction::Inventory || *action == InputAction::Use || *action == InputAction::AdvancedInventory) {
+            if (commandPending) { return; }
+            if (submit(RequestKind::PauseForItems)) {
+                itemAdvanced = *action == InputAction::AdvancedInventory;
+                itemUse = *action == InputAction::Use;
+                modal.BeginOpen(Screen::ItemInventory);
+                SetMessage("Pausing...");
+            }
+            return;
+        }
         if (*action == InputAction::Grab) {
             heldKey.Reset();
             if (snapshot.view.grabbedObject) {
@@ -487,7 +519,10 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             case ReplyKind::StartupFailed: std::fputs("Session startup failed.\n", stderr); return 1;
             case ReplyKind::Admission: SetMessage(localization.ResultText(reply.result)); break;
             case ReplyKind::Completed:
-                commandPending = false;
+                if (commandRequest && reply.id == *commandRequest) { commandPending = false; commandRequest.reset(); }
+                if (itemRequest && reply.id == *itemRequest) {
+                    itemRequest.reset(); itemUi.CommandFinished(reply.result); heldKey.Reset();
+                }
                 SetMessage(localization.ResultText(reply.result) + (reply.result.storageError ? " (world storage failed)" : ""));
                 if (craftingRequest && reply.id == *craftingRequest) {
                     craftingRequest.reset();
@@ -501,7 +536,9 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 if (options.smoke) {
                     const Outcome expected = smokeStep == 1 || smokeStep == 14 ? Outcome::moved
                         : smokeStep == 2 ? Outcome::picked_up : smokeStep == 13 ? Outcome::toggled
-                        : smokeStep == 17 ? Outcome::locked : Outcome::waited;
+                        : smokeStep == 17 ? Outcome::locked
+                        : smokeStep == 20 && smokeItemAction == 1 ? Outcome::wielded
+                        : smokeStep == 20 && smokeItemAction == 2 ? Outcome::unwielded : Outcome::waited;
                     if (reply.result.outcome != expected || reply.result.storageError) {
                         std::fprintf(stderr,"SDL smoke step %u: outcome %d, expected %d\n",smokeStep,static_cast<int>(reply.result.outcome),static_cast<int>(expected));
                         smokeFailed = true;
@@ -509,10 +546,14 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 }
                 smokeWaiting = false; break;
             case ReplyKind::Paused:
+                if (!modalRequest || reply.id != *modalRequest) { break; }
+                modalRequest.reset();
                 modal.Paused(); initializeScreen = true;
                 SetMessage("Local session paused.");
                 smokeWaiting = false; break;
             case ReplyKind::Resumed:
+                if (!modalRequest || reply.id != *modalRequest) { break; }
+                modalRequest.reset();
                 modal.Closed(); frame.visible = false; SetMessage("Local session resumed.");
                 smokeWaiting = false; break;
             case ReplyKind::Inspected:
@@ -551,14 +592,20 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 }
                 break;
             case ReplyKind::Stale:
-                commandPending = false; SetMessage("Input expired; use the current opportunity.");
+                if (modalRequest && reply.id == *modalRequest) { modalRequest.reset(); modal.Closed(); }
+                if (commandRequest && reply.id == *commandRequest) { commandPending = false; commandRequest.reset(); }
+                if (itemRequest && reply.id == *itemRequest) { itemRequest.reset(); itemUi.CommandRejected(); heldKey.Reset(); }
+                SetMessage("Input expired; use the current opportunity.");
                 if (craftingRequest && reply.id == *craftingRequest) {
                     craftingRequest.reset(); craftingFeedback = message;
                     if (submit(RequestKind::Pause)) { modal.BeginOpen(Screen::Crafting); }
                 }
                 smokeFailed = options.smoke; smokeWaiting = false; break;
             case ReplyKind::Cancelled:
-                commandPending = false; SetMessage("Input cancelled.");
+                if (modalRequest && reply.id == *modalRequest) { modalRequest.reset(); modal.Closed(); }
+                if (commandRequest && reply.id == *commandRequest) { commandPending = false; commandRequest.reset(); }
+                if (itemRequest && reply.id == *itemRequest) { itemRequest.reset(); itemUi.CommandRejected(); heldKey.Reset(); }
+                SetMessage("Input cancelled.");
                 if (craftingRequest && reply.id == *craftingRequest) {
                     craftingRequest.reset(); craftingFeedback = message;
                     if (submit(RequestKind::Pause)) { modal.BeginOpen(Screen::Crafting); }
@@ -566,7 +613,9 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 smokeFailed = options.smoke; smokeWaiting = false; break;
             }
         }
+        const bool wasPaused = snapshot.paused;
         if (session.TakeSnapshot(snapshot)) {
+            if (!wasPaused && snapshot.paused && modal.Active() == Screen::ItemInventory) { heldKey.Reset(); }
             dirty = true;
             mapIdentity.session = snapshot.generation;
             playback.SetGeneration(mapIdentity.session, mapIdentity.assetGeneration);
@@ -578,6 +627,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             initializeScreen = false; cursor = snapshot.view.player_position;
             if (options.smoke) { smokeModalTick = snapshot.view.tick; }
             frame.scroll = 0; frame.detailScroll = 0; inspection.clear();
+            if (modal.Active() == Screen::ItemInventory) { itemUi.Open(itemAdvanced, itemUse); }
             if (modal.Active() == Screen::Options) {
                 optionsUi.Open(store,snapshot.runtimeSettings);
                 if (!store.Dirty(SettingsScope::Global) && !store.Dirty(SettingsScope::World)) {
@@ -606,6 +656,19 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 bool single = true;
                 for (const auto& choice : snapshot.interactions) { single &= choice.request.position == cursor; }
                 if (single) { openActions(); }
+            }
+        }
+        if (modal.Active() == Screen::ItemInventory && !modal.Pending()) {
+            const auto previous = itemUi.Frame().screen;
+            itemUi.Refresh(snapshot.view, content, localization, keys);
+            if (previous != itemUi.Frame().screen) { heldKey.Reset(); dirty = true; }
+            if (!itemRequest && !commandPending && snapshot.paused) {
+                if (const auto command = itemUi.TakeCommand(snapshot.view)) {
+                    const auto id = nextId;
+                    if (submit(RequestKind::ItemCommand, *command)) { itemRequest = id; }
+                    else { itemUi.CommandRejected(); }
+                    heldKey.Reset(); dirty = true;
+                } else if (!itemUi.IsOpen() && !itemUi.NeedsTime()) { close(); }
             }
         }
         if (modal.Active() == Screen::Examine && inspectionNeeded && !inspectionId && snapshot.paused) {
@@ -724,8 +787,47 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 smokeWaiting = commandPending;
                 if (!smokeWaiting) { smokeFailed = true; }
             }
-            else {
-                if (!smokeExamineDrawn || !smokeActionsDrawn || !smokeHealthDrawn) { smokeFailed = true; }
+            else if (smokeStep == 17) { press(SDLK_I); smokeWaiting = modal.Pending(); }
+            else if (smokeStep == 18) {
+                if (smokeItemStep == 0 && smokeInventoryDrawn) {
+                    const auto requestBefore = nextId;
+                    press(SDLK_F7); press(SDLK_Z); press(SDLK_1);
+                    if (nextId != requestBefore || modal.Active() != Screen::ItemInventory || commandPending) { smokeFailed = true; }
+                    press(SDLK_E); ++smokeItemStep;
+                } else if (smokeItemStep == 1 && smokeItemExamineDrawn) {
+                    press(SDLK_ESCAPE); ++smokeItemStep;
+                } else if (smokeItemStep == 2) {
+                    press(SDLK_ESCAPE); ++smokeItemStep;
+                } else if (smokeItemStep == 3 && modal.Active() == Screen::None) { ++smokeStep; }
+            }
+            else if (smokeStep == 19) { press(SDLK_SLASH); smokeWaiting = modal.Pending(); }
+            else if (smokeStep == 20 && smokeAdvancedDrawn) {
+                if (smokeItemAction == 0) {
+                    if (snapshot.view.wieldedItem || itemUi.Frame().activePane != 0
+                        || itemUi.Frame().panes[0].rows.empty()) { smokeFailed = true; }
+                    press(SDLK_W); smokeItemAction = 1;
+                    if (!itemUi.NeedsTime()) { smokeFailed = true; }
+                } else if (!itemRequest && !commandPending && snapshot.paused && !itemUi.NeedsTime()) {
+                    if (smokeItemAction == 1) {
+                        if (!snapshot.view.wieldedItem || !itemUi.IsOpen()) { smokeFailed = true; }
+                        press(SDLK_W); smokeItemAction = 2;
+                        if (!itemUi.NeedsTime()) { smokeFailed = true; }
+                    } else {
+                        if (snapshot.view.wieldedItem || !itemUi.IsOpen()) { smokeFailed = true; }
+                        press(SDLK_TAB); press(SDLK_5); press(SDLK_ESCAPE); ++smokeStep;
+                    }
+                }
+            }
+            else if (smokeStep == 21 && modal.Active() == Screen::None) {
+                press(SDLK_X); smokeWaiting = modal.Pending();
+            }
+            else if (smokeStep == 22 && !inspectionId && !inspectionNeeded && !inspection.empty()) {
+                if (modal.Active() != Screen::Examine || itemUi.IsOpen()) { smokeFailed = true; }
+                press(SDLK_ESCAPE); smokeWaiting = modal.Pending();
+            }
+            else if (smokeStep > 22 && modal.Active() == Screen::None) {
+                if (!smokeExamineDrawn || !smokeActionsDrawn || !smokeHealthDrawn
+                    || !smokeInventoryDrawn || !smokeItemExamineDrawn || !smokeAdvancedDrawn) { smokeFailed = true; }
                 running = false;
             }
             if (smokeWaiting) { ++smokeStep; }
@@ -743,7 +845,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 if (!combat.empty()) { display += combat; }
                 if (!feedback.empty()) { if (!display.empty()) { display += '\n'; } display += feedback; }
             }
-            frame.visible = modal.Active() != Screen::None;
+            frame.visible = modal.Active() != Screen::None && modal.Active() != Screen::ItemInventory;
             frame.presentation = modal.Active() == Screen::Examine || modal.Active() == Screen::Targets || modal.Active() == Screen::Actions
                 ? ScreenPresentation::Anchored : ScreenPresentation::Large;
             frame.followCursor = modal.Active() == Screen::Examine;
@@ -849,11 +951,15 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             if (!DrawFrame(platform.renderer, text, assets, mapValid ? &snapshot.view : nullptr,
                 content, display.c_str(), hints.c_str(), elapsedMilliseconds, mapValid ? &mapPacket : nullptr,
                 zoom, options.uiScale, {}, &playback, &shader, &frame,
-                {&messageHistory, &store.Keys(), &localization})) { return SdlFailure(); }
+                {&messageHistory, &store.Keys(), &localization},
+                modal.Active() == Screen::ItemInventory ? &itemUi.Frame() : nullptr)) { return SdlFailure(); }
             if (options.smoke) {
                 smokeHealthDrawn |= mapValid && text.Width(62) > 0;
                 smokeExamineDrawn |= modal.Active() == Screen::Examine && frame.presentation == ScreenPresentation::Anchored && frame.cursor.has_value();
                 smokeActionsDrawn |= modal.Active() == Screen::Actions && frame.presentation == ScreenPresentation::Anchored && frame.selected >= 0;
+                smokeInventoryDrawn |= modal.Active() == Screen::ItemInventory && itemUi.Frame().screen == ItemUiScreen::Inventory;
+                smokeItemExamineDrawn |= modal.Active() == Screen::ItemInventory && itemUi.Frame().screen == ItemUiScreen::Examine;
+                smokeAdvancedDrawn |= modal.Active() == Screen::ItemInventory && itemUi.Frame().screen == ItemUiScreen::Advanced;
             }
             dirty = false;
             animationDeadline.reset();

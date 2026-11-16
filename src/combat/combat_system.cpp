@@ -1,5 +1,6 @@
 #include "combat/combat_system.h"
 #include "core/world.h"
+#include "core/static_list.h"
 
 #include <EASTL/sort.h>
 #include <EASTL/algorithm.h>
@@ -145,7 +146,7 @@ void CombatSystem::Record(ActorHandle handle, const AttackResult& result, bool i
 
 bool CombatSystem::CanAttack(ActorHandle handle) const {
     const auto* actor = world_.GetActor(handle);
-    return Available(world_, actor) && SelectMove(actor->combat) != CombatMove::None;
+    return Available(world_, actor) && world_.CanUseWieldedItem(handle) && SelectMove(actor->combat) != CombatMove::None;
 }
 
 bool CombatSystem::CanReach(ActorHandle handle, ActorHandle target) const {
@@ -164,7 +165,7 @@ bool CombatSystem::CanReach(ActorHandle handle, ActorHandle target) const {
 
 ActorHandle CombatSystem::FindTarget(ActorHandle handle) const {
     const auto* actor = world_.GetActor(handle);
-    if (!Available(world_, actor) || SelectMove(actor->combat) == CombatMove::None) { return {}; }
+    if (!CanAttack(handle)) { return {}; }
     const auto position = actor->position;
     const auto faction = actor->combat.faction;
     const bool player = actor->player;
@@ -195,19 +196,28 @@ AttackResult CombatSystem::Attack(ActorHandle handle, ActorHandle target, std::u
     result.target = other->id;
     if (!CanReach(handle, target)) { result.outcome = AttackOutcome::OutOfReach; return result; }
     const auto move = SelectMove(actor->combat);
-    if (move == CombatMove::None) { result.outcome = AttackOutcome::NoMove; return result; }
+    if (move == CombatMove::None || !world_.CanUseWieldedItem(handle)) { result.outcome = AttackOutcome::NoMove; return result; }
     const auto speed = actor->speed;
-    const auto baseCost = move == CombatMove::HeavyAttack ? 80U : PlainCost(actor->combat.body);
+    const auto* weapon = world_.GetItem(actor->wieldedItem);
+    const auto weaponId = weapon ? weapon->id : 0;
+    const auto weaponCost = weapon ? ItemMelee(world_.GetContent().GetItem(weapon->type)).attackCost : 100U;
+    const auto scaledCost = [weaponCost](std::uint32_t cost) {
+        const auto scaled = (std::uint64_t{cost} * weaponCost + 99) / 100;
+        Require(scaled > 0 && scaled <= UINT32_MAX);
+        return static_cast<std::uint32_t>(scaled);
+    };
+    const auto baseCost = scaledCost(move == CombatMove::HeavyAttack ? 80U : PlainCost(actor->combat.body));
+    const auto recoveryCost = scaledCost(120);
     if (move == CombatMove::HeavyAttack) {
         // Both committed phases must fit, even if the target later vanishes.
-        CheckedTickAdd(CheckedTickAdd(world_.GetTick(), ActionTicks(baseCost, speed)), ActionTicks(120, speed));
+        CheckedTickAdd(CheckedTickAdd(world_.GetTick(), ActionTicks(baseCost, speed)), ActionTicks(recoveryCost, speed));
     }
     const auto targetId = other->id;
     Require(world_.ScheduleActorAction(handle, baseCost).has_value());
     auto* mutableActor = world_.MutableActor(handle);
     if (move == CombatMove::HeavyAttack) {
         mutableActor->combat.action = {ActorActionKind::MeleeWindup, targetId,
-            static_cast<std::uint32_t>(move), ActionTicks(120, speed), 0};
+            static_cast<std::uint32_t>(move), ActionTicks(recoveryCost, speed), 0, weaponId};
         mutableActor->combat.stamina -= 20;
         mutableActor->combat.heavyCooldown = 400;
         result.outcome = AttackOutcome::Windup;
@@ -251,16 +261,29 @@ DisruptionResult CombatSystem::Disrupt(ActorHandle handle, const Disruption& dis
 }
 
 AttackResult CombatSystem::Damage(ActorHandle handle, ActorHandle source, BodyPart part, DamagePacket damage) {
+    return DamageContact(handle, source, part, {&damage, 1});
+}
+
+AttackResult CombatSystem::DamageContact(ActorHandle handle, ActorHandle source, BodyPart part,
+    eastl::span<const DamagePacket> packets) {
     auto* actor = world_.MutableActor(handle);
     if (!Available(world_, actor)) { return {}; }
-    Require(damage.type < DamageType::Count && HasPart(actor->combat.body.kind, part));
+    Require(HasPart(actor->combat.body.kind, part));
     AttackResult result;
     result.target = actor->id;
     result.part = part;
     result.contact = true;
-    const auto protection = actor->combat.protection[static_cast<std::size_t>(part)][static_cast<std::size_t>(damage.type)];
-    const auto reduction = protection > damage.penetration ? protection - damage.penetration : 0;
-    const auto injury = (damage.amount > reduction ? damage.amount - reduction : 0) / body_hp_scale;
+    std::uint64_t total = 0;
+    for (const auto& damage : packets) {
+        Require(damage.type < DamageType::Count);
+        const auto protection = actor->combat.protection[static_cast<std::size_t>(part)][static_cast<std::size_t>(damage.type)];
+        const auto reduction = protection > damage.penetration ? protection - damage.penetration : 0;
+        const auto remaining = damage.amount > reduction ? damage.amount - reduction : 0;
+        Require(total <= UINT64_MAX - remaining);
+        total += remaining;
+    }
+    Require(total / body_hp_scale <= UINT32_MAX);
+    const auto injury = static_cast<std::uint32_t>(total / body_hp_scale);
     if (injury == 0) {
         result.outcome = AttackOutcome::Blocked;
         Record(handle, result, true);
@@ -272,7 +295,7 @@ AttackResult CombatSystem::Damage(ActorHandle handle, ActorHandle source, BodyPa
     const bool capabilityLost = summary.lostCapability &&
         actor->combat.action.kind == ActorActionKind::MeleeWindup &&
         actor->combat.action.move == static_cast<std::uint32_t>(CombatMove::HeavyAttack) &&
-        !HeavyCapable(actor->combat.body);
+        (!HeavyCapable(actor->combat.body) || !world_.CanUseWieldedItem(handle));
     const bool defeated = summary.defeated && !actor->player;
     result.injury = injury;
     result.lostCapability = summary.lostCapability;
@@ -325,6 +348,20 @@ AttackResult CombatSystem::Strike(ActorHandle handle, ActorHandle target, Combat
     }
     Require(count != 0);
     const auto part = parts[Draw(rng) % count];
+    if (const auto* weapon = world_.GetItem(actor->wieldedItem)) {
+        // Content permits at most one component per closed DamageType member.
+        StaticList<DamagePacket, damage_type_count> packets;
+        for (auto packet : ItemMelee(world_.GetContent().GetItem(weapon->type)).damage) {
+            if (move == CombatMove::HeavyAttack) {
+                Require(packet.amount <= UINT32_MAX / 2);
+                packet.amount *= 2;
+            }
+            Require(packets.PushBack(packet));
+        }
+        result = DamageContact(target, handle, part, {packets.begin(), packets.Size()});
+        result.move = move;
+        return result;
+    }
     auto damage = actor->combat.attackDamage;
     if (move == CombatMove::Bite && damage != 0) { damage = eastl::max(1U, damage / 2); }
     const std::uint64_t amount = std::uint64_t{damage} * body_hp_scale *
@@ -373,6 +410,11 @@ void CombatSystem::ProcessEvents(std::uint32_t& rng) {
             actor->combat.action.kind == ActorActionKind::None) { continue; }
         const auto action = actor->combat.action;
         if (action.kind == ActorActionKind::MeleeWindup) {
+            const auto* weapon = world_.GetItem(actor->wieldedItem);
+            if ((weapon ? weapon->id : 0) != action.weapon || !world_.CanUseWieldedItem(handle)) {
+                Disrupt(handle, {DisruptionCause::RequiredCapabilityLost});
+                continue;
+            }
             Require(action.move == static_cast<std::uint32_t>(CombatMove::HeavyAttack) && action.recoveryTicks != 0);
             actor->combat.action = {ActorActionKind::Recovery};
             actor->actionDeadline.Set(world_.GetTick(), action.recoveryTicks);

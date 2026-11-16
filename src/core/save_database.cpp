@@ -347,6 +347,10 @@ SaveResult<void> ValidateEntityState(const ContentCatalog& content, const ChunkA
             return Failure(SaveError::InvalidData, "Unknown monster type or typed player actor", diagnostics);
         }
         const auto combat = ReadCombatState(actor.combat, diagnostics);
+        if ((combat && combat->action.kind == ActorActionKind::MeleeWindup && combat->action.weapon != actor.wieldedItem)
+            || (actor.wieldedItem && eastl::none_of(chunk.items.begin(), chunk.items.end(), [&actor](const SavedItem& item) {
+                return item.id == actor.wieldedItem && item.location == LocationKind::actor && item.owner == actor.id;
+            }))) { return Failure(SaveError::InvalidData, "Invalid wielded item ownership", diagnostics); }
         if (!combat) {
             return eastl::unexpected(combat.error() == StateError::UnsupportedVersion
                 ? SaveError::UnsupportedVersion : SaveError::InvalidData);
@@ -876,6 +880,7 @@ String EncodeChunk(const ContentCatalog& content, const ChunkArchive& chunk) {
         writer.Counter(value, "carry_capacity_g", actor.carryCapacityGrams);
         EncodeLight(writer, value, actor.light);
         writer.Add(value, "combat", EncodeValue(writer, actor.combat));
+        writer.Counter(value, "wielded_item", actor.wieldedItem);
         if (EmptyController(actor.controller)) {
             writer.Add(value, "controller", EncodeValue(writer, DefaultController(actor.player)));
         } else { writer.Add(value, "controller", EncodeValue(writer, actor.controller)); }
@@ -1062,7 +1067,11 @@ SaveResult<ChunkArchive> DecodeChunk(const ContentCatalog& content, const char* 
     yyjson_arr_iter actorIterator = yyjson_arr_iter_with(actors);
     while (auto* value = yyjson_arr_iter_next(&actorIterator)) {
         SavedActor actor{};
-        const bool fields = formatVersion < 9
+        const bool fields = formatVersion >= 11
+            ? Get(value, "monster_type")
+                ? Fields(value, {"id", "position", "player", "parked", "turns", "inventory", "speed", "remaining_ticks", "carry_capacity_g", "light", "controller", "combat", "monster_type", "wielded_item"})
+                : Fields(value, {"id", "position", "player", "parked", "turns", "inventory", "speed", "remaining_ticks", "carry_capacity_g", "light", "controller", "combat", "wielded_item"})
+            : formatVersion < 9
             ? Fields(value, {"id", "position", "player", "parked", "turns", "inventory", "speed", "remaining_ticks", "carry_capacity_g", "light"})
             : formatVersion == 9
                 ? Fields(value, {"id", "position", "player", "parked", "turns", "inventory", "speed", "remaining_ticks", "carry_capacity_g", "light", "controller"})
@@ -1080,8 +1089,11 @@ SaveResult<ChunkArchive> DecodeChunk(const ContentCatalog& content, const char* 
             return Failure(SaveError::InvalidData, "Invalid actor", diagnostics);
         }
         actor.player = yyjson_get_bool(Get(value, "player"));
+        if (formatVersion >= 11 && !Counter(Get(value, "wielded_item"), actor.wieldedItem)) {
+            return Failure(SaveError::InvalidData, "Invalid wielded item", diagnostics);
+        }
         actor.parked = yyjson_get_bool(Get(value, "parked"));
-        if (formatVersion == 10) {
+        if (formatVersion >= 10) {
             if (auto* type = Get(value, "monster_type")) {
                 if (!yyjson_is_str(type)) {
                     return Failure(SaveError::InvalidData, "Actor monster_type must be a stable string", diagnostics);
@@ -1327,7 +1339,7 @@ SaveResult<int> ReadFormatVersion(sqlite3* db, Diagnostics* diagnostics) {
         return Failure(SaveError::InvalidData, "Invalid save metadata", diagnostics);
     }
     const auto version = sqlite3_column_int64(metadata.value, 1);
-    if (version != 7 && version != 8 && version != 9 && version != save_format_version) {
+    if (version != 7 && version != 8 && version != 9 && version != 10 && version != save_format_version) {
         return Failure(SaveError::UnsupportedVersion, "Unsupported save format version", diagnostics);
     }
     code = sqlite3_step(metadata.value);
@@ -1594,7 +1606,7 @@ SaveResult<void> SaveDatabase::Create(const char* path, Diagnostics* diagnostics
         "BEGIN IMMEDIATE;"
         "CREATE TABLE metadata(singleton INTEGER PRIMARY KEY CHECK(singleton=1),"
         "format_version INTEGER NOT NULL,game_version TEXT NOT NULL);"
-        "INSERT INTO metadata VALUES(1,10,'0.1.0');"
+        "INSERT INTO metadata VALUES(1,11,'0.1.0');"
         "CREATE TABLE world_state(singleton INTEGER PRIMARY KEY CHECK(singleton=1),payload TEXT NOT NULL);"
         "CREATE TABLE chunks(x INTEGER NOT NULL,z INTEGER NOT NULL,y INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(x,z,y));"
         "CREATE TABLE player_memories(player_id TEXT NOT NULL,x INTEGER NOT NULL,z INTEGER NOT NULL,y INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(player_id,x,z,y));"
@@ -1738,7 +1750,7 @@ SaveResult<void> SaveDatabase::Begin(Diagnostics* diagnostics) {
         if (code == SQLITE_OK) { code = sqlite3_step(statement.value); }
         if (code != SQLITE_DONE) { return impl_->WriteFailure(code, diagnostics); }
     }
-    auto upgraded = Execute(db, "UPDATE metadata SET format_version=10 WHERE singleton=1", diagnostics);
+    auto upgraded = Execute(db, "UPDATE metadata SET format_version=11 WHERE singleton=1", diagnostics);
     if (!upgraded) { impl_->Rollback(); return upgraded; }
     impl_->effectiveVersion = save_format_version;
     return {};

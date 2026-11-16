@@ -102,7 +102,7 @@ TEST_CASE("Combat state validation rejects invalid runtime invariants", "[combat
 TEST_CASE("Combat state reader checks exact schemas types ranges and version", "[combat][state]") {
     auto data = CaptureCombatState(MakeCombatState(false));
     StateError expected = StateError::InvalidData;
-    SECTION("unsupported version") { data.SetUnsigned("version", 2); expected = StateError::UnsupportedVersion; }
+    SECTION("unsupported version") { data.SetUnsigned("version", 3); expected = StateError::UnsupportedVersion; }
     SECTION("zero version") { data.SetUnsigned("version", 0); expected = StateError::UnsupportedVersion; }
     SECTION("version type") { data.SetSigned("version", 1); }
     SECTION("missing fields") { data = DataObject{}; data.SetUnsigned("version", 1); }

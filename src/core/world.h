@@ -6,6 +6,7 @@
 #include "core/timing.h"
 #include "core/world_types.h"
 #include "core/item_state.h"
+#include "core/inventory.h"
 #include "crafting/crafting_types.h"
 #include "core/world_result.h"
 #include "core/perception_types.h"
@@ -261,6 +262,15 @@ public:
     WorldResult<void> DestroyActor(ActorHandle actor);
     WorldResult<ItemHandle> CreateItem(ItemTypeId type, ItemLocation location);
     WorldResult<void> TransferItem(ItemHandle item, ItemLocation destination);
+    // Gameplay mutations return base cost without scheduling. Equipment remains
+    // directly carried; persistent source identity is checked before transfer.
+    InventoryResult WieldItem(ActorHandle actor, ItemHandle item = {});
+    InventoryResult TransferInventoryItem(ActorHandle actor, PersistentId item,
+        const ItemStorage& source, const ItemStorage& destination);
+    ItemStorage GetItemStorage(ItemHandle item) const;
+    bool CanAccessGroundStorage(ActorHandle actor, TileCoord position) const;
+    bool CanAccessStorage(ActorHandle actor, const ItemStorage& storage) const;
+    bool CanUseWieldedItem(ActorHandle actor) const;
     WorldResult<void> DestroyItem(ItemHandle item);
     WorldResult<void> SetActorCarryCapacity(ActorHandle actor, std::uint64_t grams);
     std::uint64_t GetItemMass(ItemHandle item) const;
@@ -371,6 +381,7 @@ private:
     void EndCraftingMutation();
     Actor* MutableActor(ActorHandle actor);
     void ActorChanged(ActorHandle actor);
+    void ClearWieldedItem(ItemHandle item);
     friend bool LineVisible(const World&, TileCoord, TileCoord);
     void RecordPointLos(bool voxel, std::uint64_t count = 1) const;
     friend class ItemSystem;

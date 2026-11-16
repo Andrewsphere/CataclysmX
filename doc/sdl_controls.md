@@ -17,7 +17,7 @@ selected automatically. A direction immediately opens that tile's actions; `.`
 or Home selects the player's tile. Exactly one available action executes
 immediately. Otherwise Up/Down selects an action and Enter executes it. Unavailable
 actions remain gray with refusal reasons. Escape returns to target selection,
-then resumes. Loose items and inventory retain their existing interfaces.
+then resumes. Loose items use the shared inventory interfaces described below.
 
 Alt+Up ascends and Alt+Down descends, using the ordinary stairs checks. Ctrl+Left
 and Ctrl+Right move southwest/southeast; Shift+Left and Shift+Right move
@@ -32,6 +32,21 @@ Bumping closed openable terrain opens it at the normal opening cost without
 entering. A later movement enters. This authoritative behavior also applies to
 terminal/headless clients. An attempted diagonal door opening uses opening
 cost, rather than diagonal locomotion cost.
+
+## Inventory and equipment
+
+**i** opens inventory; **u** opens use-selection; **/** opens advanced inventory.
+Item lists include scaled sprites, names, counts, volumes and masses. **e** (or
+Enter in ordinary inventory) examines the item, **w** wields/unwields, **d** drops,
+**u** uses and **a** manages contents. Examination includes optional descriptions
+and colored UTF-8 art, plus the item's relevant stats.
+
+Advanced inventory keeps two panes open through paid transfers. **Tab** switches
+panes; **I** selects inventory; **1–9** selects the current/neighboring tile in
+keypad order. **f** toggles floor/object storage; **o** opens a portable container
+and **Backspace** returns to its parent. **Enter** transfers one, **m** prompts for
+an amount, **M** transfers the selected stack. Escape cancels future work or backs
+out. See [shared controls](inventory_ui.md) and [SDL rendering/timing](sdl_inventory.md).
 
 ## Debug and options
 
