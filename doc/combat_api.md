@@ -1,5 +1,10 @@
 # Combat API
 
+This page describes the implemented first melee slice. The expanded
+[combat design](../md/CombatDesign.md) specifies planned JSON-defined arts, weighted
+selection, equipment/armor, skills, and ordinary human death. Those rules are not
+implemented merely by documenting them; the current contracts below still apply.
+
 The first melee slice is implemented by [`CombatSystem`](../src/combat/combat_system.h),
 accessed through `world.Combat()`. The world owns the coordinator and actor storage;
 each actor owns its `CombatState`, including body, injury profile, faction, style,
@@ -47,7 +52,9 @@ hit that breaks a limb does not transfer overkill to maximum loss. Subsequent wh
 injury to an already broken limb reduces maximum HP by 10%, accumulated in
 hundredths, capped at 50% of unreduced maximum. Further hits do not reset mending.
 Simple disabled attached zones redirect subsequent hits to Core; a defeated simple
-non-player is destroyed. Detailed vital defeat is deferred.
+non-player is destroyed. Detailed vital defeat is not implemented; the
+[ordinary human death rule](../md/CombatDesign.md#ordinary-human-death) is now
+specified for future implementation.
 
 With regeneration enabled, broken limbs mend after seven logical game days to
 40 HP, clamped to effective maximum; `InjuryProfile::mendedHp` can instead be 60.

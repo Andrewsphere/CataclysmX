@@ -8,6 +8,10 @@ document summarizes the current concept and scope; see [runtime crafting](../doc
 and [frontend controls](../doc/crafting_ui.md) for detailed contracts. Recycling,
 disassembling, and uncrafting refer to the same operation here.
 
+The [skill system](SkillsDesign.md) now specifies planned learned-skill gates and
+training rewards. That design is not implemented by the current recipes/jobs;
+the runtime sections below continue to describe the existing slice.
+
 ## Recipes and content
 
 Crafting recipes specify exact consumed inputs, retained item requirements,
@@ -100,12 +104,40 @@ different nonempty classes cannot transfer through an output intermediary within
 one operation. Other input
 state is not reconstructed.
 
+## Planned skill integration
+
+The agreed [skill design](SkillsDesign.md) adds these rules when implemented:
+
+- Recipe skill requirements use learned levels 1-10. Temporary effective-level
+  bonuses affect performance but do not satisfy missing learned knowledge.
+- Appropriate crafting/deconstruction grant ordinary XP while advancing a
+  noncombat skill toward levels 1-5. From learned level 5 onward, advancement
+  toward levels 6-10 requires paired theory and practice.
+- Crafting supplies practice in the advanced band; deconstruction supplies
+  theory. A theory source plus a practice source is necessary; books are one
+  theory source, not mandatory when suitable deconstruction is available.
+- A craft requiring level 3 can teach that skill toward level 4, then stops
+  granting XP at learned level 4. Deconstruction follows the same rule using its
+  own difficulty. Teaching ceilings apply separately to each taught skill.
+- Ungated beginner activities can have training level 0 and teach toward level 1.
+  Neither training nor recipe requirements create learned levels above 10.
+- Ordinary book XP multipliers use the strongest applicable value and last until
+  the trained skill levels up. They do not expire with elapsed crafting time or
+  a finite XP budget; used books do not reset at the next level.
+
+Skill gain must follow actual credited work and cannot repeat when a job is
+paused, resumed, or restored. Incremental versus completion-time credit,
+cancellation/worker-change attribution, and surplus routing at teaching/level
+boundaries still need implementation design. Existing reservation, paid-slice,
+and persistence contracts are not changed by this Markdown specification. Skill
+gates also remain separate from any future recipe-knowledge system.
+
 ## Deferred design
 
-Skills, richer item quality and condition effects, higher-tier speed bonuses,
-stations or machine integration, recipe knowledge, and richer requirement
-alternatives remain future design choices. The existing runtime rules above do
-not imply those features.
+Richer item quality and condition effects, higher-tier speed bonuses, stations or
+machine integration, recipe knowledge, and richer requirement alternatives remain
+future design choices. The current runtime does not imply those features or the
+planned skill integration above.
 
 ## Acceptance scenarios
 

@@ -121,6 +121,19 @@ The deterministic server supports local-only sessions and authoritative LAN
 guests, with SQLite host saves. Unloaded archives stay in memory until a
 successful checkpoint permits eviction.
 
+## Gameplay design
+
+These documents include agreed future rules and explicitly identify implementation
+gaps; they are not additions to the current content/API contracts:
+
+- [Combat design](../md/CombatDesign.md): JSON-defined arts, progression, weighted
+  move/target selection, reactions, active abilities, two-hand equipment, armor,
+  human death, and headless balance experiments.
+- [Skill design](../md/SkillsDesign.md): learned/effective levels, ordinary and
+  theory/practice XP, level-scoped book boosts, and activity teaching limits.
+- [Crafting design](../md/CraftingDesign.md): existing jobs and planned skill gates
+  and training rewards.
+
 ## LAN profile API
 
 `client/lan_profile.h` owns a bounded set of endpoint identities. `Load(path)`
