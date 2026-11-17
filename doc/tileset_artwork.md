@@ -5,7 +5,8 @@ The SDL default is `assets/tiles/gen1_32x32/tileset.json5`, selectable with
 atlas pages on every launch. The individual files are the editable production
 artwork; no preassembled tileset atlases are shipped.
 
-The pack maps the base and architectural terrain types, six generic overlays and the backpack. Grass
+The pack maps the base and architectural terrain types, six generic overlays and
+90 item types: 87 [imported item sprites](item_sprites.md) and three existing animated bulbs. Grass
 uses horizontal mirroring so tufts stay upright. Roads use plain full-cell asphalt
 without lane markings or connection shapes. Trees use a transparent 32x64 upright
 sprite with a separate grass underlay. Actors, ground items and machines preserve

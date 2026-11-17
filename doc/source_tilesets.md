@@ -59,7 +59,14 @@ and accepts `optional: true` for absent content types while still validating
 artwork references. See [furniture sprites](furniture_sprites.md) for observation
 identity and compatibility details.
 
-Terrain/item keys are existing content IDs. The optional `monsters` object maps
+Terrain/item keys are existing content IDs. Item mappings may set `optional: true`
+so the same artwork pack can serve scenarios that omit those items. An absent
+optional item produces no mapping; its visual and activation references are still
+validated. Without this flag, an unknown item ID is an error. The flag must be a
+boolean and is not accepted for terrain or generic mappings. This matches the
+existing object/monster policy and keeps scenario differences out of rendering.
+
+The optional `monsters` object maps
 existing monster content IDs to visuals with the same syntax as `items`.
 Monster mappings accept static sprites, animations and variant sets, but no
 terrain connections or ground underlays. `TilesetDefinition::monsters` is indexed

@@ -13,6 +13,8 @@
 - [Vulkan builds](vulkan_build.md): shared Windows/Linux rendering, runtime GLSL compilation and dependencies.
 - [Default tileset artwork](tileset_artwork.md): individual Gen1 sprites, references,
   preparation, transparent overlays and lightbulb frames.
+- [Imported item sprites](item_sprites.md): ComfyUI artwork, content aliases,
+  scenario compatibility, retained bulb animations and item fallbacks.
 - [SDL frontend architecture](sdl_client.md): session ownership, snapshots,
   local pause and live multiplayer menus.
 - [SDL multiplayer](sdl_multiplayer.md): hosting, joining, discovery, reconnect,

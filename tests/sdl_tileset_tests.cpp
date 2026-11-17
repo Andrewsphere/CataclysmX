@@ -72,3 +72,27 @@ TEST_CASE("tileset validates optional sprite activation bindings", "[sdl][tilese
         CHECK_FALSE(parse(mapping, &diagnostics)); CHECK_FALSE(diagnostics.Empty());
     }
 }
+
+TEST_CASE("Item mappings can omit scenario content while validating artwork", "[sdl][tileset][item-sprites]") {
+    const auto known = Parse("items:{backpack:{visual:'tile.a',optional:true}}");
+    REQUIRE(known);
+    CHECK(known->items[TestItem("backpack").value].kind == TilesetMappingKind::Sprite);
+    const auto absent = Parse("items:{absent:{visual:'tile.a',optional:true}}");
+    REQUIRE(absent);
+    CHECK(absent->items[TestItem("backpack").value].kind == TilesetMappingKind::Missing);
+    CHECK(Parse("items:{absent:{visual:'tile.idle',optional:true,activation:{animation:'tile.idle',mode:'once'}}}"));
+    for (const char* fields : {
+        "items:{absent:{visual:'tile.a'}}",
+        "items:{absent:{visual:'tile.a',optional:false}}",
+        "items:{backpack:{visual:'tile.a',optional:1}}",
+        "items:{absent:{visual:'tile.a',optional:'true'}}",
+        "items:{absent:{visual:'missing',optional:true}}",
+        "items:{absent:{visual:'tile.a',optional:true,activation:{animation:'missing',mode:'once'}}}",
+        "items:{absent:{visual:'tile.a',optional:true,ground:'tile.a'}}",
+        "generic:{player:{visual:'tile.a',optional:true}}"}) {
+        CAPTURE(fields);
+        Diagnostics diagnostics;
+        CHECK_FALSE(Parse(fields, &diagnostics));
+        CHECK_FALSE(diagnostics.Empty());
+    }
+}

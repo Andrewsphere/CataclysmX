@@ -390,14 +390,16 @@ ContentResult<TilesetDefinition> ParseSourceTileset(eastl::string_view manifest,
             else if (category == 1) { const auto id = content.FindItem(View(key)); if (id.value) { mapping = &d.items[id.value]; } }
             else if (category == 3 || category == 4) {
                 const auto id = category == 3 ? content.FindMonster(View(key)).value : content.FindObject(View(key)).value;
-                auto* optional = yyjson_obj_get(value, "optional");
-                if (optional && !yyjson_is_bool(optional)) { return invalid(); }
                 if (id) { mapping = category == 3 ? &d.monsters[id] : &d.objects[id]; }
-                else if (optional && yyjson_get_bool(optional)) { mapping = &unused; }
             }
             else { for (unsigned j = 0; j < 6; ++j) { if (View(key) == generic[j]) { mapping = &d.generic[j]; } } }
+            if (category == 1 || category >= 3) {
+                auto* optional = yyjson_obj_get(value, "optional");
+                if (optional && !yyjson_is_bool(optional)) { return invalid(); }
+                if (!mapping && optional && yyjson_get_bool(optional)) { mapping = &unused; }
+            }
             if (!mapping || !Object(value, category == 0 ? std::initializer_list<eastl::string_view>{"visual", "activation", "ground"}
-                : category >= 3 ? std::initializer_list<eastl::string_view>{"visual", "activation", "optional"}
+                : category == 1 || category >= 3 ? std::initializer_list<eastl::string_view>{"visual", "activation", "optional"}
                 : std::initializer_list<eastl::string_view>{"visual", "activation"})) { return invalid(); }
             auto* visual = yyjson_obj_get(value, "visual");
             if (!Reference(visual, d, *mapping, true)) {

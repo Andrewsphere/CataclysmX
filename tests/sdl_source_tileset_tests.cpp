@@ -1,6 +1,7 @@
 #include "content/tileset_source.h"
 #include "sdl/atlas_builder.h"
 #include "sdl/renderer.h"
+#include "sdl/map_packet.h"
 #include "content_fixture.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -285,6 +286,96 @@ TEST_CASE("Gen1 maps every supplied furniture sprite in supported content packs"
         const auto built = BuildSourceAtlases(path.parent_path().string().c_str(), *tileset, pages, {});
         for (auto* page : pages) { SDL_DestroySurface(page); }
         REQUIRE(built);
+    }
+}
+
+TEST_CASE("Gen1 item sprites load across scenarios and preserve unmapped fallbacks", "[sdl][tileset][source][item-sprites]") {
+    const auto path = fs::path(CATACLYSMX_CONTENT_PACK).parent_path().parent_path()
+        / "assets/tiles/gen1_32x32/tileset.json5";
+    for (const auto* pack : {CATACLYSMX_TERRAIN_FILE, CATACLYSMX_FIRST_HOUSE_PACK,
+        CATACLYSMX_CONTENT_PACK, CATACLYSMX_ZOMBIE_SHOWCASE_PACK}) {
+        Diagnostics diagnostics;
+        auto content = LoadContentPack(pack, &diagnostics);
+        REQUIRE(content);
+        auto tileset = LoadTilesetFile(path.string().c_str(), *content, &diagnostics);
+        INFO(FormatDiagnostics(diagnostics).c_str());
+        REQUIRE(tileset);
+        const auto fallback = tileset->generic[static_cast<unsigned>(GenericSprite::GroundItems)];
+        REQUIRE(fallback.kind == TilesetMappingKind::Sprite);
+        CHECK(tileset->sprites[fallback.index].id == "sprite.item.ground_items");
+        WorldView view;
+        view.width = view.height = 1;
+        view.cells.resize(1);
+        view.cells[0].terrainVisibility = view.cells[0].overlayVisibility = Visibility::Visible;
+        view.cells[0].tile.terrain = content->FindTerrain("floor");
+        view.cells[0].ground_items = 1;
+        Vector<MapItemVisual> items(1);
+        unsigned mapped = 0;
+        for (std::uint32_t type = 1; type <= content->ItemCount(); ++type) {
+            const auto& definition = content->GetItem(ItemTypeId{type});
+            const auto& mapping = tileset->items[type];
+            items[0] = {42, ItemTypeId{type}};
+            const auto packet = PrepareMapPacket(view, *content, *tileset, {}, items);
+            const bool lacksArtwork = definition.id == "combat_corpse" || definition.id == "unfinished_craft"
+                || definition.id == "boxing_manual" || definition.id == "brass_knuckles"
+                || definition.id == "cloth_face_wrap" || definition.id == "weapon_forms_manual"
+                || definition.id == "wooden_shield" || definition.id == "work_boots";
+            CAPTURE(pack, definition.id.c_str());
+            if (lacksArtwork) {
+                CHECK(mapping.kind == TilesetMappingKind::Missing);
+                CHECK(packet.cells[0].overlaySprite == fallback);
+                continue;
+            }
+            ++mapped;
+            CHECK(packet.cells[0].overlaySprite == mapping);
+            if (definition.id == "blinking_lightbulb") {
+                REQUIRE(mapping.kind == TilesetMappingKind::Animation);
+                const auto& clip = tileset->animations[mapping.index];
+                REQUIRE(clip.frames.size() == 2);
+                CHECK(clip.frames[0].endMilliseconds == 500);
+                CHECK(clip.frames[1].endMilliseconds == 1000);
+                CHECK(tileset->sprites[clip.frames[0].spriteIndex].id == "sprite.item.bulb.on");
+                CHECK(tileset->sprites[clip.frames[1].spriteIndex].id == "sprite.item.bulb.off");
+                continue;
+            }
+            if (definition.id == "toggle_lightbulb" || definition.id == "single_blink_lightbulb") {
+                REQUIRE(mapping.kind == TilesetMappingKind::Sprite);
+                CHECK(tileset->sprites[mapping.index].id == "sprite.item.bulb.off");
+                REQUIRE(mapping.activation);
+                const bool once = definition.id == "single_blink_lightbulb";
+                CHECK(mapping.activation->kind == (once ? SpriteActivation::PlayOnce : SpriteActivation::ToggleLoop));
+                const auto& clip = tileset->animations[mapping.activation->animationIndex];
+                REQUIRE(clip.frames.size() == 2);
+                CHECK(clip.frames[0].endMilliseconds == (once ? 120 : 500));
+                CHECK(clip.frames[1].endMilliseconds == (once ? 240 : 1000));
+                continue;
+            }
+            REQUIRE(mapping.kind == TilesetMappingKind::Sprite);
+            CHECK_FALSE(mapping.activation);
+            const auto& sprite = tileset->sprites[mapping.index];
+            String expected = "sprite.item.";
+            expected += definition.id;
+            CHECK(sprite.id == expected);
+            CHECK(sprite.width == 32); CHECK(sprite.height == 32);
+            CHECK(sprite.layer == SpriteLayer::Upright);
+        }
+        if (String(pack) == CATACLYSMX_CONTENT_PACK) { CHECK(mapped == 90); }
+        Vector<SDL_Surface*> pages;
+        const auto built = BuildSourceAtlases(path.parent_path().string().c_str(), *tileset, pages, {});
+        bool visible = false, transparent = false;
+        if (built) {
+            const auto& sprite = tileset->sprites[tileset->items[content->FindItem("backpack").value].index];
+            for (unsigned y = 0; y < sprite.height; ++y) {
+                for (unsigned x = 0; x < sprite.width; ++x) {
+                    Uint8 r = 0, g = 0, b = 0, a = 0;
+                    REQUIRE(SDL_ReadSurfacePixel(pages[sprite.atlasIndex], sprite.x + x, sprite.y + y, &r, &g, &b, &a));
+                    visible |= a != 0; transparent |= a == 0;
+                }
+            }
+        }
+        for (auto* page : pages) { SDL_DestroySurface(page); }
+        REQUIRE(built);
+        CHECK(visible); CHECK(transparent);
     }
 }
 
