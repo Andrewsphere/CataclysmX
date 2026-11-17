@@ -512,6 +512,7 @@ bool ValidMemories(const ContentCatalog& content, const SaveSnapshot& snapshot, 
                 const auto& object = chunk.objects[j];
                 if (chunk.terrain[object.tileIndex] == TerrainId{}
                     || object.appearance.kind == ObjectKind::None || !ValidObjectAppearance(object.appearance)
+                    || (object.appearance.type.value && !content.TryGetObject(object.appearance.type))
                     || (j != 0 && chunk.objects[j - 1].tileIndex >= object.tileIndex)) { return false; }
             }
         }
@@ -552,6 +553,7 @@ String EncodeMemory(const ContentCatalog& content, const MemoryChunk& chunk) {
         writer.Integer(value, "facing", static_cast<int>(object.appearance.facing));
         writer.Boolean(value, "active", object.appearance.active);
         writer.Boolean(value, "broken", object.appearance.broken);
+        writer.Text(value, "type", object.appearance.type.value ? content.TryGetObject(object.appearance.type)->id.c_str() : "");
         writer.Append(objects, value);
     }
     writer.Add(root, "objects", objects);
@@ -612,13 +614,24 @@ SaveResult<MemoryChunk> DecodeMemory(const ContentCatalog& content, const char* 
     iterator = yyjson_arr_iter_with(objects);
     while (auto* value = yyjson_arr_iter_next(&iterator)) {
         RememberedObject object;
-        if (!Fields(value, {"tile", "kind", "facing", "active", "broken"})
+        const bool fields = Get(value, "type")
+            ? Fields(value, {"tile", "kind", "facing", "active", "broken", "type"})
+            : Fields(value, {"tile", "kind", "facing", "active", "broken"});
+        if (!fields
             || !Byte(Get(value, "tile"), object.tileIndex) || !Appearance(value, object.appearance)
             || !yyjson_is_bool(Get(value, "active")) || !yyjson_is_bool(Get(value, "broken"))) {
             return Failure(SaveError::InvalidData, "Invalid remembered object", diagnostics);
         }
         object.appearance.active = yyjson_get_bool(Get(value, "active"));
         object.appearance.broken = yyjson_get_bool(Get(value, "broken"));
+        if (auto* type = Get(value, "type")) {
+            if (!yyjson_is_str(type)) { return Failure(SaveError::InvalidData, "Invalid remembered object type", diagnostics); }
+            const eastl::string_view name(yyjson_get_str(type), yyjson_get_len(type));
+            if (!name.empty()) {
+                object.appearance.type = content.FindObject(name);
+                if (!object.appearance.type.value) { return Failure(SaveError::InvalidData, "Unknown remembered object type", diagnostics); }
+            }
+        }
         chunk.objects.push_back(object);
     }
     return chunk;
@@ -1339,7 +1352,7 @@ SaveResult<int> ReadFormatVersion(sqlite3* db, Diagnostics* diagnostics) {
         return Failure(SaveError::InvalidData, "Invalid save metadata", diagnostics);
     }
     const auto version = sqlite3_column_int64(metadata.value, 1);
-    if (version != 7 && version != 8 && version != 9 && version != 10 && version != save_format_version) {
+    if (version != 7 && version != 8 && version != 9 && version != 10 && version != 11 && version != save_format_version) {
         return Failure(SaveError::UnsupportedVersion, "Unsupported save format version", diagnostics);
     }
     code = sqlite3_step(metadata.value);
@@ -1606,7 +1619,7 @@ SaveResult<void> SaveDatabase::Create(const char* path, Diagnostics* diagnostics
         "BEGIN IMMEDIATE;"
         "CREATE TABLE metadata(singleton INTEGER PRIMARY KEY CHECK(singleton=1),"
         "format_version INTEGER NOT NULL,game_version TEXT NOT NULL);"
-        "INSERT INTO metadata VALUES(1,11,'0.1.0');"
+        "INSERT INTO metadata VALUES(1,12,'0.1.0');"
         "CREATE TABLE world_state(singleton INTEGER PRIMARY KEY CHECK(singleton=1),payload TEXT NOT NULL);"
         "CREATE TABLE chunks(x INTEGER NOT NULL,z INTEGER NOT NULL,y INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(x,z,y));"
         "CREATE TABLE player_memories(player_id TEXT NOT NULL,x INTEGER NOT NULL,z INTEGER NOT NULL,y INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(player_id,x,z,y));"
@@ -1750,7 +1763,7 @@ SaveResult<void> SaveDatabase::Begin(Diagnostics* diagnostics) {
         if (code == SQLITE_OK) { code = sqlite3_step(statement.value); }
         if (code != SQLITE_DONE) { return impl_->WriteFailure(code, diagnostics); }
     }
-    auto upgraded = Execute(db, "UPDATE metadata SET format_version=11 WHERE singleton=1", diagnostics);
+    auto upgraded = Execute(db, "UPDATE metadata SET format_version=12 WHERE singleton=1", diagnostics);
     if (!upgraded) { impl_->Rollback(); return upgraded; }
     impl_->effectiveVersion = save_format_version;
     return {};

@@ -102,7 +102,8 @@
   crossings, parcels/buildings, terrain materialization and debug inspection.
 - [Diagnostics](diagnostics.md): structured error causes and contextual frames.
 - [Terrain rendering](terrain_rendering.md): UTF-8 symbols, colors, and frontend behavior.
-- [Save format](save_format.md): SQLite v11, equipment, snapshots, player memory, validation and checkpoints.
+- [Save format](save_format.md): SQLite v12, furniture identity, equipment, snapshots, player memory, validation and checkpoints.
+- [Furniture sprites](furniture_sprites.md): imported artwork, normalization, object mappings and remembered identity.
 - [LAN networking](networking.md): ENet hosting, joining, authoritative messages and discovery.
 - [Network presentation](network_presentation.md): owned map visuals, interaction
   choices, filtered layer inspection and receipt-updated input context.

@@ -6,6 +6,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <chrono>
 #include <condition_variable>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <mutex>
@@ -81,6 +82,63 @@ AssetState Finish(SdlAssets& assets, WakeState& wake, SDL_Renderer* renderer) {
     for (int i = 0; i < 70 && assets.State() == AssetState::Loading; ++i) { assets.Poll(renderer); }
     return assets.State();
 }
+}
+
+TEST_CASE("SDL renders bundled furniture on terrain with clear tile borders", "[sdl][assets][render][object-sprites]") {
+    auto content = LoadContentPack(CATACLYSMX_CONTENT_PACK);
+    REQUIRE(content);
+    RenderFixture render;
+    WakeState wake;
+    SdlAssets assets(&*content, {}, WakeState::Wake, &wake);
+    REQUIRE(Finish(assets, wake, render.renderer) == AssetState::Ready);
+    SdlText text(render.renderer);
+    REQUIRE(text.Ready());
+    WorldView view;
+    view.width = 13; view.height = 11; view.playerId = 1;
+    view.cells.resize(view.width * view.height);
+    for (auto& cell : view.cells) {
+        cell.terrainVisibility = Visibility::Visible;
+        cell.terrainLight = LightBand::Ordinary;
+        cell.tile.terrain = content->FindTerrain("floor_wood");
+    }
+    REQUIRE(DrawFrame(render.renderer, text, assets, &view, *content, "", ""));
+    const auto layout = MakeMapLayout(800, 600, view.width, view.height);
+    Vector<Uint32> ground;
+    ground.reserve(view.cells.size() * 32 * 32);
+    const auto pixel = [&](int x, int y) {
+        Uint8 r, g, b, a;
+        REQUIRE(SDL_ReadSurfacePixel(render.surface, x, y, &r, &g, &b, &a));
+        return (static_cast<Uint32>(r) << 24) | (static_cast<Uint32>(g) << 16) | (static_cast<Uint32>(b) << 8) | a;
+    };
+    for (int y = 0; y < view.height * 32; ++y) {
+        for (int x = 0; x < view.width * 32; ++x) { ground.push_back(pixel(layout.x + x, layout.y + y)); }
+    }
+    unsigned count = 0;
+    for (std::size_t type = 1; type < assets.Definition().objects.size(); ++type) {
+        if (assets.Definition().objects[type].kind == TilesetMappingKind::Missing) { continue; }
+        const int column = static_cast<int>(count % 7) * 2, row = static_cast<int>(count / 7) * 2;
+        auto& cell = view.cells[row * view.width + column];
+        cell.overlayVisibility = Visibility::Visible; cell.overlayLight = LightBand::Ordinary;
+        cell.object = ++count;
+        cell.objectAppearance = {ObjectKind::Generic, ObjectFacing::North, true, false,
+            ObjectTypeId{static_cast<std::uint32_t>(type)}};
+    }
+    REQUIRE(count == 33);
+    REQUIRE(DrawFrame(render.renderer, text, assets, &view, *content, "", ""));
+    for (unsigned object = 0; object < count; ++object) {
+        const int left = static_cast<int>(object % 7) * 64, top = static_cast<int>(object / 7) * 64;
+        int changed = 0;
+        for (int y = 0; y < 32; ++y) {
+            for (int x = 0; x < 32; ++x) {
+                const bool different = pixel(layout.x + left + x, layout.y + top + y)
+                    != ground[(top + y) * view.width * 32 + left + x];
+                changed += different;
+                if (x == 0 || x == 31 || y == 0 || y == 31) { CHECK_FALSE(different); }
+            }
+        }
+        CHECK(changed > 0);
+    }
+    if (const char* path = std::getenv("CATACLYSMX_FURNITURE_PREVIEW")) { REQUIRE(SDL_SavePNG(render.surface, path)); }
 }
 
 TEST_CASE("SDL asset loading reports failures and uses bundled default", "[sdl][assets]") {

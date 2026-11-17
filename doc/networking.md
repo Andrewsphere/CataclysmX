@@ -1,9 +1,10 @@
 # LAN networking API
 
-## Current protocol 18
+## Current protocol 19
 
-The current protocol constant is `0x43584e12`. Peers need matching updated builds
-and content; protocol 18 is incompatible with protocol 17. It adds owned player
+The current protocol constant is `0x43584e13`. Peers need matching updated builds
+and content; protocol 19 is incompatible with protocol 18. It adds observed object
+types to visible and remembered cells. Protocol 18 introduced owned player
 presentation, remote typed inspection and expanded authoritative input context.
 See [network presentation](network_presentation.md) for the current contracts.
 
@@ -39,7 +40,7 @@ monster, terrain and object). Item flag attachments hash their canonical sorted
 stable string IDs. Definition, domain and attachment authoring order therefore
 does not matter; changed meaning or attachments reject admission, including
 changes to unused vocabulary. These fingerprint changes use the existing
-matching-content check and do not change protocol 18's wire layout.
+matching-content check and do not change the current protocol's wire layout.
 
 `network/network.h` exposes `NetworkRuntime`, `LanHost`, `LanClient` and
 `LanDiscovery`. The content catalog and server must outlive their network peers;
@@ -160,7 +161,7 @@ must check encoding failures before sending. Invalid receipt encoding reports
 ### Lighting and memory cell record
 
 The view header remains 87 bytes through its u16 **expanded** cell count. The
-row-major map is encoded as `(u16 run length, 40-byte cell payload)` records until
+row-major map is encoded as `(u16 run length, 44-byte cell payload)` records until
 that count is reached. Runs repeat identical cell values and may cross row
 boundaries. Zero runs and runs exceeding the remaining count are invalid. Every
 expanded position is validated, including coordinate bounds; repeated values do
@@ -179,6 +180,13 @@ explicit. Offsets below are relative to the payload, after the run length:
 | 33 | overlay visibility | same visibility enum |
 | 34, 35 | terrain light, overlay light | u8: Dark=0, Dim=1, Ordinary=2, Bright=3 |
 | 36 | monster type | u32 catalog-local MonsterTypeId; zero means untyped |
+| 40 | observed object type | u32 catalog-local ObjectTypeId; zero means untyped |
+
+Protocol 19 appends the observed object type to the historical cell layout above.
+`ValidObjectDefinitions` checks it against the admitted catalog for ordinary and
+inspection views. Remembered cells retain their last observed object type without
+a live entity ID; unknown overlays and empty appearances cannot carry a type.
+See [furniture sprites](furniture_sprites.md).
 
 `playerLight` is appended after the player-status list as the same light-band u8.
 It is followed by the player's `CombatView`: body kind, style and action (u8),
@@ -205,8 +213,8 @@ Non-Unknown channels must refer to in-world columns even when the projection bou
 extend beyond the world. Terrain IDs are checked against the admitted catalog at
 the client boundary for both Visible and Remembered terrain, before publication.
 All enum values, state booleans and depth bounds are checked on decode; the encoder
-also rejects noncanonical states. A uniform 129×129 map uses one 42-byte run;
-the worst case of distinct adjacent cells uses 698,922 bytes before header,
+also rejects noncanonical states. A uniform 129×129 map uses one 46-byte run;
+the worst case of distinct adjacent cells uses 765,486 bytes before header,
 items and player statuses. The 1 MiB packet limit still applies. Compressing
 repeated unknown/empty tiles avoids filling ENet's reliable window with redundant
 snapshot data during admission and delaying the first command opportunity.

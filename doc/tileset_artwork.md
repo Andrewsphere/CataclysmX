@@ -30,3 +30,6 @@ tree alpha. The tool is optional and has no build or runtime role.
 
 See [individual sprite tilesets](source_tilesets.md) for package IDs, local
 metadata, anchors, animation sheets, variants and optional connected terrain.
+
+The [furniture sprite batch](furniture_sprites.md) maps 33 object types to
+normalized transparent 32×32 artwork, including exact remembered appearances.

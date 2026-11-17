@@ -16,6 +16,35 @@ const ViewCell& Cell(const WorldView& view, int x, int z) {
     return view.cells[static_cast<std::size_t>(index)];
 }
 
+TEST_CASE("Views project exact furniture types from live and stale observations", "[server][perception][object-sprites]") {
+    Server server(TestContent());
+    auto& world = server.GetWorld();
+    for (int x = 6; x <= 14; ++x) {
+        REQUIRE(world.SetTile({x,8,0}, {TestTerrain("floor"),0}));
+        REQUIRE(world.SetTile({x,8,1}, {TestTerrain("floor"),0}));
+    }
+    world.SetSkyLight(0);
+    REQUIRE(world.MoveActor(server.GetPlayer(), {8,8,0}));
+    const auto type = TestContent().FindObject("scrap_press");
+    REQUIRE(type.value != 0);
+    const auto object = world.CreateObject(type, {9,8,0});
+    REQUIRE(object);
+    world.UpdatePlayerObservations();
+    const auto live = server.View(4);
+    REQUIRE(Cell(live, 9, 8).overlayVisibility == Visibility::Visible);
+    CHECK(Cell(live, 9, 8).objectAppearance.type == type);
+    REQUIRE(world.MoveActor(server.GetPlayer(), {12,8,0}));
+    REQUIRE(world.DestroyObject(*object));
+    world.UpdatePlayerObservations();
+    const auto hidden = server.View(4);
+    REQUIRE(Cell(hidden, 9, 8).overlayVisibility == Visibility::Remembered);
+    CHECK(Cell(hidden, 9, 8).objectAppearance.type == type);
+    CHECK(Cell(hidden, 9, 8).object == 0);
+    REQUIRE(world.MoveActor(server.GetPlayer(), {8,8,0}));
+    world.UpdatePlayerObservations();
+    CHECK(Cell(server.View(4), 9, 8).objectAppearance == ObjectAppearance{});
+}
+
 TEST_CASE("Dark close-range views expose all eight neighbors and their overlays", "[server][perception][close-range]") {
     Server server(TestContent());
     World& world = server.GetWorld();

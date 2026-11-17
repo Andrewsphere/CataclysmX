@@ -149,6 +149,96 @@ TEST_CASE("Remembered terrain resolves stable strings in reordered catalogs", "[
     CHECK(opened->memories == PerceptionSnapshot(*reordered).memories);
 }
 
+TEST_CASE("Remembered furniture stores stable types and reads legacy memory", "[save][perception][object-sprites]") {
+    PerceptionSaveFile file;
+    const auto& content = TestContent();
+    auto snapshot = PerceptionSnapshot(content);
+    const auto type = content.FindObject("scrap_press");
+    REQUIRE(type.value != 0);
+    snapshot.memories[0].chunks[0].objects[0].appearance.type = type;
+    {
+        SaveDatabase database(content);
+        REQUIRE(database.Create(file.path.c_str()));
+        REQUIRE(database.Begin());
+        REQUIRE(database.WriteChunk(PerceptionChunk(content)));
+        REQUIRE(database.WriteSnapshot(snapshot));
+        REQUIRE(database.Commit());
+    }
+    SECTION("typed roundtrip") {
+        SaveDatabase database(content);
+        const auto loaded = database.Open(file.path.c_str());
+        REQUIRE(loaded);
+        CHECK(loaded->memories == snapshot.memories);
+    }
+    SECTION("invalid runtime type") {
+        SaveDatabase database(content);
+        REQUIRE(database.Open(file.path.c_str()));
+        REQUIRE(database.Begin());
+        snapshot.memories[0].chunks[0].objects[0].appearance.type = ObjectTypeId{UINT32_MAX};
+        CHECK(database.WriteSnapshot(snapshot) == eastl::unexpected(SaveError::InvalidData));
+    }
+    SECTION("unknown persisted type") {
+        { MemorySql raw(file.path.c_str()); raw.Exec("UPDATE player_memories SET payload=json_set(payload,'$.objects[0].type','unknown_furniture')"); }
+        SaveDatabase database(content);
+        CHECK(database.Open(file.path.c_str()) == eastl::unexpected(SaveError::InvalidData));
+    }
+    SECTION("non-string persisted type") {
+        { MemorySql raw(file.path.c_str()); raw.Exec("UPDATE player_memories SET payload=json_set(payload,'$.objects[0].type',7)"); }
+        SaveDatabase database(content);
+        CHECK(database.Open(file.path.c_str()) == eastl::unexpected(SaveError::InvalidData));
+    }
+    SECTION("legacy v11 memory upgrades without inferring unseen identity") {
+        {
+            MemorySql raw(file.path.c_str());
+            raw.Exec("UPDATE metadata SET format_version=11");
+            raw.Exec("UPDATE player_memories SET payload=json_remove(payload,'$.objects[0].type')");
+        }
+        snapshot.memories[0].chunks[0].objects[0].appearance.type = {};
+        {
+            SaveDatabase database(content);
+            const auto loaded = database.Open(file.path.c_str());
+            REQUIRE(loaded);
+            CHECK(loaded->memories == snapshot.memories);
+            REQUIRE(database.Begin()); REQUIRE(database.Commit());
+        }
+        SaveDatabase reopened(content);
+        const auto loaded = reopened.Open(file.path.c_str());
+        REQUIRE(loaded);
+        CHECK(loaded->memories == snapshot.memories);
+    }
+}
+
+TEST_CASE("Remembered furniture resolves stable strings in reordered catalogs", "[save][perception][object-sprites]") {
+    const ContentSource sources[] = {
+        {"original", R"({format_version:1,objects:[{id:'z_chair',name:'chair',behavior:'none',kind:'chair'}],definitions:[
+          {type:'terrain',id:'floor',name:'floor',movement:{passable:true},blocks_sight:false,
+           appearance:{symbol:'.',foreground:'white'}}]})"},
+        {"extra", "{format_version:1,objects:[{id:'a_crate',name:'crate',behavior:'none'}],definitions:[]}"}
+    };
+    auto original = LoadContent({sources, 1});
+    auto reordered = LoadContent({sources, 2});
+    REQUIRE(original); REQUIRE(reordered);
+    const auto originalType = original->FindObject("z_chair");
+    const auto reorderedType = reordered->FindObject("z_chair");
+    REQUIRE(originalType.value != 0); REQUIRE(reorderedType.value != 0);
+    REQUIRE(originalType != reorderedType);
+    PerceptionSaveFile file;
+    auto snapshot = PerceptionSnapshot(*original);
+    snapshot.memories[0].chunks[0].objects[0].appearance.type = originalType;
+    {
+        SaveDatabase database(*original);
+        REQUIRE(database.Create(file.path.c_str()));
+        REQUIRE(database.Begin());
+        REQUIRE(database.WriteChunk(PerceptionChunk(*original)));
+        REQUIRE(database.WriteSnapshot(snapshot));
+        REQUIRE(database.Commit());
+    }
+    SaveDatabase database(*reordered);
+    const auto loaded = database.Open(file.path.c_str());
+    REQUIRE(loaded);
+    CHECK(loaded->memories[0].chunks[0].objects[0].appearance.type == reorderedType);
+}
+
 TEST_CASE("Malformed palettes runs and sparse objects are rejected", "[save][perception]") {
     PerceptionSaveFile file;
     SavePerception(file.path.c_str(), TestContent());

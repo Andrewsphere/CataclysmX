@@ -77,6 +77,58 @@ TEST_CASE("monster artwork follows visible monster type with generic and player 
     }
 }
 
+TEST_CASE("Object artwork retains observed type and painted orientation", "[sdl][map][object-sprites]") {
+    const auto& content = TestContent();
+    const auto type = content.FindObject("scrap_press");
+    REQUIRE(type.value != 0);
+    TilesetDefinition tileset;
+    tileset.objects.resize(content.ObjectCount() + 1);
+    tileset.objects[type.value] = {TilesetMappingKind::Sprite, 7};
+    tileset.generic[static_cast<unsigned>(GenericSprite::ObjectEnabled)] = {TilesetMappingKind::Sprite, 8};
+    tileset.generic[static_cast<unsigned>(GenericSprite::ObjectDisabled)] = {TilesetMappingKind::Sprite, 9};
+    tileset.generic[static_cast<unsigned>(GenericSprite::GroundItems)] = {TilesetMappingKind::Sprite, 10};
+    tileset.generic[static_cast<unsigned>(GenericSprite::Player)] = {TilesetMappingKind::Sprite, 11};
+    WorldView view;
+    view.width = view.height = 1; view.playerId = 1; view.cells.resize(1);
+    auto& cell = view.cells[0];
+    cell.terrainVisibility = cell.overlayVisibility = Visibility::Visible;
+    cell.tile.terrain = content.FindTerrain("floor");
+    cell.object = 42;
+    cell.objectAppearance = {ObjectKind::Generic, ObjectFacing::North, true, false, type};
+    for (const auto facing : {ObjectFacing::North, ObjectFacing::East, ObjectFacing::South, ObjectFacing::West}) {
+        cell.objectAppearance.facing = facing;
+        const auto mapping = PrepareMapPacket(view, content, tileset, {}).cells[0].overlaySprite;
+        CHECK(mapping.index == 7);
+        CHECK(mapping.transform == SpriteTransform{});
+    }
+    cell.objectAppearance.active = false; cell.objectAppearance.broken = true;
+    CHECK(PrepareMapPacket(view, content, tileset, {}).cells[0].overlaySprite.index == 7);
+    cell.ground_items = 1;
+    CHECK(PrepareMapPacket(view, content, tileset, {}).cells[0].overlaySprite.index == 10);
+    cell.actor = view.playerId;
+    CHECK(PrepareMapPacket(view, content, tileset, {}).cells[0].overlaySprite.index == 11);
+    cell.actor = 0; cell.ground_items = 0; cell.object = 0;
+    cell.overlayVisibility = Visibility::Remembered;
+    const auto remembered = PrepareMapPacket(view, content, tileset, {}).cells[0];
+    CHECK(remembered.overlaySprite.index == 7);
+    CHECK(remembered.overlayShading == MakePerceptionTransform(Visibility::Remembered, LightBand::Dark, 0));
+    for (const auto missing : {ObjectTypeId{}, ObjectTypeId{UINT32_MAX}}) {
+        cell.objectAppearance.type = missing;
+        CHECK(PrepareMapPacket(view, content, tileset, {}).cells[0].overlaySprite.index == 9);
+    }
+    cell.objectAppearance.type = type;
+    tileset.animations.push_back({"furniture", {{7, 100}, {12, 200}}, 200});
+    tileset.objects[type.value] = {TilesetMappingKind::Animation, 0, SpriteActivationBinding{0, SpriteActivation::ToggleLoop}};
+    const auto frozen = PrepareMapPacket(view, content, tileset, {}).cells[0].overlaySprite;
+    CHECK(frozen.kind == TilesetMappingKind::Sprite);
+    CHECK(frozen.index == 7);
+    CHECK_FALSE(frozen.activation);
+    tileset.objects[type.value] = {};
+    CHECK(PrepareMapPacket(view, content, tileset, {}).cells[0].overlaySprite.index == 9);
+    cell.overlayVisibility = Visibility::Unknown;
+    CHECK_FALSE(PrepareMapPacket(view, content, tileset, {}).cells[0].hasOverlay);
+}
+
 TEST_CASE("map packets keep terrain and overlay perception independent", "[sdl][map][perception]") {
     const auto content = Catalog();
     TilesetDefinition tileset;

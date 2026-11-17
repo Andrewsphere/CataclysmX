@@ -1,10 +1,10 @@
 # Save format
 
-CataclysmX saves are SQLite database files. The strict v11 format is governed by
-one authoritative `metadata.format_version = 11` for both SQL and JSON. The
+CataclysmX saves are SQLite database files. The strict v12 format is governed by
+one authoritative `metadata.format_version = 12` for both SQL and JSON. The
 `metadata` columns are `singleton INTEGER PRIMARY KEY CHECK(singleton=1)`,
 `format_version INTEGER NOT NULL`, and `game_version TEXT NOT NULL`; its single
-row is `(1, 11, "0.1.0")`. The other tables are
+row is `(1, 12, "0.1.0")`. The other tables are
 `world_state(singleton INTEGER PRIMARY KEY CHECK(singleton=1), payload TEXT NOT
 NULL)` and `chunks(x INTEGER NOT NULL, z INTEGER NOT NULL, y INTEGER NOT NULL,
 payload TEXT NOT NULL, PRIMARY KEY(x,z,y))`, and
@@ -13,6 +13,10 @@ y INTEGER NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(player_id,x,z,y))`.
 Extra application tables/schema objects are rejected.
 
 ## JSON payloads
+
+Version 12 adds stable object type strings to remembered furniture. Missing types
+in legacy memory remain unknown until reobserved; formats 7?11 remain readable
+and upgrade on checkpoint. See [furniture sprites](furniture_sprites.md).
 
 Version 11 adds required actor `wielded_item`, a canonical unsigned decimal-string
 persistent item ID (zero means unarmed). It must refer to the actor's direct
@@ -30,7 +34,7 @@ required integer in 0–255: the fixed environment illumination (new-world defau
 192), independent of wall-clock time. The session object has exactly
 `tick`, `rng_state`, `player`, `position` (`x`, `z`, `y`), `active_radius`,
 `resident_radius`, `autosave_interval`, `pacing`, `players`, and `circle_residency`.
-`circle_residency` is required in v8/v9/v10/v11 and is either JSON `null` (legacy square
+`circle_residency` is required in v8/v9/v10/v11/v12 and is either JSON `null` (legacy square
 residency) or an exact object `{ "radius_tiles": integer }` with radius in
 0–128 inclusive. Zero is a valid circle radius; the default `CircleResidency`
 value is 78 tiles. Missing, duplicate, unknown, noninteger or out-of-range fields
@@ -155,7 +159,7 @@ tree directly. The controller target is a world position and includes its Y
 coordinate in the v6 state representation. `ValidateItemSnapshot` is the shared item-state and ownership-tree
 validator for both archive paths, dispatching behavior-owned local and relational
 validation. Installation names resolve against the parent definition and its
-  `AcceptsInstallation` policy. Metadata is version 11. Energy and charger state
+  `AcceptsInstallation` policy. Metadata is version 12. Energy and charger state
 remain version 1; door state version 2 adds required signed Y. These schemas use
 unsigned JSON numbers and signed `$i64` target
 coordinates. No capacity clamping or implicit state migration is introduced.
@@ -185,7 +189,7 @@ version 4 introduced authored layers and population. Regeneration depends on the
 supplied immutable content: changed patterns or palettes can change ungenerated
 chunks even when the saved generation version is unchanged. Region plans are
 regenerated, not serialized, and v6 does not itself change the save schema.
-The SQL/JSON save schema is version 11; strict v7/v8/v9/v10 saves are also
+The SQL/JSON save schema is version 12; strict v7/v8/v9/v10/v11 saves are also
 accepted as described below. Save formats v1 through v6 and all other schema
 versions are rejected. In particular, v2 command-count ticks are not silently reinterpreted as
 simulation ticks. Content's own format version is independent of both versions.
@@ -231,13 +235,13 @@ relabeling modern chunks as legacy is invalid.
 `SaveDatabase::Begin` starts the first checkpoint with `BEGIN IMMEDIATE`, checks
 that metadata still matches the opened durable version, and validates the old
 database. Before returning to the caller it rewrites **every** legacy chunk and
-the snapshot, then sets metadata to 11, all inside that transaction. A coordinate
+the snapshot, then sets metadata to 12, all inside that transaction. A coordinate
 list allows decoding/writing one chunk at a time without modifying an active
 chunk scan. Each old row is decoded exactly once during the rewrite; newly
-written v11 rows are never decoded as legacy. Memory rows are unchanged by the
+written v12 rows are never decoded as legacy. Memory rows are unchanged by the
 migration itself. Generation versions 1, 2 and 3 are preserved.
 
-A separate transaction-local effective version switches to 11 only after the
+A separate transaction-local effective version switches to 12 only after the
 full rewrite. Reads and commit validation use this effective version, including
 new caller `WriteChunk` rows; the durable version advances only after SQLite
 commits. Snapshot-only, chunk-only and empty checkpoints all migrate the full
@@ -288,7 +292,7 @@ including Y in `[-10,10]`. Memory chunks need not have any corresponding live
 
 The exact payload is `{ "palette": [null, "floor", ...], "runs": [[index,count], ...],
 "objects": [{"tile": integer, "kind": integer, "facing": integer,
-"active": boolean, "broken": boolean}, ...] }`.
+"active": boolean, "broken": boolean, "type": string}, ...] }`.
 
 - Palette slot zero is always `null`, meaning unknown terrain. Other entries are
   unique stable terrain strings resolved against the supplied catalog. There are
@@ -301,7 +305,9 @@ The exact payload is `{ "palette": [null, "floor", ...], "runs": [[index,count],
   chunk must contain at least one observed terrain tile; all-unknown chunks are invalid.
 - Objects are sparse, strictly increasing by tile index (0–255), with no
   duplicate tile, unknown enum value, None kind, or object on unknown terrain.
-  Appearance stores only kind/facing/active/broken, with no entity ID, behavior,
+  Appearance stores kind/facing/active/broken and a stable object type string.
+  The type may be empty or absent for legacy/untyped observations; unknown
+  nonempty IDs are invalid. There is no entity ID, behavior,
   inventory, source parameters or ownership link to a live object.
 - Memory owners must resolve to player-marked actors anywhere in the durable
   world, including parked actors and unloaded chunks. An empty server roster in

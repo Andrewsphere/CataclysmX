@@ -1,11 +1,45 @@
 #include "network/network.h"
 #include "network/wire.h"
+#include "content_fixture.h"
 
 #include <catch2/catch_test_macros.hpp>
 
 namespace {
 using namespace cataclysmx;
 using namespace cataclysmx::network;
+
+TEST_CASE("Observed furniture types roundtrip with memory and require valid content", "[house][network][codec][object-sprites]") {
+    const auto& content = TestContent();
+    const auto type = content.FindObject("scrap_press");
+    REQUIRE(type.value != 0);
+    WorldView view;
+    view.width = view.height = 1; view.playerId = 1; view.cells.resize(1);
+    auto& cell = view.cells[0];
+    cell.overlayVisibility = Visibility::Visible;
+    cell.object = 42;
+    cell.objectAppearance = {ObjectKind::Generic, ObjectFacing::East, false, true, type};
+    SECTION("visible") {}
+    SECTION("remembered") { cell.overlayVisibility = Visibility::Remembered; cell.object = 0; }
+    wire::Writer writer;
+    REQUIRE(writer.View(view));
+    WorldView decoded;
+    wire::Reader reader{{writer.bytes.data(), writer.bytes.size()}};
+    REQUIRE(reader.View(decoded)); REQUIRE(reader.Done());
+    CHECK(decoded.cells == view.cells);
+    CHECK(wire::ValidObjectDefinitions(decoded, content));
+    for (std::size_t size = 0; size < writer.bytes.size(); ++size) {
+        wire::Reader truncated{{writer.bytes.data(), size}};
+        CHECK_FALSE(truncated.View(decoded));
+    }
+    cell.objectAppearance.type = ObjectTypeId{UINT32_MAX};
+    CHECK_FALSE(wire::ValidObjectDefinitions(view, content));
+    cell.objectAppearance.type = {};
+    CHECK(wire::ValidObjectDefinitions(view, content));
+    cell.objectAppearance.type = type; cell.objectAppearance.kind = ObjectKind::None;
+    CHECK_FALSE(wire::Writer{}.View(view));
+    cell.objectAppearance.kind = ObjectKind::Generic; cell.overlayVisibility = Visibility::Unknown;
+    CHECK_FALSE(wire::Writer{}.View(view));
+}
 
 TEST_CASE("Push and pull interaction codecs retain stale target guards", "[house][network][codec]") {
     for (auto kind : {InteractionKind::PushObject, InteractionKind::PullObject}) {

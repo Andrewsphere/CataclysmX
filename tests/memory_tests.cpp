@@ -73,6 +73,33 @@ TEST_CASE("Memories are per player, survive unloading and exclude inactive playe
     CHECK(world.GetRememberedTile(secondId, {2,1,0}).terrain.value == 0);
 }
 
+TEST_CASE("Typed furniture observations retain identity until reobserved", "[memory][object-sprites]") {
+    World world(TestContent());
+    REQUIRE(world.RequestChunks({{0,0},0}, LoadMode::active));
+    REQUIRE(world.ReconcileChunks());
+    world.SetSkyLight(0);
+    REQUIRE(world.SetTile({1,1,0}, {TestTerrain("floor"),0}));
+    REQUIRE(world.SetTile({2,1,0}, {TestTerrain("floor"),0}));
+    REQUIRE(world.SetTile({3,1,0}, {TestTerrain("floor"),0}));
+    const auto player = world.CreateActor({1,1,0}, true);
+    REQUIRE(player);
+    const auto id = world.GetActor(*player)->id;
+    const auto type = TestContent().FindObject("scrap_press");
+    REQUIRE(type.value != 0);
+    const auto object = world.CreateObject(type, {2,1,0});
+    REQUIRE(object);
+    world.UpdatePlayerObservations();
+    const auto observed = world.GetRememberedTile(id, {2,1,0});
+    CHECK(observed.object.type == type);
+    REQUIRE(world.SetActorParked(*player, true));
+    REQUIRE(world.DestroyObject(*object));
+    world.UpdatePlayerObservations();
+    CHECK(world.GetRememberedTile(id, {2,1,0}) == observed);
+    REQUIRE(world.SetActorParked(*player, false));
+    world.UpdatePlayerObservations();
+    CHECK(world.GetRememberedTile(id, {2,1,0}).object == ObjectAppearance{});
+}
+
 TEST_CASE("Observations learn lower open columns but not the floor above", "[memory]") {
     World world(TestContent());
     REQUIRE(world.RequestChunks({{0,0},0}, LoadMode::active));

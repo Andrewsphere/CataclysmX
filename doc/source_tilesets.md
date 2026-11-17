@@ -52,6 +52,13 @@ so artists can edit unrelated assets without sharing one large manifest.
 }
 ```
 
+The optional `objects` section maps existing object content IDs to visuals,
+indexed by `ObjectTypeId::value` in `TilesetDefinition::objects`. It supports
+static sprites, animations and variants, rejects terrain connections/underlays,
+and accepts `optional: true` for absent content types while still validating
+artwork references. See [furniture sprites](furniture_sprites.md) for observation
+identity and compatibility details.
+
 Terrain/item keys are existing content IDs. The optional `monsters` object maps
 existing monster content IDs to visuals with the same syntax as `items`.
 Monster mappings accept static sprites, animations and variant sets, but no

@@ -212,6 +212,62 @@ TEST_CASE("source monster mappings validate content IDs and support variants", "
     CHECK(omitted->monsters[type.value].kind == TilesetMappingKind::Missing);
 }
 
+TEST_CASE("Source object mappings validate content and visual references", "[sdl][tileset][source][object-sprites]") {
+    const Vector<SpriteSourceFile> files{
+        {"sprite/press.png", {}, 32, 32},
+        {"sprite/varied.meta", "{kind:'variants',alternatives:[{visual:'sprite.press'},{visual:'sprite.press',flip_x:true}]}"},
+        {"sprite/loop.meta", "{kind:'animation',frames:[{sprite:'sprite.press',duration_ms:100}]}"}
+    };
+    const auto parse = [&](const char* mappings) { return Parse(files, mappings); };
+    auto parsed = parse("objects:{scrap_press:{visual:'sprite.varied'}}");
+    REQUIRE(parsed);
+    const auto type = TestContent().FindObject("scrap_press");
+    REQUIRE(type.value != 0);
+    CHECK(parsed->objects.size() == TestContent().ObjectCount() + 1);
+    CHECK(parsed->objects[type.value].kind == TilesetMappingKind::Visual);
+    CHECK(parse("objects:{scrap_press:{visual:'sprite.loop'}}"));
+    CHECK_FALSE(parse("objects:{missing:{visual:'sprite.press'}}"));
+    CHECK(parse("objects:{missing:{visual:'sprite.press',optional:true}}"));
+    CHECK_FALSE(parse("objects:{missing:{visual:'sprite.missing',optional:true}}"));
+    CHECK_FALSE(parse("objects:{missing:{visual:'sprite.press',optional:false}}"));
+    CHECK_FALSE(parse("objects:{scrap_press:{visual:'sprite.press',optional:1}}"));
+    CHECK_FALSE(parse("objects:{scrap_press:{visual:'sprite.press',ground:'sprite.press'}}"));
+    auto connected = ConnectedSources();
+    CHECK_FALSE(ParseSourceTileset(Manifest("objects:{scrap_press:{visual:'tile.road.connected'}}"),
+        {connected.data(), connected.size()}, TestContent()));
+}
+
+TEST_CASE("Gen1 maps every supplied furniture sprite in supported content packs", "[sdl][tileset][source][object-sprites]") {
+    const auto path = fs::path(CATACLYSMX_CONTENT_PACK).parent_path().parent_path()
+        / "assets/tiles/gen1_32x32/tileset.json5";
+    for (const auto* pack : {CATACLYSMX_TERRAIN_FILE, CATACLYSMX_FIRST_HOUSE_PACK, CATACLYSMX_CONTENT_PACK}) {
+        Diagnostics diagnostics;
+        auto content = LoadContentPack(pack, &diagnostics);
+        REQUIRE(content);
+        auto tileset = LoadTilesetFile(path.string().c_str(), *content, &diagnostics);
+        INFO(FormatDiagnostics(diagnostics).c_str());
+        REQUIRE(tileset);
+        unsigned mapped = 0;
+        for (std::size_t type = 1; type < tileset->objects.size(); ++type) {
+            const auto& mapping = tileset->objects[type];
+            if (mapping.kind == TilesetMappingKind::Missing) { continue; }
+            ++mapped;
+            REQUIRE(mapping.kind == TilesetMappingKind::Sprite);
+            const auto& sprite = tileset->sprites[mapping.index];
+            String expected = "sprite.object.";
+            expected += content->GetObject(ObjectTypeId{static_cast<std::uint32_t>(type)}).id;
+            CHECK(sprite.id == expected);
+            CHECK(sprite.width == 32); CHECK(sprite.height == 32);
+            CHECK(sprite.layer == SpriteLayer::Upright);
+        }
+        CHECK(mapped == (String(pack) == CATACLYSMX_TERRAIN_FILE ? 1U : String(pack) == CATACLYSMX_FIRST_HOUSE_PACK ? 15U : 33U));
+        Vector<SDL_Surface*> pages;
+        const auto built = BuildSourceAtlases(path.parent_path().string().c_str(), *tileset, pages, {});
+        for (auto* page : pages) { SDL_DestroySurface(page); }
+        REQUIRE(built);
+    }
+}
+
 TEST_CASE("source animation frames and variants can exceed inline capacity", "[sdl][tileset][source]") {
     auto d = Parse({{"tile/a.png", {}, 2, 2}, {"tile/b.png", {}, 2, 2},
         {"tile/clip.meta", "{kind:'animation',frames:[{sprite:'tile.a',duration_ms:10},{sprite:'tile.a',duration_ms:10},{sprite:'tile.a',duration_ms:10},{sprite:'tile.a',duration_ms:10},{sprite:'tile.b',duration_ms:10}]}"},

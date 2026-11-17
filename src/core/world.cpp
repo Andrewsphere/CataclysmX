@@ -303,7 +303,8 @@ bool ValidMemoryChunk(const ContentCatalog& content, const MemoryChunk& chunk) {
     for (const RememberedObject& object : chunk.objects) {
         if (object.tileIndex <= previousIndex || !chunk.terrain[object.tileIndex].value
             || object.appearance.kind == ObjectKind::None
-            || !ValidObjectAppearance(object.appearance)) { return false; }
+            || !ValidObjectAppearance(object.appearance)
+            || (object.appearance.type.value && !content.TryGetObject(object.appearance.type))) { return false; }
         previousIndex = object.tileIndex;
     }
     return true;
@@ -3076,7 +3077,7 @@ WorldResult<void> World::SetObjectEnabled(ObjectHandle handle, bool enabled) {
 }
 
 ObjectAppearance DescribeObject(const InteractiveObject& object) {
-    return {object.kind, object.facing, object.enabled, object.broken};
+    return {object.kind, object.facing, object.enabled, object.broken, object.type};
 }
 
 WorldResult<void> World::SetObjectAppearance(ObjectHandle handle, ObjectKind kind,

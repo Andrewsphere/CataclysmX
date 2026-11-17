@@ -6,12 +6,12 @@
 
 namespace cataclysmx::network::wire {
 
-// Version 18 adds snapshot presentation sidecars and read-only inspection queries.
-inline constexpr std::uint32_t protocol = 0x43584e12;
+// Version 19 adds observed object types to visible and remembered cells.
+inline constexpr std::uint32_t protocol = 0x43584e13;
 inline constexpr int maxViewRadius = maxPresentationRadius;
 inline constexpr int maxViewDimension = 2 * maxViewRadius + 1;
 static_assert(maxViewDimension <= UINT8_MAX && maxViewDimension * maxViewDimension <= UINT16_MAX);
-// Worst-case 129 squared cells use 698922 bytes (one 42-byte run per cell),
+// Worst-case 129 squared cells use 765486 bytes (one 46-byte run per cell),
 // before inventory and session metadata. Repeated cells use one run instead.
 inline constexpr std::size_t maxPacket = 1024 * 1024;
 inline constexpr std::size_t maxItemEntries = 2048;
@@ -23,6 +23,7 @@ inline constexpr std::size_t maxItemActions = maxItemActionsPerItem;
 bool ValidItemDefinitions(const WorldView& view, const ContentCatalog& content);
 bool ValidTerrainDefinitions(const WorldView& view, const ContentCatalog& content);
 bool ValidMonsterDefinitions(const WorldView& view, const ContentCatalog& content);
+bool ValidObjectDefinitions(const WorldView& view, const ContentCatalog& content);
 enum class Type : std::uint8_t {
     Hello = 1, Accepted, Ready, Snapshot, Input, Receipt, Rejection,
     Closing, Query, Advertisement, SnapshotAck, Inspect, Inspection, InspectionAck

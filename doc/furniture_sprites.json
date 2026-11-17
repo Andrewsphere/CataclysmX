@@ -1,0 +1,464 @@
+[
+  {
+    "id": "bathroom_cabinet",
+    "source": "bathroom_cabinet_pitch_corrected.png",
+    "source_bounds": [
+      6,
+      2,
+      20,
+      28
+    ],
+    "size": [
+      21,
+      30
+    ]
+  },
+  {
+    "id": "bedroom_cabinet",
+    "source": "bedroom_cabinet_pitch_corrected.png",
+    "source_bounds": [
+      2,
+      3,
+      28,
+      26
+    ],
+    "size": [
+      30,
+      28
+    ]
+  },
+  {
+    "id": "bookcase",
+    "source": "bookcase.png",
+    "source_bounds": [
+      2,
+      1,
+      28,
+      30
+    ],
+    "size": [
+      28,
+      30
+    ]
+  },
+  {
+    "id": "cellar_chest",
+    "source": "cellar_chest_pitch_corrected.png",
+    "source_bounds": [
+      2,
+      6,
+      28,
+      21
+    ],
+    "size": [
+      30,
+      23
+    ]
+  },
+  {
+    "id": "cellar_lamp",
+    "source": "cellar_lamp_pitch_corrected.png",
+    "source_bounds": [
+      7,
+      3,
+      18,
+      25
+    ],
+    "size": [
+      22,
+      30
+    ]
+  },
+  {
+    "id": "display_rack",
+    "source": "display_rack_v3.png",
+    "source_bounds": [
+      0,
+      1,
+      32,
+      30
+    ],
+    "size": [
+      30,
+      28
+    ]
+  },
+  {
+    "id": "examination_bed",
+    "source": "examination_bed.png",
+    "source_bounds": [
+      7,
+      1,
+      18,
+      31
+    ],
+    "size": [
+      17,
+      30
+    ]
+  },
+  {
+    "id": "house_bathtub",
+    "source": "house_bathtub_pitch_corrected.png",
+    "source_bounds": [
+      7,
+      4,
+      19,
+      25
+    ],
+    "size": [
+      23,
+      30
+    ]
+  },
+  {
+    "id": "house_bed",
+    "source": "house_bed_pitch_corrected.png",
+    "source_bounds": [
+      4,
+      3,
+      24,
+      26
+    ],
+    "size": [
+      28,
+      30
+    ]
+  },
+  {
+    "id": "house_chair",
+    "source": "house_chair.png",
+    "source_bounds": [
+      7,
+      1,
+      18,
+      30
+    ],
+    "size": [
+      18,
+      30
+    ]
+  },
+  {
+    "id": "house_sofa",
+    "source": "house_sofa_pitch_corrected.png",
+    "source_bounds": [
+      0,
+      5,
+      32,
+      23
+    ],
+    "size": [
+      30,
+      22
+    ]
+  },
+  {
+    "id": "house_table",
+    "source": "house_table_pitch_corrected.png",
+    "source_bounds": [
+      4,
+      4,
+      24,
+      25
+    ],
+    "size": [
+      29,
+      30
+    ]
+  },
+  {
+    "id": "house_toilet",
+    "source": "house_toilet_pitch_corrected.png",
+    "source_bounds": [
+      8,
+      2,
+      16,
+      28
+    ],
+    "size": [
+      17,
+      30
+    ]
+  },
+  {
+    "id": "industrial_workbench",
+    "source": "industrial_workbench.png",
+    "source_bounds": [
+      1,
+      3,
+      31,
+      24
+    ],
+    "size": [
+      30,
+      23
+    ]
+  },
+  {
+    "id": "kitchen_cabinet",
+    "source": "kitchen_cabinet_pitch_corrected.png",
+    "source_bounds": [
+      3,
+      4,
+      26,
+      24
+    ],
+    "size": [
+      30,
+      28
+    ]
+  },
+  {
+    "id": "kitchen_sink",
+    "source": "kitchen_sink.png",
+    "source_bounds": [
+      4,
+      0,
+      24,
+      31
+    ],
+    "size": [
+      23,
+      30
+    ]
+  },
+  {
+    "id": "kitchen_stove",
+    "source": "kitchen_stove_pitch_corrected.png",
+    "source_bounds": [
+      3,
+      2,
+      26,
+      28
+    ],
+    "size": [
+      28,
+      30
+    ]
+  },
+  {
+    "id": "metal_locker",
+    "source": "metal_locker.png",
+    "source_bounds": [
+      8,
+      1,
+      16,
+      30
+    ],
+    "size": [
+      16,
+      30
+    ]
+  },
+  {
+    "id": "office_chair",
+    "source": "office_chair.png",
+    "source_bounds": [
+      5,
+      1,
+      22,
+      31
+    ],
+    "size": [
+      21,
+      30
+    ]
+  },
+  {
+    "id": "office_desk",
+    "source": "office_desk.png",
+    "source_bounds": [
+      0,
+      7,
+      32,
+      20
+    ],
+    "size": [
+      30,
+      19
+    ]
+  },
+  {
+    "id": "park_bench",
+    "source": "park_bench.png",
+    "source_bounds": [
+      1,
+      6,
+      30,
+      21
+    ],
+    "size": [
+      30,
+      21
+    ]
+  },
+  {
+    "id": "planter",
+    "source": "planter_v2.png",
+    "source_bounds": [
+      1,
+      3,
+      30,
+      27
+    ],
+    "size": [
+      30,
+      27
+    ]
+  },
+  {
+    "id": "refrigerator",
+    "source": "refrigerator.png",
+    "source_bounds": [
+      6,
+      0,
+      21,
+      32
+    ],
+    "size": [
+      20,
+      30
+    ]
+  },
+  {
+    "id": "restaurant_table",
+    "source": "restaurant_table.png",
+    "source_bounds": [
+      2,
+      3,
+      28,
+      27
+    ],
+    "size": [
+      30,
+      29
+    ]
+  },
+  {
+    "id": "school_desk",
+    "source": "school_desk.png",
+    "source_bounds": [
+      2,
+      3,
+      28,
+      26
+    ],
+    "size": [
+      30,
+      28
+    ]
+  },
+  {
+    "id": "scrap_press",
+    "source": "scrap_press.png",
+    "source_bounds": [
+      6,
+      1,
+      21,
+      30
+    ],
+    "size": [
+      21,
+      30
+    ]
+  },
+  {
+    "id": "square_fountain",
+    "source": "square_fountain.png",
+    "source_bounds": [
+      1,
+      2,
+      30,
+      28
+    ],
+    "size": [
+      30,
+      28
+    ]
+  },
+  {
+    "id": "store_counter",
+    "source": "store_counter.png",
+    "source_bounds": [
+      0,
+      5,
+      32,
+      24
+    ],
+    "size": [
+      30,
+      23
+    ]
+  },
+  {
+    "id": "store_shelf",
+    "source": "store_shelf_v2.png",
+    "source_bounds": [
+      2,
+      2,
+      27,
+      29
+    ],
+    "size": [
+      28,
+      30
+    ]
+  },
+  {
+    "id": "utility_cabinet",
+    "source": "utility_cabinet.png",
+    "source_bounds": [
+      2,
+      2,
+      28,
+      28
+    ],
+    "size": [
+      30,
+      30
+    ]
+  },
+  {
+    "id": "warehouse_crate",
+    "source": "warehouse_crate.png",
+    "source_bounds": [
+      2,
+      6,
+      29,
+      24
+    ],
+    "size": [
+      30,
+      25
+    ]
+  },
+  {
+    "id": "washing_machine",
+    "source": "washing_machine.png",
+    "source_bounds": [
+      4,
+      2,
+      24,
+      29
+    ],
+    "size": [
+      25,
+      30
+    ]
+  },
+  {
+    "id": "workshop_bench",
+    "source": "workshop_bench_pitch_corrected.png",
+    "source_bounds": [
+      2,
+      3,
+      29,
+      26
+    ],
+    "size": [
+      30,
+      27
+    ]
+  }
+]

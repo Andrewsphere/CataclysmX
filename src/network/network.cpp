@@ -851,7 +851,8 @@ void LanClient::Pump(std::uint64_t elapsed) {
                 bool valid = r.U64(nonce) && nonce == impl_->nonce_ && r.View(view) &&
                     r.Presentation(view, presentation) && wire::ValidPresentationDefinitions(presentation, impl_->content_) &&
                     r.Done() && view.playerId == impl_->player_ && wire::ValidItemDefinitions(view, impl_->content_) &&
-                    wire::ValidTerrainDefinitions(view, impl_->content_) && wire::ValidMonsterDefinitions(view, impl_->content_);
+                    wire::ValidTerrainDefinitions(view, impl_->content_) && wire::ValidMonsterDefinitions(view, impl_->content_)
+                    && wire::ValidObjectDefinitions(view, impl_->content_);
                 if (!valid) {
                     impl_->ProtocolFailure();
                 } else {

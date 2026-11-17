@@ -362,6 +362,14 @@ bool ValidMonsterDefinitions(const WorldView& view, const ContentCatalog& conten
     return true;
 }
 
+bool ValidObjectDefinitions(const WorldView& view, const ContentCatalog& content) {
+    for (const auto& cell : view.cells) {
+        if (!ValidObjectAppearance(cell.objectAppearance)
+            || (cell.objectAppearance.type.value && !content.TryGetObject(cell.objectAppearance.type))) return false;
+    }
+    return true;
+}
+
 bool ValidItemDefinitions(const WorldView& view, const ContentCatalog& content) {
     if (!ValidLists(view) || !ValidCraftingJobs(view.craftingJobs)) return false;
     for (const auto& job : view.craftingJobs) {
@@ -507,6 +515,7 @@ bool Writer::View(const WorldView& v, bool inspection) {
         U8(static_cast<std::uint8_t>(c.overlayVisibility));
         U8(static_cast<std::uint8_t>(c.terrainLight)); U8(static_cast<std::uint8_t>(c.overlayLight));
         U32(c.monsterType.value);
+        U32(c.objectAppearance.type.value);
         i += run;
     }
     if (!WriteEntries(*this, v.inventory) || !WriteEntries(*this, v.groundItems)) return false;
@@ -631,6 +640,7 @@ bool Reader::View(WorldView& v, bool inspection) {
             !U8(terrainLight) || !U8(overlayLight) || !U32(c.monsterType.value)) return false;
         c.player = player;
         c.objectAppearance = {static_cast<ObjectKind>(kind), static_cast<ObjectFacing>(facing), active != 0, broken != 0};
+        if (!U32(c.objectAppearance.type.value)) return false;
         c.terrainDepth = terrainDepth; c.overlayDepth = overlayDepth;
         c.overlayVisibility = static_cast<Visibility>(overlayVisibility);
         c.terrainLight = static_cast<LightBand>(terrainLight); c.overlayLight = static_cast<LightBand>(overlayLight);
@@ -844,7 +854,8 @@ bool ValidPresentationDefinitions(const PlayerPresentation& value, const Content
 bool ValidInspectionDefinitions(const PlayerInspection& value, const ContentCatalog& content) {
     if (value.status != InspectionStatus::Complete) return true;
     if (!ValidItemDefinitions(value.view, content) || !ValidTerrainDefinitions(value.view, content) ||
-        !ValidMonsterDefinitions(value.view, content) || value.details.objectType.value > content.ObjectCount()) return false;
+        !ValidMonsterDefinitions(value.view, content) || !ValidObjectDefinitions(value.view, content)
+        || value.details.objectType.value > content.ObjectCount()) return false;
     for (const auto& item : value.mapItems) if (item.type.value > content.ItemCount()) return false;
     for (const auto& item : value.details.items) if (item.type.value > content.ItemCount()) return false;
     return true;

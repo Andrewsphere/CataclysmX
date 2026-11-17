@@ -8,11 +8,6 @@
 
 namespace cataclysmx {
 
-struct ObjectTypeId {
-    std::uint32_t value = 0;
-    bool operator==(const ObjectTypeId&) const = default;
-};
-
 enum class ObjectBehaviorKind { None, CraftingMachine };
 
 struct CraftingMachineDefinition {

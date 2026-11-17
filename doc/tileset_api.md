@@ -29,6 +29,11 @@ another pack automatically.
 
 ## Compiled graphics
 
+`TilesetDefinition::objects` maps `ObjectTypeId::value` to artwork. The optional
+manifest `objects` section supports sprites, clips, variants and optional content
+IDs. Observed identity preserves exact remembered artwork; see
+[furniture sprites](furniture_sprites.md) for API and compatibility details.
+
 `TilesetDefinition` owns source images, generated atlas page dimensions, sprites,
 clips, visual groups and resolved mappings. Atlas descriptors have an ID and pixel
 dimensions; source file paths belong to source images. Keeping filesystem paths out
