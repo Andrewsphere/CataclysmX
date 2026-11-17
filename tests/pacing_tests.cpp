@@ -141,6 +141,26 @@ TEST_CASE("Queued future commands and busy players count as activity", "[pacing]
     CHECK(DeadlineWait(pacer) == 1'000'000);
 }
 
+TEST_CASE("Continuous pacing with no players discards credit until a player returns", "[pacing][death]") {
+    TickPacer pacer;
+    REQUIRE(pacer.SetSettings({100, true, false}));
+    auto busy = Ready();
+    busy.ready = false;
+    pacer.Synchronize(SmallVector<PlayerReadiness, 4>{busy});
+    pacer.ElapseMicroseconds(250'001);
+    CHECK(pacer.AvailableTicks() == 25);
+    pacer.Synchronize({});
+    CHECK(pacer.IsIdle());
+    pacer.ElapseMicroseconds(maximum);
+    CHECK(pacer.AvailableTicks() == 0);
+    pacer.Synchronize(SmallVector<PlayerReadiness, 4>{busy});
+    CHECK_FALSE(pacer.IsIdle());
+    CHECK(pacer.MicrosecondsUntilTicks(1) == 10'000);
+    REQUIRE(pacer.SetSettings({100, false, false}));
+    pacer.Synchronize({});
+    CHECK(pacer.IsIdle());
+}
+
 TEST_CASE("Simultaneous deadlines are returned in persistent ID order", "[pacing]") {
     TickPacer pacer;
     REQUIRE(pacer.SetSettings({100, false, false}));

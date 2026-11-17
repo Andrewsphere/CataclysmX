@@ -25,6 +25,7 @@ SimulationResult AdvanceUntilInput(World& world, Tick& tick,
     // Compatibility output mirror; supplied time never moves the World clock.
     tick = world.GetTick();
     Require(limitTick >= tick);
+    const bool hadActivePlayers = world.HasActivePlayers();
     for (;;) {
         world.FinalizeActorDeaths();
         // Completed timed effects precede the input barrier. Their next delay
@@ -47,6 +48,10 @@ SimulationResult AdvanceUntilInput(World& world, Tick& tick,
         if (effectsCompleted) { world.UpdatePlayerObservations(); }
 
         SimulationResult result;
+        if (hadActivePlayers && !world.HasActivePlayers()) {
+            result.stop = SimulationStop::NoActivePlayers;
+            return result;
+        }
         world.CollectReadyPlayers(result.readyPlayers);
         if (!result.readyPlayers.empty()) {
             result.stop = SimulationStop::InputRequired;
@@ -55,6 +60,13 @@ SimulationResult AdvanceUntilInput(World& world, Tick& tick,
 
         world.ProcessNpcActions(rngState);
         world.FinalizeActorDeaths();
+        // An immediate NPC strike can remove the final input participant too.
+        // Yield before chasing recurring NPC/object events toward an unbounded
+        // limit; the server must resynchronize pacing and publish the death.
+        if (hadActivePlayers && !world.HasActivePlayers()) {
+            result.stop = SimulationStop::NoActivePlayers;
+            return result;
+        }
 
         Tick next = std::numeric_limits<Tick>::max();
         bool hasEvents = false;
@@ -98,7 +110,7 @@ void Advance(World& world, ActorHandle player, std::uint32_t& rng_state) {
     world.UpdatePlayerObservations();
     const SimulationResult result = cataclysmx::AdvanceUntilInput(world, rng_state,
         std::numeric_limits<Tick>::max());
-    Require(result.stop == SimulationStop::InputRequired);
+    Require(result.stop == SimulationStop::InputRequired || result.stop == SimulationStop::NoActivePlayers);
 }
 
 }

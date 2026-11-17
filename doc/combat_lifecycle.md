@@ -61,7 +61,10 @@ deadlines, learning credit, and pacing. Due player cohorts recheck readiness
 before each command, so a friendly sweep can kill or disrupt a later queued
 participant. Its queued input receives a terminal/not-ready receipt rather than
 executing or becoming an automatic wait. With no living active sessions, pacing
-is idle. Dead views retain access to character status and remembered maps.
+is idle, including continuous pacing mode. When the last active player dies
+inside simulation, `AdvanceUntilInput` returns `NoActivePlayers` after the current
+batch and corpse finalization, before advancing to any future NPC/object event.
+Dead views retain access to character status and remembered maps.
 
 ## Sessions and replacement
 

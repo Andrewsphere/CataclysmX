@@ -380,6 +380,7 @@ public:
     // Unordered snapshots; clear output while retaining its capacity.
     void CollectActiveActors(Vector<ActorHandle>& output) const;
     void CollectActiveObjects(Vector<ObjectHandle>& output) const;
+    bool HasActivePlayers() const;
     void CollectReadyPlayers(Vector<ActorHandle>& output) const;
     void ProcessNpcActions(std::uint32_t& rng);
     bool ProcessObjectEvents();

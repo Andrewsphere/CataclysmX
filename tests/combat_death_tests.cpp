@@ -4,6 +4,7 @@
 #include "core/save_database.h"
 #include "crafting/crafting_state.h"
 #include "content_fixture.h"
+#include "combat_runtime_fixture.h"
 #include <catch2/catch_test_macros.hpp>
 #include <sqlite3.h>
 #include <chrono>
@@ -29,6 +30,153 @@ struct SaveFile {
     }
     ~SaveFile() { std::error_code error; std::filesystem::remove_all(directory, error); }
 };
+
+ContentCatalog LethalCombatContent(std::uint32_t windup) {
+    auto content = CombatRuntimeTestContent();
+    auto& move = const_cast<CombatMoveDefinition&>(content.GetCombatMove(content.FindCombatMove("basic_natural")));
+    move.cost = {windup, 100, 0};
+    move.strikes[0].contacts = {{ContactRegion::Torso, 1}};
+    move.strikes[0].damage = {{DamageType::Blunt, 10000}};
+    move.strikes[0].defenses = DefenseMask::None;
+    return content;
+}
+
+ActorHandle LethalZombie(World& world, TileCoord position) {
+    REQUIRE(world.SetTile(position, {world.GetContent().FindTerrain("floor")}));
+    const auto zombie = Take(world.CreateActor(position));
+    auto state = MakeCombatState(false);
+    state.faction = CombatFaction::Undead;
+    REQUIRE(world.Combat().Configure(zombie, state));
+    REQUIRE(world.SetActorController(zombie, AiControllerKind::Melee));
+    return zombie;
+}
+
+TEST_CASE("Simulation stops at the last player's lethal NPC strike", "[combat][death][scheduling]") {
+    for (const std::uint32_t windup : {0u, 80u}) {
+        CAPTURE(windup);
+        const auto content = LethalCombatContent(windup);
+        World world{content};
+        Take(world.RequestChunks({{}, 0}, LoadMode::active));
+        REQUIRE(world.ReconcileChunks());
+        for (int x = 3; x <= 5; ++x) { REQUIRE(world.SetTile({x, 3}, {content.FindTerrain("floor")})); }
+        const auto player = Take(world.CreateActor({3, 3}, true));
+        REQUIRE(world.SetTile({3, 4}, {content.FindTerrain("floor")}));
+        const auto parked = Take(world.CreateActor({3, 4}, true));
+        REQUIRE(world.SetActorParked(parked, true));
+        const auto zombie = LethalZombie(world, {4, 3});
+        const auto object = Take(world.CreateObject({5, 3}, true));
+        REQUIRE(world.ScheduleActorAction(player, 300));
+        std::uint32_t rng = 7;
+        Tick mirror = 0;
+        // A finite ceiling makes the old runaway reproducible without hanging
+        // the test. Uncapped server updates use the maximum representable tick.
+        const auto result = AdvanceUntilInput(world, mirror, rng, 1000);
+        REQUIRE_FALSE(world.IsActorAlive(player));
+        CHECK(world.GetTick() == windup);
+        CHECK(mirror == windup);
+        CHECK(result.stop == SimulationStop::NoActivePlayers);
+        CHECK(result.readyPlayers.empty());
+        CHECK(world.GetActor(player)->combat.corpse != 0);
+        CHECK(world.GetActor(zombie)->turns == 1);
+        CHECK(world.GetObject(object)->updates == 0);
+        CHECK(world.IsActorAlive(parked));
+        CHECK(world.CheckInvariants());
+    }
+}
+
+TEST_CASE("Lethal combat returns server control in every pacing mode", "[combat][death][scheduling][server]") {
+    for (const std::uint32_t windup : {0u, 80u}) {
+        for (const bool capped : {false, true}) {
+            for (const bool pause : {false, true}) {
+                CAPTURE(windup, capped, pause);
+                const auto content = LethalCombatContent(windup);
+                Server server{content, 7};
+                auto& world = server.GetWorld();
+                REQUIRE(world.DestroyActor(world.ActorAt({5, 5})));
+                const auto zombie = LethalZombie(world, {1, 0});
+                const auto player = server.GetPlayer();
+                const auto character = world.GetActor(player)->id;
+                const auto item = Take(world.CreateItem(content.FindItem("rock"), ItemLocation::Carried(player)));
+                REQUIRE(server.SetPacing({100, capped, pause}));
+                Command wait;
+                wait.waitCost = 300;
+                REQUIRE(server.Send(wait).advanced);
+                if (windup && capped) { CHECK(server.Send(wait).outcome == Outcome::queued); }
+                const auto update = server.Update(10'000'000);
+                if (windup && capped) {
+                    REQUIRE(update.commandResult);
+                    CHECK(update.commandResult->outcome == Outcome::character_dead);
+                }
+                REQUIRE_FALSE(world.IsActorAlive(player));
+                CHECK(server.GetTick() == windup);
+                CHECK(world.GetActor(zombie)->turns == 1);
+                const auto corpseId = world.GetActor(player)->combat.corpse;
+                REQUIRE(corpseId != 0);
+                CHECK(world.GetItem(item)->location == ItemLocation::Inside(world.FindItem(corpseId)));
+                const auto view = server.View(0);
+                CHECK(view.combat.life == ActorLifeState::Dead);
+                unsigned deaths = 0;
+                for (const auto& event : view.combatEvents) {
+                    if (event.kind == CombatEventKind::ActorDied && event.actor == character) { ++deaths; }
+                }
+                CHECK(deaths == 1);
+                CHECK(server.Update(10'000'000).tick == windup);
+                CHECK(server.Send(wait).outcome == Outcome::character_dead);
+                Command replace;
+                replace.kind = CommandKind::new_character;
+                CHECK(server.Send(replace).outcome == Outcome::character_created);
+                CHECK(world.IsActorAlive(server.GetPlayer()));
+                CHECK(world.GetActor(player)->combat.corpse == corpseId);
+                CHECK(world.CheckInvariants());
+            }
+        }
+    }
+}
+
+TEST_CASE("A surviving multiplayer character keeps advancing after another dies", "[combat][death][scheduling][server]") {
+    const auto content = LethalCombatContent(80);
+    Server server{content, 7};
+    auto& world = server.GetWorld();
+    REQUIRE(world.DestroyActor(world.ActorAt({5, 5})));
+    const auto guest = Take(server.JoinPlayer("Survivor", 0, 123));
+    REQUIRE(server.ActivatePlayer(guest.player));
+    const auto survivor = world.FindActor(guest.player);
+    REQUIRE(world.SetTile({0, 3}, {content.FindTerrain("floor")}));
+    REQUIRE(world.MoveActor(survivor, {0, 3}));
+    LethalZombie(world, {1, 0});
+    Command wait;
+    wait.waitCost = 100;
+    const auto context = server.GetInputContext(guest.player);
+    CHECK(server.Submit(guest.player, {context.lastInputSequence + 1, context.opportunity, wait}).outcome == Outcome::queued);
+    wait.waitCost = 300;
+    REQUIRE(server.Send(wait).outcome == Outcome::queued);
+    const auto update = server.Update(0);
+    REQUIRE(update.commandResults.size() == 2);
+    CHECK(update.commandResults[0].result.advanced);
+    CHECK(update.commandResults[1].result.advanced);
+    CHECK_FALSE(world.IsActorAlive(server.GetPlayer()));
+    CHECK(world.IsActorAlive(survivor));
+    CHECK(server.GetTick() == 100);
+    CHECK(world.GetActorRemainingTicks(survivor) == 0);
+    CHECK(server.Update(1'000'000).tick == 100);
+    CHECK(world.CheckInvariants());
+}
+
+TEST_CASE("Single-player advance returns after a lethal delayed attack", "[combat][death][scheduling]") {
+    const auto content = LethalCombatContent(80);
+    World world{content};
+    Take(world.RequestChunks({{}, 0}, LoadMode::active));
+    REQUIRE(world.ReconcileChunks());
+    REQUIRE(world.SetTile({3, 3}, {content.FindTerrain("floor")}));
+    const auto player = Take(world.CreateActor({3, 3}, true));
+    LethalZombie(world, {4, 3});
+    std::uint32_t rng = 7;
+    Advance(world, player, rng);
+    CHECK_FALSE(world.IsActorAlive(player));
+    CHECK(world.GetTick() == 80);
+    CHECK(world.GetActor(player)->combat.corpse != 0);
+    CHECK(world.CheckInvariants());
+}
 
 TEST_CASE("Death removes participation immediately and finalizes possessions once", "[combat][death]") {
     World world{TestContent()};

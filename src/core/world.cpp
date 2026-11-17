@@ -3756,6 +3756,14 @@ void World::CollectActiveObjects(Vector<ObjectHandle>& output) const {
     }
 }
 
+bool World::HasActivePlayers() const {
+    for (const auto& actor : impl_->actors) {
+        if (actor.player && actor.combat.life == ActorLifeState::Alive
+            && !actor.parked && IsActive(actor.position)) { return true; }
+    }
+    return false;
+}
+
 void World::CollectReadyPlayers(Vector<ActorHandle>& output) const {
     output.clear();
     for (const auto& entry : impl_->actors.items()) {

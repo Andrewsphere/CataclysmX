@@ -71,7 +71,11 @@ void TickPacer::Synchronize(eastl::span<const PlayerReadiness> players) {
     }
 }
 
-bool TickPacer::IsIdle() const { return settings_.pauseWhenIdle && !hasActivity_; }
+bool TickPacer::IsIdle() const {
+    // No busy/queued player and no ready deadline means no participants at all.
+    // Continuous mode still pauses after the last living player is removed.
+    return !hasActivity_ && (deadlines_.empty() || settings_.pauseWhenIdle);
+}
 
 void TickPacer::ElapseMicroseconds(std::uint64_t elapsed) {
     if (IsIdle()) { return; }

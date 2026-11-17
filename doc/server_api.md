@@ -349,6 +349,13 @@ with `Tick&` retains an output mirror of this clock for existing callers:
   processed, including a player barrier if applicable.
 - `NoEvents`: no eligible actor, enabled object, or active item can produce a future event;
   time stays at the last processed tick. `nextEventIn` is zero.
+- `NoActivePlayers`: a call that started with active players lost its last living,
+  unparked player in an active chunk. The current effects/NPC batch and death
+  finalization complete, then simulation yields without advancing time further.
+  This lets the server refresh pacing and publish death instead of indefinitely
+  processing recurring NPC events. Calls starting without active players retain
+  event-only headless simulation; surviving multiplayer participants still advance
+  normally. `World::HasActivePlayers()` queries participation without allocating.
 
 At each event tick, `World::ProcessObjectEvents()` runs the due enabled object
 batch first in persistent-ID order. Generic objects immediately schedule their
@@ -375,7 +382,8 @@ are derived for views and persistence. Resident-only and archived entities freez
 without catch-up on reactivation. See [entity scheduling](entity_scheduling.md).
 
 `Advance(World&, ActorHandle, uint32_t&)` is a single-player convenience: commit
-a normal player wait, then simulate to the next input barrier. The player must
+a normal player wait, then simulate to the next input barrier or loss of the last
+active player. The player must
 be live, active, player-marked, and ready. This helper owns no server tick and
 does not reconcile chunk requests. One normal speed-100 action now spans 100
 ticks, rather than incrementing time by one.
