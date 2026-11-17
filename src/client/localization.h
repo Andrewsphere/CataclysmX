@@ -39,6 +39,7 @@ public:
     String Format(eastl::string_view key, std::initializer_list<TextArgument> arguments,
         std::uint64_t count = 1) const;
     String OutcomeText(Outcome outcome) const;
+    // Includes typed combat refusal reasons and expanded character/study outcomes.
     String ResultText(const CommandResult& result) const;
     String ItemName(const ItemDefinition& definition) const;
     String ItemName(const ContentCatalog& content, ItemTypeId type) const;

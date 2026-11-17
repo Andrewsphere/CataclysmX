@@ -26,6 +26,7 @@ SimulationResult AdvanceUntilInput(World& world, Tick& tick,
     tick = world.GetTick();
     Require(limitTick >= tick);
     for (;;) {
+        world.FinalizeActorDeaths();
         // Completed timed effects precede the input barrier. Their next delay
         // is committed immediately, so resuming this same tick cannot repeat it.
         bool effectsCompleted = world.ProcessObjectEvents();
@@ -40,6 +41,7 @@ SimulationResult AdvanceUntilInput(World& world, Tick& tick,
             world.Combat().ProcessEvents(rngState);
             effectsCompleted = true;
         }
+        world.FinalizeActorDeaths();
         // Due effects at the same tick form one observation boundary. This is
         // inside the loop so a long wait cannot skip intermediate observations.
         if (effectsCompleted) { world.UpdatePlayerObservations(); }
@@ -52,6 +54,7 @@ SimulationResult AdvanceUntilInput(World& world, Tick& tick,
         }
 
         world.ProcessNpcActions(rngState);
+        world.FinalizeActorDeaths();
 
         Tick next = std::numeric_limits<Tick>::max();
         bool hasEvents = false;

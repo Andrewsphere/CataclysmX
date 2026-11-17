@@ -2,6 +2,7 @@
 #include "core/server.h"
 #include "core/simulation.h"
 #include "content_fixture.h"
+#include "combat_runtime_fixture.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <EASTL/utility.h>
@@ -72,7 +73,8 @@ ActorHandle Target(World& world, TileCoord position) {
 }
 
 struct ServerRig {
-    Server server{TestContent(), 7};
+    ContentCatalog content = CombatRuntimeTestContent();
+    Server server{content, 7};
 
     ServerRig() {
         auto& world = server.GetWorld();
@@ -84,7 +86,8 @@ struct ServerRig {
 };
 
 struct Rig {
-    World world{TestContent()};
+    ContentCatalog content = CombatRuntimeTestContent();
+    World world{content};
     LoadRequest request{};
     ActorHandle player{};
     ActorHandle target{};
@@ -135,7 +138,7 @@ TEST_CASE("Combat integration hostile bump attacks without displacing either act
     CHECK(world.CheckInvariants());
 }
 
-TEST_CASE("Combat integration Tab selects perceived adjacent hostiles by identity and refuses unavailable attacks",
+TEST_CASE("Combat integration Tab randomly selects one perceived adjacent hostile and refuses unavailable attacks",
     "[combat][integration][server][targeting]") {
     ServerRig rig;
     auto& server = rig.server;
@@ -148,8 +151,9 @@ TEST_CASE("Combat integration Tab selects perceived adjacent hostiles by identit
     REQUIRE(world.CanPlayerSee(server.GetPlayer(), {-1, 0}));
     REQUIRE(world.CanPlayerSee(server.GetPlayer(), {1, 0}));
     REQUIRE(server.Send({CommandKind::attack}).outcome == Outcome::attacked);
-    CHECK_FALSE(world.GetActor(west)->combat.body == westBody);
-    CHECK(world.GetActor(east)->combat.body == eastBody);
+    const bool westHit = world.GetActor(west)->combat.body != westBody;
+    const bool eastHit = world.GetActor(east)->combat.body != eastBody;
+    CHECK(westHit != eastHit);
 
     const auto vision = world.GetVisionProfile();
     auto blind = vision;
@@ -203,23 +207,23 @@ TEST_CASE("Combat integration neutral bump stays occupied and style commands sel
     style.style = CombatStyle::Aggressive;
     const auto selected = server.Send(style);
     CHECK(selected.outcome == Outcome::combat_style_changed);
-    CHECK_FALSE(selected.advanced);
-    CHECK(server.GetTick() == 0);
-    CHECK(world.GetActor(server.GetPlayer())->turns == 0);
+    CHECK(selected.advanced);
+    CHECK(server.GetTick() == 25);
+    CHECK(world.GetActor(server.GetPlayer())->turns == 1);
     CHECK(world.GetActor(server.GetPlayer())->combat.style == CombatStyle::Aggressive);
     const auto attack = server.Send({CommandKind::attack});
     CHECK(attack.outcome == Outcome::attack_windup);
     CHECK(attack.cost == 100);
-    CHECK(attack.tick == 250); // 80 windup + 120 recovery, both captured at 125%.
-    CHECK(world.GetActor(server.GetPlayer())->turns == 1);
+    CHECK(attack.tick == 275); // Paid switch, then captured windup + recovery.
+    CHECK(world.GetActor(server.GetPlayer())->turns == 2);
     CHECK(world.GetActor(server.GetPlayer())->combat.action.kind == ActorActionKind::None);
     style.style = CombatStyle::Defensive;
     CHECK(server.Send(style).outcome == Outcome::combat_style_changed);
     const auto plain = server.Send({CommandKind::attack});
     CHECK(plain.outcome == Outcome::attacked);
     CHECK(plain.cost == 125);
-    CHECK(plain.tick == 375);
-    CHECK(world.GetActor(server.GetPlayer())->turns == 2);
+    CHECK(plain.tick == 425);
+    CHECK(world.GetActor(server.GetPlayer())->turns == 4);
     CHECK(world.CheckInvariants());
 }
 
@@ -228,6 +232,7 @@ TEST_CASE("Combat integration Melee controller uses the shared attacker deadline
     Rig rig;
     // Configure before installing the controller or scheduling the player.
     auto enemy = State(false, CombatFaction::Undead);
+    enemy.body = MakeBody(BodyKind::Detailed);
     enemy.style = CombatStyle::Aggressive;
     REQUIRE(rig.world.Combat().Configure(rig.target, enemy));
     REQUIRE(rig.world.SetActorController(rig.target, AiControllerKind::Melee));
@@ -381,7 +386,7 @@ TEST_CASE("Combat integration checkpoint and RAM reload preserve injury pending 
     session.playerPosition = {3, 3};
     session.rngState = rig.rng;
     REQUIRE(rig.world.CreateSave(file.path.c_str(), session));
-    World restored(TestContent());
+    World restored(rig.content);
     const auto loadedSession = Take(restored.LoadSave(file.path.c_str()));
     auto restoredRng = loadedSession.rngState;
     CHECK(restoredRng == rig.rng);
@@ -474,7 +479,7 @@ TEST_CASE("Combat integration canceled saved windup never completes against a re
     session.playerPosition = {3, 3};
     session.rngState = rig.rng;
     REQUIRE(rig.world.CreateSave(file.path.c_str(), session));
-    World loaded(TestContent());
+    World loaded(rig.content);
     auto rng = Take(loaded.LoadSave(file.path.c_str())).rngState;
     Load(loaded);
     const auto player = loaded.FindActor(session.player);
@@ -494,8 +499,9 @@ TEST_CASE("Combat integration canceled saved windup never completes against a re
 
 TEST_CASE("Combat integration equivalent identities replay across different handle allocation",
     "[combat][integration][determinism][streaming]") {
-    World first(TestContent());
-    World second(TestContent());
+    auto content = CombatRuntimeTestContent();
+    World first(content);
+    World second(content);
     const auto firstLeft = Load(first);
     const auto firstRight = Load(first, {1, 0});
     const auto secondLeft = Load(second);
@@ -505,6 +511,9 @@ TEST_CASE("Combat integration equivalent identities replay across different hand
         const auto player = Take(world->CreateActor({15, 3}, true));
         auto state = State(true, CombatFaction::Survivors);
         state.style = CombatStyle::Aggressive;
+        // Replay six real paid windups without making target death the stopping
+        // condition. Cooldowns and stamina remain enabled and are funded below.
+        state.attackDamage = 1;
         REQUIRE(world->Combat().Configure(player, state));
         Target(*world, {16, 3});
     }
@@ -523,12 +532,14 @@ TEST_CASE("Combat integration equivalent identities replay across different hand
     REQUIRE(first.FindActor(playerId) != second.FindActor(playerId));
     std::uint32_t a = 918;
     std::uint32_t b = a;
+    Vector<CombatEvent> firstEvents, secondEvents;
     for (int turn = 0; turn < 6; ++turn) {
         CAPTURE(turn);
         const auto attackA = first.Combat().Attack(first.FindActor(playerId), first.FindActor(targetId), a);
         const auto attackB = second.Combat().Attack(second.FindActor(playerId), second.FindActor(targetId), b);
         REQUIRE(attackA.committed);
         CHECK(attackA == attackB);
+        CHECK(attackA.moveId == content.FindCombatMove("basic_heavy"));
         const auto until = first.GetTick() + 300;
         CHECK(AdvanceUntilInput(first, a, until).stop == SimulationStop::InputRequired);
         CHECK(AdvanceUntilInput(second, b, until).stop == SimulationStop::InputRequired);
@@ -536,6 +547,27 @@ TEST_CASE("Combat integration equivalent identities replay across different hand
         CHECK(a == b);
         SameActor(first, second, playerId);
         SameActor(first, second, targetId);
+        // Input resumes after recovery, before this fixture's heavy cooldown
+        // expires. An explicit rest pays time and restores the next attack's
+        // stamina instead of depending on the old free/plain attack behavior.
+        const auto& heavy = content.GetCombatMove(attackA.moveId);
+        REQUIRE(heavy.cooldown <= UINT32_MAX);
+        const auto rest = static_cast<std::uint32_t>(heavy.cooldown);
+        for (auto* world : {&first, &second}) {
+            REQUIRE(world->SetActorExertion(world->FindActor(playerId), ExertionKind::Rest));
+            REQUIRE(world->ScheduleActorAction(world->FindActor(playerId), rest));
+        }
+        const auto restedUntil = first.GetTick() + rest;
+        CHECK(AdvanceUntilInput(first, a, restedUntil).stop == SimulationStop::InputRequired);
+        CHECK(AdvanceUntilInput(second, b, restedUntil).stop == SimulationStop::InputRequired);
+        CHECK(first.GetTick() == second.GetTick());
+        CHECK(a == b);
+        SameActor(first, second, playerId);
+        SameActor(first, second, targetId);
+        CHECK(first.GetActor(first.FindActor(playerId))->combat.stamina == 100);
+        first.Combat().DrainEvents(firstEvents);
+        second.Combat().DrainEvents(secondEvents);
+        CHECK(firstEvents == secondEvents);
     }
     CHECK(first.CheckInvariants());
     CHECK(second.CheckInvariants());
@@ -543,7 +575,8 @@ TEST_CASE("Combat integration equivalent identities replay across different hand
 
 TEST_CASE("Combat integration same tick NPC batch revalidates an actor destroyed before its turn",
     "[combat][integration][simulation][ai][lifetime]") {
-    World world(TestContent());
+    auto content = CombatRuntimeTestContent();
+    World world(content);
     Load(world);
     for (const TileCoord tile : {TileCoord{3, 3}, TileCoord{4, 3}, TileCoord{8, 8}}) { Floor(world, tile); }
     const auto killer = Take(world.CreateActor({3, 3}));
@@ -563,6 +596,15 @@ TEST_CASE("Combat integration same tick NPC batch revalidates an actor destroyed
     const auto victimId = world.GetActor(victim)->id;
     std::uint32_t rng = 7;
     world.ProcessNpcActions(rng);
+    // The due cohort must skip the already-dead victim before safe-boundary
+    // corpse creation removes its handle. It must still execute the later NPC.
+    REQUIRE(world.GetActor(victim));
+    CHECK_FALSE(world.IsActorAlive(victim));
+    CHECK(world.GetActor(victim)->turns == 0);
+    CHECK(world.GetActor(victim)->actionDeadline.suspended);
+    CHECK_FALSE(world.ActorAt({4, 3}).value);
+    CHECK(world.GetActor(later)->turns == 1);
+    world.FinalizeActorDeaths();
     CHECK_FALSE(world.GetActor(victim));
     CHECK(world.FindActor(victimId) == ActorHandle{});
     CHECK(world.GetActor(killer)->turns == 1);
@@ -573,15 +615,16 @@ TEST_CASE("Combat integration same tick NPC batch revalidates an actor destroyed
     CHECK(world.CheckInvariants());
 }
 
-TEST_CASE("Combat integration retained simple player recovery completes after core failure",
+TEST_CASE("Combat integration dead simple player has no pending combat deadline",
     "[combat][integration][simulation]") {
     Rig rig;
     REQUIRE(rig.world.Combat().Configure(rig.player, State(false, CombatFaction::Survivors)));
     REQUIRE(rig.world.Combat().Attack(rig.player, rig.target, rig.rng).committed);
     rig.world.Combat().Damage(rig.player, rig.target, BodyPart::Core, {DamageType::Blunt, 10000});
-    REQUIRE(rig.world.GetActor(rig.player)); // Player defeat is deferred, independent of anatomy.
-    CHECK(AdvanceUntilInput(rig.world, rig.rng, 100).stop == SimulationStop::InputRequired);
-    CHECK(rig.world.GetTick() == 100);
+    REQUIRE(rig.world.GetActor(rig.player));
+    CHECK_FALSE(rig.world.IsActorAlive(rig.player));
+    CHECK_FALSE(rig.world.Combat().NextEventIn());
+    CHECK(rig.world.GetActor(rig.player)->actionDeadline.suspended);
     CHECK(rig.world.GetActor(rig.player)->combat.action.kind == ActorActionKind::None);
     CHECK(rig.world.CheckInvariants());
 }

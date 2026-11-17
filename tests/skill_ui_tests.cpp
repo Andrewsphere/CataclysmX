@@ -168,7 +168,10 @@ TEST_CASE("Learning summary is read only reusable and preserves fixed point prog
     CHECK(Contains(lines, "combat: books grant no direct/theory XP; boost cap 1.2x"));
     CHECK(Contains(lines, "study boost 1.2x until next level"));
     CollectLearningSummary({}, *content, lines);
-    CHECK(lines.empty());
+    CHECK_FALSE(Contains(lines, "Making | learned"));
+    CHECK_FALSE(Contains(lines, "Fighting | learned"));
+    CHECK(Contains(lines, "Attack rating = 0.4 x effective melee"));
+    CHECK(Contains(lines, "Training: equal-or-harder opponent 100%"));
     Vector<CraftingMenuRow> rows;
     CollectCraftingMenu({}, *content, Localization{}, rows);
     REQUIRE(rows.size() == 2);

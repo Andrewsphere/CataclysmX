@@ -1,0 +1,16 @@
+{format_version:1, definitions:[
+  {type:'item',id:'brass_knuckles',name:'brass knuckles',description:'A compact fist weapon. Occupies one hand and uses Unarmed handling.',mass_g:250,volume_ml:150,
+   flags:['melee_weapon','rigid','electrically_conductive'],
+   melee:{handling_skill:'unarmed',grips:[{kind:'one_handed'}],damage:[{type:'blunt',amount:650}],attack_cost:90}},
+  {type:'item',id:'wooden_shield',name:'wooden shield',description:'A strapped wooden shield held in one hand.',mass_g:2500,volume_ml:4000,
+   flags:['melee_weapon','rigid','combustible'],
+   melee:{handling_skill:'shields',grips:[{kind:'one_handed'}],damage:[{type:'blunt',amount:450}],attack_cost:120,block_capacity:1400,allowed_responses:['block']}},
+  {type:'item',id:'boxing_manual',name:'practical boxing manual',description:'A repeatable course of stance, guard and striking drills.',mass_g:300,volume_ml:350,flags:['book','combustible'],books:['boxing_manual_text']},
+  {type:'item',id:'weapon_forms_manual',name:'practical weapon forms manual',description:'Illustrated practice forms for edged weapons, with notes on controlled cuts and sweeping attacks.',mass_g:350,volume_ml:400,flags:['book','combustible'],books:['weapon_forms_manual_text']},
+  {type:'item',id:'cloth_face_wrap',name:'cloth face wrap',mass_g:50,volume_ml:100,
+   description:'A simple cloth wrap covering the mouth.',flags:['clothing','combustible','flexible'],
+   armor:{layer:'normal',regions:[{region:'mouth',coverage:9000,encumbrance:2}],protection:{slashing:40}}},
+  {type:'item',id:'work_boots',name:'work boots',mass_g:1500,volume_ml:2500,
+   description:'A pair of heavy leather boots protecting the feet.',flags:['clothing','combustible'],
+   armor:{layer:'outer',regions:[{region:'left_foot',encumbrance:4},{region:'right_foot',encumbrance:4}],protection:{blunt:300,slashing:350,piercing:200}}},
+]}

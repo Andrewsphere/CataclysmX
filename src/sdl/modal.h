@@ -5,7 +5,7 @@
 
 namespace cataclysmx::sdl {
 
-enum class ModalScreen { None, Help, Examine, Targets, Actions, Options, Debug, Crafting, ItemInventory, Lan, Players };
+enum class ModalScreen { None, Help, Examine, Targets, Actions, Options, Debug, Crafting, ItemInventory, Lan, Players, Combat, CombatInfo };
 
 // Main-thread UI state only. The caller submits the authoritative pause/resume
 // operation first, then enters its pending transition here.

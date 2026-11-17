@@ -37,6 +37,8 @@ struct SavedPlayer {
     TileCoord position{};
     String name;
     std::uint64_t reconnectToken = 0;
+    // Stable session identity; zero in legacy saves means actor.
+    PersistentId session = 0;
 };
 
 inline constexpr int maxCircleResidencyRadius = 128;
@@ -265,11 +267,23 @@ public:
     WorldResult<void> ParkActors(eastl::span<const ActorHandle> actors);
     // Actor destruction drops possessions at its last position.
     WorldResult<void> DestroyActor(ActorHandle actor);
+    bool IsActorAlive(ActorHandle actor) const;
+    void MarkActorDead(ActorHandle actor, PersistentId killer = 0);
+    void FinalizeActorDeaths();
+    WorldResult<void> SetActorExertion(ActorHandle actor, ExertionKind exertion);
+    // Body and regional leg/foot burden only; caller applies direction and speed.
+    std::uint32_t ActorMovementBaseCost(ActorHandle actor, std::uint32_t authoredBase = 100) const;
     WorldResult<ItemHandle> CreateItem(ItemTypeId type, ItemLocation location);
     WorldResult<void> TransferItem(ItemHandle item, ItemLocation destination);
     // Gameplay mutations return base cost without scheduling. Equipment remains
     // directly carried; persistent source identity is checked before transfer.
     InventoryResult WieldItem(ActorHandle actor, ItemHandle item = {});
+    EquipmentQuery QueryEquipment(ActorHandle actor, const EquipmentRequest& request) const;
+    InventoryResult HoldItem(ActorHandle actor, ItemHandle item, Hand hand, GripKind grip);
+    InventoryResult ReleaseHand(ActorHandle actor, Hand hand);
+    InventoryResult RegripItem(ActorHandle actor, Hand hand, GripKind grip);
+    InventoryResult WearItem(ActorHandle actor, ItemHandle item);
+    InventoryResult RemoveWornItem(ActorHandle actor, ItemHandle item);
     InventoryResult TransferInventoryItem(ActorHandle actor, PersistentId item,
         const ItemStorage& source, const ItemStorage& destination);
     ItemStorage GetItemStorage(ItemHandle item) const;

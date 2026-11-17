@@ -47,6 +47,7 @@
     {item:'bottled_water',weight:4},{item:'chocolate_bar',weight:2},
     {item:'aa_alkaline_battery',weight:2},{item:'cloth_patch',weight:1},
     {item:'workshop_primer_print',weight:2},{item:'salvage_notes_print',weight:2},
+    {item:'boxing_manual',weight:2},{item:'weapon_forms_manual',weight:2},
   ]},
   {type:'loot_pool', id:'loot_office', entries:[
     {pool:'loot_reading_room_supplies',weight:4},{pool:'loot_electronics',weight:1},
@@ -70,6 +71,7 @@
   {type:'loot_pool', id:'loot_outdoors', entries:[
     {item:'steel_water_bottle',weight:4},{item:'nylon_rope',weight:3},{item:'camping_backpack',weight:2},
     {item:'camping_tarp',weight:3},{item:'rain_jacket',weight:2},{pool:'loot_food',weight:2},
+    {item:'brass_knuckles',weight:1},
   ]},
   {type:'loot_pool', id:'loot_warehouse', entries:[
     {pool:'loot_hardware',weight:4},{item:'plastic_storage_box',weight:3},
@@ -97,5 +99,6 @@
     {item:'sewing_supplies',weight:3},{item:'tiny_electric_motor',weight:2},
     {item:'servo',weight:2},{pool:'loot_electronics',weight:2},{pool:'loot_hardware',weight:2},
     {item:'workshop_primer_print',weight:2},{item:'salvage_notes_print',weight:2},
+    {item:'boxing_manual',weight:1},{item:'weapon_forms_manual',weight:1},
   ]},
 ]}

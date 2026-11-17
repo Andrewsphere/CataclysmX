@@ -276,8 +276,21 @@ TEST_CASE("Disabled simple attached zones remain targetable and redirect later h
         profile.regeneration = false;
     }
     auto detailed = MakeBody(BodyKind::Detailed);
-    CHECK_FALSE(ApplyInjury(detailed, BodyPart::Head, WholeHp(BodyPart::Head), profile).defeated);
-    CHECK_FALSE(ApplyInjury(detailed, BodyPart::Torso, WholeHp(BodyPart::Torso), profile).defeated);
+    CHECK(ApplyInjury(detailed, BodyPart::Head, WholeHp(BodyPart::Head), profile).defeated);
+    CHECK(ApplyInjury(detailed, BodyPart::Torso, WholeHp(BodyPart::Torso), profile).defeated);
+}
+
+TEST_CASE("Either detailed vital zero is terminal and freezes every recovery pool", "[combat][body][death]") {
+    const auto profile = FastRecovery();
+    for (const auto vital : {BodyPart::Head, BodyPart::Torso}) {
+        auto body = MakeBody(BodyKind::Detailed);
+        ApplyInjury(body, BodyPart::LeftHand, 100, profile);
+        REQUIRE(ApplyInjury(body, vital, 1000, profile).defeated);
+        CHECK_FALSE(BodyAlive(body));
+        const auto dead = body;
+        ElapseBody(body, profile, UINT64_MAX);
+        CHECK(body == dead);
+    }
 }
 
 TEST_CASE("Disabling regeneration freezes mending and all recovery counters", "[combat][body]") {

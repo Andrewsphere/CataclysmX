@@ -28,6 +28,8 @@ struct SavedActor {
     String monsterType;
     PersistentId wieldedItem = 0;
     DataObject learning;
+    DataObject equipment;
+    DataObject characterCombat;
 };
 
 struct SavedObject {

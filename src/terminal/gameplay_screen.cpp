@@ -9,6 +9,7 @@
 #include <ftxui/screen/string.hpp>
 
 #include <algorithm>
+#include <cstdlib>
 #include <initializer_list>
 #include <memory>
 #include <string>
@@ -141,7 +142,8 @@ private:
 class MapViewport final : public ftxui::Node {
 public:
     MapViewport(const WorldView& view, Vector<ViewCell> cells, const ContentCatalog& content,
-        std::shared_ptr<TerminalMapCache> cache, int radius, const String& cropped)
+        std::shared_ptr<TerminalMapCache> cache, int radius, const String& cropped,
+        eastl::span<const TileCoord> highlights)
         : Node(ftxui::Elements{}), width_(view.width), height_(view.height),
           playerX_(static_cast<int>(std::clamp<std::int64_t>(
               static_cast<std::int64_t>(view.player_position.x) - view.origin.x, 0, std::max(0, view.width - 1)))),
@@ -154,6 +156,9 @@ public:
         right_ = std::min(width_, playerX_ + boundedRadius + 1);
         bottom_ = std::min(height_, playerY_ + boundedRadius + 1);
         children_ = {Text(cropped)};
+        for (const auto tile : highlights) {
+            highlights_.push_back({tile.x - view.origin.x, tile.z - view.origin.z, tile.y});
+        }
     }
     void ComputeRequirement() override { Node::ComputeRequirement(); Flexible(requirement_); }
     void SetBox(ftxui::Box box) override {
@@ -198,6 +203,11 @@ public:
                 pixel.character = appearance.glyph;
                 pixel.foreground_color = appearance.foreground;
                 pixel.background_color = appearance.background;
+                for (const auto tile : highlights_) {
+                    if (tile.x == startX_ + x - drawX_ && tile.z == startY_ + y - drawY_) {
+                        pixel.inverted = true;
+                    }
+                }
             }
         }
         if (cropped_ && box_.y_max > box_.y_min) {
@@ -257,6 +267,7 @@ private:
     int playerX_;
     int playerY_;
     Vector<ViewCell> cells_;
+    SmallVector<TileCoord, 3> highlights_;
     const ContentCatalog& content_;
     std::shared_ptr<TerminalMapCache> cache_;
     int left_ = 0;
@@ -483,6 +494,8 @@ String GameplayWelcome(const Localization& localization, const Keymap& keys) {
 
 bool GameplayUi::Open(InputAction action) {
     switch (action) {
+    case InputAction::CombatMenu: modal_ = Modal::Combat; combatSelection_.reset(); combatIndex_ = 0; break;
+    case InputAction::CombatInfo: modal_ = Modal::CombatInfo; break;
     case InputAction::Crafting: modal_ = Modal::Crafting; craftingSelection_.reset(); craftingIndex_ = 0; break;
     case InputAction::Use:
     case InputAction::Inventory:
@@ -494,29 +507,107 @@ bool GameplayUi::Open(InputAction action) {
     case InputAction::QuickActions: modal_ = Modal::QuickActions; break;
     default: return false;
     }
-    feedback_.clear(); return true;
+    openingAction_ = action; pendingCommand_.reset(); feedback_.clear(); return true;
 }
 bool GameplayUi::IsOpen() const { return modal_ == Modal::Inventory ? items_.IsOpen() : modal_ != Modal::None; }
 
-void GameplayUi::Close() { items_.Close(); modal_ = Modal::None; feedback_.clear(); }
+void GameplayUi::Close() {
+    items_.Close(); pendingCommand_.reset(); openingAction_.reset(); modal_ = Modal::None; feedback_.clear();
+}
 bool GameplayUi::PausesLocal(eastl::optional<InputAction> action) const {
     if (items_.NeedsTime()) { return false; }
     if (modal_ == Modal::Crafting || action == InputAction::Crafting) { return false; }
     return IsOpen() || action == InputAction::Inventory || action == InputAction::Players
         || action == InputAction::Help || action == InputAction::QuickActions || action == InputAction::Use
-        || action == InputAction::AdvancedInventory;
+        || action == InputAction::AdvancedInventory || action == InputAction::CombatMenu
+        || action == InputAction::CombatInfo || action == InputAction::FocusAbility
+        || action == InputAction::LeapAbility || action == InputAction::SweepAbility;
 }
 void GameplayUi::RefreshItems(const WorldView& view, const ContentCatalog& content,
     const Localization& localization, const Keymap& keys, const std::function<bool(Command)>& submit) {
+    ObserveCharacter(view);
     items_.Refresh(view, content, localization, keys);
     if (auto command = items_.TakeCommand(view)) { if (!submit(*command)) { items_.CommandRejected(); } }
 }
 void GameplayUi::ItemCommandFinished(const CommandResult& result) { items_.CommandFinished(result); }
-void GameplayUi::ResetItems() { items_ = {}; if (modal_ == Modal::Inventory) { modal_ = Modal::None; } }
+void GameplayUi::ResetItems() {
+    Close(); items_ = {}; combatSelection_.reset(); craftingSelection_.reset();
+    contextInitialized_ = false; combatSerial_ = 0;
+}
+
+void GameplayUi::ObserveCharacter(const WorldView& view) {
+    const auto opening = openingAction_;
+    openingAction_.reset();
+    if (contextInitialized_ && (character_ != view.characterId || contextPlayer_ != view.playerId)) {
+        Close(); items_ = {}; combatSelection_.reset(); craftingSelection_.reset();
+        combatIndex_ = 0; combatScroll_ = 0;
+        // A new avatar in the same world must not replay the old avatar's history.
+        for (const auto& event : view.combatEvents) { combatSerial_ = std::max(combatSerial_, event.serial); }
+        // An explicit Open belongs to the incoming view. Discard the previous
+        // avatar's state, then honor that fresh opening with a clean selection.
+        if (opening) { Open(*opening); openingAction_.reset(); }
+    }
+    character_ = view.characterId; contextPlayer_ = view.playerId; contextInitialized_ = true;
+    if (pendingCommand_ && (view.player_position != targetOrigin_ || view.opportunity != targetOpportunity_
+        || view.combatInfo.combat.life == ActorLifeState::Dead || view.remainingTicks || view.commandQueued)) {
+        Close();
+    }
+}
+
+void GameplayUi::RecordCombatEvents(const WorldView& view, const ContentCatalog& content, MessageHistory& history) {
+    ObserveCharacter(view);
+    for (const auto& event : view.combatEvents) {
+        if (event.serial <= combatSerial_) { continue; }
+        combatSerial_ = event.serial;
+        if (event.kind == CombatEventKind::ActionCommitted) { continue; }
+        const auto text = CombatEventText(event, content);
+        if (!text.empty()) { history.Add(View(text)); }
+    }
+}
+
+void GameplayUi::BeginCombatChoice(const CombatMenuEntry& entry, const WorldView& view,
+    const std::function<bool(Command)>& submit) {
+    if (!entry.enabled) { feedback_ = entry.details; return; }
+    pendingCommand_ = entry.command;
+    if (entry.command.kind == CommandKind::use_ability && entry.targeting != AbilityTargetKind::Self) {
+        if (entry.targeting == AbilityTargetKind::Actor) {
+            pendingCommand_.reset(); feedback_ = "This ability requires an actor target."; return;
+        }
+        modal_ = Modal::CombatTarget; targetOrigin_ = view.player_position;
+        targetOpportunity_ = view.opportunity; targetChosen_ = false;
+        if (entry.targeting == AbilityTargetKind::Tile) { pendingCommand_->ability.target.tile = targetOrigin_; }
+        feedback_.clear(); return;
+    }
+    const auto command = *pendingCommand_; pendingCommand_.reset();
+    if (submit(command)) { Close(); }
+    else { feedback_ = "Command could not be submitted."; }
+}
+
+bool GameplayUi::CombatAction(InputAction action, const WorldView& view, const ContentCatalog& content,
+    const std::function<bool(Command)>& submit) {
+    const char* name = action == InputAction::FocusAbility ? "focus"
+        : action == InputAction::LeapAbility ? "leap" : action == InputAction::SweepAbility ? "sweep" : nullptr;
+    if (!name) { return false; }
+    ObserveCharacter(view); modal_ = Modal::Combat; itemContent_ = &content;
+    CollectCombatMenu(content, view, combatRows_);
+    const auto ability = content.FindAbility(name);
+    const CombatMenuEntry* refused = nullptr;
+    for (std::size_t i = 0; i < combatRows_.size(); ++i) {
+        const auto& row = combatRows_[i];
+        if (row.command.kind != CommandKind::use_ability || row.command.ability.ability != ability) { continue; }
+        if (!refused) { refused = &row; }
+        if (!row.enabled) { continue; }
+        combatIndex_ = i; combatSelection_ = row.command;
+        BeginCombatChoice(row, view, submit); return true;
+    }
+    feedback_ = refused ? refused->details : String("Ability unavailable: ") + name + " (no valid grant).";
+    return true;
+}
 
 ftxui::Element GameplayUi::Render(WorldView view, const ContentCatalog& content,
     const Localization& localization, const Keymap& keys, const GameplayPresentation& presentation) {
     itemContent_ = &content;
+    ObserveCharacter(view);
     // Reconcile against the complete snapshot before its map cells move into
     // MapViewport. Item storage presentation can resolve locations from cells.
     items_.Refresh(view, content, localization, keys);
@@ -549,7 +640,7 @@ ftxui::Element GameplayUi::Render(WorldView view, const ContentCatalog& content,
         StatusField(t("game.ui.tick_rate"), localization.Format("game.ui.per_second", {{"rate", UnsignedText(view.pacing.ticksPerSecond)}})),
         StatusField(t("game.ui.rate_limit"), on(view.pacing.rateLimited)),
         StatusField(t("game.ui.idle_pause"), on(view.pacing.pauseWhenIdle))};
-    const auto combatStatus = CombatStatusText(view.combat);
+    const auto combatStatus = CombatStatusText(view, content);
     const auto combatFeedback = CombatFeedbackText(view.combat);
     if (!combatStatus.empty()) { status.insert(status.begin() + 1, ParagraphLines(combatStatus)); }
     if (!combatFeedback.empty()) { status.insert(status.begin() + 1, Paragraph(combatFeedback)); }
@@ -583,9 +674,25 @@ ftxui::Element GameplayUi::Render(WorldView view, const ContentCatalog& content,
         compact += '\n'; compact += visibleActors;
     }
     if (!presentation.lan && !mapCache_) { mapCache_ = std::make_shared<TerminalMapCache>(); }
+    SmallVector<TileCoord, 3> highlights;
+    if (pendingCommand_ && modal_ == Modal::CombatTarget && targetChosen_) {
+        const auto& target = pendingCommand_->ability.target;
+        if (target.kind == AbilityTargetKind::Tile) { highlights.push_back(target.tile); }
+        else {
+            const int dx = target.direction == CardinalDirection::East ? 1 : target.direction == CardinalDirection::West ? -1 : 0;
+            const int dz = target.direction == CardinalDirection::South ? 1 : target.direction == CardinalDirection::North ? -1 : 0;
+            for (int side = -1; side <= 1; ++side) {
+                const auto x = static_cast<std::int64_t>(targetOrigin_.x) + dx + (dz ? side : 0);
+                const auto z = static_cast<std::int64_t>(targetOrigin_.z) + dz + (dx ? side : 0);
+                if (x >= INT32_MIN && x <= INT32_MAX && z >= INT32_MIN && z <= INT32_MAX) {
+                    highlights.push_back({static_cast<std::int32_t>(x), static_cast<std::int32_t>(z), targetOrigin_.y});
+                }
+            }
+        }
+    }
     auto world = presentation.lan ? presentation.lan
         : std::make_shared<MapViewport>(view, std::move(view.cells), content, mapCache_,
-            presentation.viewRadius, t("game.ui.cropped"));
+            presentation.viewRadius, t("game.ui.cropped"), eastl::span<const TileCoord>(highlights.data(), highlights.size()));
     auto body = std::make_shared<GameplayBody>(Panel(t(presentation.lan ? "game.ui.lan" : "game.ui.world"), world),
         Panel(t("game.ui.status"), ftxui::vbox(std::move(status))), Padded(ftxui::paragraph(Frontend(compact))));
     ftxui::Elements topBar{Text(t("game.title")) | ftxui::bold, ftxui::text(" · "),
@@ -614,11 +721,18 @@ ftxui::Element GameplayUi::Render(WorldView view, const ContentCatalog& content,
         for (const auto& entry : presentation.history->Entries()) { messages.push_back(Text(entry)); }
     } else if (!presentation.message.empty()) { messages.push_back(Text(presentation.message)); }
     if (presentation.interacting) { messages.push_back(Text(t("game.interact_direction")) | ftxui::bold); }
+    if (modal_ == Modal::CombatTarget && pendingCommand_) {
+        String prompt = pendingCommand_->ability.target.kind == AbilityTargetKind::Tile
+            ? "Leap: move cursor up to 2 tiles on this level. " : "Sweep: choose one cardinal direction; preview covers 3 tiles. ";
+        prompt += BindingHint(keys, InputContext::Menu, InputAction::Accept) + " accepts; Escape cancels.";
+        messages.push_back(Paragraph(prompt) | ftxui::bold);
+        if (!feedback_.empty()) { messages.push_back(Paragraph(feedback_)); }
+    }
     const int messageRows = static_cast<int>(messages.size()) + 1;
     auto history = std::make_shared<RecentMessages>(Text(t("game.ui.message_history")) | ftxui::bold, std::move(messages));
     auto background = std::make_shared<GameplayFrame>(Padded(ftxui::hbox(std::move(topBar))), body,
         Padded(history), messageRows) | ftxui::borderLight;
-    if (!IsOpen()) { return background; }
+    if (!IsOpen() || modal_ == Modal::CombatTarget) { return background; }
     if (modal_ == Modal::Inventory) {
         auto& frame = items_.Frame();
         ftxui::Element itemBody;
@@ -701,8 +815,17 @@ ftxui::Element GameplayUi::Render(WorldView view, const ContentCatalog& content,
         const auto cancel = BindingHint(keys, InputContext::Menu, InputAction::Cancel);
         if (cancel != "Escape" && cancel != "—") { close += '/'; close += cancel; }
         close += " back/close";
+        String footer = frame.footer;
+        if (frame.screen == ItemUiScreen::Inventory || frame.screen == ItemUiScreen::Advanced) {
+            constexpr InputAction actions[] = {InputAction::HoldLeft, InputAction::HoldRight, InputAction::TwoHanded,
+                InputAction::Regrip, InputAction::Wear, InputAction::RemoveWorn, InputAction::ReleaseHand};
+            constexpr const char* labels[] = {"hold left", "hold right", "two-handed", "regrip", "wear", "remove", "release"};
+            for (std::size_t i = 0; i < std::size(actions); ++i) {
+                footer += " | " + BindingHint(keys, InputContext::Items, actions[i]) + " " + labels[i];
+            }
+        }
         auto window = std::make_shared<ItemWindow>(Text(frame.title) | ftxui::bold, itemBody,
-            Paragraph(feedback) | ftxui::color(ftxui::Color::Yellow), !feedback.empty(), Paragraph(frame.footer), Text(close));
+            Paragraph(feedback) | ftxui::color(ftxui::Color::Yellow), !feedback.empty(), Paragraph(footer), Text(close));
         return std::make_shared<ModalOverlay>(background, window | ftxui::borderLight, items_.IsAdvanced() ? 116 : 90);
     }
 
@@ -714,7 +837,29 @@ ftxui::Element GameplayUi::Render(WorldView view, const ContentCatalog& content,
     int* scroll = nullptr;
     int selected = -1;
     std::shared_ptr<ftxui::Box> craftingFocus;
-    if (modal_ == Modal::Crafting) {
+    if (modal_ == Modal::Combat || modal_ == Modal::CombatInfo) {
+        title = modal_ == Modal::Combat ? "Combat" : "Character and combat information";
+        scroll = modal_ == Modal::Combat ? &combatScroll_ : &combatInfoScroll_;
+        if (modal_ == Modal::CombatInfo) { rows.push_back(ParagraphLines(CombatDetailsText(content, view))); }
+        else {
+            subtitle = "Choose a stance, ability or manual. Unavailable choices include their reason.";
+            CollectCombatMenu(content, view, combatRows_);
+            if (!combatSelection_ && !combatRows_.empty()) { combatSelection_ = combatRows_.front().command; }
+            craftingFocus = std::make_shared<ftxui::Box>();
+            for (std::size_t i = 0; i < combatRows_.size(); ++i) {
+                const auto& entry = combatRows_[i];
+                const bool chosen = combatSelection_ && SameCraftingChoice(*combatSelection_, entry.command);
+                auto row = Paragraph(entry.label + (entry.enabled ? "" : " [unavailable]"));
+                if (chosen) {
+                    combatIndex_ = i; selected = static_cast<int>(i);
+                    row = row | ftxui::bold | ftxui::inverted | ftxui::reflect(*craftingFocus);
+                }
+                rows.push_back(row);
+                if (chosen) { rows.push_back(ParagraphLines(entry.details)); }
+            }
+            if (rows.empty()) { rows.push_back(ftxui::text("No combat choices available.")); }
+        }
+    } else if (modal_ == Modal::Crafting) {
         if (selectionPlayer_ != view.playerId) {
             selectionPlayer_ = view.playerId; craftingSelection_.reset(); craftingIndex_ = 0; craftingScroll_ = 0;
         }
@@ -773,10 +918,11 @@ ftxui::Element GameplayUi::Render(WorldView view, const ContentCatalog& content,
                     BindingLabel(keys, localization, InputContext::Gameplay, action)));
             }
         };
-        group("game.ui.windows", {InputAction::QuickActions, InputAction::Inventory, InputAction::AdvancedInventory, InputAction::Crafting, InputAction::Players,
+        group("game.ui.windows", {InputAction::QuickActions, InputAction::Inventory, InputAction::AdvancedInventory, InputAction::Crafting, InputAction::CombatMenu, InputAction::CombatInfo, InputAction::Players,
             InputAction::Settings, InputAction::Help});
         group("game.ui.actions", {InputAction::Use, InputAction::PickUp, InputAction::Drop, InputAction::Interact, InputAction::Grab, InputAction::Wait,
-            InputAction::Attack, InputAction::StyleBalanced, InputAction::StyleAggressive, InputAction::StyleDefensive});
+            InputAction::Attack, InputAction::StyleBalanced, InputAction::StyleAggressive, InputAction::StyleDefensive,
+            InputAction::FocusAbility, InputAction::LeapAbility, InputAction::SweepAbility});
         group("game.ui.movement", {InputAction::West, InputAction::North, InputAction::South, InputAction::East, InputAction::MoveDown, InputAction::MoveUp});
         group("game.ui.pacing", {InputAction::RateDown, InputAction::RateUp, InputAction::ToggleRate, InputAction::ToggleIdle});
         group("game.ui.system", {InputAction::Save, InputAction::Debug, InputAction::Quit, InputAction::Cancel});
@@ -805,9 +951,9 @@ ftxui::Element GameplayUi::Render(WorldView view, const ContentCatalog& content,
     auto contentPane = std::make_shared<ScrollPane>(ftxui::vbox(std::move(rows)), *scroll, selected, craftingFocus);
     String directions = BindingLabel(keys, localization, InputContext::Menu, InputAction::North);
     directions += '/'; directions += BindingLabel(keys, localization, InputContext::Menu, InputAction::South);
-    const bool selectable = modal_ == Modal::QuickActions || modal_ == Modal::Crafting;
+    const bool selectable = modal_ == Modal::QuickActions || modal_ == Modal::Crafting || modal_ == Modal::Combat;
     ftxui::Elements hints{Hint(directions, t(selectable ? "game.ui.select" : "game.ui.scroll"))};
-    if (modal_ == Modal::QuickActions || modal_ == Modal::Crafting) {
+    if (selectable) {
         hints.push_back(ftxui::text("  |  "));
         hints.push_back(Hint(BindingLabel(keys, localization, InputContext::Menu, InputAction::Accept),
             t("game.ui.activate")));
@@ -833,12 +979,28 @@ ftxui::Element GameplayUi::Render(WorldView view, const ContentCatalog& content,
 bool GameplayUi::HandleEvent(const ftxui::Event& event, const WorldView& view, const Localization& localization,
     const Keymap& keys, const std::function<bool(Command)>& submit, const std::function<void(InputAction)>& activate, const ContentCatalog* content) {
     if (!IsOpen()) { return false; }
+    ObserveCharacter(view);
+    if (!IsOpen()) { return true; }
     if (modal_ == Modal::Inventory) {
         if (content) { itemContent_ = content; }
         if (!itemContent_) { return true; }
         const auto& catalog = *itemContent_;
         const auto chord = DecodeTerminalInput({event.input().data(), event.input().size()});
-        if (chord) { items_.Handle(*chord, keys, view, catalog, localization); }
+        if (chord) {
+            const auto action = ResolveAction(keys, InputContext::Items, *chord);
+            eastl::optional<ItemUiAction> equipment;
+            if (action == InputAction::HoldLeft) { equipment = ItemUiAction::HoldLeft; }
+            else if (action == InputAction::HoldRight) { equipment = ItemUiAction::HoldRight; }
+            else if (action == InputAction::TwoHanded) { equipment = ItemUiAction::TwoHanded; }
+            else if (action == InputAction::Regrip) { equipment = ItemUiAction::Regrip; }
+            else if (action == InputAction::Wear) { equipment = ItemUiAction::Wear; }
+            else if (action == InputAction::RemoveWorn) { equipment = ItemUiAction::Remove; }
+            else if (action == InputAction::ReleaseHand) { equipment = ItemUiAction::Release; }
+            const auto screen = items_.Frame().screen;
+            if (equipment && (screen == ItemUiScreen::Inventory || screen == ItemUiScreen::Advanced)) {
+                items_.HandleAction(*equipment, view);
+            } else { items_.Handle(*chord, keys, view, catalog, localization); }
+        }
         RefreshItems(view, catalog, localization, keys, submit); return true;
     }
     // A player change after the last frame invalidates the entire prompt. Do
@@ -848,11 +1010,67 @@ bool GameplayUi::HandleEvent(const ftxui::Event& event, const WorldView& view, c
     }
     const auto chord = DecodeTerminalInput({event.input().data(), event.input().size()});
     auto action = chord ? ResolveAction(keys, InputContext::Menu, *chord) : eastl::optional<InputAction>{};
-    if (action == InputAction::Cancel) {
+    if (event == ftxui::Event::Escape || action == InputAction::Cancel) {
         Close();
         return true;
     }
-    if (modal_ == Modal::Crafting) {
+    if (modal_ == Modal::CombatTarget && pendingCommand_) {
+        auto& target = pendingCommand_->ability.target;
+        auto direction = action;
+        if (chord) {
+            const auto gameplay = ResolveAction(keys, InputContext::Gameplay, *chord);
+            if (gameplay == InputAction::Northwest || gameplay == InputAction::Northeast
+                || gameplay == InputAction::Southwest || gameplay == InputAction::Southeast) { direction = gameplay; }
+        }
+        int dx = 0, dz = 0;
+        if (direction == InputAction::West || direction == InputAction::Northwest || direction == InputAction::Southwest) { dx = -1; }
+        if (direction == InputAction::East || direction == InputAction::Northeast || direction == InputAction::Southeast) { dx = 1; }
+        if (direction == InputAction::North || direction == InputAction::Northwest || direction == InputAction::Northeast) { dz = -1; }
+        if (direction == InputAction::South || direction == InputAction::Southwest || direction == InputAction::Southeast) { dz = 1; }
+        if (dx || dz) {
+            if (target.kind == AbilityTargetKind::CardinalDirection) {
+                if (dx && dz) { feedback_ = "Choose one cardinal direction."; return true; }
+                target.direction = dx < 0 ? CardinalDirection::West : dx > 0 ? CardinalDirection::East
+                    : dz < 0 ? CardinalDirection::North : CardinalDirection::South;
+                targetChosen_ = true;
+            } else {
+                const auto x = static_cast<std::int64_t>(target.tile.x) + dx;
+                const auto z = static_cast<std::int64_t>(target.tile.z) + dz;
+                if (x >= INT32_MIN && x <= INT32_MAX && z >= INT32_MIN && z <= INT32_MAX
+                    && std::abs(x - targetOrigin_.x) <= 2 && std::abs(z - targetOrigin_.z) <= 2) {
+                    target.tile = {static_cast<std::int32_t>(x), static_cast<std::int32_t>(z), targetOrigin_.y};
+                    targetChosen_ = target.tile != targetOrigin_;
+                }
+            }
+            feedback_.clear();
+        } else if (action == InputAction::Accept && targetChosen_) {
+            // Revalidate the exact ability/source against the latest snapshot.
+            const auto* catalog = content ? content : itemContent_;
+            if (!catalog) { return true; }
+            CollectCombatMenu(*catalog, view, combatRows_);
+            bool available = false;
+            for (const auto& row : combatRows_) {
+                if (row.command.kind == CommandKind::use_ability && row.command.ability.ability == pendingCommand_->ability.ability
+                    && row.command.ability.source == pendingCommand_->ability.source && row.enabled) { available = true; break; }
+            }
+            if (!available) { Close(); return true; }
+            if (submit(*pendingCommand_)) { Close(); }
+            else { feedback_ = "Command could not be submitted."; }
+        }
+    } else if (modal_ == Modal::Combat) {
+        const auto* catalog = content ? content : itemContent_;
+        if (!catalog) { return true; }
+        CollectCombatMenu(*catalog, view, combatRows_);
+        if (!combatRows_.empty() && (action == InputAction::North || action == InputAction::South)) {
+            combatIndex_ = action == InputAction::North ? (combatIndex_ + combatRows_.size() - 1) % combatRows_.size()
+                : (combatIndex_ + 1) % combatRows_.size();
+            combatSelection_ = combatRows_[combatIndex_].command; feedback_.clear();
+        } else if (action == InputAction::Accept && combatSelection_) {
+            for (const auto& row : combatRows_) {
+                if (SameCraftingChoice(*combatSelection_, row.command)) { BeginCombatChoice(row, view, submit); break; }
+            }
+        }
+    } else if (modal_ == Modal::Crafting) {
         const auto count = craftingRows_.size() + learningLines_.size();
         if (count && (action == InputAction::North || action == InputAction::South)) {
             craftingIndex_ = action == InputAction::North ? (craftingIndex_ + count - 1) % count
@@ -878,7 +1096,8 @@ bool GameplayUi::HandleEvent(const ftxui::Event& event, const WorldView& view, c
             else { feedback_ = localization.Text("game.ui.action_unavailable"); }
         }
     } else {
-        int& scroll = modal_ == Modal::Players ? playersScroll_ : controlsScroll_;
+        int& scroll = modal_ == Modal::Players ? playersScroll_
+            : modal_ == Modal::CombatInfo ? combatInfoScroll_ : controlsScroll_;
         if (action == InputAction::North) { scroll = std::max(0, scroll - 1); }
         else if (action == InputAction::South) { ++scroll; }
     }

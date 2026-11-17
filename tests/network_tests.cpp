@@ -14,26 +14,24 @@ namespace {
 using namespace cataclysmx;
 using namespace cataclysmx::network;
 
-constexpr std::size_t combatViewWireSize = 128;
-constexpr std::size_t emptyCraftingJobsWireSize = 2; // Protocol 13 appends a u16 job count.
-constexpr std::size_t grabWireSize = 8; // Protocol 16 appends the grabbed object's persistent ID.
+constexpr std::size_t combatViewWireSize = 171;
 
-// Measure the variable inventory and learning suffix after the grip, keeping
-// corruption offsets independent of the number of entries in either subsystem.
-std::size_t PostGrabWireSize(const WorldView& view, std::size_t encodedSize) {
-    auto withoutLists = view;
-    withoutLists.nearbyItems.clear();
-    withoutLists.itemStorages.clear();
-    withoutLists.learning = {};
-    wire::Writer writer;
-    REQUIRE(writer.View(withoutLists));
-    wire::Writer emptyTail;
-    emptyTail.U64(0); // Wielded ID.
-    emptyTail.U16(0); emptyTail.U16(0); // Nearby items and storages.
-    emptyTail.U32(0); emptyTail.U32(0); emptyTail.U32(0); // Skills, recipes and books.
-    emptyTail.U32(0); emptyTail.U64(0); emptyTail.U8(0); // Active book, deadline and pause flag.
-    REQUIRE(encodedSize >= writer.bytes.size());
-    return encodedSize - writer.bytes.size() + emptyTail.bytes.size();
+// Locate a field by changing only that field in a valid same-size encoding.
+// Variable item/player/learning/combat-history tails need no mirrored layout.
+std::size_t ChangedViewByte(const WorldView& view, const WorldView& changed) {
+    wire::Writer before, after;
+    REQUIRE(before.View(view)); REQUIRE(after.View(changed));
+    REQUIRE(before.bytes.size() == after.bytes.size());
+    for (std::size_t i = 0; i < before.bytes.size(); ++i)
+        if (before.bytes[i] != after.bytes[i]) return i;
+    FAIL("Expected a changed wire field");
+    return 0;
+}
+std::size_t CombatViewOffset(const WorldView& view) {
+    auto changed = view;
+    changed.combat.style = view.combat.style == CombatStyle::Balanced ? CombatStyle::Aggressive : CombatStyle::Balanced;
+    // Style immediately follows body kind in the fixed CombatView record.
+    return ChangedViewByte(view, changed) - sizeof(std::uint8_t);
 }
 
 TEST_CASE("Network wire rejects truncated values, invalid enums and oversized snapshots", "[network][codec]") {
@@ -86,14 +84,16 @@ TEST_CASE("Network wire rejects truncated values, invalid enums and oversized sn
     wire::Reader badSpeed{{bad.data(), bad.size()}};
     CHECK_FALSE(badSpeed.View(result));
     bad = snapshot.bytes;
-    // State is followed by player fields, light, combat, jobs, grip, inventory and learning.
-    bad[bad.size() - (20 + combatViewWireSize + emptyCraftingJobsWireSize + grabWireSize
-        + PostGrabWireSize(view, bad.size()))] = 255;
+    REQUIRE_FALSE(view.players.empty());
+    auto changed = view;
+    changed.players[0].state = view.players[0].state == PlayerConnectionState::Active
+        ? PlayerConnectionState::Parked : PlayerConnectionState::Active;
+    bad[ChangedViewByte(view, changed)] = 255;
     wire::Reader badState{{bad.data(), bad.size()}};
     CHECK_FALSE(badState.View(result));
     wire::Writer commandBytes;
     commandBytes.CommandValue({CommandKind::wait});
-    commandBytes.bytes[0] = static_cast<std::uint8_t>(CommandKind::pause_study) + 1;
+    commandBytes.bytes[0] = static_cast<std::uint8_t>(CommandKind::new_character) + 1;
     wire::Reader badCommand{{commandBytes.bytes.data(), commandBytes.bytes.size()}};
     Command decodedCommand;
     CHECK_FALSE(badCommand.CommandValue(decodedCommand));
@@ -135,7 +135,7 @@ bool Poll(LanHost& host, LanClient& a, LanClient& b, Predicate predicate) {
 }
 
 TEST_CASE("Current protocol preserves signed six-axis commands and authoritative shapes", "[network][codec][3d]") {
-    CHECK(wire::protocol == 0x43584e14);
+    CHECK(wire::protocol == 0x43584e15);
     for (const auto kind : {CommandKind::move, CommandKind::interact}) {
         for (const TileCoord direction : {TileCoord{1, 0, 0}, {-1, 0, 0}, {0, 1, 0},
             {0, -1, 0}, {0, 0, 1}, {0, 0, -1}, {0, 0, 0}, {1, 0, 1}, {0, 1, -1}, {0, 0, INT_MIN}}) {
@@ -209,13 +209,18 @@ TEST_CASE("Combat snapshot roundtrips and validates all fields", "[network][code
     wire::Writer writer; REQUIRE(writer.View(view));
     wire::Reader reader{{writer.bytes.data(), writer.bytes.size()}};
     WorldView decoded; REQUIRE(reader.View(decoded)); CHECK(reader.Done()); CHECK(decoded.combat == combat);
-    const auto start = writer.bytes.size() - combatViewWireSize - emptyCraftingJobsWireSize - grabWireSize
-        - PostGrabWireSize(view, writer.bytes.size());
+    auto abilityWindup = view; abilityWindup.combat.action = ActorActionKind::AbilityWindup;
+    wire::Writer abilityWriter; REQUIRE(abilityWriter.View(abilityWindup));
+    wire::Reader abilityReader{{abilityWriter.bytes.data(), abilityWriter.bytes.size()}};
+    REQUIRE(abilityReader.View(decoded)); CHECK(abilityReader.Done());
+    CHECK(decoded.combat.action == ActorActionKind::AbilityWindup);
+    const auto start = CombatViewOffset(view);
+    REQUIRE(writer.bytes.size() >= start + combatViewWireSize);
     REQUIRE(writer.bytes[start] == static_cast<std::uint8_t>(combat.bodyKind));
     REQUIRE(writer.bytes[start + 1] == static_cast<std::uint8_t>(combat.style));
     REQUIRE(writer.bytes[start + 2] == static_cast<std::uint8_t>(combat.action));
     // Each entry names an invalid byte: enums, limits, flags, and absent simple-body parts.
-    for (const auto [offset, value] : {eastl::pair<std::size_t, std::uint8_t>{0, 2}, {1, 3}, {2, 5},
+    for (const auto [offset, value] : {eastl::pair<std::size_t, std::uint8_t>{0, 2}, {1, 3}, {2, 6},
         {6, 101}, {7, 31}, {16, 2}, {89, 11}, {93, 5}, {102, 10},
         {115, 2}, {116, 2}, {117, 2}, {118, 3}, {119, 2}}) {
         auto bytes = writer.bytes; bytes[start + offset] = value;
@@ -503,8 +508,9 @@ TEST_CASE("Snapshot runs reject hidden information and malformed perception stat
 TEST_CASE("Snapshot runs validate the appended player light band", "[network][codec][perception]") {
     auto view = SingleCellView();
     wire::Writer writer; REQUIRE(writer.View(view));
-    const auto lightOffset = writer.bytes.size() - (1 + combatViewWireSize + emptyCraftingJobsWireSize + grabWireSize
-        + PostGrabWireSize(view, writer.bytes.size()));
+    auto changed = view;
+    changed.playerLight = view.playerLight == LightBand::Dark ? LightBand::Bright : LightBand::Dark;
+    const auto lightOffset = ChangedViewByte(view, changed);
     REQUIRE(writer.bytes[lightOffset] == static_cast<std::uint8_t>(view.playerLight));
     writer.bytes[lightOffset] = 4;
     wire::Reader reader{{writer.bytes.data(), writer.bytes.size()}};

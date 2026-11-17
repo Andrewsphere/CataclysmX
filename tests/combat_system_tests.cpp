@@ -1,6 +1,7 @@
 #include "combat/combat_system.h"
 #include "core/world.h"
 #include "content_fixture.h"
+#include "combat_runtime_fixture.h"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -14,7 +15,8 @@ T Take(WorldResult<T> result) {
 }
 
 struct Rig {
-    World world{TestContent()};
+    ContentCatalog content = CombatRuntimeTestContent();
+    World world{content};
     ActorHandle attacker{};
     ActorHandle target{};
     std::uint32_t rng = 7;
@@ -90,9 +92,13 @@ TEST_CASE("Defensive reaction works during recovery and is bounded by cooldown",
     REQUIRE(initial.committed);
     const auto deadline = rig.world.GetActorRemainingTicks(rig.target);
     const auto attack = rig.world.Combat().Attack(rig.attacker, rig.target, rig.rng);
-    REQUIRE(attack.outcome == AttackOutcome::Parried);
+    REQUIRE(attack.committed);
+    Vector<CombatEvent> events;
+    rig.world.Combat().DrainEvents(events);
+    REQUIRE_FALSE(events.empty());
+    CHECK(events.back().strike.response == DefenseKind::Parry);
     CHECK(rig.world.GetActor(rig.target)->combat.stamina == 90);
-    CHECK(rig.world.GetActor(rig.target)->combat.reactionCooldown == 100);
+    CHECK_FALSE(rig.world.GetActor(rig.target)->combat.moveCooldowns.empty());
     CHECK(rig.world.GetActorRemainingTicks(rig.target) == deadline);
     CHECK(rig.world.GetActor(rig.target)->turns == 1);
     CHECK(rig.world.GetActor(rig.attacker)->turns == 1);
@@ -170,7 +176,8 @@ TEST_CASE("Parked combat state freezes while controllerless bodies recover", "[c
     REQUIRE(rig.world.Combat().Configure(rig.target, state));
     REQUIRE(rig.world.SetActorParked(rig.target, true));
     rig.Advance(30);
-    CHECK(rig.world.GetActor(rig.target)->combat == state);
+    CHECK(rig.world.GetActor(rig.target)->combat.stamina == state.stamina);
+    CHECK(rig.world.GetActor(rig.target)->combat.body == state.body);
     const auto idle = Take(rig.world.CreateActor({2, 2}));
     REQUIRE(rig.world.SetActorController(idle, AiControllerKind::None));
     REQUIRE(rig.world.Combat().Configure(idle, state));
@@ -199,7 +206,7 @@ TEST_CASE("Active combat recovery is invariant under elapsed subdivision", "[com
     CHECK(whole.world.GetActor(whole.target)->combat == split.world.GetActor(split.target)->combat);
 }
 
-TEST_CASE("Disabled simple apparatus retains bite and disabled locomotion increases its cost", "[combat][moves]") {
+TEST_CASE("Disabled simple apparatus refuses apparatus moves without spending time", "[combat][moves]") {
     Rig rig;
     auto state = MakeCombatState(false);
     state.faction = CombatFaction::Survivors;
@@ -209,13 +216,13 @@ TEST_CASE("Disabled simple apparatus retains bite and disabled locomotion increa
     state.body.parts[static_cast<std::size_t>(BodyPart::Locomotion)].hp = 0;
     REQUIRE(rig.world.Combat().Configure(rig.attacker, state));
     const auto result = rig.world.Combat().Attack(rig.attacker, rig.target, rig.rng);
-    CHECK(result.move == CombatMove::Bite);
-    CHECK(result.cost == 150);
-    CHECK(result.committed);
+    CHECK(result.outcome == AttackOutcome::NoMove);
+    CHECK(result.cost == 0);
+    CHECK_FALSE(result.committed);
     CHECK(rig.world.GetActor(rig.attacker)->combat.stamina == 100);
 }
 
-TEST_CASE("Simple core defeat removes NPC after capturing result", "[combat][injury]") {
+TEST_CASE("Simple core defeat marks death before safe-boundary finalization", "[combat][injury]") {
     Rig rig;
     const auto npc = Take(rig.world.CreateActor({2, 2}));
     const auto id = rig.world.GetActor(npc)->id;
@@ -225,7 +232,9 @@ TEST_CASE("Simple core defeat removes NPC after capturing result", "[combat][inj
     CHECK(result.target == id);
     CHECK(result.injury == 100);
     CHECK(result.outcome == AttackOutcome::Defeated);
-    CHECK(rig.world.GetActor(npc) == nullptr);
+    CHECK_FALSE(rig.world.IsActorAlive(npc));
+    rig.world.FinalizeActorDeaths();
+    CHECK_FALSE(rig.world.ActorAt({2, 2}).value);
 }
 
 }

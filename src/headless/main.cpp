@@ -5,6 +5,7 @@
 #include "headless/lan.h"
 #include "client/settings.h"
 #include "client/crafting_menu.h"
+#include "client/combat_menu.h"
 
 #include <EASTL/array.h>
 #include <EASTL/unique_ptr.h>
@@ -115,6 +116,34 @@ bool Execute(eastl::unique_ptr<Server>& ownedServer, eastl::string_view line, bo
         return true;
     }
     if (name == "inspect" && count == 1) { Inspect(server); return true; }
+    if ((name == "combat" || name == "styles" || name == "abilities") && count == 1) {
+        const auto view = server.View(0);
+        const auto& content = server.GetWorld().GetContent();
+        if (name == "combat") {
+            std::puts(CombatDetailsText(content, view).c_str());
+            Vector<CombatMenuEntry> rows;
+            CollectCombatMenu(content, view, rows);
+            for (const auto& row : rows) {
+                std::printf("%s%s\n%s\n", row.enabled ? "" : "[unavailable] ", row.label.c_str(), row.details.c_str());
+            }
+        }
+        if (name == "styles" || name == "combat") {
+            for (std::uint32_t i = 1; i <= content.CombatStyleCount(); ++i) {
+                const auto& style = content.GetCombatStyle({i});
+                bool known = style.art.value == 0;
+                for (const auto& art : view.combatInfo.arts) { known |= art.art == style.art; }
+                std::printf("style %s known=%d selected=%d\n", style.id.c_str(), known, view.combat.styleId.value == i);
+            }
+        }
+        if (name == "abilities" || name == "combat") {
+            for (const auto& ability : view.combatInfo.abilities) {
+                std::printf("ability %s source=%s status=%s cooldown=%llu targeting=%u\n", content.GetAbility(ability.ability).id.c_str(),
+                    ability.source.kind == AbilityGrantSourceKind::Art ? content.GetCombatArt(ability.source.art).id.c_str() : "innate",
+                    CombatRefusalText(ability.availability.reason).c_str(), static_cast<unsigned long long>(ability.cooldownRemaining), static_cast<unsigned>(ability.targeting));
+            }
+        }
+        return true;
+    }
     if (name == "skills" && count == 1) {
         Vector<String> lines;
         CollectLearningSummary(server.View(0), server.GetWorld().GetContent(), lines);
@@ -253,7 +282,73 @@ bool Execute(eastl::unique_ptr<Server>& ownedServer, eastl::string_view line, bo
         return true;
     }
     Command command;
-    if (name == "study" && count == 2) {
+    if (name == "new-character" && count == 1) {
+        command.kind = CommandKind::new_character;
+    } else if (name == "study-art" && count == 3) {
+        command.kind = CommandKind::study_art;
+        const auto& content = server.GetWorld().GetContent();
+        if (!Number(words[1], command.book.value)) { command.book = content.FindBook(words[1]); }
+        if (!Number(words[2], command.art.value)) { command.art = content.FindCombatArt(words[2]); }
+        if (!content.TryGetBook(command.book) || !content.TryGetCombatArt(command.art)) { return false; }
+    } else if (name == "pause-art" && count == 1) {
+        command.kind = CommandKind::pause_art_study;
+    } else if ((name == "hold" && (count == 3 || count == 4)) || (name == "releasehand" && count == 2)
+        || (name == "regrip" && count == 3) || ((name == "wear" || name == "remove") && count == 2)) {
+        command.kind = CommandKind::equipment;
+        auto& request = command.equipment;
+        request.operation = name == "hold" ? EquipmentOperation::Hold : name == "releasehand" ? EquipmentOperation::Release
+            : name == "regrip" ? EquipmentOperation::Regrip : name == "wear" ? EquipmentOperation::Wear : EquipmentOperation::Remove;
+        if (name == "hold" || name == "wear" || name == "remove") {
+            if (!Number(words[1], request.item) || request.item == 0) { return false; }
+        }
+        if (name == "hold" || name == "releasehand" || name == "regrip") {
+            const auto hand = words[name == "hold" ? 2 : 1];
+            if (hand == "left") { request.hand = Hand::Left; }
+            else if (hand == "right") { request.hand = Hand::Right; }
+            else { return false; }
+        }
+        if ((name == "hold" && count == 4) || name == "regrip") {
+            const auto grip = words[name == "hold" ? 3 : 2];
+            if (grip == "two") { request.grip = GripKind::TwoHanded; }
+            else if (grip != "one") { return false; }
+        }
+    } else if (name == "use" && count >= 2 && (words[1] == "ability"
+        || server.GetWorld().GetContent().FindAbility(words[1]).value != 0)) {
+        const std::size_t idIndex = words[1] == "ability" ? 2 : 1;
+        if (count <= idIndex) { return false; }
+        command.kind = CommandKind::use_ability;
+        auto& request = command.ability;
+        const auto& content = server.GetWorld().GetContent();
+        if (!Number(words[idIndex], request.ability.value)) { request.ability = content.FindAbility(words[idIndex]); }
+        if (!content.TryGetAbility(request.ability)) { return false; }
+        // Select a real grant from the snapshot, deterministically by stable art ID.
+        const auto view = server.View(0);
+        const AbilityView* selected = nullptr;
+        for (const auto& ability : view.combatInfo.abilities) {
+            if (ability.ability != request.ability) { continue; }
+            if (!selected || static_cast<unsigned>(ability.source.kind) < static_cast<unsigned>(selected->source.kind)
+                || (ability.source.kind == AbilityGrantSourceKind::Art && selected->source.kind == AbilityGrantSourceKind::Art
+                    && content.GetCombatArt(ability.source.art).id < content.GetCombatArt(selected->source.art).id)) { selected = &ability; }
+        }
+        if (!selected) { return false; }
+        request.source = selected->source;
+        const std::size_t targetIndex = idIndex + 1;
+        if (count == targetIndex || (count == targetIndex + 1 && words[targetIndex] == "self")) {
+            request.target.kind = AbilityTargetKind::Self;
+        } else if (count == targetIndex + 3 && words[targetIndex] == "tile") {
+            request.target.kind = AbilityTargetKind::Tile;
+            request.target.tile.y = view.player_position.y;
+            if (!Number(words[targetIndex + 1], request.target.tile.x) || !Number(words[targetIndex + 2], request.target.tile.z)) { return false; }
+        } else if (count == targetIndex + 1) {
+            request.target.kind = AbilityTargetKind::CardinalDirection;
+            const auto direction = words[targetIndex];
+            if (direction == "north") { request.target.direction = CardinalDirection::North; }
+            else if (direction == "east") { request.target.direction = CardinalDirection::East; }
+            else if (direction == "south") { request.target.direction = CardinalDirection::South; }
+            else if (direction == "west") { request.target.direction = CardinalDirection::West; }
+            else { return false; }
+        } else { return false; }
+    } else if (name == "study" && count == 2) {
         command.kind = CommandKind::study_book;
         if (!Number(words[1], command.book.value) || command.book.value == 0) { return false; }
     } else if (name == "pause-study" && count == 1) {
@@ -276,7 +371,11 @@ bool Execute(eastl::unique_ptr<Server>& ownedServer, eastl::string_view line, bo
         if (words[1] == "balanced") { command.style = CombatStyle::Balanced; }
         else if (words[1] == "aggressive") { command.style = CombatStyle::Aggressive; }
         else if (words[1] == "defensive") { command.style = CombatStyle::Defensive; }
-        else { return false; }
+        else {
+            command.kind = CommandKind::select_combat_style;
+            if (!Number(words[1], command.combatStyle.value)) { command.combatStyle = server.GetWorld().GetContent().FindCombatStyle(words[1]); }
+            if (!server.GetWorld().GetContent().TryGetCombatStyle(command.combatStyle)) { return false; }
+        }
     } else if (name == "ungrab" && count == 1) {
         command.kind = CommandKind::release_grab;
     } else if ((name == "move" || name == "interact" || name == "grab") && count == 2) {
@@ -369,7 +468,7 @@ int main(int argc, char** argv) {
         } else if (argument == "--world-dir" && i + 1 < argc) { configuration.worldDirectory = argv[++i]; configuration.enabled = true;
         } else {
             std::fputs("Usage: cataclysmx_headless [--content path] [--user-dir path] [--world-dir path] [--save path | --load path] [--script | --host | --join address[:port] | --discover] [--port n] [--discovery-port n] [--discovery-address address] [--name name] [--profile path] [--new-character] [--run-for ms] [--command 'move e'] | --probe | --fail-log\nMovement: move n/s/e/w, move down or move < (downstairs), move up or move > (upstairs).\nCombat: attack [persistentId], style balanced|aggressive|defensive.\n", stderr);
-            std::fputs("Content: --content <single definition file> | --content-pack <manifest>. New game: --scenario demo|first-house|town|zombie-showcase (default town) --seed <uint32>.\nGrab (local --script): grab n/ne/e/se/s/sw/w/nw, move in any of those directions, ungrab.\nCrafting (local --script): recipes, crafting, craft ID, recycle ITEM_ID, resume-craft JOB_ID, pause-craft JOB_ID, cancel-craft JOB_ID.\nLearning (local --script): skills, study BOOK_ID, pause-study.\n", stderr);
+            std::fputs("Content: --content <single definition file> | --content-pack <manifest>. New game: --scenario demo|first-house|town|zombie-showcase (default town) --seed <uint32>.\nGrab (local --script): grab n/ne/e/se/s/sw/w/nw, move in any of those directions, ungrab.\nCrafting (local --script): recipes, crafting, craft ID, recycle ITEM_ID, resume-craft JOB_ID, pause-craft JOB_ID, cancel-craft JOB_ID.\nLearning (local --script): skills, study BOOK_ID, pause-study.\nCombat (local --script): combat, styles, style ID, hold ITEM_ID left|right [two], releasehand left|right, regrip left|right one|two, wear ITEM_ID, remove ITEM_ID, abilities, use ability ID [self|tile X Z|north|east|south|west], study-art BOOK ART, pause-art, new-character.\n", stderr);
             return 2;
         }
     }

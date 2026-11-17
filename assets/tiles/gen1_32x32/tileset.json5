@@ -139,6 +139,8 @@
     zombie_courier: {visual: 'sprite.character.zombie.zombie_courier_variants', optional: true},
     zombie_janitor: {visual: 'sprite.character.zombie.zombie_janitor_variants', optional: true},
     zombie_construction_worker: {visual: 'sprite.character.zombie.zombie_construction_worker_variants', optional: true},
+    // Reuse the existing broad-shouldered worker sprite for this reach-2 combat type.
+    zombie_longarms: {visual: 'sprite.character.zombie.construction_worker', optional: true},
     zombie_cleaner: {visual: 'sprite.character.zombie.zombie_cleaner_variants', optional: true},
     zombie_warehouse_worker: {visual: 'sprite.character.zombie.zombie_warehouse_worker_variants', optional: true},
     zombie_firefighter: {visual: 'sprite.character.zombie.firefighter', optional: true},

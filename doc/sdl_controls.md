@@ -48,6 +48,59 @@ and **Backspace** returns to its parent. **Enter** transfers one, **m** prompts 
 an amount, **M** transfers the selected stack. Escape cancels future work or backs
 out. See [shared controls](inventory_ui.md) and [SDL rendering/timing](sdl_inventory.md).
 
+## Expanded combat
+
+**C** opens Combat: Up/Down chooses a learned/basic style, granted ability, or
+accessible art manual; Enter accepts. Unavailable rows remain visible with their
+shared refusal, cost, cooldown, and prerequisite details. PageUp/PageDown or
+Ctrl+Up/Down scroll details. Escape closes without issuing a combat command.
+Manual entries start/resume an attempt or pause active study at its paid boundary.
+
+**4** uses Focus, **5** opens Leap targeting, and **6** opens Directional Sweep
+targeting. These resolve the stable content IDs `focus`, `leap`, and `sweep` and
+choose the first available grant in the same order as the menu. Missing or blocked
+abilities explain their unavailability in Combat. Menu and hotkey choices use the
+same pending ability command, retaining its exact grant source.
+
+Sweep uses one of four cardinal arrow directions and outlines all three affected
+tiles. Leap uses a landing cursor within two tiles of the player on the same Y;
+arrows and the gameplay diagonal bindings move the preview. Enter accepts the
+preview, at which point the server validates and pays the action. Escape cancels
+targeting back to Combat; a second Escape closes. Previewing, inspecting, and
+cancelling issue no combat command and spend no action resources. Local menus
+pause the world; LAN menus leave the shared simulation live.
+
+**@** opens Player combat information. Up/Down, PageUp/PageDown, or Ctrl+Up/Down
+scroll the continuous wrapped shared detail text, including timing, player costs,
+defense rates, training/blocked XP rules, hands, arts, and regional encumbrance
+(eyes, mouth, and each foot included). Enter/Escape closes.
+
+In inventory and item inspection, the **Items** bindings are **L** hold left,
+**R** hold right, **H** two-handed, **G** regrip, **W** wear, **T** remove worn,
+and **U** release the selected held item. The SDL footer includes these configured
+bindings. These uppercase chords are distinct from gameplay and legacy item keys.
+
+While dead, **C** remains usable: select **Create new character** and press Enter.
+This uses the existing session and world; belongings remain with the corpse.
+Character identity changes clear old pending UI commands and target previews.
+Combat snapshot events enter ordinary message history once per session-local
+serial: hits/misses/defenses, invalidations, XP suppression, death, and successful
+or failed study attempts. Routine `ActionCommitted` events do not flood the log.
+
+### Frontend implementation
+
+`sdl::CombatUi` in `sdl/screens.h` owns snapshot-only menu selection and a pending
+command. `BeginChoice`/`MoveTarget` only prepare presentation; `Accept` returns the
+exact command after checking that its menu/grant choice still exists and is
+enabled. The app submits it through `ResumeAndCommand`. `PresentCombatInfo` uses
+`ScreenFrame::scrollText` for continuous wrapping and text-line scrolling.
+`CombatEventCursor` scopes deduplication to session generation, retaining the cursor
+across character replacement. Session snapshots copy the entire `WorldView`, so
+combat information, events, and character identity survive presentation cropping.
+
+Focused regression coverage is in `tests/sdl_combat_tests.cpp` (add that source to
+the SDL-enabled test target when integrating).
+
 ## Debug and options
 
 F9 opens [Multiplayer settings](sdl_multiplayer.md), also available from F2's

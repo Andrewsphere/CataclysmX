@@ -61,7 +61,7 @@ void ItemBrowser::Open(const ContentCatalog& content, const Localization& locali
     for (std::size_t i = 0; i < content.ItemCount(); ++i) {
         const ItemTypeId type{static_cast<std::uint32_t>(i + 1)};
         const auto& definition = content.GetItem(type);
-        if (definition.unfinishedCraft) { continue; }
+        if (definition.unfinishedCraft || type == content.CorpseItem()) { continue; }
         labels_[i] = localization.ItemName(content, type) + " [" + definition.id + "]";
         types_.push_back(type);
     }

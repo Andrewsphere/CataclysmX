@@ -99,6 +99,22 @@ TEST_CASE("Town item pilot crafting inputs and tools have authored loot placemen
     }
 }
 
+TEST_CASE("Combat manuals shield and knuckles have reachable Town and FirstHouse loot", "[item-pilot][content][combat-content][worldgen]") {
+    for (const char* pack : {CATACLYSMX_CONTENT_PACK, CATACLYSMX_FIRST_HOUSE_PACK}) {
+        CAPTURE(pack);
+        Diagnostics diagnostics;
+        const auto loaded = LoadContentPack(pack, &diagnostics);
+        INFO(FormatDiagnostics(diagnostics).c_str());
+        REQUIRE(loaded);
+        for (const char* name : {"boxing_manual", "weapon_forms_manual", "wooden_shield", "brass_knuckles"}) {
+            CAPTURE(name);
+            const auto type = loaded->FindItem(name);
+            REQUIRE(type.value != 0);
+            CHECK(HasPlacement(*loaded, type));
+        }
+    }
+}
+
 TEST_CASE("Town item pilot crafts plank scraps into a salvaged sword through server commands", "[item-pilot][crafting][server][world]") {
     const auto content = PilotContent();
     // Use the small deterministic arena with the actual Town catalog. Loot

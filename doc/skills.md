@@ -7,8 +7,9 @@ incremental awards. Content thresholds are whole XP. Default XP to reach each
 successive level is 100, 200, 400, 800, 1200, 1800, 2600, 3600, 4800, 6400.
 These are defaults to tune, not a guarantee of shipped activities at every tier.
 
-The main and FirstHouse packs ship eight noncombat skills and the basic Melee,
-Unarmed and Dodge combat skills. The starter fabrication chain includes ungated
+The main and FirstHouse packs ship 17 skills: eight noncombat and nine combat
+skills (Melee, Unarmed, Knives, Swords, Clubs & Hammers, Axes, Polearms, Shields
+and Dodge). The starter fabrication chain includes ungated
 level-0 work toward Fabrication 1, a level-1 coil spear recipe available by
 manual or autolearn at level 2, and a level-2 sword recipe. Ungated spear
 disassembly also contributes spear recipe-learning credit. Two distinct manuals
@@ -43,12 +44,16 @@ and book ID; it is not consumed as an item and remains a recipe reference.
 
 ### Combat training
 
-Each valid, in-reach hostile `Strike` attempt grants the attacker one whole Melee
-XP, plus one Unarmed XP when no weapon is wielded. The defender gains one Dodge XP
-on a miss or a non-parried strike, or one Melee XP on an actual parry. Normal
-training ceilings and multipliers apply. Raw damage, individual damage packets,
-and cancelled or unreachable windups do not independently grant credit. Combat
-skill performance scaling has not yet been authored.
+An attack's authored work is divided over planned strike opportunities, including
+Sweep tiles, then split between Melee and the actual handling family; identical
+skill IDs merge. Defensive work trains its applicable skill. Damage packet count
+does not multiply work. Difficulty is evaluated separately for each trained skill
+and art against the opponent's relevant rank: two levels below yields one tenth
+training, three or more below yields none. The first fully suppressed award per
+encounter is logged; the notice expires after 30 active seconds without interaction. Authored
+monster ranks supply difficulty without granting monsters learned-skill XP.
+Performance uses effective levels; unlocks use learned levels. See
+[runtime training](combat_runtime.md#stamina-and-training-policy).
 
 ## Study and references
 
@@ -97,15 +102,17 @@ Sparse character vectors avoid per-entry allocations for untouched actors.
 Definition relationships use overflow-capable `SmallVector<..., 1>` for common
 small lists; book recipe lists use bulk `Vector`, as do job contributions, avoiding
 large inline per-owner costs and allowing growth. Stable content names are saved.
-Save format 13 migrates legacy characters to neutral learning state; missing
+Save format 14 carries expanded combat and learning state; legacy characters migrate
+to neutral learning state where appropriate; missing
 learning state `{}` is also neutral. Learning payload version 1 validates its
 contents. Crafting job payload version 2 records contributions; version 1 work
-migrates as unattributed, without inventing worker credit. Network protocol 20
+migrates as unattributed, without inventing worker credit. Network protocol 21
 transports learning state and study commands with matching content fingerprints.
 
 The crafting panel presents skills, recipe knowledge, teaching limits, available
 books and study/pause controls. See [crafting UI](crafting_ui.md) and
 [commands](crafting_commands.md). Content schema and tuning are in
-[skills content](skills_content.md); martial-art progression is not implemented.
+[skills content](skills_content.md). Learned arts, their XP, grants and repeatable
+manual attempts are described in [combat learning](combat_learning.md).
 The local headless script supports `skills`, `study BOOK_ID`, and `pause-study`;
 book IDs are shown in the shared crafting menu.

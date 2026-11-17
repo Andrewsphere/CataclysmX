@@ -132,10 +132,11 @@ TEST_CASE("Gameplay localizes player light in wide and compact status", "[termin
 TEST_CASE("Combat presentation shows injury and incoming feedback", "[terminal][gameplay][combat]") {
     Fixture f;
     auto& combat = f.view.combat;
-    combat.style = CombatStyle::Defensive; combat.stamina = 61;
+    combat.style = CombatStyle::Defensive; combat.styleId = TestContent().FindCombatStyle("basic_defensive"); combat.stamina = 61;
     combat.action = ActorActionKind::MeleeWindup; combat.accuracyPenalty = 15;
     combat.parts[static_cast<std::size_t>(BodyPart::LeftHand)] = {1250, 9000, true};
     combat.feedback.result.outcome = AttackOutcome::Hit;
+    combat.feedback.result.injury = 7;
     combat.feedback.result.part = BodyPart::LeftHand;
     combat.feedback.result.lostCapability = true;
     combat.feedback.result.disruption = DisruptionResponse::Canceled;
@@ -145,6 +146,8 @@ TEST_CASE("Combat presentation shows injury and incoming feedback", "[terminal][
     CHECK(status.find("left hand 12.50/90.00 broken") != String::npos);
     CHECK(status.find("accuracy -15%") != String::npos);
     CHECK(feedback.find("Received: hit (left hand)") != String::npos);
+    CHECK(feedback.find("injury 7") != String::npos);
+    CHECK(CombatStatusText(f.view, TestContent()).find("Combat: Defensive") != String::npos);
     CHECK(feedback.find("capability lost") != String::npos);
     CHECK(feedback.find("action canceled") != String::npos);
     const auto screen = f.Draw(120, 50);
@@ -154,6 +157,12 @@ TEST_CASE("Combat presentation shows injury and incoming feedback", "[terminal][
     CHECK(Find(screen, "stamina 61%"));
     CHECK(Find(screen, "accuracy -15%"));
     CHECK(Find(screen, "12.50/90.00"));
+    combat.styleId = TestContent().FindCombatStyle("boxing_guard");
+    REQUIRE(combat.styleId.value);
+    CHECK(CombatStatusText(f.view, TestContent()).find("Combat: Boxing guard") != String::npos);
+    CHECK(CombatStatusText(combat).find("Combat: Defensive") != String::npos);
+    combat.styleId = CombatStyleId{UINT32_MAX};
+    CHECK(CombatStatusText(f.view, TestContent()).find("Combat: Defensive") != String::npos);
     CHECK(CombatStatusText(CombatView{}).empty());
     CHECK(CombatFeedbackText(CombatView{}).empty());
     for (const auto [outcome, expected] : {eastl::pair<AttackOutcome, const char*>{AttackOutcome::Miss, "missed"},

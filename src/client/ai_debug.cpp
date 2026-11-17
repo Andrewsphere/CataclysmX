@@ -114,7 +114,7 @@ void CaptureAiDebugView(const World& world, TileCoord cursor, AiDebugView& outpu
     details.push_back(world.IsActive(cursor) ? "Activity: active" : "Activity: resident-only (frozen)");
     details.push_back("Action remaining: " + UnsignedText(world.GetActorRemainingTicks(handle))
         + " | Speed factor: " + UnsignedText(actor->speed));
-    const auto baseCost = LocomotionBaseCost(actor->combat.body);
+    const auto baseCost = world.ActorMovementBaseCost(handle);
     details.push_back("Move ticks now: cardinal " + UnsignedText(ActionTicks(baseCost, actor->speed))
         + " / diagonal " + UnsignedText(ActionTicks(ActorStepBaseCost(baseCost, {1, 1}), actor->speed)));
     const auto ai = world.InspectActorAi(handle);

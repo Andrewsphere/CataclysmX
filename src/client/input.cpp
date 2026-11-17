@@ -18,7 +18,9 @@ constexpr eastl::string_view actionNames[] = {
     "inventory", "players", "help", "quick_actions", "use", "move_down", "move_up", "attack",
     "style_balanced", "style_aggressive", "style_defensive", "examine",
     "northwest", "northeast", "southwest", "southeast", "crafting", "grab",
-    "advanced_inventory", "wield", "transfer_amount", "transfer_stack", "open_container", "parent_storage", "toggle_storage"
+    "advanced_inventory", "wield", "transfer_amount", "transfer_stack", "open_container", "parent_storage", "toggle_storage",
+    "combat_menu", "combat_info", "hold_left", "hold_right", "two_handed", "regrip", "wear", "remove_worn", "release_hand",
+    "ability_focus", "ability_leap", "ability_sweep"
 };
 constexpr eastl::string_view contextNames[] = {"gameplay", "interaction", "menu", "debug", "items"};
 constexpr eastl::string_view namedKeys[] = {
@@ -129,6 +131,9 @@ Keymap DefaultKeymap() {
     add(game, InputAction::StyleBalanced, {"1"});
     add(game, InputAction::StyleAggressive, {"2"});
     add(game, InputAction::StyleDefensive, {"3"});
+    add(game, InputAction::FocusAbility, {"4"});
+    add(game, InputAction::LeapAbility, {"5"});
+    add(game, InputAction::SweepAbility, {"6"});
     add(game, InputAction::Wait, {"."}); add(game, InputAction::PickUp, {"g"});
     add(game, InputAction::Drop, {"d"}); add(game, InputAction::Interact, {"e", "o"});
     add(game, InputAction::Save, {"S"}); add(game, InputAction::Quit, {"q"});
@@ -143,6 +148,8 @@ Keymap DefaultKeymap() {
         add(context, InputAction::Inventory, {"i"});
         add(context, InputAction::AdvancedInventory, {"/"});
         add(context, InputAction::Crafting, {"&"});
+        add(context, InputAction::CombatMenu, {"C"});
+        add(context, InputAction::CombatInfo, {"@"});
         add(context, InputAction::Use, {"u"});
         add(context, InputAction::Players, {"P"});
         add(context, InputAction::Help, {"F1"});
@@ -171,6 +178,13 @@ Keymap DefaultKeymap() {
     add(InputContext::Items, InputAction::OpenContainer, {"o"});
     add(InputContext::Items, InputAction::ParentStorage, {"Backspace"});
     add(InputContext::Items, InputAction::ToggleStorage, {"f"});
+    add(InputContext::Items, InputAction::HoldLeft, {"L"});
+    add(InputContext::Items, InputAction::HoldRight, {"R"});
+    add(InputContext::Items, InputAction::TwoHanded, {"H"});
+    add(InputContext::Items, InputAction::Regrip, {"G"});
+    add(InputContext::Items, InputAction::Wear, {"W"});
+    add(InputContext::Items, InputAction::RemoveWorn, {"T"});
+    add(InputContext::Items, InputAction::ReleaseHand, {"U"});
     add(InputContext::Items, InputAction::MoveDown, {"<"});
     add(InputContext::Items, InputAction::MoveUp, {">"});
     add(InputContext::Menu, InputAction::Reset, {"Backspace"});

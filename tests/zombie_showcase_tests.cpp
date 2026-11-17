@@ -22,7 +22,8 @@ TEST_CASE("Zombie showcase covers production zombie types with matching combat r
     const auto showcase = ShowcaseContent();
     const auto production = LoadContentPack(CATACLYSMX_CONTENT_PACK);
     REQUIRE(production);
-    CHECK(showcase.MonsterCount() == 66);
+    CHECK(showcase.MonsterCount() == 67); // 64 original sprite exhibits, two fallbacks, and the long-arms combat type.
+    REQUIRE(showcase.FindMonster("zombie_longarms").value != 0);
     for (std::uint32_t value = 1; value <= production->MonsterCount(); ++value) {
         const auto& original = production->GetMonster({value});
         if (original.faction != CombatFaction::Undead) { continue; }
@@ -36,6 +37,10 @@ TEST_CASE("Zombie showcase covers production zombie types with matching combat r
             CHECK(exhibit.accuracy == original.accuracy);
             CHECK(exhibit.body == original.body);
             CHECK(exhibit.faction == original.faction);
+            if (original.id == "zombie_longarms") {
+                // Its shared artwork must not replace any authored combat semantics.
+                CHECK(exhibit == original);
+            }
         }
         INFO(original.id.c_str());
         CHECK(found);
@@ -53,6 +58,8 @@ TEST_CASE("Zombie showcase exhibits remain stationary and harmless beside the pl
     Vector<bool> seen(content.MonsterCount() + 1, false);
     Vector<TileCoord> positions;
     ActorHandle neighbor;
+    const auto longArms = content.FindMonster("zombie_longarms");
+    REQUIRE(longArms.value != 0);
     for (const auto handle : actors) {
         const auto* actor = world.GetActor(handle);
         REQUIRE(actor);
@@ -66,7 +73,12 @@ TEST_CASE("Zombie showcase exhibits remain stationary and harmless beside the pl
         CHECK_FALSE(seen[actor->monsterType.value]);
         seen[actor->monsterType.value] = true;
         CHECK(world.CaptureActorController(handle).GetString("type") == eastl::string_view("none"));
-        neighbor = handle;
+        if (actor->monsterType == longArms) {
+            neighbor = handle;
+            CHECK(actor->combat.reach.distance == 2);
+            CHECK(actor->combat.inexhaustible);
+            CHECK(actor->combat.styleId == content.FindCombatStyle("basic_aggressive"));
+        }
     }
     REQUIRE(world.GetActor(neighbor) != nullptr);
     const auto adjacent = world.GetActor(server.GetPlayer())->position;
@@ -83,7 +95,7 @@ TEST_CASE("Zombie showcase exhibits remain stationary and harmless beside the pl
     for (std::size_t index = 1; index < seen.size(); ++index) { CHECK(seen[index]); }
 }
 
-TEST_CASE("Zombie showcase maps every production sprite exactly once and retains fallback art", "[zombie-showcase][tileset]") {
+TEST_CASE("Zombie showcase maps every authored sprite once and retains production aliases and fallback art", "[zombie-showcase][tileset]") {
     const auto content = ShowcaseContent();
     const auto production = LoadContentPack(CATACLYSMX_CONTENT_PACK);
     REQUIRE(production);
@@ -95,9 +107,30 @@ TEST_CASE("Zombie showcase maps every production sprite exactly once and retains
     REQUIRE(tileset);
     const auto original = LoadTilesetFile(path.string().c_str(), *production);
     REQUIRE(original);
+    const auto worker = content.FindMonster("showcase_construction_worker");
+    const auto longArms = content.FindMonster("zombie_longarms");
+    const auto productionLongArms = production->FindMonster("zombie_longarms");
+    REQUIRE(worker.value != 0);
+    REQUIRE(longArms.value != 0);
+    REQUIRE(productionLongArms.value != 0);
+    const auto shared = tileset->monsters[worker.value];
+    const auto alias = tileset->monsters[longArms.value];
+    const auto productionAlias = original->monsters[productionLongArms.value];
+    REQUIRE(shared.kind == TilesetMappingKind::Sprite);
+    REQUIRE(alias.kind == TilesetMappingKind::Sprite);
+    REQUIRE(productionAlias.kind == TilesetMappingKind::Sprite);
+    CHECK(alias == shared);
+    CHECK(tileset->sprites[alias.index].id == "sprite.character.zombie.construction_worker");
+    CHECK(tileset->sprites[alias.index].id == original->sprites[productionAlias.index].id);
     Vector<bool> displayed(tileset->sprites.size(), false);
+    std::size_t uniqueExhibits = 0;
     for (std::uint32_t value = 1; value <= content.MonsterCount(); ++value) {
         const auto mapping = tileset->monsters[value];
+        if (MonsterTypeId{value} == longArms) {
+            // This extra combat-type exhibit aliases the independently covered worker art.
+            CHECK(mapping == shared);
+            continue;
+        }
         if (content.GetMonster({value}).id == "zombie_doctor") {
             CHECK(mapping.kind == TilesetMappingKind::Missing);
             continue;
@@ -109,7 +142,10 @@ TEST_CASE("Zombie showcase maps every production sprite exactly once and retains
         REQUIRE(mapping.kind == TilesetMappingKind::Sprite);
         CHECK_FALSE(displayed[mapping.index]);
         displayed[mapping.index] = true;
+        ++uniqueExhibits;
     }
+    CHECK(uniqueExhibits == 64);
+    CHECK(displayed[alias.index]);
     for (const auto& mapping : original->monsters) {
         if (mapping.kind == TilesetMappingKind::Missing) { continue; }
         if (mapping.kind == TilesetMappingKind::Visual) {

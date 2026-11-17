@@ -3,6 +3,8 @@
 #include "core/save_database.h"
 #include "combat/combat_system.h"
 #include "content_fixture.h"
+#include "combat_runtime_fixture.h"
+#include "actors/movement.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <chrono>
@@ -263,7 +265,9 @@ TEST_CASE("NPC step deadlines match player injury diagonal and speed costs", "[a
 
 TEST_CASE("NPC diagonal attacks keep combat deadlines independent of step costs", "[ai][world][movement-cost][combat]") {
     for (const bool diagonal : {false, true}) {
-        World world(TestContent());
+        CAPTURE(diagonal);
+        auto content = CombatRuntimeTestContent();
+        World world(content);
         Load(world);
         const auto npc = Create(world, {2,2});
         const auto player = Create(world, diagonal ? TileCoord{3,3} : TileCoord{3,2}, true);
@@ -278,7 +282,14 @@ TEST_CASE("NPC diagonal attacks keep combat deadlines independent of step costs"
         std::uint32_t rng = 42;
         world.ProcessNpcActions(rng);
         CHECK(world.GetActor(npc)->position == TileCoord{2,2});
-        CHECK(world.GetActorRemainingTicks(npc) == 125);
+        const auto moveId = world.GetActor(npc)->combatFeedback.result.moveId;
+        REQUIRE(moveId == content.FindCombatMove("basic_fist"));
+        const auto& move = content.GetCombatMove(moveId);
+        REQUIRE(move.cost.windupCost == 0);
+        const auto expected = ActionTicks(move.cost.recoveryCost, 125);
+        CHECK(world.GetActorRemainingTicks(npc) == expected);
+        const auto step = ActorStepBaseCost(LocomotionBaseCost(state.body), {1, diagonal ? 1 : 0});
+        CHECK(world.GetActorRemainingTicks(npc) != ActionTicks(step, 125));
     }
 }
 

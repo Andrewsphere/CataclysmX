@@ -334,7 +334,7 @@ TEST_CASE("Crafting power resolves only explicitly named own energy capabilities
                       {id:'power',type:'energy_store',capacity_energy:100,rechargeable:false}])");
     const auto loaded = Load(View(valid));
     REQUIRE(loaded.has_value());
-    const auto& item = loaded->GetItem({1});
+    const auto& item = loaded->GetItem(loaded->FindItem("tool"));
     CHECK(item.craftingPower == FindItemCapability(item, "power"));
     CHECK(item.craftingEnergyPerWork == ratioScale);
     REQUIRE(ItemEnergyStore(item, item.craftingPower) != nullptr);
@@ -365,14 +365,14 @@ TEST_CASE("Crafting power resolves only explicitly named own energy capabilities
     const auto noBilling = Item("tool", "capabilities:[{id:'power',type:'energy_store',capacity_energy:1,rechargeable:false}]");
     const auto unpowered = Load(View(noBilling));
     REQUIRE(unpowered.has_value());
-    CHECK(unpowered->GetItem({1}).craftingPower == ItemCapabilityId{});
-    CHECK(unpowered->GetItem({1}).craftingEnergyPerWork == 0);
+    CHECK(unpowered->GetItem(unpowered->FindItem("tool")).craftingPower == ItemCapabilityId{});
+    CHECK(unpowered->GetItem(unpowered->FindItem("tool")).craftingEnergyPerWork == 0);
 }
 
 TEST_CASE("Crafting empty catalogs and conditional reserved IDs preserve existing content", "[content][crafting-content]") {
     const auto empty = Load("");
     REQUIRE(empty.has_value());
-    CHECK(empty->ItemCount() == 0);
+    CHECK(empty->ItemCount() == 1);
     CHECK(empty->CraftingRecipeCount() == 0);
     CHECK(empty->RecyclingRecipeCount() == 0);
     CHECK(empty->ToolTraitCount() == 0);
@@ -383,7 +383,7 @@ TEST_CASE("Crafting empty catalogs and conditional reserved IDs preserve existin
     const auto authored = Item("unfinished_craft");
     const auto ordinary = Load(View(authored));
     REQUIRE(ordinary.has_value());
-    CHECK_FALSE(ordinary->GetItem({1}).unfinishedCraft);
+    CHECK_FALSE(ordinary->GetItem(ordinary->FindItem("unfinished_craft")).unfinishedCraft);
     CHECK(ordinary->UnfinishedCraftItem() == ItemTypeId{});
 }
 

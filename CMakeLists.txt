@@ -111,6 +111,9 @@ add_library(cataclysmx_engine STATIC
     src/combat/combat_types.cpp src/combat/combat_types.h
     src/combat/combat_system.cpp src/combat/combat_system.h
     src/combat/melee_profile.h
+    src/combat/contact.cpp src/combat/combat_rules.cpp
+    src/combat/combat_runtime.cpp src/combat/combat_learning.cpp
+    src/combat/combat_persistence.cpp
     src/objects/interactive_object.cpp src/objects/interactive_object.h
     src/objects/object_behavior.cpp src/objects/object_behavior.h
     src/objects/storage_access.cpp src/objects/storage_access.h src/objects/object_movement.h
@@ -164,6 +167,7 @@ add_library(cataclysmx_client STATIC src/client/text.cpp src/client/text.h
     src/client/message_history.cpp src/client/message_history.h
     src/client/tile_inspection.cpp src/client/tile_inspection.h
     src/client/combat_text.cpp src/client/combat_text.h
+    src/client/combat_menu.cpp src/client/combat_menu.h
     src/client/perception_style.cpp src/client/perception_style.h
     src/client/worldgen_debug.cpp src/client/worldgen_debug.h
     src/client/ai_debug.cpp src/client/ai_debug.h src/client/debug_map.h
@@ -188,6 +192,13 @@ target_compile_definitions(cataclysmx_chunk_benchmark PRIVATE
     CATACLYSMX_TERRAIN_FILE="${CMAKE_CURRENT_SOURCE_DIR}/data/demo.json5")
 target_link_libraries(cataclysmx_chunk_benchmark PRIVATE cataclysmx_engine)
 cataclysmx_no_exceptions(cataclysmx_chunk_benchmark)
+
+# Production combat/scheduler experiments, deliberately outside automated tooling tests.
+add_executable(cataclysmx_combat_experiment EXCLUDE_FROM_ALL tools/combat_experiment.cpp)
+target_compile_definitions(cataclysmx_combat_experiment PRIVATE
+    CATACLYSMX_CONTENT_PACK="${CMAKE_CURRENT_SOURCE_DIR}/data/content.json5")
+target_link_libraries(cataclysmx_combat_experiment PRIVATE cataclysmx_engine)
+cataclysmx_no_exceptions(cataclysmx_combat_experiment)
 
 if(CATACLYSMX_BUILD_TERMINAL)
     find_package(ftxui CONFIG REQUIRED)
@@ -303,6 +314,10 @@ if(CATACLYSMX_BUILD_TESTS)
         tests/actor_action_tests.cpp tests/combat_body_tests.cpp
         tests/combat_state_tests.cpp tests/combat_system_tests.cpp
         tests/combat_integration_tests.cpp
+        tests/combat_content_tests.cpp tests/combat_expansion_tests.cpp
+        tests/combat_equipment_tests.cpp tests/combat_death_tests.cpp
+        tests/combat_learning_tests.cpp tests/combat_persistence_tests.cpp
+        tests/combat_network_tests.cpp tests/combat_ui_tests.cpp
         tests/object_content_tests.cpp tests/object_behavior_tests.cpp
         tests/object_server_tests.cpp tests/object_network_tests.cpp
         tests/settings_tests.cpp tests/localization_tests.cpp)
@@ -331,6 +346,7 @@ if(CATACLYSMX_BUILD_TESTS)
         target_sources(cataclysmx_tests PRIVATE tests/sdl_network_session_tests.cpp
             tests/sdl_multiplayer_ui_tests.cpp tests/sdl_guest_settings_tests.cpp tests/sdl_multiplayer_settings_tests.cpp)
         target_sources(cataclysmx_tests PRIVATE tests/sdl_inventory_tests.cpp)
+        target_sources(cataclysmx_tests PRIVATE tests/sdl_combat_tests.cpp)
         target_sources(cataclysmx_tests PRIVATE tests/sdl_shader_tests.cpp tests/sdl_shading_integration_tests.cpp)
         target_link_libraries(cataclysmx_tests PRIVATE cataclysmx_sdl)
         add_test(NAME sdl_frontend_smoke COMMAND cataclysmx_sdl_game --smoke --scenario demo
@@ -346,7 +362,7 @@ if(CATACLYSMX_BUILD_TESTS)
         target_compile_definitions(cataclysmx_tests PRIVATE CATACLYSMX_MONSTER_PRESENTATION_TERMINAL)
         target_sources(cataclysmx_tests PRIVATE tests/terminal_render_tests.cpp tests/terminal_debug_menu_tests.cpp
             tests/terminal_input_tests.cpp tests/terminal_settings_tests.cpp tests/terminal_gameplay_tests.cpp
-            tests/item_ui_tests.cpp)
+            tests/item_ui_tests.cpp tests/terminal_combat_tests.cpp)
         target_link_libraries(cataclysmx_tests PRIVATE cataclysmx_terminal)
     endif()
     cataclysmx_target(cataclysmx_tests)

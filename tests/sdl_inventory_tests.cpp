@@ -397,6 +397,11 @@ TEST_CASE("SDL item slice renders sixty definitions through the item browser", "
     Localization localization; REQUIRE(localization.Load(CATACLYSMX_LOC_DIRECTORY, "en"));
     const auto keys = DefaultKeymap();
     ItemBrowser browser; browser.Open(content, localization);
+    CHECK(browser.Frame().matches.size() == 96); // Authored definitions only; both generated containers are hidden.
+    for (const auto type : browser.Frame().matches) {
+        CHECK(type != content.CorpseItem());
+        CHECK_FALSE(content.GetItem(type).unfinishedCraft);
+    }
     for (const auto size : {SDL_Point{480, 360}, SDL_Point{1120, 900}}) {
         CAPTURE(size.x, size.y);
         Display display(size.x, size.y); REQUIRE(display.renderer);
@@ -409,6 +414,7 @@ TEST_CASE("SDL item slice renders sixty definitions through the item browser", "
         REQUIRE(assets.State() == AssetState::Ready);
         unsigned rendered = 0;
         unsigned learningRendered = 0;
+        unsigned combatListed = 0;
         for (std::size_t index = 0; index < browser.Frame().matches.size(); ++index) {
             const auto type = browser.Frame().matches[index];
             const auto& item = content.GetItem(type);
@@ -418,6 +424,17 @@ TEST_CASE("SDL item slice renders sixty definitions through the item browser", "
                 pilot |= item.id == id;
             }
             if (pilot) { continue; }
+            bool combat = false;
+            for (const char* id : {"brass_knuckles", "wooden_shield", "boxing_manual",
+                    "weapon_forms_manual", "cloth_face_wrap", "work_boots"}) {
+                combat |= type == content.FindItem(id);
+            }
+            if (combat) {
+                // These authored additions use the missing-art fallback, rather than slice artwork.
+                CHECK(item.art.lines.empty());
+                ++combatListed;
+                continue;
+            }
             CAPTURE(item.id.c_str());
             browser.Frame().selected = index;
             browser.Handle({"e"}, keys, content, localization);
@@ -452,6 +469,7 @@ TEST_CASE("SDL item slice renders sixty definitions through the item browser", "
         }
         CHECK(rendered == 60);
         CHECK(learningRendered == 3);
+        CHECK(combatListed == 6);
     }
 }
 

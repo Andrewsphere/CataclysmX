@@ -1,4 +1,5 @@
 #include "combat/combat_types.h"
+#include "content_fixture.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <initializer_list>
@@ -97,6 +98,24 @@ TEST_CASE("Combat state validation rejects invalid runtime invariants", "[combat
         state.action = {ActorActionKind::MeleeWindup, 99, static_cast<std::uint32_t>(CombatMove::HeavyAttack), 0};
     }
     CHECK_FALSE(ValidateCombatState(state));
+}
+
+TEST_CASE("Terminal legacy anatomy migrates to dead without inventing a corpse", "[combat][state][save]") {
+    auto state = MakeCombatState(true);
+    SECTION("head") { state.body.parts[static_cast<unsigned>(BodyPart::Head)].hp = 0; }
+    SECTION("torso") { state.body.parts[static_cast<unsigned>(BodyPart::Torso)].hp = 0; }
+    SECTION("simple core") {
+        state = MakeCombatState(false); state.body.parts[static_cast<unsigned>(BodyPart::Core)].hp = 0;
+    }
+    state.action = {ActorActionKind::MeleeWindup, 59, static_cast<unsigned>(CombatMove::HeavyAttack), 77};
+    REQUIRE(ValidateBody(state.body, state.injury));
+    const auto migrated = ReadCombatState(CaptureCombatState(state), TestContent()); REQUIRE(migrated);
+    CHECK(migrated->life == ActorLifeState::Dead); CHECK(migrated->corpse == 0);
+    CHECK(migrated->action == ActorActionState{}); CHECK(ValidateCombatState(*migrated, TestContent()));
+    auto encoded = CaptureCombatState(*migrated, TestContent());
+    const auto again = ReadCombatState(encoded, TestContent()); REQUIRE(again); CHECK(*again == *migrated);
+    auto invalid = *migrated; invalid.life = ActorLifeState::Alive; CHECK_FALSE(ValidateCombatState(invalid, TestContent()));
+    invalid = *migrated; invalid.body = MakeBody(invalid.body.kind); CHECK_FALSE(ValidateCombatState(invalid, TestContent()));
 }
 
 TEST_CASE("Combat state reader checks exact schemas types ranges and version", "[combat][state]") {

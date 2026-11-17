@@ -16,7 +16,8 @@ enum class NewGameScenario { Demo, FirstHouse, Town, ZombieShowcase };
 enum class CommandKind {
     wait, move, pick_up, drop, interact, use_item, store_item, attack, combat_style, interact_action,
     craft, recycle, resume_craft, pause_craft, cancel_craft, grab, release_grab,
-    wield_item, transfer_item, study_book, pause_study
+    wield_item, transfer_item, study_book, pause_study,
+    equipment, select_combat_style, use_ability, study_art, pause_art_study, new_character
 };
 struct Command {
     CommandKind kind = CommandKind::wait;
@@ -40,6 +41,10 @@ struct Command {
     ItemStorage source;
     ItemStorage destination;
     BookId book{}; // study_book uses information identity, any usable copy qualifies.
+    EquipmentRequest equipment;
+    CombatStyleId combatStyle{};
+    AbilityRequest ability;
+    CombatArtId art{};
 };
 bool ValidCommandShape(const Command& command);
 enum class Outcome {
@@ -51,7 +56,9 @@ enum class Outcome {
     target_defeated, no_target, no_combat_move, combat_style_changed, locked, unlocked,
     craft_started, recycling_started, craft_resumed, craft_paused, craft_cancelled, crafting_refused,
     object_moved, grabbed, released, nothing_to_grab, grab_lost, grab_blocked,
-    wielded, unwielded, transferred, inventory_refused, study_started, study_paused, study_refused
+    wielded, unwielded, transferred, inventory_refused, study_started, study_paused, study_refused,
+    equipment_changed, ability_used, combat_refused, art_study_started, art_study_paused,
+    character_dead, character_created
 };
 const char* OutcomeMessage(Outcome outcome);
 // The demo requires floor, wall, and closed_door; floor must be passable.
@@ -72,6 +79,7 @@ struct CommandResult {
     String objectName; // Grab feedback; captured before deletion/movement can invalidate the target.
     InventoryOutcome inventoryOutcome = InventoryOutcome::Succeeded;
     StudyOutcome studyOutcome = StudyOutcome::ActorUnavailable;
+    CombatRefusal combatReason = CombatRefusal::None;
 };
 String CommandResultMessage(const CommandResult& result);
 
@@ -84,6 +92,8 @@ struct PlayerStatus {
     bool commandQueued = false;
     std::uint64_t opportunity = 1;
     std::uint64_t graceMicroseconds = 0;
+    PersistentId character = 0;
+    ActorLifeState life = ActorLifeState::Alive;
 };
 struct PlayerInput {
     std::uint64_t sequence = 0;
@@ -161,6 +171,8 @@ struct InventoryEntry {
     bool wielded = false;
     // Only state-free, interchangeable leaf instances may form a UI stack.
     bool stackable = false;
+    bool worn = false;
+    HandMask heldHands = HandMask::None;
     bool operator==(const InventoryEntry&) const = default;
 };
 // Transport/presentation values contain persistent identities, never runtime handles.
@@ -209,6 +221,9 @@ struct WorldView {
     Vector<InventoryEntry> nearbyItems;
     Vector<ItemStorageView> itemStorages;
     LearningView learning;
+    PersistentId characterId = 0;
+    CombatInfoView combatInfo;
+    Vector<CombatEvent> combatEvents; // Bounded presentation history, never simulation input.
 };
 
 // Authoritative deterministic endpoint. No transport or clock access.
@@ -230,6 +245,7 @@ public:
         std::uint64_t reconnectToken, std::uint64_t newToken);
     SessionResult<void> ActivatePlayer(PersistentId player);
     SessionResult<void> DisconnectPlayer(PersistentId player);
+    SessionResult<PersistentId> CreateFreshCharacter(PersistentId player);
     CommandResult Submit(PersistentId player, PlayerInput input);
     PersistentId GetHostPlayerId() const;
     Vector<PlayerStatus> GetPlayers() const;
@@ -265,6 +281,7 @@ private:
     explicit Server(const ContentCatalog& content, EmptyTag);
     World world_;
     ActorHandle player_{};
+    PersistentId hostPlayerId_ = 0;
     LoadRequest active_request_{};
     LoadRequest resident_request_{};
     int active_radius_ = 1;
@@ -292,11 +309,15 @@ private:
         mutable WorldView cachedView;
         mutable std::uint64_t cachedMapRevision = 0;
         mutable bool cachedObserving = false;
+        PersistentId character = 0;
     };
     Vector<PlayerSlot> players_;
     std::uint64_t revision_ = 1;
     std::uint64_t legacySequence_ = 0;
     mutable ViewStats viewStats_;
+    Vector<CombatEvent> combatEvents_;
+    Vector<CombatEvent> drainedCombatEvents_;
+    std::uint64_t nextCombatEventSerial_ = 1;
 
     CommandResult Execute(ActorHandle handle, PlayerSlot& slot, Command command);
     PlayerSlot* FindPlayer(PersistentId id);
@@ -309,6 +330,7 @@ private:
     void SynchronizePacing();
     eastl::optional<SaveError> Autosave();
     SessionState Checkpoint() const;
+    void CollectCombatEvents();
 };
 
 }

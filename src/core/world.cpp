@@ -10,6 +10,8 @@
 #include "core/slot_map.h"
 #include "core/save_database.h"
 #include "combat/combat_system.h"
+#include "combat/combat_persistence.h"
+#include "combat/combat_runtime.h"
 #include "items/item_system.h"
 #include "items/item_snapshot.h"
 #include "crafting/crafting_system.h"
@@ -132,7 +134,7 @@ SaveResult<void> ValidateArchiveDeadlines(const Archive& saved, const ContentCat
             return eastl::unexpected(controllerContent.error() == StateError::UnsupportedVersion
                 ? SaveError::UnsupportedVersion : SaveError::InvalidData);
         }
-        const auto combat = ReadCombatState(actor.combat, diagnostics);
+        const auto combat = ReadCombatState(actor.combat, content, diagnostics);
         if (!combat) { return eastl::unexpected(SaveError::InvalidData); }
         const auto learning = ReadLearningState(actor.learning, content, diagnostics);
         if (!learning || learning->study.remaining > room) { return eastl::unexpected(SaveError::InvalidData); }
@@ -179,14 +181,50 @@ bool ValidateArchive(const ContentCatalog& content, const Archive& saved,
         return true;
     };
     Vector<TileCoord> positions;
+    for (const auto& item : saved.items) { if (!content.TryGetItem(item.type)) { return false; } }
     for (const SavedActor& actor : saved.actors) {
         if (!actor.monsterType.empty()
             && (actor.player || !content.FindMonster(actor.monsterType).value)) { return false; }
         const auto controller = ReadAiController(actor.controller);
         if (!controller || (actor.player && *controller)) { return false; }
         if (!ValidateAiControllerContent(actor.controller, content)) { return false; }
-        const auto combat = ReadCombatState(actor.combat);
-        if (!combat || (combat->action.kind == ActorActionKind::MeleeWindup && combat->action.weapon != actor.wieldedItem)) { return false; }
+        const auto combat = ReadCombatState(actor.combat, content);
+        if (!combat || !ReadCharacterCombat(actor.characterCombat, content)) { return false; }
+        const auto combatVersion = actor.combat.GetUnsigned("version");
+        if ((!combatVersion || *combatVersion < 3) && combat->action.kind == ActorActionKind::MeleeWindup
+            && combat->action.weapon != actor.wieldedItem) { return false; }
+        const auto equipment = ReadEquipment(actor.equipment);
+        if (!equipment) { return false; }
+        Vector<PersistentId> equipped;
+        for (unsigned hand = 0; hand < 2; ++hand) {
+            const auto held = equipment->hands[hand];
+            if (!held.item) { continue; }
+            const auto found = eastl::find_if(saved.items.begin(), saved.items.end(), [&](const SavedItem& item) {
+                return item.id == held.item && item.location == LocationKind::actor && item.owner == actor.id;
+            });
+            if (found == saved.items.end()) { return false; }
+            const auto& grips = ItemMelee(content.GetItem(found->type)).grips;
+            if (eastl::none_of(grips.begin(), grips.end(), [&](const GripDefinition& grip) { return grip.kind == held.grip; })) { return false; }
+            const auto other = equipment->hands[1 - hand];
+            if ((held.grip == GripKind::TwoHanded) != (other.item == held.item)) { return false; }
+            if (held.grip == GripKind::TwoHanded && other.grip != held.grip) { return false; }
+            if (!hand || equipment->hands[0].item != held.item) { equipped.push_back(held.item); }
+        }
+        for (const auto worn : equipment->worn) {
+            if (eastl::find(equipped.begin(), equipped.end(), worn) != equipped.end()) { return false; }
+            const auto found = eastl::find_if(saved.items.begin(), saved.items.end(), [&](const SavedItem& item) {
+                return item.id == worn && item.location == LocationKind::actor && item.owner == actor.id;
+            });
+            if (found == saved.items.end() || !content.GetItem(found->type).armor) { return false; }
+            const auto& armor = *content.GetItem(found->type).armor;
+            for (const auto previous : equipment->worn) {
+                if (previous == worn) { break; }
+                const auto item = eastl::find_if(saved.items.begin(), saved.items.end(), [&](const SavedItem& value) { return value.id == previous; });
+                const auto& other = *content.GetItem(item->type).armor;
+                if (armor.layer == other.layer && (armor.rigidRegions & other.rigidRegions)) { return false; }
+            }
+            equipped.push_back(worn);
+        }
         const auto learning = ReadLearningState(actor.learning, content);
         if (!learning || (learning->study.active && (combat->action.kind != ActorActionKind::None
             || actor.remainingTicks != learning->study.remaining))) { return false; }
@@ -415,6 +453,7 @@ public:
         }
     };
     using ArchiveMap = ankerl::unordered_dense::segmented_map<ChunkCoord, Archive, ChunkHash>;
+    World& owner;
     const ContentCatalog& content;
     TerrainId floor;
     TerrainId wall;
@@ -439,7 +478,7 @@ public:
 
     void RefreshSchedule(Actor& actor) {
         const Chunk* chunk = GetChunk(ChunkOf(actor.position));
-        actor.actionDeadline.SetRunning(tick, chunk && chunk->active && !actor.parked
+        actor.actionDeadline.SetRunning(tick, actor.combat.life == ActorLifeState::Alive && chunk && chunk->active && !actor.parked
             && (actor.player || actor.controller_));
     }
     void RefreshSchedule(InteractiveObject& object) {
@@ -781,7 +820,7 @@ public:
     }
 
     explicit Impl(World& world, const ContentCatalog& catalog, std::uint32_t value)
-        : content(catalog), floor(catalog.FindTerrain("floor")),
+        : owner(world), content(catalog), floor(catalog.FindTerrain("floor")),
           wall(catalog.FindTerrain("wall")), seed(value), itemSystem(world), craftingSystem(world), learningSystem(world), combatSystem(world) {
         Require(floor.value != 0 && wall.value != 0);
     }
@@ -1136,7 +1175,7 @@ public:
     void OccupyActorTile(ActorHandle handle) {
         const Actor* actor = Live(actors, handle);
         Require(actor != nullptr);
-        if (actor->parked) { return; }
+        if (actor->parked || actor->combat.life == ActorLifeState::Dead) { return; }
         ActorHandle& occupant = GetChunk(ChunkOf(actor->position))->actorOccupancy[TileIndex(actor->position)];
         Require(occupant == ActorHandle{});
         occupant = handle;
@@ -1145,7 +1184,7 @@ public:
     void VacateActorTile(ActorHandle handle) {
         const Actor* actor = Live(actors, handle);
         Require(actor != nullptr);
-        if (actor->parked) { return; }
+        if (actor->parked || actor->combat.life == ActorLifeState::Dead) { return; }
         ActorHandle& occupant = GetChunk(ChunkOf(actor->position))->actorOccupancy[TileIndex(actor->position)];
         Require(occupant == handle);
         occupant = {};
@@ -1219,24 +1258,24 @@ public:
     Vector<ItemHandle>& Collection(ItemLocation location) {
         switch (location.kind) {
         case LocationKind::ground: {
-            Chunk* owner = GetChunk(ChunkOf(location.position));
-            Require(owner != nullptr);
-            return owner->ground_items;
+            Chunk* currentChunk = GetChunk(ChunkOf(location.position));
+            Require(currentChunk != nullptr);
+            return currentChunk->ground_items;
         }
         case LocationKind::actor: {
-            Actor* owner = Live(actors, location.actor);
-            Require(owner != nullptr);
-            return owner->inventory;
+            Actor* currentActor = Live(actors, location.actor);
+            Require(currentActor != nullptr);
+            return currentActor->inventory;
         }
         case LocationKind::item: {
-            Item* owner = Live(items, location.item);
-            Require(owner != nullptr);
-            return owner->contents;
+            Item* currentItem = Live(items, location.item);
+            Require(currentItem != nullptr);
+            return currentItem->contents;
         }
         case LocationKind::object: {
-            InteractiveObject* owner = Live(objects, location.object);
-            Require(owner != nullptr);
-            return owner->contents;
+            InteractiveObject* currentObject = Live(objects, location.object);
+            Require(currentObject != nullptr);
+            return currentObject->contents;
         }
         }
         std::abort();
@@ -1282,10 +1321,11 @@ public:
             Require(actor != nullptr);
             saved.actors.push_back({actor->id, actor->position, actor->player, actor->turns,
                 actor->speed, actor->actionDeadline.Remaining(tick), actor->parked, actor->carryCapacityGrams, actor->light,
-                CaptureAiController(actor->controller_.get()), CaptureCombatState(actor->combat),
+                CaptureAiController(actor->controller_.get()), CaptureCombatState(actor->combat, content),
                 actor->monsterType.value ? content.GetMonster(actor->monsterType).id : String{},
                 actor->wieldedItem.value ? Live(items, actor->wieldedItem)->id : 0,
-                CaptureLearningState(actor->learning, content)});
+                CaptureLearningState(actor->learning, content), CaptureEquipment(owner, *actor),
+                CaptureCharacterCombat(actor->characterCombat.get(), content)});
             for (ItemHandle item : actor->inventory) {
                 pending.push_back(item);
             }
@@ -1305,15 +1345,15 @@ public:
             Require(pending.size() <= items.size());
             const Item* item = Live(items, pending[index]);
             Require(item != nullptr);
-            PersistentId owner = 0;
+            PersistentId ownerId = 0;
             switch (item->location.kind) {
             case LocationKind::ground: break;
-            case LocationKind::actor: owner = Live(actors, item->location.actor)->id; break;
-            case LocationKind::item: owner = Live(items, item->location.item)->id; break;
-            case LocationKind::object: owner = Live(objects, item->location.object)->id; break;
+            case LocationKind::actor: ownerId = Live(actors, item->location.actor)->id; break;
+            case LocationKind::item: ownerId = Live(items, item->location.item)->id; break;
+            case LocationKind::object: ownerId = Live(objects, item->location.object)->id; break;
             }
             saved.items.push_back({item->id, item->type, item->location.kind,
-                item->location.position, owner, item->location.installation, itemSystem.Capture(pending[index])});
+                item->location.position, ownerId, item->location.installation, itemSystem.Capture(pending[index])});
             for (ItemHandle child : item->contents) {
                 pending.push_back(child);
             }
@@ -1358,12 +1398,40 @@ public:
             restored.parked = actor.parked;
             restored.carryCapacityGrams = actor.carryCapacityGrams;
             restored.light = actor.light;
-            const auto combat = ReadCombatState(actor.combat);
+            const auto combat = ReadCombatState(actor.combat, content);
             Require(combat.has_value());
             restored.combat = *combat;
+            const auto combatVersion = actor.combat.GetUnsigned("version");
+            if ((!combatVersion || *combatVersion < 3) && restored.combat.life == ActorLifeState::Alive) {
+                // RAM archives can still contain the original envelope. Disk
+                // migration has its own remainingTicks-aware normalization and
+                // returns v3; never infer migration from legacyAccuracyOverride.
+                Tick lock = 0;
+                switch (restored.combat.action.kind) {
+                case ActorActionKind::MeleeWindup:
+                    lock = CheckedTickAdd(actor.remainingTicks, restored.combat.action.recoveryTicks);
+                    break;
+                case ActorActionKind::Recovery:
+                case ActorActionKind::DisruptionRecovery: lock = actor.remainingTicks; break;
+                default: break;
+                }
+                restored.combat.combatLockRemaining = eastl::max(restored.combat.combatLockRemaining, lock);
+            }
+            if (restored.combat.life == ActorLifeState::Dead) {
+                restored.parked = restored.player;
+                restored.combat.action = {};
+                restored.actionDeadline.Set(tick, 0);
+            }
+            auto character = ReadCharacterCombat(actor.characterCombat, content);
+            Require(character.has_value());
+            restored.characterCombat = eastl::move(*character);
             auto learning = ReadLearningState(actor.learning, content);
             Require(learning.has_value());
             restored.learning = eastl::move(*learning);
+            if (restored.combat.life == ActorLifeState::Dead) {
+                restored.learning.study = {};
+                if (restored.characterCombat) { restored.characterCombat->manuals.clear(); }
+            }
             auto controller = ReadAiController(actor.controller);
             Require(controller.has_value());
             restored.controller_ = eastl::move(*controller);
@@ -1411,9 +1479,44 @@ public:
         }
         for (const auto& actor : saved.actors) {
             const auto handle = FindActor(actor.id);
-            const auto item = FindItem(actor.wieldedItem);
-            Require(!actor.wieldedItem || (Live(items, item) && Live(items, item)->location == ItemLocation::Carried(handle)));
-            Live(actors, handle)->wieldedItem = item;
+            auto* restored = Live(actors, handle);
+            const auto equipment = ReadEquipment(actor.equipment);
+            Require(equipment.has_value());
+            for (unsigned hand = 0; hand < 2; ++hand) {
+                restored->equipment.hands[hand] = {FindItem(equipment->hands[hand].item), equipment->hands[hand].grip};
+            }
+            for (const auto worn : equipment->worn) { restored->equipment.worn.push_back(FindItem(worn)); }
+            if (actor.equipment.Size() == 0 && actor.wieldedItem) {
+                const auto item = FindItem(actor.wieldedItem);
+                const auto& grips = ItemMelee(content.GetItem(Live(items, item)->type)).grips;
+                Require(!grips.empty());
+                restored->equipment.hands[0] = {item, grips.front().kind};
+                if (grips.front().kind == GripKind::TwoHanded) { restored->equipment.hands[1] = restored->equipment.hands[0]; }
+            }
+            restored->wieldedItem = restored->equipment.hands[0].item.value
+                ? restored->equipment.hands[0].item : restored->equipment.hands[1].item;
+            const auto combatVersion = actor.combat.GetUnsigned("version");
+            auto& action = restored->combat.action;
+            if ((!combatVersion || *combatVersion < 3) && action.kind == ActorActionKind::MeleeWindup && action.weapon) {
+                // Catalog-only migration cannot know the legacy weapon's grip.
+                // Bind its already-paid commitment after equipment identities
+                // exist; never reconstruct an expanded v3 commitment this way.
+                const auto weapon = FindItem(action.weapon);
+                Require(weapon.value && action.weapon == actor.wieldedItem);
+                action.sources = {};
+                action.sources.primaryKind = AttackSourceKind::HeldItem;
+                bool bound = false;
+                for (unsigned hand = 0; hand < 2; ++hand) {
+                    const auto held = restored->equipment.hands[hand];
+                    if (held.item != weapon) { continue; }
+                    if (!bound) { action.sources.primaryHand = static_cast<Hand>(hand); }
+                    bound = true;
+                    action.sources.hands[hand] = {action.weapon, held.grip, true};
+                    action.sources.functionalHands = static_cast<HandMask>(
+                        static_cast<unsigned>(action.sources.functionalHands) | (1U << hand));
+                }
+                Require(bound);
+            }
         }
     }
 
@@ -1442,9 +1545,10 @@ public:
             }
         }
         Vector<PersistentId> playerIds;
+        Vector<PersistentId> sessionIds;
         Vector<std::uint64_t> tokens;
         for (const SavedPlayer& entry : roster) {
-            if (entry.actor == 0 || entry.actor >= next_id || !ValidPosition(entry.position)
+            if (entry.actor == 0 || entry.actor >= next_id || entry.session >= next_id || !ValidPosition(entry.position)
                 || (!entry.name.empty() && entry.name.size() > 32)
                 || (!session.players.empty() && (entry.name.empty()
                     || std::memchr(entry.name.data(), '\0', entry.name.size())))
@@ -1454,11 +1558,12 @@ public:
                 return SaveFailure(SaveError::InvalidData, "Invalid player roster entry", diagnostics);
             }
             playerIds.push_back(entry.actor);
+            sessionIds.push_back(entry.session ? entry.session : entry.actor);
             if (entry.reconnectToken != 0) { tokens.push_back(entry.reconnectToken); }
             const Actor* live = Live(actors, FindActor(entry.actor));
             if (live) {
                 if (live->player && live->position == entry.position
-                    && (entry.actor != session.player || !live->parked)) { continue; }
+                    && (entry.actor != session.player || !live->parked || live->combat.life == ActorLifeState::Dead)) { continue; }
                 return SaveFailure(SaveError::InvalidData, "Roster player does not match world", diagnostics);
             }
             const ChunkCoord position = ChunkOf(entry.position);
@@ -1479,14 +1584,15 @@ public:
                 if (*saved) { disk = eastl::move(**saved); archive = &*disk; }
             }
             if (!archive || eastl::none_of(archive->actors.begin(), archive->actors.end(),
-                    [&entry, &session](const SavedActor& actor) {
+                    [&entry, &session, this](const SavedActor& actor) {
+                        const auto combat = ReadCombatState(actor.combat, content);
                         return actor.id == entry.actor && actor.player && actor.position == entry.position
-                            && (entry.actor != session.player || !actor.parked);
+                            && combat && (entry.actor != session.player || !actor.parked || combat->life == ActorLifeState::Dead);
                     })) {
                 return SaveFailure(SaveError::InvalidData, "Roster player missing from world", diagnostics);
             }
         }
-        if (!UniqueIds(playerIds)) {
+        if (!UniqueIds(playerIds) || !UniqueIds(sessionIds)) {
             return SaveFailure(SaveError::InvalidData, "Duplicate player IDs", diagnostics);
         }
         eastl::sort(tokens.begin(), tokens.end());
@@ -1502,6 +1608,24 @@ public:
         if (session.player != 0 || !session.players.empty()) {
             for (const auto& player : playerPositions) {
                 if (eastl::find(playerIds.begin(), playerIds.end(), player.first) == playerIds.end()) {
+                    const auto* actor = Live(actors, FindActor(player.first));
+                    if (actor && actor->combat.life == ActorLifeState::Dead && actor->combat.corpse) { continue; }
+                    const auto position = ChunkOf(player.second);
+                    const Archive* saved = nullptr;
+                    if (const auto found = archives.find(position); found != archives.end()) { saved = &found->second; }
+                    if (!saved) {
+                        if (const auto found = warmArchives.find(position); found != warmArchives.end()) { saved = &found->second; }
+                    }
+                    eastl::optional<Archive> disk;
+                    if (!saved && source) {
+                        auto result = source->ReadChunk(position, next_id, diagnostics);
+                        if (!result) { return eastl::unexpected(result.error()); }
+                        if (*result) { disk = eastl::move(**result); saved = &*disk; }
+                    }
+                    if (saved && eastl::any_of(saved->actors.begin(), saved->actors.end(), [&](const SavedActor& value) {
+                        const auto combat = ReadCombatState(value.combat, content);
+                        return value.id == player.first && combat && combat->life == ActorLifeState::Dead && combat->corpse;
+                    })) { continue; }
                     return SaveFailure(SaveError::InvalidData, "Player missing from roster", diagnostics);
                 }
             }
@@ -1512,6 +1636,7 @@ public:
     SaveResult<void> ApplyRecipeCredit(World& world, RecipeCredit credit, Diagnostics* diagnostics) {
         if (const auto handle = FindActor(credit.actor); handle.value) {
             auto* actor = Live(actors, handle);
+            if (actor->combat.life == ActorLifeState::Dead) { return {}; }
             cataclysmx::LearnRecipe(actor->learning, content, credit.recipe, credit.points);
             world.ActorChanged(handle);
             return {};
@@ -1519,6 +1644,9 @@ public:
         const auto apply = [&](Archive& archive) -> SaveResult<bool> {
             for (auto& actor : archive.actors) {
                 if (actor.id != credit.actor) { continue; }
+                const auto combat = ReadCombatState(actor.combat, content, diagnostics);
+                if (!combat) { return eastl::unexpected(SaveError::InvalidData); }
+                if (combat->life == ActorLifeState::Dead) { return true; }
                 auto learning = ReadLearningState(actor.learning, content, diagnostics);
                 if (!learning) { return eastl::unexpected(SaveError::InvalidData); }
                 cataclysmx::LearnRecipe(*learning, content, credit.recipe, credit.points);
@@ -1904,6 +2032,17 @@ SaveResult<void> World::ReconcileChunks(Diagnostics* diagnostics) {
     }
     for (ItemHandle handle : restoredItems) { impl_->itemSystem.Attach(handle); }
     impl_->itemSystem.EndCallback();
+    Vector<ActorHandle> terminal;
+    for (const auto& entry : impl_->actors.items()) {
+        const auto& body = entry.second.get().combat.body;
+        if (entry.second.get().combat.life == ActorLifeState::Alive
+            && (body.kind == BodyKind::Simple ? !Functional(body, BodyPart::Core)
+                : !Functional(body, BodyPart::Head) || !Functional(body, BodyPart::Torso))) {
+            terminal.push_back({entry.first.raw});
+        }
+    }
+    for (const auto actor : terminal) { MarkActorDead(actor); }
+    FinalizeActorDeaths();
     SettleGravity();
     incoming.clear();
     newChunks.clear();
@@ -1913,6 +2052,7 @@ SaveResult<void> World::ReconcileChunks(Diagnostics* diagnostics) {
 
 SaveResult<void> World::CreateSave(const char* path, const SessionState& session,
     Diagnostics* diagnostics) {
+    FinalizeActorDeaths();
     if (auto result = impl_->FlushRecipeCredits(*this, diagnostics); !result) { return result; }
     if (impl_->database) {
         return SaveFailure(SaveError::InvalidState, "World already has an attached save", diagnostics);
@@ -1993,6 +2133,7 @@ SaveResult<SessionState> World::LoadSave(const char* path, Diagnostics* diagnost
 }
 
 SaveResult<void> World::Save(const SessionState& session, Diagnostics* diagnostics) {
+    FinalizeActorDeaths();
     if (!impl_->database) {
         return SaveFailure(SaveError::NotOpen, "World has no attached save", diagnostics);
     }
@@ -2284,6 +2425,8 @@ WorldResult<ActorHandle> World::CreateActor(TileCoord position, bool player) {
     const auto key = impl_->actors.emplace(Actor(impl_->IssueId(), position, player));
     const ActorHandle handle{key.raw};
     Require(impl_->actorIds.try_emplace(GetActor(handle)->id, handle).second);
+    MutableActor(handle)->combat.styleId = impl_->content.FindCombatStyle("basic_balanced");
+    Require(MutableActor(handle)->combat.styleId.value != 0);
     impl_->InsertChunkActor(*impl_->GetChunk(ChunkOf(position)), handle);
     impl_->OccupyActorTile(handle);
     impl_->RefreshSchedule(*Live(impl_->actors, handle));
@@ -2307,6 +2450,14 @@ WorldResult<ActorHandle> World::CreateMonster(MonsterTypeId type, TileCoord posi
     actor->combat.faction = definition->faction;
     actor->combat.attackDamage = definition->attackDamage;
     actor->combat.accuracy = static_cast<std::uint8_t>(definition->accuracy / 100);
+    actor->combat.styleId = definition->combatStyle;
+    actor->combat.authoredTrainingRanks = definition->authoredTrainingRanks;
+    actor->combat.offensiveTrainingRank = definition->offensiveTrainingRank;
+    actor->combat.defensiveTrainingRank = definition->defensiveTrainingRank;
+    actor->combat.attackRating100 = definition->attackRating100;
+    actor->combat.defenseRating100 = definition->defenseRating100;
+    actor->combat.inexhaustible = definition->inexhaustible;
+    actor->combat.reach = definition->reach;
     actor->speed = definition->speed;
     actor->controller_ = MakeSightedAiController(profile->id);
     actor->monsterType = type;
@@ -2351,7 +2502,7 @@ WorldResult<void> World::SetActorController(ActorHandle handle, AiControllerKind
 WorldResult<void> World::TryActorStep(ActorHandle handle, TileCoord direction, bool activeOnly) {
     const Actor* actor = GetActor(handle);
     if (!actor) { return eastl::unexpected(WorldError::invalid_handle); }
-    if (actor->parked || !IsActive(actor->position)) { return eastl::unexpected(WorldError::chunk_unavailable); }
+    if (!IsActorAlive(handle) || actor->parked || !IsActive(actor->position)) { return eastl::unexpected(WorldError::chunk_unavailable); }
     // Explicit comparisons also avoid overflow for fabricated direction values.
     const bool cardinal = (direction == TileCoord{1, 0, 0}) || (direction == TileCoord{-1, 0, 0})
         || (direction == TileCoord{0, 1, 0}) || (direction == TileCoord{0, -1, 0})
@@ -2419,6 +2570,7 @@ WorldResult<void> World::SetActorParked(ActorHandle handle, bool parked) {
     Actor* value = Live(impl_->actors, handle);
     if (!value) { return eastl::unexpected(WorldError::invalid_handle); }
     if (!value->player) { return eastl::unexpected(WorldError::invalid_request); }
+    if (!parked && !IsActorAlive(handle)) { return eastl::unexpected(WorldError::invalid_request); }
     if (value->parked == parked) { return {}; }
     if (!parked) {
         if (BlocksMovement(value->position)) {
@@ -2474,6 +2626,108 @@ WorldResult<void> World::DestroyActor(ActorHandle handle) {
     return {};
 }
 
+bool World::IsActorAlive(ActorHandle handle) const {
+    const auto* actor = GetActor(handle);
+    return actor && actor->combat.life == ActorLifeState::Alive;
+}
+
+void World::MarkActorDead(ActorHandle handle, PersistentId killer) {
+    auto* actor = MutableActor(handle);
+    if (!actor || (actor->combat.life == ActorLifeState::Dead && actor->combat.corpse)) { return; }
+    const bool newlyDead = actor->combat.life != ActorLifeState::Dead;
+    const auto position = actor->position;
+    const auto id = actor->id;
+    // Release funded work without completing it or destroying the job. Keep the
+    // paid remainder on its wrapper for a future living worker to resume.
+    Vector<ItemHandle> jobs;
+    for (const auto& entry : impl_->items.items()) {
+        const ItemHandle item{entry.first.raw};
+        const auto job = InspectCrafting(item);
+        if (job && job->worker == id) { jobs.push_back(item); }
+    }
+    for (const auto item : jobs) {
+        auto data = CaptureItemState(item);
+        auto state = ReadCraftingState(*data.Find("crafting_job"));
+        Require(state.has_value());
+        state->worker = 0; state->pauseRequested = false; state->status = CraftingStatus::WorkerUnavailable;
+        data.Set("crafting_job", WriteCraftingState(*state));
+        DetachCrafting(item);
+        Require(impl_->itemSystem.Initialize(*MutableItem(item), &data).has_value());
+        MarkItemDirty(item);
+    }
+    actor = MutableActor(handle);
+    impl_->VacateActorTile(handle);
+    actor->combat.life = ActorLifeState::Dead;
+    actor->combat.action = {};
+    actor->learning.study = {};
+    if (actor->characterCombat) {
+        actor->characterCombat->manuals.clear();
+    }
+    actor->actionDeadline.Set(impl_->tick, 0);
+    actor->actionDeadline.SetRunning(impl_->tick, false);
+    if (actor->player) { actor->parked = true; }
+    impl_->MarkLightingDirty(ChunkOf(position));
+    ActorChanged(handle);
+    if (newlyDead) {
+        CombatEvent event;
+        event.kind = CombatEventKind::ActorDied;
+        event.tick = GetTick(); event.actor = id; event.opponent = killer;
+        Combat().EmitEvent(event);
+    }
+}
+
+void World::FinalizeActorDeaths() {
+    Impl::GravityBatch batch(*this);
+    Vector<PersistentId> pending;
+    for (const auto& actor : impl_->actors) {
+        if (actor.combat.life == ActorLifeState::Dead && !actor.combat.corpse) { pending.push_back(actor.id); }
+    }
+    eastl::sort(pending.begin(), pending.end());
+    for (const auto id : pending) {
+        const auto handle = FindActor(id);
+        // Legacy readers may have marked terminal life before items (and their
+        // crafting-worker assignments) existed. Complete cleanup after restore.
+        MarkActorDead(handle);
+        const auto position = GetActor(handle)->position;
+        const bool player = GetActor(handle)->player;
+        const auto created = CreateItem(GetContent().CorpseItem(), ItemLocation::Ground(position));
+        Require(created.has_value());
+        const auto corpse = *created;
+        MutableActor(handle)->combat.corpse = GetItem(corpse)->id;
+        // Terminal ownership transfer bypasses capacity and reservation checks.
+        // Root identity and all nested contents survive intact.
+        MutableActor(handle)->equipment = {};
+        MutableActor(handle)->wieldedItem = {};
+        while (!GetActor(handle)->inventory.empty()) {
+            const auto item = GetActor(handle)->inventory.back();
+            MutableActor(handle)->inventory.pop_back();
+            MutableItem(item)->location = ItemLocation::Inside(corpse);
+            MutableItem(corpse)->contents.push_back(item);
+            impl_->itemSystem.Notify({ItemChangeKind::Moved, item, {}});
+        }
+        impl_->itemSystem.Notify({ItemChangeKind::ContentsChanged, corpse, {}});
+        ActorChanged(handle);
+        impl_->QueueGravity(position);
+        if (!player) { Require(DestroyActor(handle).has_value()); }
+    }
+}
+
+std::uint32_t World::ActorMovementBaseCost(ActorHandle handle, std::uint32_t authoredBase) const {
+    const auto* actor = GetActor(handle);
+    Require(actor && authoredBase > 0);
+    const auto scaled = (std::uint64_t{authoredBase} * LocomotionBaseCost(actor->combat.body) + 99) / 100;
+    Require(scaled <= UINT32_MAX);
+    return combat_runtime::MovementEncumbranceCost(*this, *actor, static_cast<std::uint32_t>(scaled));
+}
+
+WorldResult<void> World::SetActorExertion(ActorHandle handle, ExertionKind exertion) {
+    auto* actor = MutableActor(handle);
+    if (!actor) { return eastl::unexpected(WorldError::invalid_handle); }
+    if (!IsActorAlive(handle) || exertion > ExertionKind::Combat) { return eastl::unexpected(WorldError::invalid_request); }
+    if (actor->combat.exertion != exertion) { actor->combat.exertion = exertion; ActorChanged(handle); }
+    return {};
+}
+
 WorldResult<ItemHandle> World::CreateItem(ItemTypeId type, ItemLocation location) {
     Impl::GravityBatch batch(*this);
     const ItemDefinition* definition = impl_->content.TryGetItem(type);
@@ -2503,14 +2757,19 @@ WorldResult<ItemHandle> World::CreateItem(ItemTypeId type, ItemLocation location
 
 bool World::CanUseWieldedItem(ActorHandle handle) const {
     const auto* actor = GetActor(handle);
-    if (!actor) { return false; }
+    if (!actor || !IsActorAlive(handle)) { return false; }
     if (!actor->wieldedItem.value) { return true; }
     const auto* item = GetItem(actor->wieldedItem);
     if (!item || item->location != ItemLocation::Carried(handle)) { return false; }
     const auto& body = actor->combat.body;
-    if (body.kind == BodyKind::Simple) { return Functional(body, BodyPart::AttackApparatus); }
-    const unsigned hands = unsigned(Functional(body, BodyPart::LeftHand)) + unsigned(Functional(body, BodyPart::RightHand));
-    return hands >= ItemMelee(impl_->content.GetItem(item->type)).hands;
+    if (body.kind == BodyKind::Simple) { return false; }
+    bool held = false;
+    for (unsigned hand = 0; hand < 2; ++hand) {
+        if (actor->equipment.hands[hand].item != actor->wieldedItem) { continue; }
+        held = true;
+        if (!Functional(body, hand == 0 ? BodyPart::LeftHand : BodyPart::RightHand)) { return false; }
+    }
+    return held;
 }
 
 void World::ClearWieldedItem(ItemHandle handle) {
@@ -2518,9 +2777,23 @@ void World::ClearWieldedItem(ItemHandle handle) {
     if (!item || item->location.kind != LocationKind::actor) { return; }
     const auto owner = item->location.actor;
     auto* actor = MutableActor(owner);
-    if (actor->wieldedItem != handle) { return; }
-    actor->wieldedItem = {};
-    if (actor->combat.action.kind == ActorActionKind::MeleeWindup) {
+    bool changed = false;
+    for (auto& held : actor->equipment.hands) {
+        if (held.item == handle) { held = {}; changed = true; }
+    }
+    auto& worn = actor->equipment.worn;
+    const auto found = eastl::find(worn.begin(), worn.end(), handle);
+    if (found != worn.end()) { worn.erase(found); changed = true; }
+    if (!changed && actor->wieldedItem != handle) { return; }
+    actor->wieldedItem = actor->equipment.hands[0].item.value
+        ? actor->equipment.hands[0].item : actor->equipment.hands[1].item;
+    const auto id = item->id;
+    const auto& action = actor->combat.action;
+    const bool required = action.definitionDriven
+        ? eastl::any_of(action.sources.hands.begin(), action.sources.hands.end(), [id](const CommittedHand& hand) {
+            return hand.required && hand.item == id;
+        }) : action.weapon == id;
+    if (required && action.kind != ActorActionKind::None) {
         Combat().Disrupt(owner, {DisruptionCause::RequiredCapabilityLost});
     }
     ActorChanged(owner);
@@ -2531,28 +2804,53 @@ InventoryResult World::WieldItem(ActorHandle handle, ItemHandle selected) {
     if (!actor || actor->parked || !IsActive(actor->position)) { return {InventoryOutcome::Inaccessible}; }
     if (GetActorRemainingTicks(handle) || actor->combat.action.kind != ActorActionKind::None
         || impl_->learningSystem.Busy(handle)) { return {InventoryOutcome::Busy}; }
-    if (actor->wieldedItem == selected) { return {InventoryOutcome::AlreadyThere}; }
-    if (selected.value) {
-        const auto* item = GetItem(selected);
-        if (!item) { return {InventoryOutcome::InvalidItem}; }
-        if (IsReservedItem(selected) || item->location.installation.value
-            || impl_->content.GetItem(item->type).unfinishedCraft) { return {InventoryOutcome::Reserved}; }
-        for (const auto* current = item; current->location.kind == LocationKind::item; current = GetItem(current->location.item)) {
-            if (current->location.installation.value) { return {InventoryOutcome::Reserved}; }
-        }
-        const auto root = impl_->Root(item->location);
-        if (root.kind != LocationKind::actor || root.actor != handle || !CanAccessItem(handle, selected)) { return {InventoryOutcome::Inaccessible}; }
-        const auto& body = actor->combat.body;
-        const auto hands = ItemMelee(impl_->content.GetItem(item->type)).hands;
-        if (body.kind == BodyKind::Detailed && unsigned(Functional(body, BodyPart::LeftHand))
-            + unsigned(Functional(body, BodyPart::RightHand)) < hands) { return {InventoryOutcome::NeedsHands}; }
-        if (body.kind == BodyKind::Simple && !Functional(body, BodyPart::AttackApparatus)) { return {InventoryOutcome::NeedsHands}; }
-        const auto moved = TransferItem(selected, ItemLocation::Carried(handle));
-        if (!moved) { return {InventoryOutcome::NoCapacity}; }
+    if (!IsActorAlive(handle)) { return {InventoryOutcome::Inaccessible}; }
+    const auto old = actor->wieldedItem;
+    if (old == selected) { return {InventoryOutcome::AlreadyThere}; }
+    if (!selected.value) {
+        if (!old.value) { return {InventoryOutcome::AlreadyThere}; }
+        return ReleaseHand(handle, actor->equipment.hands[0].item == old ? Hand::Left : Hand::Right);
     }
-    MutableActor(handle)->wieldedItem = selected;
-    ActorChanged(handle);
-    return {InventoryOutcome::Succeeded, 100};
+    const auto* item = GetItem(selected);
+    if (!item) { return {InventoryOutcome::InvalidItem}; }
+    for (auto current = selected; current.value;) {
+        const auto* value = GetItem(current);
+        if (!value) { return {InventoryOutcome::InvalidItem}; }
+        if (IsReservedItem(current) || value->location.installation.value
+            || impl_->content.GetItem(value->type).unfinishedCraft) { return {InventoryOutcome::Reserved}; }
+        if (value->location.kind != LocationKind::item) { break; }
+        current = value->location.item;
+    }
+    const auto& grips = ItemMelee(impl_->content.GetItem(item->type)).grips;
+    const auto root = impl_->Root(item->location);
+    if (root.kind != LocationKind::actor || root.actor != handle) { return {InventoryOutcome::Inaccessible}; }
+    // Inventory UI replacement is explicit: release only the old left-first
+    // selection. Preserve all other equipment and roll back on any refusal.
+    auto saved = eastl::move(actor->equipment);
+    actor->equipment = saved;
+    for (auto& held : actor->equipment.hands) { if (held.item == old) { held = {}; } }
+    actor->wieldedItem = actor->equipment.hands[0].item.value
+        ? actor->equipment.hands[0].item : actor->equipment.hands[1].item;
+    bool needsHands = false;
+    bool occupied = false;
+    for (const auto& grip : grips) {
+        for (const auto hand : {Hand::Left, Hand::Right}) {
+            const auto query = QueryEquipment(handle, {EquipmentOperation::Hold, item->id, hand, grip.kind});
+            if (query.reason != CombatRefusal::None) {
+                needsHands |= query.reason == CombatRefusal::MissingCapability;
+                occupied |= query.reason == CombatRefusal::NeedsFreeHand;
+                continue;
+            }
+            const auto result = HoldItem(handle, selected, hand, grip.kind);
+            if (result.outcome == InventoryOutcome::Succeeded) { return result; }
+            MutableActor(handle)->equipment = eastl::move(saved);
+            MutableActor(handle)->wieldedItem = old;
+            return result;
+        }
+    }
+    actor->equipment = eastl::move(saved);
+    actor->wieldedItem = old;
+    return {needsHands && !occupied ? InventoryOutcome::NeedsHands : InventoryOutcome::InvalidDestination};
 }
 
 WorldResult<void> World::TransferItem(ItemHandle handle, ItemLocation location) {
@@ -2666,7 +2964,7 @@ std::uint64_t World::GetContainerUsedVolume(ItemHandle handle) const {
 bool World::CanAccessItem(ActorHandle actorHandle, ItemHandle itemHandle) const {
     const Actor* actor = GetActor(actorHandle);
     const Item* item = GetItem(itemHandle);
-    if (!actor || actor->parked || !IsActive(actor->position) || !item || IsReservedItem(itemHandle)) { return false; }
+    if (!actor || !IsActorAlive(actorHandle) || actor->parked || !IsActive(actor->position) || !item || IsReservedItem(itemHandle)) { return false; }
     const ItemLocation root = impl_->Root(item->location);
     return (root.kind == LocationKind::actor && root.actor == actorHandle)
         || (root.kind == LocationKind::ground && root.position == actor->position)
@@ -2757,24 +3055,29 @@ void World::LearnRecipe(PersistentId actor, CraftingRecipeId recipe, std::uint64
 }
 CraftingSettings World::GetCraftingSettings() const { return impl_->craftingSystem.Settings(); }
 WorldResult<CraftingResult> World::StartCrafting(ActorHandle actor, CraftingRecipeId recipe) {
+    if (GetActor(actor) && !IsActorAlive(actor)) { return CraftingResult{CraftingOutcome::ActorUnavailable}; }
     if (impl_->learningSystem.Busy(actor)) { return CraftingResult{CraftingOutcome::ActorBusy}; }
     Impl::GravityBatch batch(*this); BeginCraftingMutation();
     auto result = impl_->craftingSystem.Start(actor, recipe); EndCraftingMutation(); return result;
 }
 WorldResult<CraftingResult> World::StartRecycling(ActorHandle actor, ItemHandle target, RecyclingRecipeId recipe) {
+    if (GetActor(actor) && !IsActorAlive(actor)) { return CraftingResult{CraftingOutcome::ActorUnavailable}; }
     if (impl_->learningSystem.Busy(actor)) { return CraftingResult{CraftingOutcome::ActorBusy}; }
     Impl::GravityBatch batch(*this); BeginCraftingMutation();
     auto result = impl_->craftingSystem.Recycle(actor, target, recipe); EndCraftingMutation(); return result;
 }
 WorldResult<CraftingResult> World::ResumeCrafting(ActorHandle actor, ItemHandle item) {
+    if (GetActor(actor) && !IsActorAlive(actor)) { return CraftingResult{CraftingOutcome::ActorUnavailable}; }
     if (impl_->learningSystem.Busy(actor)) { return CraftingResult{CraftingOutcome::ActorBusy}; }
     Impl::GravityBatch batch(*this); BeginCraftingMutation();
     auto result = impl_->craftingSystem.Resume(actor, item); EndCraftingMutation(); return result;
 }
 WorldResult<CraftingResult> World::PauseCrafting(ActorHandle actor, ItemHandle item) {
+    if (GetActor(actor) && !IsActorAlive(actor)) { return CraftingResult{CraftingOutcome::ActorUnavailable}; }
     return impl_->craftingSystem.Pause(actor, item);
 }
 WorldResult<CraftingResult> World::CancelCrafting(ActorHandle actor, ItemHandle item) {
+    if (GetActor(actor) && !IsActorAlive(actor)) { return CraftingResult{CraftingOutcome::ActorUnavailable}; }
     Impl::GravityBatch batch(*this); BeginCraftingMutation();
     auto result = impl_->craftingSystem.Cancel(actor, item); EndCraftingMutation(); return result;
 }
@@ -2849,7 +3152,7 @@ std::uint64_t World::GetObjectUsedVolume(ObjectHandle handle) const {
 
 bool World::CanAccessObjectStorage(ActorHandle actorHandle, ObjectHandle handle) const {
     const auto* actor = GetActor(actorHandle);
-    return actor && !actor->parked && IsActive(actor->position)
+    return actor && IsActorAlive(actorHandle) && !actor->parked && IsActive(actor->position)
         && CanReachStorage(*this, actor->position, handle, 1);
 }
 
@@ -2878,7 +3181,7 @@ WorldResult<void> World::MoveObject(ObjectHandle handle, TileCoord destination) 
 ObjectMoveResult World::QueryObjectMove(ActorHandle actorHandle, ObjectHandle handle, ObjectMoveKind kind) const {
     const auto* actor = GetActor(actorHandle);
     const auto* object = GetObject(handle);
-    if (!actor || !object || actor->parked || !IsActive(actor->position) || !IsActive(object->position)
+    if (!actor || !IsActorAlive(actorHandle) || !object || actor->parked || !IsActive(actor->position) || !IsActive(object->position)
         || (kind != ObjectMoveKind::Push && kind != ObjectMoveKind::Pull)) { return {}; }
     if (actor->actionDeadline.Remaining(impl_->tick) || actor->combat.action.kind != ActorActionKind::None
         || impl_->craftingSystem.Busy(actorHandle) || impl_->learningSystem.Busy(actorHandle)
@@ -2922,7 +3225,7 @@ WorldResult<ObjectMoveResult> World::TryMoveObject(ActorHandle actorHandle, Obje
 ObjectMoveResult World::QueryObjectStep(ActorHandle actorHandle, ObjectHandle handle, TileCoord direction) const {
     const auto* actor = GetActor(actorHandle);
     const auto* object = GetObject(handle);
-    if (!actor || !object || actor->parked || !IsActive(actor->position) || !IsActive(object->position)
+    if (!actor || !IsActorAlive(actorHandle) || !object || actor->parked || !IsActive(actor->position) || !IsActive(object->position)
         || direction.y != 0 || direction.x < -1 || direction.x > 1 || direction.z < -1 || direction.z > 1
         || (direction.x == 0 && direction.z == 0)) { return {}; }
     if (actor->actionDeadline.Remaining(impl_->tick) || actor->combat.action.kind != ActorActionKind::None
@@ -2947,7 +3250,8 @@ ObjectMoveResult World::QueryObjectStep(ActorHandle actorHandle, ObjectHandle ha
         if (furniture.value && furniture != handle
             && (destination == objectDestination || BlocksMovement(destination))) { return {ObjectMoveOutcome::Occupied}; }
     }
-    const auto cost = ActorStepBaseCost(eastl::max(definition->moveCost, LocomotionBaseCost(actor->combat.body)), direction);
+    const auto cost = ActorStepBaseCost(combat_runtime::MovementEncumbranceCost(*this, *actor,
+        eastl::max(definition->moveCost, LocomotionBaseCost(actor->combat.body))), direction);
     if (ActionTicks(cost, actor->speed) > UINT64_MAX - impl_->tick) { return {ObjectMoveOutcome::NotReady}; }
     return {ObjectMoveOutcome::Moved, cost};
 }
@@ -2987,7 +3291,7 @@ WorldResult<void> World::SetObjectEnergy(ObjectHandle handle, std::uint64_t ener
 bool World::CanUseObject(ActorHandle actorHandle, ObjectHandle objectHandle) const {
     const auto* actor = GetActor(actorHandle);
     const auto* object = GetObject(objectHandle);
-    if (!actor || actor->parked || !IsActive(actor->position) || !object || !IsActive(object->position)) { return false; }
+    if (!actor || !IsActorAlive(actorHandle) || actor->parked || !IsActive(actor->position) || !object || !IsActive(object->position)) { return false; }
     const TileCoord a = actor->position;
     const TileCoord b = object->position;
     if (a.y != b.y || eastl::max(std::abs(a.x - b.x), std::abs(a.z - b.z)) > 1) { return false; }
@@ -3366,7 +3670,7 @@ WorldResult<void> World::SetActorSpeed(ActorHandle handle, std::uint32_t speed) 
 WorldResult<void> World::ScheduleActorAction(ActorHandle handle, std::uint32_t baseCost) {
     Actor* value = Live(impl_->actors, handle);
     if (!value) { return eastl::unexpected(WorldError::invalid_handle); }
-    if (!IsActive(value->position) || value->parked) { return eastl::unexpected(WorldError::chunk_unavailable); }
+    if (!IsActorAlive(handle) || !IsActive(value->position) || value->parked) { return eastl::unexpected(WorldError::chunk_unavailable); }
     if (baseCost == 0 || value->actionDeadline.Remaining(impl_->tick) != 0
         || value->combat.action.kind != ActorActionKind::None || impl_->craftingSystem.Busy(handle) || impl_->learningSystem.Busy(handle)) {
         return eastl::unexpected(WorldError::invalid_request);
@@ -3421,7 +3725,7 @@ void World::ElapseTicks(Tick elapsed) {
     impl_->learningSystem.Elapse(elapsed);
     impl_->combatSystem.Elapse(elapsed);
     for (Actor& actor : impl_->actors) {
-        if (!actor.player && !actor.parked && actor.controller_ && IsActive(actor.position)) {
+        if (actor.combat.life == ActorLifeState::Alive && !actor.player && !actor.parked && actor.controller_ && IsActive(actor.position)) {
             actor.controller_->Elapse(elapsed);
         }
     }
@@ -3441,7 +3745,7 @@ void World::CollectActiveActors(Vector<ActorHandle>& output) const {
     output.clear();
     for (const auto& entry : impl_->actors.items()) {
         const Actor& actor = entry.second.get();
-        if (!actor.parked && IsActive(actor.position)) { output.push_back({entry.first.raw}); }
+        if (actor.combat.life == ActorLifeState::Alive && !actor.parked && IsActive(actor.position)) { output.push_back({entry.first.raw}); }
     }
 }
 
@@ -3456,7 +3760,7 @@ void World::CollectReadyPlayers(Vector<ActorHandle>& output) const {
     output.clear();
     for (const auto& entry : impl_->actors.items()) {
         const Actor& actor = entry.second.get();
-        if (actor.player && !actor.actionDeadline.suspended && actor.actionDeadline.dueTick <= impl_->tick
+        if (actor.combat.life == ActorLifeState::Alive && actor.player && !actor.actionDeadline.suspended && actor.actionDeadline.dueTick <= impl_->tick
             && actor.combat.action.kind == ActorActionKind::None && !impl_->craftingSystem.Busy({entry.first.raw})
             && !impl_->learningSystem.Busy({entry.first.raw})) {
             output.push_back({entry.first.raw});
@@ -3474,7 +3778,7 @@ void World::ProcessNpcActions(std::uint32_t& rng) {
     due.clear();
     for (const auto& entry : impl_->actors.items()) {
         const Actor& actor = entry.second.get();
-        if (!actor.player && !actor.parked && actor.controller_ && IsActive(actor.position)
+        if (actor.combat.life == ActorLifeState::Alive && !actor.player && !actor.parked && actor.controller_ && IsActive(actor.position)
             && actor.actionDeadline.dueTick <= impl_->tick
             && actor.combat.action.kind == ActorActionKind::None && !impl_->craftingSystem.Busy({entry.first.raw})
             && !impl_->learningSystem.Busy({entry.first.raw})) { due.push_back({actor.id, {entry.first.raw}}); }
@@ -3482,7 +3786,7 @@ void World::ProcessNpcActions(std::uint32_t& rng) {
     eastl::sort(due.begin(), due.end(), [](const auto& a, const auto& b) { return a.id < b.id; });
     for (const auto record : due) {
         Actor* actor = Live(impl_->actors, record.handle);
-        if (!actor || actor->id != record.id || actor->player || actor->parked || !actor->controller_
+        if (!actor || actor->combat.life == ActorLifeState::Dead || actor->id != record.id || actor->player || actor->parked || !actor->controller_
             || !IsActive(actor->position) || actor->actionDeadline.dueTick > impl_->tick
             || actor->combat.action.kind != ActorActionKind::None || impl_->craftingSystem.Busy(record.handle)
             || impl_->learningSystem.Busy(record.handle)) { continue; }
@@ -3493,17 +3797,18 @@ void World::ProcessNpcActions(std::uint32_t& rng) {
         if (intent.kind == ActorIntentKind::Attack) {
             const auto attack = impl_->combatSystem.Attack(record.handle, intent.target, rng);
             // A refused AI intent still makes progress; never leave a due NPC spinning.
-            if (!attack.committed) { Require(ScheduleActorAction(record.handle, intent.baseCost).has_value()); }
+            if (!attack.committed && IsActorAlive(record.handle)) { Require(ScheduleActorAction(record.handle, intent.baseCost).has_value()); }
             UpdatePlayerObservations();
             continue;
         }
         const std::uint64_t baseCost = intent.kind == ActorIntentKind::Move
-            ? (std::uint64_t{intent.baseCost} * LocomotionBaseCost(actor->combat.body)) / 100
+            ? ActorMovementBaseCost(record.handle, intent.baseCost)
             : intent.baseCost;
         Require(baseCost <= eastl::numeric_limits<std::uint32_t>::max());
         const auto actionCost = intent.kind == ActorIntentKind::Move
             ? ActorStepBaseCost(static_cast<std::uint32_t>(baseCost), intent.direction)
             : static_cast<std::uint32_t>(baseCost);
+        Require(SetActorExertion(record.handle, intent.kind == ActorIntentKind::Move ? ExertionKind::Moving : ExertionKind::Rest).has_value());
         Require(ScheduleActorAction(record.handle, actionCost).has_value());
         // Commit the deadline before execution: blocked movement still costs time.
         if (intent.kind == ActorIntentKind::Move) {
@@ -3520,6 +3825,7 @@ eastl::optional<Tick> World::NextActorEventIn() const {
     for (const auto& entry : impl_->actors.items()) {
         const Actor& actor = entry.second.get();
         const ActorHandle handle{entry.first.raw};
+        if (actor.combat.life == ActorLifeState::Dead) { continue; }
         if (impl_->learningSystem.Busy(handle)) {
             const auto delay = impl_->learningSystem.ActorEventIn(handle);
             if (delay && (!next || *delay < *next)) { next = *delay; }
@@ -3660,7 +3966,7 @@ bool World::CheckInvariants() const {
                     return false;
                 }
                 previousActorId = actor->id;
-                if (!actor->parked) {
+                if (!actor->parked && actor->combat.life == ActorLifeState::Alive) {
                     ActorHandle& occupant = expectedOccupancy[TileIndex(actor->position)];
                     if (occupant != ActorHandle{}) { return false; }
                     occupant = handle;
@@ -3698,16 +4004,46 @@ bool World::CheckInvariants() const {
         const auto controller = ReadAiController(CaptureAiController(value.controller_.get()));
         if (!controller || (value.player && value.controller_)) { return false; }
         if (!ValidateAiControllerContent(CaptureAiController(value.controller_.get()), state.content)) { return false; }
-        if (!ValidateCombatState(value.combat)) { return false; }
+        if (!ValidateCombatState(value.combat, state.content)) { return false; }
         if (!ReadLearningState(CaptureLearningState(value.learning, state.content), state.content)) { return false; }
         if (value.learning.study.active && (state.craftingSystem.Busy(handle)
             || value.combat.action.kind != ActorActionKind::None
             || value.actionDeadline.Remaining(state.tick) != value.learning.study.remaining)) { return false; }
         const auto* wielded = GetItem(value.wieldedItem);
         if (value.wieldedItem.value && (!wielded || wielded->location != ItemLocation::Carried(handle))) { return false; }
-        if (value.combat.action.kind == ActorActionKind::MeleeWindup
+        if (!value.combat.action.definitionDriven && value.combat.action.kind == ActorActionKind::MeleeWindup
             && value.combat.action.weapon != (wielded ? wielded->id : 0)) { return false; }
-        const bool running = !value.parked && IsActive(value.position) && (value.player || value.controller_);
+        const auto projected = value.equipment.hands[0].item.value ? value.equipment.hands[0].item : value.equipment.hands[1].item;
+        if (projected != value.wieldedItem) { return false; }
+        for (unsigned hand = 0; hand < 2; ++hand) {
+            const auto held = value.equipment.hands[hand];
+            if (!held.item.value) { continue; }
+            const auto* item = GetItem(held.item);
+            if (!item || item->location != ItemLocation::Carried(handle) || IsReservedItem(held.item)) { return false; }
+            const auto& grips = ItemMelee(state.content.GetItem(item->type)).grips;
+            if (eastl::none_of(grips.begin(), grips.end(), [&](const GripDefinition& grip) { return grip.kind == held.grip; })) { return false; }
+            const auto other = value.equipment.hands[1 - hand];
+            if ((held.grip == GripKind::TwoHanded) != (held.item == other.item)
+                || (held.grip == GripKind::TwoHanded && other.grip != held.grip)) { return false; }
+            if (eastl::find(value.equipment.worn.begin(), value.equipment.worn.end(), held.item) != value.equipment.worn.end()) { return false; }
+        }
+        for (std::size_t index = 0; index < value.equipment.worn.size(); ++index) {
+            const auto item = value.equipment.worn[index];
+            const auto* garment = GetItem(item);
+            if (!garment || garment->location != ItemLocation::Carried(handle) || IsReservedItem(item)) { return false; }
+            const auto& armor = state.content.GetItem(garment->type).armor;
+            if (!armor) { return false; }
+            for (std::size_t previous = 0; previous < index; ++previous) {
+                const auto other = value.equipment.worn[previous];
+                if (other == item) { return false; }
+                const auto& otherArmor = *state.content.GetItem(GetItem(other)->type).armor;
+                if (armor->layer == otherArmor.layer && (armor->rigidRegions & otherArmor.rigidRegions)) { return false; }
+            }
+        }
+        if (value.combat.life == ActorLifeState::Dead && (value.combat.action.kind != ActorActionKind::None
+            || value.learning.study.active || (value.player && !value.parked)
+            || (value.combat.corpse && (!value.inventory.empty() || value.wieldedItem.value || !value.equipment.worn.empty())))) { return false; }
+        const bool running = value.combat.life == ActorLifeState::Alive && !value.parked && IsActive(value.position) && (value.player || value.controller_);
         if (value.actionDeadline.suspended == running) { return false; }
         if (!ValidLightEmission(value.light) || value.speed == 0 || !add_id(value.id) || Occurrences(indexed_actors, handle) != 1
             || (value.player && state.PlayerPosition(value.id) != value.position)) {
@@ -3757,7 +4093,7 @@ bool World::CheckInvariants() const {
         for (ItemHandle child : value.contents) {
             const Item* item = this->GetItem(child);
             if (!item || item->location.kind != LocationKind::item || item->location.item != handle
-                || !state.Fits(item->type, item->location, child)) {
+                || (value.type != state.content.CorpseItem() && !state.Fits(item->type, item->location, child))) {
                 return false;
             }
             owned_items.push_back(child);

@@ -2,11 +2,12 @@
 
 #include "core/timing.h"
 #include "core/world_types.h"
+#include "combat/action_types.h"
 #include <EASTL/optional.h>
 
 namespace cataclysmx {
 
-enum class ActorActionKind { None, Recovery, Aiming, MeleeWindup, DisruptionRecovery };
+enum class ActorActionKind { None, Recovery, Aiming, MeleeWindup, DisruptionRecovery, AbilityWindup };
 
 // The actor owns the deadline separately. Pending actions use persistent targets,
 // so this state never retains a runtime entity pointer or handle.
@@ -19,6 +20,18 @@ struct ActorActionState {
     Tick recoveryTicks = 0;
     std::uint8_t accuracyPenalty = 0;
     PersistentId weapon = 0;
+    // Expansion authority; old fields above remain aggregate-compatible adapters.
+    CombatMoveId moveId{};
+    CombatStyleId committedStyle{};
+    CombatArtId trainingArt{};
+    SourceCommitment sources;
+    AbilityId ability{};
+    AbilityGrantKey abilitySource;
+    AbilityTarget abilityTarget;
+    std::int32_t ratingPenalty100 = 0;
+    std::uint64_t trainingWork = 0;
+    bool counter = false;
+    bool definitionDriven = false;
     bool operator==(const ActorActionState&) const = default;
 };
 

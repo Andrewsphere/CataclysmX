@@ -14,8 +14,9 @@ TEST_CASE("Bundled English catalog covers outcomes actions and settings and supp
         const auto outcome = static_cast<Outcome>(i);
         CHECK(localization.OutcomeText(outcome) == OutcomeMessage(outcome));
     }
-    for (const auto& binding : DefaultKeymap()) {
-        String key = "action."; const auto name = ActionName(binding.action); key.append(name.data(), name.size());
+    for (unsigned i = 0; i <= static_cast<unsigned>(InputAction::SweepAbility); ++i) {
+        String key = "action."; const auto name = ActionName(static_cast<InputAction>(i)); key.append(name.data(), name.size());
+        INFO(key.c_str());
         CHECK(localization.Text({key.data(), key.size()}) != String("[") + key + "]");
     }
     CHECK(localization.Text("missing") == "[missing]");

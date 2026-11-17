@@ -77,6 +77,8 @@ the terminal is small; history uses at most half the gameplay height.
 | `players` | `P` | Player connection, readiness, queue and grace status |
 | `help` | `F1` | Shortcut reference, interaction bindings and fixed LAN keys |
 | `quick_actions` | `a` | Select common gameplay commands and windows with arrows |
+| `combat_menu` | `C` | Stances, granted abilities, accessible art manuals, and new character after death |
+| `combat_info` | `@` | Shared character, equipment, combat rules and learning details |
 
 These actions exist in both Gameplay and Interaction and are editable in
 Settings. Lowercase `p` still toggles idle pause. The initial welcome message
@@ -219,13 +221,57 @@ must outlive the component, as must any localization and keymap pointers.
 
 ## Frontend API and ownership
 
+### Combat windows and targeting
+
+Combat uses `CollectCombatMenu` entries, including their exact typed commands,
+grant sources, target kinds, costs and refusal details. Menu up/down selects and
+Menu accept activates. Disabled entries remain readable. The information window
+uses `CombatDetailsText`; Menu up/down scrolls it. Combat bindings also appear in
+Controls. After death, **C** offers **Create new character** even while the old
+snapshot reports busy or queued work. Acceptance submits `new_character` through
+the ordinary local/host/guest callback.
+
+Gameplay **4**, **5**, **6** resolve the stable authored ability names `focus`,
+`leap`, and `sweep`. They select the first available matching snapshot grant in
+snapshot order, retaining its exact source. Missing grants show feedback in the
+combat window. A disabled grant is never replaced with an unrelated ability.
+Hotkeys and menu acceptance use the same pending-command path.
+
+Sweep enters cardinal targeting: choose one direction, inspect the three-tile
+inverted map preview, then use Menu accept. Leap starts a tile cursor at the
+character; Menu directions move it within Chebyshev distance two on the same Y
+level (gameplay diagonal bindings also work). Its selected tile is inverted on
+the map. Accept requires a non-origin destination. Escape or Menu cancel closes
+either prompt without submission. Previewing changes no world state; the server
+checks occupancy, perception, obstruction and final ability availability. The
+exact grant is checked again against the latest snapshot before acceptance.
+Prompts expire on avatar/player changes, movement, changed input opportunity,
+death, or busy/queued state, preventing a stale target from becoming a new action.
+
+Inventory **L/R/H/G/W/T/U** map to shared `ItemUiAction` values for hold left,
+hold right, two-handed hold, regrip, wear, remove worn, and release held item.
+The inventory footer displays their effective Items-context bindings. Ordinary
+item navigation and submodal key handling continue through the shared controller.
+
+`GameplayUi::CombatAction` handles ability shortcuts with a snapshot and the
+same admission callback used by `HandleEvent`. `RecordCombatEvents` appends
+`CombatEventText` to application history once per increasing session-local
+`CombatEvent::serial`. It advances over suppressed `ActionCommitted` events to
+avoid commitment spam and duplicate messages from repeated snapshots.
+`ResetItems` resets the entire transient UI and serial cursor at an actual
+connection change. Replacing `WorldView::characterId` within a stable player
+session clears selections and pending prompts while advancing the cursor to the
+latest snapshot serial, so old-avatar events are not replayed. The application
+also clears pending receipt labels and interaction/grab prompts on avatar change.
+
 `terminal/gameplay_screen.h` provides `GameplayUi`, `GameplayPresentation`, and
 `GameplayWelcome`. `GameplayUi::Render` accepts a `WorldView` snapshot, catalog,
 localization, effective keys, and presentation values. Its DOM owns rendered
 text and cells, but scroll panes reference UI state: draw the returned element
 before the next render or destruction of that `GameplayUi`.
 
-`Open` accepts Inventory, AdvancedInventory, Use, Crafting, Players, Help and QuickActions. `PausesLocal` identifies an open modal
+`Open` accepts Inventory, AdvancedInventory, Use, Crafting, CombatMenu, CombatInfo,
+Players, Help and QuickActions. `PausesLocal` identifies an open modal
 or its opening action; the application combines it with existing modal and host
 timing rules. `HandleEvent` consumes all events while open and accepts a
 `bool(Command)` submission callback for drops, item use and storage. Return true only for an

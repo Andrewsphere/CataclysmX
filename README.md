@@ -48,8 +48,13 @@ the complete controls reference. **a** opens Quick actions: use **Up/Down** and
 These windows are hidden by default; **Escape**
 closes them. Their opening keys and navigation are configurable in Settings.
 See the [gameplay UI overview](doc/gameplay_ui.md) for layouts and modal behavior.
-The crafting panel also provides skill and study controls; see [runtime skills](doc/skills.md)
-and [skill content](doc/skills_content.md).
+The crafting panel provides skill and study controls. **C** opens combat actions,
+**@** character information, and **4/5/6** use the Focus/Leap/Sweep starter ability
+names when granted. Inventory **L/R/H/G/W/T/U** hold left/right, hold two-handed,
+regrip, wear, remove and release. Bindings are configurable. Styles cost time to
+switch; arts can be learned from manuals found in loot. On death, **C** offers a
+new character in the same world while the corpse remains. See [combat presentation](doc/combat_presentation.md),
+[runtime skills](doc/skills.md), and [skill content](doc/skills_content.md).
 
 ```powershell
 ./out/build/win-msvc-debug/cataclysmx_game.exe --host --port 24680 --name Host
@@ -74,8 +79,7 @@ Use arrows/Enter to host or join and adjust host tick rate, rate limiting and
 all-idle pause, then select **Apply pacing changes**.
 See [SDL multiplayer](doc/sdl_multiplayer.md) for controls, cross-frontend
 commands and persistent hosts. Peers require matching content and updated builds
-using protocol 18 (`0x43584e12`).
-using protocol 20 (`0x43584e14`).
+using protocol 21 (`0x43584e15`).
 Press **F11** in-game for the world-generation debug menu; arrows move its
 cursor, **Shift+arrows** jump by region, **1–5/Tab/Shift+Tab** change layers, **+/-** zoom,
 **Home/c** recenter, **PageUp/PageDown** browse details, and **F11/Escape/q** close.

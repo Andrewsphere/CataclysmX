@@ -191,7 +191,11 @@ TEST_CASE("Remembered furniture stores stable types and reads legacy memory", "[
         {
             MemorySql raw(file.path.c_str());
             raw.Exec("UPDATE metadata SET format_version=11");
-            raw.Exec("UPDATE chunks SET payload=json_set(payload,'$.actors',json((SELECT json_group_array(json_remove(value,'$.learning')) FROM json_each(chunks.payload,'$.actors'))))");
+            raw.Exec("UPDATE chunks SET payload=json_set(payload,'$.actors',json((SELECT json_group_array("
+                "json_remove(json_set(value,'$.combat',json_extract(value,'$.combat.legacy')),"
+                "'$.learning','$.equipment','$.character_combat')) FROM json_each(chunks.payload,'$.actors'))))");
+            raw.Exec("UPDATE world_state SET payload=json_set(payload,'$.session.players',json((SELECT json_group_array("
+                "json_remove(value,'$.session')) FROM json_each(world_state.payload,'$.session.players'))))");
             raw.Exec("UPDATE player_memories SET payload=json_remove(payload,'$.objects[0].type')");
         }
         snapshot.memories[0].chunks[0].objects[0].appearance.type = {};

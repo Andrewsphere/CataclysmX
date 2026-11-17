@@ -365,6 +365,7 @@ std::uint64_t ContentFingerprint(const ContentCatalog& content) {
         HashNumber(hash, book.recipes.size());
         for (const auto recipe : book.recipes) HashNumber(hash, recipe.value);
     }
+    HashData(hash, WriteCombatContent(content));
     return hash;
 }
 

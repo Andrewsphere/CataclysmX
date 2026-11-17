@@ -523,9 +523,17 @@ TEST_CASE("Default navigation uses arrows and debug region jumps use Shift arrow
     }
     for (const auto context : {InputContext::Gameplay, InputContext::Interaction, InputContext::Menu, InputContext::Debug, InputContext::Items}) {
         for (const char* key : {"h", "j", "k", "l", "H", "J", "K", "L"}) {
+            if (context == InputContext::Items && (String(key) == "H" || String(key) == "L")) { continue; }
             CHECK_FALSE(ResolveAction(keys, context, {key, false}));
         }
     }
+    CHECK(ResolveAction(keys, InputContext::Items, {"H"}) == InputAction::TwoHanded);
+    CHECK(ResolveAction(keys, InputContext::Items, {"L"}) == InputAction::HoldLeft);
+    CHECK(ResolveAction(keys, InputContext::Gameplay, {"4"}) == InputAction::FocusAbility);
+    CHECK(ResolveAction(keys, InputContext::Gameplay, {"5"}) == InputAction::LeapAbility);
+    CHECK(ResolveAction(keys, InputContext::Gameplay, {"6"}) == InputAction::SweepAbility);
+    CHECK(ResolveAction(keys, InputContext::Gameplay, {"C"}) == InputAction::CombatMenu);
+    CHECK(ResolveAction(keys, InputContext::Gameplay, {"@"}) == InputAction::CombatInfo);
     const auto overridden = ResolveKeymap({{InputContext::Debug, InputAction::Inspect, {{"Left", false, false, true}}}}, {});
     REQUIRE(ValidateKeymap(overridden));
     CHECK(ResolveAction(overridden, InputContext::Debug, {"Left", false, false, true}) == InputAction::Inspect);

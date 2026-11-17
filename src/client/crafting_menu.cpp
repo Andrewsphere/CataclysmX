@@ -1,5 +1,6 @@
 #include "client/crafting_menu.h"
 #include "client/text.h"
+#include "client/combat_menu.h"
 
 #include <initializer_list>
 
@@ -96,7 +97,9 @@ String BookLabel(const BookStudyView& book, const ContentCatalog& content) {
 }
 
 bool SameCraftingChoice(const Command& left, const Command& right) {
-    return left.kind == right.kind && left.item == right.item && left.recipe == right.recipe && left.book == right.book;
+    return left.kind == right.kind && left.item == right.item && left.recipe == right.recipe && left.book == right.book
+        && left.combatStyle == right.combatStyle && left.art == right.art && left.ability == right.ability
+        && left.equipment == right.equipment;
 }
 
 void CollectCraftingMenu(const WorldView& view, const ContentCatalog& content,
@@ -206,6 +209,21 @@ void CollectLearningSummary(const WorldView& view, const ContentCatalog& content
     }
     for (const auto& book : view.learning.books) {
         if (content.TryGetBook(book.book)) { lines.push_back(BookLabel(book, content)); }
+    }
+    const auto combat = CombatDetailsText(content, view);
+    std::size_t start = 0;
+    while (start < combat.size()) {
+        const auto end = combat.find('\n', start);
+        lines.push_back(combat.substr(start, end == String::npos ? String::npos : end - start));
+        if (end == String::npos) { break; }
+        start = end + 1;
+    }
+    Vector<CombatMenuEntry> combatRows;
+    CollectCombatMenu(content, view, combatRows);
+    for (const auto& row : combatRows) {
+        if (row.command.kind == CommandKind::study_art || row.command.kind == CommandKind::pause_art_study) {
+            lines.push_back(row.label + " | " + row.details);
+        }
     }
 }
 }

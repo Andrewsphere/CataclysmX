@@ -2,6 +2,7 @@
 #include "combat/combat_system.h"
 #include "network/wire.h"
 #include "content_fixture.h"
+#include "combat_runtime_fixture.h"
 #include <catch2/catch_test_macros.hpp>
 #include <chrono>
 #include <filesystem>
@@ -11,7 +12,7 @@ namespace {
 using namespace cataclysmx;
 template<class T, class E> T Take(eastl::expected<T, E> value) { REQUIRE(value); return eastl::move(*value); }
 
-ContentCatalog InventoryContent() {
+ContentCatalog InventoryContent(bool unarmedHeavy = false) {
     const ContentSource source{"inventory-engine", R"({format_version:1,objects:[
       {id:'cabinet',name:'Cabinet',behavior:'none',capacity_volume_ml:100,blocks_movement:true}
     ],definitions:[
@@ -26,16 +27,46 @@ ContentCatalog InventoryContent() {
     Diagnostics diagnostics;
     auto content = LoadContent({&source, 1}, &diagnostics);
     INFO(FormatDiagnostics(diagnostics).c_str());
-    return Take(eastl::move(content));
+    auto result = Take(eastl::move(content));
+    ConfigureCombatRuntimeTestContent(result);
+    const auto edit = [&](const char* name) -> CombatMoveDefinition& {
+        return const_cast<CombatMoveDefinition&>(result.GetCombatMove(result.FindCombatMove(name)));
+    };
+    // Test inventory sources and committed identity independently of repertoire
+    // weights, defensive responses, intrinsic misses, and learning discounts.
+    auto& fist = edit("basic_fist");
+    fist.requirements.primary.freeHands = HandMask::Both;
+    fist.training.work = 0;
+    auto& weapon = edit("basic_weapon");
+    weapon.cost = {0, 100, 0}; weapon.cooldown = 0;
+    weapon.strikes[0].intrinsicMiss = 0;
+    weapon.strikes[0].damageRatio = ratioScale;
+    weapon.training.work = 0;
+    auto& heavy = edit("basic_heavy");
+    heavy.requirements.primary = unarmedHeavy
+        ? SourceRequirement{AttackSourceKind::EmptyHand, SourceHand::Both}
+        : SourceRequirement{AttackSourceKind::HeldItem};
+    heavy.training.work = 0;
+    for (const auto* name : {"basic_balanced", "basic_aggressive", "basic_defensive"}) {
+        auto& style = const_cast<CombatStyleDefinition&>(result.GetCombatStyle(result.FindCombatStyle(name)));
+        style.moves.clear();
+        if (eastl::string_view(name) == "basic_aggressive") {
+            style.moves.push_back({result.FindCombatMove("basic_heavy"), 1});
+        } else {
+            style.moves.push_back({result.FindCombatMove("basic_fist"), 1});
+            style.moves.push_back({result.FindCombatMove("basic_weapon"), 1});
+        }
+    }
+    return result;
 }
 
 struct Rig {
-    ContentCatalog content = InventoryContent();
+    ContentCatalog content;
     World world{content};
     LoadRequest request = Take(world.RequestChunks({{}, 0}, LoadMode::active));
     ActorHandle actor{}, target{};
     std::uint32_t rng = 7;
-    Rig() {
+    explicit Rig(bool unarmedHeavy = false) : content(InventoryContent(unarmedHeavy)) {
         REQUIRE(world.ReconcileChunks());
         for (int z = 1; z <= 6; ++z) for (int x = 1; x <= 6; ++x)
             REQUIRE(world.SetTile({x, z}, {content.FindTerrain("floor")}));
@@ -99,6 +130,11 @@ TEST_CASE("Weapon disability retains equipment but removal cancels its pending s
     REQUIRE(r.world.Combat().SetStyle(r.actor, CombatStyle::Aggressive));
     REQUIRE(r.world.Combat().Attack(r.actor, r.target, r.rng).outcome == AttackOutcome::Windup);
     CHECK(r.world.GetActor(r.actor)->combat.action.weapon == r.world.GetItem(weapon)->id);
+    for (const auto& hand : r.world.GetActor(r.actor)->combat.action.sources.hands) {
+        CHECK(hand.required);
+        CHECK(hand.item == r.world.GetItem(weapon)->id);
+        CHECK(hand.grip == GripKind::TwoHanded);
+    }
     SECTION("injury") {
         r.world.Combat().Damage(r.actor, r.target, BodyPart::LeftHand, {DamageType::Blunt, 100000, 0});
         CHECK(r.world.GetActor(r.actor)->wieldedItem == weapon);
@@ -107,6 +143,17 @@ TEST_CASE("Weapon disability retains equipment but removal cancels its pending s
         r.Advance();
         CHECK(r.world.WieldItem(r.actor).outcome == InventoryOutcome::Succeeded);
         CHECK(r.world.WieldItem(r.actor, weapon).outcome == InventoryOutcome::NeedsHands);
+        const auto bag = r.Item("bag", ItemLocation::Carried(r.actor));
+        REQUIRE(r.world.WieldItem(r.actor, bag).outcome == InventoryOutcome::Succeeded);
+        REQUIRE(r.world.TransferItem(weapon, ItemLocation::Inside(bag)));
+        const auto equipment = r.world.GetActor(r.actor)->equipment;
+        const auto mass = r.world.GetCarriedMass(r.actor);
+        CHECK(r.world.WieldItem(r.actor, weapon).outcome == InventoryOutcome::NeedsHands);
+        CHECK(r.world.GetActor(r.actor)->equipment == equipment);
+        CHECK(r.world.GetActor(r.actor)->wieldedItem == bag);
+        CHECK(r.world.GetItem(weapon)->location == ItemLocation::Inside(bag));
+        CHECK(r.world.GetCarriedMass(r.actor) == mass);
+        CHECK(r.world.GetActorRemainingTicks(r.actor) == 0);
     }
     SECTION("drop") {
         REQUIRE(r.world.TransferItem(weapon, ItemLocation::Ground({3, 3})));
@@ -152,7 +199,7 @@ TEST_CASE("Exact transfers validate nearby roots, ancestry, capacity and stale s
 }
 
 TEST_CASE("Unarmed windup survives removal of an unrelated carried item", "[inventory][combat]") {
-    Rig r;
+    Rig r{true};
     const auto rock = r.Item("rock", ItemLocation::Carried(r.actor));
     REQUIRE(r.world.Combat().SetStyle(r.actor, CombatStyle::Aggressive));
     REQUIRE(r.world.Combat().Attack(r.actor, r.target, r.rng).outcome == AttackOutcome::Windup);
@@ -308,6 +355,9 @@ TEST_CASE("Archive restoration rebinds equipment and preserves pending weapon id
     REQUIRE(r.world.WieldItem(r.actor, weapon).outcome == InventoryOutcome::Succeeded);
     REQUIRE(r.world.Combat().SetStyle(r.actor, CombatStyle::Aggressive));
     REQUIRE(r.world.Combat().Attack(r.actor, r.target, r.rng).outcome == AttackOutcome::Windup);
+    const auto committed = r.world.GetActor(r.actor)->combat.action;
+    const auto remaining = r.world.GetActorRemainingTicks(r.actor);
+    const auto stamina = r.world.GetActor(r.actor)->combat.stamina;
     REQUIRE(r.world.ReleaseRequest(r.request)); REQUIRE(r.world.ReconcileChunks());
     CHECK_FALSE(r.world.GetItem(weapon));
     r.request = Take(r.world.RequestChunks({{}, 0}, LoadMode::active)); REQUIRE(r.world.ReconcileChunks());
@@ -315,6 +365,9 @@ TEST_CASE("Archive restoration rebinds equipment and preserves pending weapon id
     const auto restored = r.world.FindItem(weaponId);
     CHECK(restored != weapon); CHECK(r.world.GetActor(r.actor)->wieldedItem == restored);
     CHECK(r.world.GetActor(r.actor)->combat.action.weapon == weaponId);
+    CHECK(r.world.GetActor(r.actor)->combat.action == committed);
+    CHECK(r.world.GetActorRemainingTicks(r.actor) == remaining);
+    CHECK(r.world.GetActor(r.actor)->combat.stamina == stamina);
     CHECK(r.world.CheckInvariants());
 
     const auto path = (directory / "world.sqlite").string();
@@ -326,6 +379,9 @@ TEST_CASE("Archive restoration rebinds equipment and preserves pending weapon id
     const auto* actor = loaded.GetActor(loaded.FindActor(actorId)); REQUIRE(actor);
     CHECK(actor->wieldedItem == loaded.FindItem(weaponId));
     CHECK(actor->combat.action.weapon == weaponId);
+    CHECK(actor->combat.action == committed);
+    CHECK(loaded.GetActorRemainingTicks(loaded.FindActor(actorId)) == remaining);
+    CHECK(actor->combat.stamina == stamina);
     CHECK(loaded.CheckInvariants());
     const auto restoredActor = loaded.FindActor(actorId);
     loaded.ElapseTicks(loaded.GetActorRemainingTicks(restoredActor));

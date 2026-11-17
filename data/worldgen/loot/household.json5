@@ -20,6 +20,8 @@
     {item:'timber_plank',weight:4,count:{min:2,max:4}},
     {item:'wood_plank',weight:1,count:{min:2,max:4}}, // Original pilot recipe.
     {item:'camping_backpack',weight:1},
+    {item:'boxing_manual',weight:1},{item:'weapon_forms_manual',weight:1},
+    {item:'brass_knuckles',weight:1},{item:'wooden_shield',weight:1},
   ]},
   {type:'loot_pool', id:'house_tools', entries:[
     {item:'flathead_screwdriver',weight:5}, {item:'hacksaw',weight:4},

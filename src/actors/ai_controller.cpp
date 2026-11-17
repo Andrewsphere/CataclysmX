@@ -46,7 +46,21 @@ class MeleeController final : public AiController {
 public:
     AiControllerKind Kind() const override { return AiControllerKind::Melee; }
     ActorIntent ChooseAction(const ActorReadContext& context, std::uint32_t& rng) override {
-        const auto target = context.GetWorld().Combat().FindTarget(context.Self());
+        const auto& world = context.GetWorld();
+        const auto* actor = world.GetActor(context.Self());
+        if (!actor || !world.IsActorAlive(context.Self())) { return {}; }
+        const auto origin = actor->position;
+        const auto reach = actor->combat.reach.distance;
+        ActorHandle target{};
+        PersistentId targetId = 0;
+        for (int dz = -reach; dz <= reach; ++dz) for (int dx = -reach; dx <= reach; ++dx) {
+            if (!dx && !dz) { continue; }
+            const auto candidate = world.ActorAt({origin.x + dx, origin.z + dz, origin.y});
+            const auto* other = world.GetActor(candidate);
+            if (!other || !world.IsActorAlive(candidate) || !world.Combat().CanReach(context.Self(), candidate)
+                || !world.Combat().QueryAttack(context.Self(), candidate).Available()) { continue; }
+            if (!targetId || other->id < targetId) { target = candidate; targetId = other->id; }
+        }
         if (target.value != 0) { return {ActorIntentKind::Attack, {}, 100, target}; }
         return ChooseWander(rng);
     }

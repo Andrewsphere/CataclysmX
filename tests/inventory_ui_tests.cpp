@@ -48,14 +48,14 @@ TEST_CASE("A grouped selected instance vanishing does not select another member"
     REQUIRE(command); CHECK(command->item == 9);
 }
 
-TEST_CASE("Examination reports physical and normal player melee stats and returns without mutation", "[client][inventory]") {
+TEST_CASE("Examination reports physical and authored melee stats and returns without mutation", "[client][inventory]") {
     InventoryUiFixture f; f.view.inventory = {f.Rock(4)}; f.Open(); f.Key("Enter");
     REQUIRE(f.ui.Frame().screen == ItemUiScreen::Examine);
     const auto& detail = f.ui.Frame().examination;
     CHECK(detail.name == "rock"); CHECK(detail.type == TestItem("rock"));
     bool damage = false, cost = false, mass = false;
     for (const auto& line : detail.stats) {
-        damage |= line.find("Normal player damage:") != String::npos;
+        damage |= line.find("damage:") != String::npos && line.find("authored base") != String::npos;
         cost |= line.find("Attack cost:") != String::npos; mass |= line.find("Mass:") != String::npos;
     }
     CHECK(damage); CHECK(cost); CHECK(mass);
@@ -91,7 +91,7 @@ TEST_CASE("Examination localizes descriptions borrows colored art and preserves 
     CHECK(output.art->lines[0][0].color == ArtColor::Rgb(220, 83, 83));
     bool precise = false;
     for (const auto& stat : output.stats) {
-        precise |= stat.find("Piercing damage: 4.25 HP | Penetration: 1.25 HP | Normal player damage: 4.25 HP") != String::npos;
+        precise |= stat.find("Piercing damage: 4.25 HP | Penetration: 1.25 HP (authored base; actual damage depends on move, grip, defense and armor)") != String::npos;
     }
     CHECK(precise);
     REQUIRE(loc.SetCatalogs({}, {{"item.probe.description", "Translated prose", {}}}));

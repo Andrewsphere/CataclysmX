@@ -55,6 +55,7 @@ struct Observation {
     ActorHandle handle{};
     TileCoord position{};
     CombatFaction faction = CombatFaction::Neutral;
+    bool reachable = false;
 };
 
 // The decision function below receives only these value observations and local
@@ -89,14 +90,15 @@ void Observe(const World& world, ActorHandle handle, const AiProfile& profile,
     DecisionInput& input, AiVisionStats& stats) {
     const auto* actor = world.GetActor(handle);
     // Resident-only actors can be observed, but never get a sensing turn here.
-    if (!actor || actor->parked || actor->id == input.self) { return; }
+    if (!actor || !world.IsActorAlive(handle) || actor->parked || actor->id == input.self) { return; }
     for (std::size_t i = 0; i < input.observationCount; ++i) {
         if (input.observations[i].id == actor->id) { return; }
     }
     if (!DetectPosition(world, input.position, actor->position, profile, stats)) { return; }
     if (input.observationCount == input.observations.size()) { std::abort(); }
     // Baseline sight recognizes allegiance only after successful detection.
-    input.observations[input.observationCount++] = {actor->id, handle, actor->position, actor->combat.faction};
+    input.observations[input.observationCount++] = {actor->id, handle, actor->position, actor->combat.faction,
+        world.Combat().CanReach(world.FindActor(input.self), handle)};
 }
 
 ChunkCoord DiscoveryBucket(const SightedState& state, const AiProfile& profile) {
@@ -242,9 +244,7 @@ ActorIntent Decide(const DecisionInput& input, SightedState& state, const AiProf
     inspection.targetVisible = tracked && tracked->id == state.target;
     decision.hasGoal = state.target != 0;
     decision.goal = state.lastPosition;
-    if (inspection.targetVisible && input.canAttack && tracked->position.y == input.position.y
-        && eastl::max(std::abs(input.position.x - tracked->position.x),
-            std::abs(input.position.z - tracked->position.z)) == 1) {
+    if (inspection.targetVisible && input.canAttack && tracked->reachable) {
         state.behavior = AiBehavior::Attack;
         decision.behavior = state.behavior;
         decision.intent = ActorIntentKind::Attack;

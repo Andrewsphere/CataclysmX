@@ -1,5 +1,15 @@
 # Terminal view and LAN snapshots
 
+## Combat target previews
+
+The gameplay map can invert a small set of frontend-owned world tiles after
+resolving their normal cached appearance. Leap previews one selected tile;
+sweep previews the three neighboring tiles across the chosen cardinal direction.
+The overlay is clipped by the same viewport and screen stencil as ordinary map
+cells and does not modify the snapshot or appearance cache. Cropped/offscreen
+targets remain subject to the display radius. See [combat windows and targeting](gameplay_ui.md#combat-windows-and-targeting)
+for acceptance, cancellation and stale-context behavior.
+
 ## F11 AI inspector
 
 The local F11 debug menu opens on the existing surface world-generation preview.

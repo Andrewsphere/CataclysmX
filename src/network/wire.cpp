@@ -5,6 +5,25 @@
 
 namespace cataclysmx::network::wire {
 namespace {
+inline constexpr std::size_t combatEventWireSize = 133;
+bool ReadBool(Reader& r, bool& value) {
+    std::uint8_t byte;
+    if (!r.U8(byte) || byte > 1) return false;
+    value = byte != 0; return true;
+}
+template<class T> bool ReadEnum(Reader& r, T& value, T maximum) {
+    std::uint8_t byte;
+    if (!r.U8(byte) || byte > static_cast<unsigned>(maximum)) return false;
+    value = static_cast<T>(byte); return true;
+}
+bool ValidGrant(const AbilityGrantKey& s) {
+    return s.kind <= AbilityGrantSourceKind::Innate
+        && (s.kind == AbilityGrantSourceKind::Art ? s.art.value != 0 : s.art.value == 0);
+}
+void WriteGrant(Writer& w, const AbilityGrantKey& s) { w.U8(static_cast<std::uint8_t>(s.kind)); w.U32(s.art.value); }
+bool ReadGrant(Reader& r, AbilityGrantKey& s) {
+    return ReadEnum(r, s.kind, AbilityGrantSourceKind::Innate) && r.U32(s.art.value);
+}
 bool ValidStudyResult(const CommandResult& r) {
     if (r.studyOutcome > StudyOutcome::OutsideTeachingRange) return false;
     switch (r.outcome) {
@@ -126,12 +145,13 @@ bool ValidCombatView(const CombatView& v) {
     const auto& r = v.feedback.result;
     if (static_cast<unsigned>(v.bodyKind) > static_cast<unsigned>(BodyKind::Simple) ||
         static_cast<unsigned>(v.style) > static_cast<unsigned>(CombatStyle::Defensive) ||
-        static_cast<unsigned>(v.action) > static_cast<unsigned>(ActorActionKind::DisruptionRecovery) ||
+        static_cast<unsigned>(v.action) > static_cast<unsigned>(ActorActionKind::AbilityWindup) ||
         v.stamina > 100 || v.accuracyPenalty > 30 ||
         static_cast<unsigned>(r.outcome) > static_cast<unsigned>(AttackOutcome::Defeated) ||
         static_cast<std::uint32_t>(r.move) > static_cast<std::uint32_t>(CombatMove::Parry) ||
         static_cast<unsigned>(r.part) > static_cast<unsigned>(BodyPart::Count) ||
-        static_cast<unsigned>(r.disruption) > static_cast<unsigned>(DisruptionResponse::Canceled)) return false;
+        static_cast<unsigned>(r.disruption) > static_cast<unsigned>(DisruptionResponse::Canceled) ||
+        v.life > ActorLifeState::Dead || r.reason > CombatRefusal::InvalidDefinition || r.resolvedStrikes > r.strikeCount) return false;
     for (std::size_t i = 0; i < body_part_count; ++i) {
         const auto part = static_cast<BodyPart>(i);
         const auto& p = v.parts[i];
@@ -149,6 +169,9 @@ void WriteCombat(Writer& w, const CombatView& v) {
     w.U64(r.target); w.U8(static_cast<std::uint8_t>(r.part)); w.U32(r.injury); w.U64(r.cost);
     w.U8(r.committed ? 1 : 0); w.U8(r.contact ? 1 : 0); w.U8(r.lostCapability ? 1 : 0);
     w.U8(static_cast<std::uint8_t>(r.disruption)); w.U8(v.feedback.incoming ? 1 : 0); w.U64(v.feedback.tick);
+    w.U32(r.moveId.value); w.U8(static_cast<std::uint8_t>(r.reason)); w.U32(r.strikeCount); w.U32(r.resolvedStrikes); w.U64(r.totalHpLoss);
+    w.U32(v.styleId.value); w.U8(static_cast<std::uint8_t>(v.life)); w.U8(v.inexhaustible);
+    w.U64(v.staggerRemaining); w.U64(v.focusRemaining);
 }
 bool ReadCombat(Reader& r, CombatView& v) {
     std::uint8_t body, style, action;
@@ -170,7 +193,160 @@ bool ReadCombat(Reader& r, CombatView& v) {
     a.part = static_cast<BodyPart>(part); a.committed = committed != 0; a.contact = contact != 0;
     a.lostCapability = lost != 0; a.disruption = static_cast<DisruptionResponse>(disruption);
     v.feedback.incoming = incoming != 0;
+    if (!r.U32(a.moveId.value) || !ReadEnum(r, a.reason, CombatRefusal::InvalidDefinition)
+        || !r.U32(a.strikeCount) || !r.U32(a.resolvedStrikes) || !r.U64(a.totalHpLoss)
+        || !r.U32(v.styleId.value) || !ReadEnum(r, v.life, ActorLifeState::Dead) || !ReadBool(r, v.inexhaustible)
+        || !r.U64(v.staggerRemaining) || !r.U64(v.focusRemaining)) return false;
     return ValidCombatView(v);
+}
+bool ValidAvailability(const CombatAvailability& v) {
+    // Effective costs include grip, injury and encumbrance scaling; authored
+    // definition limits are not limits on these derived values.
+    return v.reason <= CombatRefusal::InvalidDefinition && v.cost.recoveryCost;
+}
+void WriteAvailability(Writer& w, const CombatAvailability& v) {
+    w.U8(static_cast<std::uint8_t>(v.reason)); w.U32(v.cost.windupCost); w.U32(v.cost.recoveryCost); w.U32(v.cost.staminaCost);
+}
+bool ReadAvailability(Reader& r, CombatAvailability& v) {
+    return ReadEnum(r, v.reason, CombatRefusal::InvalidDefinition) && r.U32(v.cost.windupCost)
+        && r.U32(v.cost.recoveryCost) && r.U32(v.cost.staminaCost) && ValidAvailability(v);
+}
+bool ValidCombatInfo(const CombatInfoView& v) {
+    if (!ValidCombatView(v.combat) || v.equipment.worn.size() > maxItemEntries
+        || v.moves.size() > maxPacket / 26 || v.abilities.size() > maxPacket / 31
+        || v.arts.size() > maxPacket / 12 || v.manuals.size() > maxPacket / 30) return false;
+    for (const auto& h : v.equipment.hands)
+        if (h.grip > GripKind::TwoHanded || (!h.item && (h.usable || h.grip != GripKind::OneHanded))) return false;
+    const auto& left = v.equipment.hands[0];
+    const auto& right = v.equipment.hands[1];
+    if (left.grip == GripKind::TwoHanded || right.grip == GripKind::TwoHanded) {
+        if (!left.item || left.item != right.item || left.grip != right.grip || left.usable != right.usable) return false;
+    } else if (left.item && left.item == right.item) return false;
+    for (std::size_t i = 0; i < v.equipment.worn.size(); ++i) {
+        if (!v.equipment.worn[i]) return false;
+        for (std::size_t j = 0; j < i; ++j) if (v.equipment.worn[i] == v.equipment.worn[j]) return false;
+    }
+    for (std::size_t i = 0; i < v.moves.size(); ++i)
+        if (!v.moves[i].move.value || !ValidAvailability(v.moves[i].availability)
+            || (i && v.moves[i - 1].move.value >= v.moves[i].move.value)) return false;
+    for (std::size_t i = 0; i < v.abilities.size(); ++i) {
+        const auto& a = v.abilities[i];
+        if (!a.ability.value || !ValidGrant(a.source) || !ValidAvailability(a.availability)
+            || a.targeting > AbilityTargetKind::CardinalDirection) return false;
+        for (std::size_t j = 0; j < i; ++j)
+            if (a.ability == v.abilities[j].ability && a.source == v.abilities[j].source) return false;
+    }
+    for (std::size_t i = 0; i < v.arts.size(); ++i)
+        if (!v.arts[i].art.value || (i && v.arts[i - 1].art.value >= v.arts[i].art.value)) return false;
+    unsigned active = 0;
+    for (std::size_t i = 0; i < v.manuals.size(); ++i) {
+        const auto& m = v.manuals[i];
+        if (!m.book.value || !m.art.value || m.reason > CombatRefusal::InvalidDefinition
+            || m.successChance > ratioScale || m.remaining > m.duration || (m.active && ++active > 1)) return false;
+        for (std::size_t j = 0; j < i; ++j)
+            if (m.book == v.manuals[j].book && m.art == v.manuals[j].art) return false;
+    }
+    return true;
+}
+void WriteCombatInfo(Writer& w, const CombatInfoView& v) {
+    WriteCombat(w, v.combat);
+    for (const auto& h : v.equipment.hands) { w.U64(h.item); w.U8(static_cast<std::uint8_t>(h.grip)); w.U8(h.usable); }
+    w.U32(static_cast<std::uint32_t>(v.equipment.worn.size()));
+    for (auto id : v.equipment.worn) w.U64(id);
+    for (auto value : v.equipment.encumbrance) w.U32(value);
+    w.U32(static_cast<std::uint32_t>(v.moves.size()));
+    for (const auto& m : v.moves) { w.U32(m.move.value); WriteAvailability(w, m.availability); w.U64(m.cooldownRemaining); w.U8(m.unlocked); }
+    w.U32(static_cast<std::uint32_t>(v.abilities.size()));
+    for (const auto& a : v.abilities) {
+        w.U32(a.ability.value); WriteGrant(w, a.source); WriteAvailability(w, a.availability);
+        w.U64(a.cooldownRemaining); w.U8(static_cast<std::uint8_t>(a.targeting));
+    }
+    w.U32(static_cast<std::uint32_t>(v.arts.size()));
+    for (const auto& a : v.arts) { w.U32(a.art.value); w.U64(a.xp); }
+    w.U32(static_cast<std::uint32_t>(v.manuals.size()));
+    for (const auto& m : v.manuals) {
+        w.U32(m.book.value); w.U32(m.art.value); w.U8(static_cast<std::uint8_t>(m.reason));
+        w.U32(m.successChance); w.U64(m.duration); w.U64(m.remaining); w.U8(m.active);
+    }
+}
+bool ReadCount(Reader& r, std::uint32_t& count, std::size_t minimum) {
+    return r.U32(count) && count <= maxPacket / minimum && count <= (r.bytes.size() - r.offset) / minimum;
+}
+bool ReadCombatInfo(Reader& r, CombatInfoView& v) {
+    v = {};
+    if (!ReadCombat(r, v.combat)) return false;
+    for (auto& h : v.equipment.hands)
+        if (!r.U64(h.item) || !ReadEnum(r, h.grip, GripKind::TwoHanded) || !ReadBool(r, h.usable)) return false;
+    std::uint32_t count;
+    if (!ReadCount(r, count, 8) || count > maxItemEntries) return false;
+    for (std::uint32_t i = 0; i < count; ++i) { PersistentId id; if (!r.U64(id)) return false; v.equipment.worn.push_back(id); }
+    for (auto& value : v.equipment.encumbrance) if (!r.U32(value)) return false;
+    if (!ReadCount(r, count, 26)) return false;
+    for (std::uint32_t i = 0; i < count; ++i) {
+        CombatMoveView m;
+        if (!r.U32(m.move.value) || !ReadAvailability(r, m.availability) || !r.U64(m.cooldownRemaining) || !ReadBool(r, m.unlocked)) return false;
+        v.moves.push_back(m);
+    }
+    if (!ReadCount(r, count, 31)) return false;
+    for (std::uint32_t i = 0; i < count; ++i) {
+        AbilityView a;
+        if (!r.U32(a.ability.value) || !ReadGrant(r, a.source) || !ReadAvailability(r, a.availability)
+            || !r.U64(a.cooldownRemaining) || !ReadEnum(r, a.targeting, AbilityTargetKind::CardinalDirection)) return false;
+        v.abilities.push_back(a);
+    }
+    if (!ReadCount(r, count, 12)) return false;
+    for (std::uint32_t i = 0; i < count; ++i) { ArtProgress a; if (!r.U32(a.art.value) || !r.U64(a.xp)) return false; v.arts.push_back(a); }
+    if (!ReadCount(r, count, 30)) return false;
+    for (std::uint32_t i = 0; i < count; ++i) {
+        ArtManualView m;
+        if (!r.U32(m.book.value) || !r.U32(m.art.value) || !ReadEnum(r, m.reason, CombatRefusal::InvalidDefinition)
+            || !r.U32(m.successChance) || !r.U64(m.duration) || !r.U64(m.remaining) || !ReadBool(r, m.active)) return false;
+        v.manuals.push_back(m);
+    }
+    return ValidCombatInfo(v);
+}
+bool ValidEvent(const CombatEvent& e) {
+    const auto& s = e.strike;
+    return e.kind <= CombatEventKind::ActorDied && e.reason <= CombatRefusal::InvalidDefinition
+        && s.outcome <= StrikeOutcome::Contact && s.reason <= CombatRefusal::InvalidDefinition
+        && s.response <= DefenseKind::Block && s.region <= ContactRegion::Count && s.injuryPart <= BodyPart::Count
+        && s.disruption <= DisruptionResponse::Canceled && s.postProtectionDamage <= s.incomingDamage;
+}
+bool ValidEventHistory(eastl::span<const CombatEvent> events) {
+    if (events.size() > maxPacket / combatEventWireSize) return false;
+    std::uint64_t previous = 0;
+    for (const auto& e : events) {
+        if (!ValidEvent(e) || e.serial <= previous) return false;
+        previous = e.serial;
+    }
+    return true;
+}
+void WriteEvent(Writer& w, const CombatEvent& e) {
+    const auto& s = e.strike;
+    w.U64(e.tick); w.U64(s.attacker); w.U64(s.target); w.U32(s.move.value);
+    w.U8(static_cast<std::uint8_t>(s.outcome)); w.U8(static_cast<std::uint8_t>(s.reason)); w.U8(static_cast<std::uint8_t>(s.response));
+    w.U32(s.responseMove.value); w.U8(s.defenseSucceeded); w.U8(s.armorStopped); w.U8(s.killed); w.U8(s.counter);
+    w.U8(static_cast<std::uint8_t>(s.region)); w.U8(static_cast<std::uint8_t>(s.injuryPart));
+    w.U64(s.blockAbsorbed); w.U64(s.armorAbsorbed); w.U64(s.incomingDamage); w.U64(s.postProtectionDamage);
+    w.U32(s.hpLoss); w.U32(s.maxHpLoss); w.U8(static_cast<std::uint8_t>(s.disruption));
+    w.U8(static_cast<std::uint8_t>(e.kind)); w.U64(e.actor); w.U64(e.opponent); w.U32(e.move.value);
+    w.U32(e.ability.value); w.U32(e.art.value); w.U8(static_cast<std::uint8_t>(e.reason));
+    w.U64(e.cost); w.U32(e.staminaSpent); w.U8(e.learnedArt);
+    w.U64(e.serial);
+}
+bool ReadEvent(Reader& r, CombatEvent& e) {
+    auto& s = e.strike;
+    return r.U64(e.tick) && r.U64(s.attacker) && r.U64(s.target) && r.U32(s.move.value)
+        && ReadEnum(r, s.outcome, StrikeOutcome::Contact) && ReadEnum(r, s.reason, CombatRefusal::InvalidDefinition)
+        && ReadEnum(r, s.response, DefenseKind::Block) && r.U32(s.responseMove.value)
+        && ReadBool(r, s.defenseSucceeded) && ReadBool(r, s.armorStopped) && ReadBool(r, s.killed) && ReadBool(r, s.counter)
+        && ReadEnum(r, s.region, ContactRegion::Count) && ReadEnum(r, s.injuryPart, BodyPart::Count)
+        && r.U64(s.blockAbsorbed) && r.U64(s.armorAbsorbed) && r.U64(s.incomingDamage) && r.U64(s.postProtectionDamage)
+        && r.U32(s.hpLoss) && r.U32(s.maxHpLoss) && ReadEnum(r, s.disruption, DisruptionResponse::Canceled)
+        && ReadEnum(r, e.kind, CombatEventKind::ActorDied) && r.U64(e.actor) && r.U64(e.opponent)
+        && r.U32(e.move.value) && r.U32(e.ability.value) && r.U32(e.art.value)
+        && ReadEnum(r, e.reason, CombatRefusal::InvalidDefinition) && r.U64(e.cost) && r.U32(e.staminaSpent)
+        && ReadBool(r, e.learnedArt) && r.U64(e.serial) && ValidEvent(e);
 }
 bool ValidViewBounds(const WorldView& view, bool inspection = false) {
     return view.width >= 1 && view.width <= maxViewDimension && view.height == view.width && (view.width & 1) != 0 &&
@@ -240,7 +416,9 @@ bool ValidEntries(const Vector<InventoryEntry>& entries) {
     if (entries.size() > maxItemEntries) return false;
     PersistentId last = 0;
     for (const auto& entry : entries) {
-        if (!ValidItemStorage(entry.storage)
+        if (entry.heldHands > HandMask::Both || (entry.worn && entry.heldHands != HandMask::None)
+            || ((entry.worn || entry.heldHands != HandMask::None) && (entry.parent || entry.storage.kind != ItemStorageKind::Inventory))
+            || (entry.stackable && (entry.worn || entry.heldHands != HandMask::None)) || !ValidItemStorage(entry.storage)
             || (entry.parent && (entry.storage.kind != ItemStorageKind::Container || entry.storage.id != entry.parent))
             || (!entry.parent && entry.storage.kind == ItemStorageKind::Container)
             || (entry.wielded && (entry.parent || entry.storage.kind != ItemStorageKind::Inventory))
@@ -375,6 +553,7 @@ bool WriteEntries(Writer& writer, const Vector<InventoryEntry>& entries) {
         writer.U64(entry.parent); writer.U16(entry.installation.value); writer.U64(entry.massGrams);
         writer.U32(entry.volumeMl); writer.U32(entry.capacityVolumeMl); writer.U64(entry.usedVolumeMl);
         WriteStorage(writer, entry.storage); writer.U8(entry.wielded); writer.U8(entry.stackable);
+        writer.U8(entry.worn); writer.U8(static_cast<std::uint8_t>(entry.heldHands));
         writer.U8(static_cast<std::uint8_t>(entry.energy.size()));
         for (const auto& energy : entry.energy) {
             writer.U16(energy.capability.value); writer.U32(energy.energy); writer.U32(energy.capacity);
@@ -411,6 +590,7 @@ bool ReadEntries(Reader& reader, Vector<InventoryEntry>& entries) {
         if (!ReadStorage(reader, entry.storage) || !reader.U8(wielded) || wielded > 1
             || !reader.U8(stackable) || stackable > 1) return false;
         entry.wielded = wielded != 0; entry.stackable = stackable != 0;
+        if (!ReadBool(reader, entry.worn) || !ReadEnum(reader, entry.heldHands, HandMask::Both)) return false;
         if (!reader.U8(n) || n > maxItemCapabilities) return false;
         for (unsigned j = 0; j < n; ++j) {
             ItemEnergyView energy;
@@ -496,8 +676,62 @@ bool ValidLearningDefinitions(const WorldView& view, const ContentCatalog& conte
     return true;
 }
 
+bool ValidCombatDefinitions(const WorldView& view, const ContentCatalog& content) {
+    const auto validCombat = [&](const CombatView& c) {
+        return ValidCombatView(c) && (!c.styleId.value || content.TryGetCombatStyle(c.styleId))
+            && (!c.feedback.result.moveId.value || content.TryGetCombatMove(c.feedback.result.moveId));
+    };
+    const auto& v = view.combatInfo;
+    if (!validCombat(view.combat) || !validCombat(v.combat) || !ValidCombatInfo(v)
+        || !ValidEventHistory({view.combatEvents.data(), view.combatEvents.size()})) return false;
+    for (const auto& m : v.moves) if (!content.TryGetCombatMove(m.move)) return false;
+    for (const auto& a : v.abilities) {
+        const auto* definition = content.TryGetAbility(a.ability);
+        if (!definition || a.targeting != definition->targeting) return false;
+        if (a.source.kind == AbilityGrantSourceKind::Art) {
+            const auto* art = content.TryGetCombatArt(a.source.art);
+            if (!art) return false;
+            bool found = false;
+            for (const auto& grant : art->abilities) if (grant.ability == a.ability) found = true;
+            if (!found) return false;
+        }
+    }
+    for (const auto& a : v.arts) if (!content.TryGetCombatArt(a.art)) return false;
+    for (const auto& h : v.equipment.hands) {
+        if (!h.item) continue;
+        const auto* item = FindEntry(view.inventory, h.item);
+        const auto* definition = item ? content.TryGetItem(item->type) : nullptr;
+        if (!definition || item->parent || item->worn) return false;
+        bool found = false;
+        for (const auto& grip : ItemMelee(*definition).grips) if (grip.kind == h.grip) found = true;
+        if (!found) return false;
+    }
+    for (auto id : v.equipment.worn) {
+        const auto* item = FindEntry(view.inventory, id);
+        const auto* definition = item ? content.TryGetItem(item->type) : nullptr;
+        if (!definition || !definition->armor || !item->worn || item->parent) return false;
+    }
+    for (const auto& m : v.manuals) {
+        const auto* book = content.TryGetBook(m.book);
+        if (!book || !content.TryGetCombatArt(m.art)) return false;
+        bool found = false;
+        for (const auto& manual : book->artManuals)
+            if (manual.art == m.art && manual.successChance == m.successChance) found = true;
+        if (!found) return false;
+    }
+    for (const auto& e : view.combatEvents) {
+        if (!ValidEvent(e) || (e.move.value && !content.TryGetCombatMove(e.move))
+            || (e.strike.move.value && !content.TryGetCombatMove(e.strike.move))
+            || (e.strike.responseMove.value && !content.TryGetCombatMove(e.strike.responseMove))
+            || (e.ability.value && !content.TryGetAbility(e.ability))
+            || (e.art.value && !content.TryGetCombatArt(e.art))) return false;
+    }
+    return true;
+}
+
 bool ValidItemDefinitions(const WorldView& view, const ContentCatalog& content) {
-    if (!ValidLists(view) || !ValidCraftingJobs(view.craftingJobs) || !ValidLearningDefinitions(view, content)) return false;
+    if (!ValidLists(view) || !ValidCraftingJobs(view.craftingJobs) || !ValidLearningDefinitions(view, content)
+        || !ValidCombatDefinitions(view, content)) return false;
     for (const auto& job : view.craftingJobs) {
         if (job.kind == CraftingKind::Craft) {
             const auto* recipe = content.TryGetCraftingRecipe(job.craftingRecipe);
@@ -592,11 +826,17 @@ bool Writer::CommandValue(const Command& v) {
     U32(v.recipe.value);
     WriteStorage(*this, v.source); WriteStorage(*this, v.destination);
     U32(v.book.value);
+    U8(static_cast<std::uint8_t>(v.equipment.operation)); U64(v.equipment.item);
+    U8(static_cast<std::uint8_t>(v.equipment.hand)); U8(static_cast<std::uint8_t>(v.equipment.grip));
+    U32(v.combatStyle.value); U32(v.ability.ability.value); WriteGrant(*this, v.ability.source);
+    U8(static_cast<std::uint8_t>(v.ability.target.kind)); U64(v.ability.target.actor);
+    I32(v.ability.target.tile.x); I32(v.ability.target.tile.z); I32(v.ability.target.tile.y);
+    U8(static_cast<std::uint8_t>(v.ability.target.direction)); U32(v.art.value);
     return bytes.size() <= maxPacket;
 }
 bool Writer::Result(const PlayerCommandResult& v) {
     if (!v.player || !v.sequence || !v.opportunity || v.result.outcome < Outcome::waited ||
-        v.result.outcome > Outcome::study_refused || !ValidCraftingResult(v.result) || !ValidInventoryResult(v.result) || !ValidStudyResult(v.result) ||
+        v.result.outcome > Outcome::character_created || v.result.combatReason > CombatRefusal::InvalidDefinition || !ValidCraftingResult(v.result) || !ValidInventoryResult(v.result) || !ValidStudyResult(v.result) ||
         (v.result.storageError && (*v.result.storageError < SaveError::Io || *v.result.storageError > SaveError::NotOpen)) ||
         !ValidItemUseReason(v.result.itemOutcome, v.result.itemReason)) return false;
     U64(v.player); U64(v.sequence); U64(v.opportunity);
@@ -610,6 +850,7 @@ bool Writer::Result(const PlayerCommandResult& v) {
     if (!Text(v.result.objectName, 255)) return false;
     U8(static_cast<std::uint8_t>(v.result.inventoryOutcome));
     U8(static_cast<std::uint8_t>(v.result.studyOutcome));
+    U8(static_cast<std::uint8_t>(v.result.combatReason));
     return bytes.size() <= maxPacket;
 }
 bool Writer::View(const WorldView& v, bool inspection) {
@@ -617,7 +858,13 @@ bool Writer::View(const WorldView& v, bool inspection) {
         v.cells.size() != static_cast<std::size_t>(v.width * v.height) ||
         !ValidLists(v) || !ValidCraftingJobs(v.craftingJobs) || !ValidLearning(v.learning) || v.players.size() > 32 ||
         v.playerId == 0 || v.opportunity == 0 || v.speed == 0 || v.pacing.ticksPerSecond == 0 ||
-        v.playerLight > LightBand::Bright || !ValidCombatView(v.combat)) return false;
+        v.playerLight > LightBand::Bright || !ValidCombatView(v.combat) || !ValidCombatInfo(v.combatInfo)
+        || !ValidEventHistory({v.combatEvents.data(), v.combatEvents.size()})) return false;
+    PersistentId lastPlayer = 0;
+    for (const auto& p : v.players) {
+        if (p.id <= lastPlayer || p.name.empty() || p.state > PlayerConnectionState::Active || p.life > ActorLifeState::Dead) return false;
+        lastPlayer = p.id;
+    }
     for (std::size_t i = 0; i < v.cells.size(); ++i)
         if (!ValidCell(v.cells[i], v, i)) return false;
     I32(v.origin.x); I32(v.origin.z); I32(v.origin.y);
@@ -653,6 +900,7 @@ bool Writer::View(const WorldView& v, bool inspection) {
         U64(p.id); if (!Text({p.name.data(), p.name.size()}, 32)) return false;
         U8(static_cast<std::uint8_t>(p.state)); U8(p.ready ? 1 : 0);
         U8(p.commandQueued ? 1 : 0); U64(p.opportunity); U64(p.graceMicroseconds);
+        U64(p.character); U8(static_cast<std::uint8_t>(p.life));
     }
     U8(static_cast<std::uint8_t>(v.playerLight));
     WriteCombat(*this, v.combat);
@@ -677,6 +925,9 @@ bool Writer::View(const WorldView& v, bool inspection) {
         I32(storage.objectPosition.x); I32(storage.objectPosition.z); I32(storage.objectPosition.y);
     }
     WriteLearning(*this, v.learning);
+    U64(v.characterId); WriteCombatInfo(*this, v.combatInfo);
+    U32(static_cast<std::uint32_t>(v.combatEvents.size()));
+    for (const auto& e : v.combatEvents) WriteEvent(*this, e);
     return bytes.size() <= maxPacket;
 }
 bool Reader::U8(std::uint8_t& v) { if (offset >= bytes.size()) return false; v = bytes[offset++]; return true; }
@@ -693,7 +944,8 @@ bool Reader::Text(String& v, std::size_t limit) {
 }
 bool Reader::CommandValue(Command& v) {
     std::uint8_t kind, style, interactionKind, objectAction;
-    if (bytes.size() > maxPacket || !U8(kind) || kind > static_cast<std::uint8_t>(CommandKind::pause_study) ||
+    v = {};
+    if (bytes.size() > maxPacket || !U8(kind) || kind > static_cast<std::uint8_t>(CommandKind::new_character) ||
         !I32(v.dx) || !I32(v.dz) || !U64(v.item) || !U32(v.waitCost) ||
         !U16(v.capability.value) || v.capability.value > maxItemCapabilities ||
         !Text(v.itemAction, maxItemActionName) || !U64(v.otherItem) || !I32(v.dy) ||
@@ -708,13 +960,19 @@ bool Reader::CommandValue(Command& v) {
     v.kind = static_cast<CommandKind>(kind);
     v.style = static_cast<CombatStyle>(style);
     if (!ReadStorage(*this, v.source) || !ReadStorage(*this, v.destination) || !U32(v.book.value)) return false;
+    if (!ReadEnum(*this, v.equipment.operation, EquipmentOperation::Remove) || !U64(v.equipment.item)
+        || !ReadEnum(*this, v.equipment.hand, Hand::Right) || !ReadEnum(*this, v.equipment.grip, GripKind::TwoHanded)
+        || !U32(v.combatStyle.value) || !U32(v.ability.ability.value) || !ReadGrant(*this, v.ability.source)
+        || !ReadEnum(*this, v.ability.target.kind, AbilityTargetKind::CardinalDirection) || !U64(v.ability.target.actor)
+        || !I32(v.ability.target.tile.x) || !I32(v.ability.target.tile.z) || !I32(v.ability.target.tile.y)
+        || !ReadEnum(*this, v.ability.target.direction, CardinalDirection::West) || !U32(v.art.value)) return false;
     return (v.itemAction.empty() || ValidItemActionId(v.itemAction)) && ValidCommandShape(v);
 }
 bool Reader::Result(PlayerCommandResult& v) {
     std::uint8_t outcome, advanced;
     if (bytes.size() > maxPacket || !U64(v.player) || !v.player || !U64(v.sequence) || !v.sequence ||
         !U64(v.opportunity) || !v.opportunity || !U8(outcome) ||
-        outcome > static_cast<std::uint8_t>(Outcome::study_refused) || !U8(advanced) || advanced > 1 ||
+        outcome > static_cast<std::uint8_t>(Outcome::character_created) || !U8(advanced) || advanced > 1 ||
         !U64(v.result.tick) || !U64(v.result.cost)) return false;
     std::uint8_t hasError;
     if (!U8(hasError) || hasError > 1) return false;
@@ -739,6 +997,7 @@ bool Reader::Result(PlayerCommandResult& v) {
     std::uint8_t studyOutcome;
     if (!U8(studyOutcome)) return false;
     v.result.studyOutcome = static_cast<StudyOutcome>(studyOutcome);
+    if (!ReadEnum(*this, v.result.combatReason, CombatRefusal::InvalidDefinition)) return false;
     return ValidCraftingResult(v.result) && ValidInventoryResult(v.result) && ValidStudyResult(v.result);
 }
 bool Reader::View(WorldView& v, bool inspection) {
@@ -795,6 +1054,7 @@ bool Reader::View(WorldView& v, bool inspection) {
             !U8(ready) || ready > 1 || !U8(pending) || pending > 1 ||
             !U64(p.opportunity) || !U64(p.graceMicroseconds)) return false;
         p.state = static_cast<PlayerConnectionState>(state); p.ready = ready; p.commandQueued = pending;
+        if (!U64(p.character) || !ReadEnum(*this, p.life, ActorLifeState::Dead)) return false;
         lastPlayer = p.id;
         v.players.push_back(eastl::move(p));
     }
@@ -830,7 +1090,18 @@ bool Reader::View(WorldView& v, bool inspection) {
         if (!I32(storage.objectPosition.x) || !I32(storage.objectPosition.z) || !I32(storage.objectPosition.y)) return false;
         v.itemStorages.push_back(eastl::move(storage));
     }
-    return ReadLearning(*this, v.learning) && ValidCraftingJobs(v.craftingJobs) && ValidLists(v);
+    if (!ReadLearning(*this, v.learning) || !ValidCraftingJobs(v.craftingJobs) || !ValidLists(v)
+        || !U64(v.characterId) || !ReadCombatInfo(*this, v.combatInfo)) return false;
+    std::uint32_t eventCount;
+    if (!ReadCount(*this, eventCount, combatEventWireSize)) return false;
+    v.combatEvents.clear();
+    std::uint64_t previousSerial = 0;
+    for (std::uint32_t i = 0; i < eventCount; ++i) {
+        CombatEvent e;
+        if (!ReadEvent(*this, e) || e.serial <= previousSerial) return false;
+        previousSerial = e.serial; v.combatEvents.push_back(e);
+    }
+    return true;
 }
 
 namespace {
@@ -988,6 +1259,9 @@ bool ValidInspectionDefinitions(const PlayerInspection& value, const ContentCata
     if (!ValidItemDefinitions(value.view, content) || !ValidTerrainDefinitions(value.view, content) ||
         !ValidMonsterDefinitions(value.view, content) || !ValidObjectDefinitions(value.view, content)
         || value.details.objectType.value > content.ObjectCount()) return false;
+    const auto& combat = value.details.combat;
+    if ((combat.styleId.value && !content.TryGetCombatStyle(combat.styleId))
+        || (combat.feedback.result.moveId.value && !content.TryGetCombatMove(combat.feedback.result.moveId))) return false;
     for (const auto& item : value.mapItems) if (item.type.value > content.ItemCount()) return false;
     for (const auto& item : value.details.items) if (item.type.value > content.ItemCount()) return false;
     return true;

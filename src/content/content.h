@@ -11,6 +11,7 @@
 #include "content/building_population.h"
 #include "content/content_result.h"
 #include "content/content_assets.h"
+#include "content/combat_definition.h"
 
 #include <EASTL/expected.h>
 #include <EASTL/span.h>
@@ -174,8 +175,32 @@ public:
     const BookDefinition* TryGetBook(BookId id) const;
     const BookDefinition& GetBook(BookId id) const;
     std::size_t BookCount() const;
+    CombatMoveId FindCombatMove(eastl::string_view id) const;
+    const CombatMoveDefinition* TryGetCombatMove(CombatMoveId id) const;
+    const CombatMoveDefinition& GetCombatMove(CombatMoveId id) const;
+    std::size_t CombatMoveCount() const;
+    CombatStyleId FindCombatStyle(eastl::string_view id) const;
+    const CombatStyleDefinition* TryGetCombatStyle(CombatStyleId id) const;
+    const CombatStyleDefinition& GetCombatStyle(CombatStyleId id) const;
+    std::size_t CombatStyleCount() const;
+    CombatArtId FindCombatArt(eastl::string_view id) const;
+    const CombatArtDefinition* TryGetCombatArt(CombatArtId id) const;
+    const CombatArtDefinition& GetCombatArt(CombatArtId id) const;
+    std::size_t CombatArtCount() const;
+    AbilityId FindAbility(eastl::string_view id) const;
+    const AbilityDefinition* TryGetAbility(AbilityId id) const;
+    const AbilityDefinition& GetAbility(AbilityId id) const;
+    std::size_t AbilityCount() const;
+    CombatSkillIds GetCombatSkills() const;
+    ItemTypeId CorpseItem() const;
 
 private:
+    Vector<CombatMoveDefinition> combatMoves_;
+    Vector<CombatStyleDefinition> combatStyles_;
+    Vector<CombatArtDefinition> combatArts_;
+    Vector<AbilityDefinition> abilities_;
+    CombatSkillIds combatSkills_;
+    ItemTypeId corpseItem_{};
     Vector<TerrainDefinition> definitions_;
     Vector<BuildingPattern> patterns_;
     Vector<ItemDefinition> items_;
@@ -229,5 +254,9 @@ ContentResult<ContentCatalog> LoadContentPack(const char* manifestPath,
     Diagnostics* diagnostics = nullptr);
 ContentResult<ContentCatalog> LoadContentPack(const char* manifestPath,
     const ItemBehaviorRegistry& registry, Diagnostics* diagnostics = nullptr);
+
+// Canonical, effective expansion semantics for catalog fingerprints. References
+// are stable names; defaults are explicit. Versioned independently of save data.
+DataObject WriteCombatContent(const ContentCatalog& catalog);
 
 }

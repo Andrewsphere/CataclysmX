@@ -1,10 +1,10 @@
 # Save format
 
-CataclysmX saves are SQLite database files. The strict v12 format is governed by
-one authoritative `metadata.format_version = 12` for both SQL and JSON. The
+CataclysmX saves are SQLite database files. The strict v14 format is governed by
+one authoritative `metadata.format_version = 14` for both SQL and JSON. The
 `metadata` columns are `singleton INTEGER PRIMARY KEY CHECK(singleton=1)`,
 `format_version INTEGER NOT NULL`, and `game_version TEXT NOT NULL`; its single
-row is `(1, 12, "0.1.0")`. The other tables are
+row is `(1, 14, "0.1.0")`. The other tables are
 `world_state(singleton INTEGER PRIMARY KEY CHECK(singleton=1), payload TEXT NOT
 NULL)` and `chunks(x INTEGER NOT NULL, z INTEGER NOT NULL, y INTEGER NOT NULL,
 payload TEXT NOT NULL, PRIMARY KEY(x,z,y))`, and
@@ -13,6 +13,121 @@ y INTEGER NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(player_id,x,z,y))`.
 Extra application tables/schema objects are rejected.
 
 ## JSON payloads
+
+### Format 14: equipment, combat arts, terminal life, and player sessions
+
+Format 14 retains the four SQL tables above. Each actor payload adds required
+`equipment` and `character_combat` structured values. Combat envelope version 3
+is required on disk. Formats 7–13 are decoded incrementally according to their
+original exact field sets; the next checkpoint rewrites all chunks and session
+state and updates metadata in the same transaction. Rollback retains the original
+metadata and payloads. Generation versions are independent of save versions.
+
+Each roster entry adds `session`, a nonzero canonical decimal-string persistent
+ID. `actor` identifies the current character; `session` identifies its stable
+player session across character replacements. Source aggregates may leave
+`SavedPlayer::session` zero, meaning the actor ID, and legacy saves migrate to that
+same identity. Current actor IDs, stable session IDs, and nonzero reconnect tokens
+are each unique within a roster and IDs must be below `next_id`.
+`SessionState::player` remains the current **host actor** ID, with the existing
+position/token rules. Dead historical player actors need not remain in the
+current-character roster. Their actor-owned memories retain their original
+identity; a replacement does not inherit those memories or skills.
+
+`combat` version 3 has exactly `version`, `legacy`, `style`, `life`, `corpse`,
+`inexhaustible`, `authoredTrainingRanks`, `offensiveTrainingRank`,
+`defensiveTrainingRank`, `attackRating100`, `defenseRating100`, `reach`,
+`staggerRemaining`, `focusRemaining`, `focusRatingBonus100`,
+`combatLockRemaining`, `exertion`, `staminaRegenerationRemainder`,
+`legacyAccuracyOverride`, `intrinsicMissOverride`, `moveCooldowns`, `openings`,
+and `action`. `legacy` is an exact version-2 projection of anatomy, injury profile,
+protection, numeric stamina, and old compatibility fields. For definition-driven
+actions its action is idle; the outer `action` is authoritative. Keeping this
+projection reuses the established strict injury codec and keeps migration
+explicit, rather than duplicating body-validation rules.
+
+The outer action has exactly `kind`, `target`, `move`, `weapon`, `accuracyPenalty`,
+`recoveryTicks`, `moveId`, `committedStyle`, `trainingArt`, `ability`,
+`abilitySource`, `sources`, `abilityTarget`, `ratingPenalty100`, `trainingWork`,
+`counter`, and `definitionDriven`. Definition identities are stable strings;
+empty strings mean absent where allowed. Numeric `move` is only the old closed
+legacy enum, never a catalog index. `abilitySource` has `kind` and stable `art`;
+Art requires a nonempty art and Innate requires an empty art for actual abilities.
+An unused action retains its unbound default grant key. `abilityTarget` records
+`kind`, persistent `actor`, signed `x`/`z`/`y`, and `direction`. Stale actor/item
+targets remain valid saved commitments; execution revalidates them without
+substituting sources or refunding the paid cost.
+
+Catalog validation checks relationships as well as identity existence. Offensive
+move commitments must match their style repertoire, training art, trigger/counter
+flag, execution phase, and exact source requirements. Sweep must borrow precisely
+its ability definition's `sweepMove`; Focus and Leap carry neither a strike move
+nor source commitments. Ability training art follows the selected grant source,
+which can differ from the committed style's art. Art-derived grants/cooldowns
+must refer to abilities declared by that art; a cooldown does not require a
+currently learned art or live grant. Manual progress must reference an authored
+book/art pair, with funding bounded by both remaining progress and the 100-tick
+funding slice. These checks never require committed entity IDs to remain live.
+
+Actor-aware v1/v2 migration initializes `combatLockRemaining` from the already-paid
+relative deadline: remaining windup plus captured recovery for MeleeWindup, or
+remaining recovery for Recovery. The sum is checked for uint64 overflow. No
+stamina is charged again, and inactive time remains frozen. The legacy unarmed
+heavy adapter preserves its original empty-hand binding for execution-time
+revalidation rather than substituting a currently held item.
+
+`sources` has exactly `hands` (two `{item, grip, required}` records),
+`functionalHands`, `functionalLegs`, `primaryHand`, `primaryKind`, `secondaryKind`,
+`naturalApparatus`, and `paired`. Item IDs are persistent IDs, not handles.
+`reach` has `distance`, `height`, and `regions`. `moveCooldowns` is a sparse list
+of `{move: stable-name, remaining}` with unique moves and positive durations;
+`openings` is a sparse list of `{opponent, remaining}` with unique nonzero
+persistent opponents and positive durations. All timers remain relative active
+simulation time; the World validates absolute deadline arithmetic at restore.
+
+Life is Alive or Dead. Detailed Head **or** Torso zero, or simple Core zero, is
+terminal. Legacy zero-vital actors migrate to Dead with their pending action and
+active study canceled and deadline suspended. `corpse` is zero until the World
+performs its single terminal finalization, then the persistent corpse item ID.
+Reading state never creates a corpse or transfers inventory. Dead state requires
+terminal anatomy and no actor action; restoring health does not implicitly revive
+a dead human. Dead actors do not occupy movement cells for archive validation.
+
+`equipment` version 1 has exactly `version`, `hands`, and `worn`. `hands` contains
+two `{item, grip}` records, left then right. Zero means empty, with OneHanded as
+the empty-slot grip. TwoHanded repeats the same nonzero item in both slots;
+OneHanded cannot repeat an item. `worn` is an ordered list of unique nonzero IDs,
+exclusive with held IDs. The codec performs shape checks; the database also checks
+direct inventory ownership and the left-first `wielded_item` projection. Legacy
+wielded equipment is expanded using the item's authored hand count. The World
+rebinds fresh handles after all entities exist and validates actual equipment
+eligibility. `CaptureEquipment` resolves every current handle afresh.
+
+`character_combat` is `{}` for a null optional character state. A present empty
+state is distinct: version 1 has exactly `version`, `arts`, `grants`, `cooldowns`,
+and `manuals`, even when all lists are empty. Art progress records are
+`{art: stable-name, xp}`. Grants are `{ability: stable-name, source}`; cooldowns
+add positive `remaining` and are keyed independently by `(ability, source)`.
+Cooldowns need not have a currently held grant. Manual attempts record stable
+`book` and `art`, `remaining`, `totalDuration`, `successChance`, `active`,
+`fundedTicks`, and `pauseRequested`. Remaining duration and the paid scheduler
+slice are separate: the actor deadline matches `fundedTicks`, not the whole
+remaining attempt. Paused attempts retain progress but have no funding or pending
+pause request. Only one manual may be active and it is exclusive with ordinary
+book study, actor combat actions, and crafting assignment.
+
+Catalog-free combat codecs remain for legacy setup/default aggregate snapshots;
+the catalog-free writer fails fast rather than discarding expanded state.
+Catalog-aware overloads migrate v1/v2 style, heavy/reaction cooldowns, intrinsic
+accuracy, stamina fraction, and pending move/source commitments by explicit basic
+definition names. Recovery and paid windup time are preserved. Missing required
+definitions are errors; no lookup failure selects a substitute. All envelopes
+reject unknown fields, invalid types, overflow, unsupported versions, and duplicate
+sparse identities. Captured trees use values and explicit character deep-copy/
+value-equality helpers, never `unique_ptr` address equality.
+
+Version 13 added actor learning state. The sections below document retained
+earlier layouts and the remaining world/item payloads.
 
 Version 12 adds stable object type strings to remembered furniture. Missing types
 in legacy memory remain unknown until reobserved; formats 7?11 remain readable
@@ -61,7 +176,8 @@ guests require nonzero tokens. Empty rosters preserve generic world saves.
 For sessions with a host or nonempty roster, every player-marked actor across
 all saved chunks must appear in the roster; an empty roster with a nonzero host
 acts as an implicit singleton roster and permits no other player actors. The
-host must never be parked. Sessions with both host ID zero and empty roster
+host must not be parked while alive; a terminal dead host may remain parked.
+Sessions with both host ID zero and empty roster
 remain generic and need not enumerate player-marked actors.
 The nested `pacing` object
 has exactly `ticks_per_second` (positive uint32 JSON integer), `rate_limited`

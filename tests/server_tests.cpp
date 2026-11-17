@@ -2,6 +2,8 @@
 #include "core/simulation.h"
 #include "combat/combat_system.h"
 #include "content_fixture.h"
+#include "combat_runtime_fixture.h"
+#include "actors/movement.h"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -37,6 +39,7 @@ const ViewCell& cell_at(const WorldView& view, TileCoord position) {
 }
 
 void expect(Server& server, Command command, Outcome outcome, bool advances) {
+    CAPTURE(command.kind, command.dx, command.dz, command.item, command.waitCost);
     const std::uint64_t before = server.GetTick();
     const CommandResult result = server.Send(command);
     CHECK(result.outcome == outcome);
@@ -91,6 +94,7 @@ TEST_CASE("Server creates the deterministic demo and advances only successful co
     CHECK_FALSE(world.IsActive({-32, -32}));
     const auto backpack = world.ItemsAt({0, 0});
     REQUIRE(world.CountItemsAt({0, 0}) == 1);
+    const auto backpackId = world.GetItem(*backpack.begin())->id;
     CHECK(world.GetItem(*backpack.begin())->type == TestItem("backpack"));
     REQUIRE(world.GetItem(*backpack.begin())->contents.size() == 1);
     CHECK(world.GetItem(world.GetItem(*backpack.begin())->contents[0])->type == TestItem("bandage"));
@@ -131,12 +135,30 @@ TEST_CASE("Server creates the deterministic demo and advances only successful co
     expect(server, {CommandKind::interact, -1, 0}, Outcome::nothing_here, false);
     CHECK(world.GetActor(npc)->turns == 0);
 
-    // Fields irrelevant to the selected command are deliberately ignored.
-    expect(server, {CommandKind::wait, INT_MIN, INT_MAX, UINT64_MAX}, Outcome::waited, true);
-    expect(server, {CommandKind::pick_up, INT_MAX, INT_MIN}, Outcome::picked_up, true);
-    expect(server, {CommandKind::drop, INT_MIN, INT_MAX}, Outcome::dropped, true);
-    expect(server, {CommandKind::move, 1, 0, UINT64_MAX}, Outcome::moved, true);
-    expect(server, {CommandKind::interact, 1, 0, UINT64_MAX}, Outcome::toggled, true);
+    // Local and network commands both require canonical unused fields. Refusal
+    // must leave time, inventory, position and the machine untouched.
+    for (const Command malformed : {Command{CommandKind::wait, INT_MIN, INT_MAX, UINT64_MAX},
+             Command{CommandKind::pick_up, INT_MAX, INT_MIN}, Command{CommandKind::drop, INT_MIN, INT_MAX},
+             Command{CommandKind::move, 1, 0, UINT64_MAX}, Command{CommandKind::interact, 1, 0, UINT64_MAX}}) {
+        expect(server, malformed, Outcome::invalid_command, false);
+    }
+    CHECK(world.GetActor(server.GetPlayer())->inventory.empty());
+    CHECK(world.GetActor(server.GetPlayer())->position == TileCoord{0, 0});
+    CHECK(world.IsActorAlive(server.GetPlayer()));
+    REQUIRE(world.CountItemsAt({0, 0}) == 1);
+    CHECK(world.GetItem(*world.ItemsAt({0, 0}).begin())->id == backpackId);
+    CHECK_FALSE(world.GetObject(object)->enabled);
+    CHECK(world.GetObject(object)->updates == 0);
+
+    expect(server, {CommandKind::wait}, Outcome::waited, true);
+    expect(server, {CommandKind::pick_up}, Outcome::picked_up, true);
+    REQUIRE(world.GetActor(server.GetPlayer())->inventory.size() == 1);
+    CHECK(world.GetItem(world.GetActor(server.GetPlayer())->inventory.front())->id == backpackId);
+    expect(server, {CommandKind::drop}, Outcome::dropped, true);
+    REQUIRE(world.CountItemsAt({0, 0}) == 1);
+    CHECK(world.GetItem(*world.ItemsAt({0, 0}).begin())->id == backpackId);
+    expect(server, {CommandKind::move, 1, 0}, Outcome::moved, true);
+    expect(server, {CommandKind::interact, 1, 0}, Outcome::toggled, true);
     CHECK(world.GetObject(object)->enabled);
     CHECK(world.GetObject(object)->updates == 1);
     expect(server, {CommandKind::interact, 1, 0}, Outcome::toggled, true);
@@ -156,7 +178,8 @@ TEST_CASE("Server creates the deterministic demo and advances only successful co
 }
 
 TEST_CASE("Dark diagonal bump attacks retain combat costs", "[server][commands][movement-cost][perception]") {
-    Server server(TestContent());
+    auto content = CombatRuntimeTestContent();
+    Server server(content);
     auto& world = server.GetWorld();
     REQUIRE(world.SetTile({8,8}, {TestTerrain("floor"),0}));
     REQUIRE(world.SetTile({9,9}, {TestTerrain("floor"),0}));
@@ -173,7 +196,12 @@ TEST_CASE("Dark diagonal bump attacks retain combat costs", "[server][commands][
     REQUIRE(world.CanPlayerSee(server.GetPlayer(), {9,9}));
     const auto attack = server.Send({CommandKind::move, 1, 1});
     CHECK(attack.outcome == Outcome::attacked);
-    CHECK(attack.cost == 125);
+    const auto& selected = world.GetActor(server.GetPlayer())->combatFeedback.result;
+    REQUIRE(selected.moveId == content.FindCombatMove("basic_fist"));
+    const auto& move = content.GetCombatMove(selected.moveId);
+    REQUIRE(move.cost.windupCost == 0);
+    CHECK(attack.cost == ActionTicks(move.cost.recoveryCost, 125));
+    CHECK(attack.cost != ActionTicks(ActorStepBaseCost(move.cost.recoveryCost, {1, 1}), 125));
     CHECK(world.GetActor(server.GetPlayer())->position == TileCoord{8,8});
 }
 

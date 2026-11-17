@@ -1,11 +1,13 @@
 # Authoritative inventory and equipment
 
-`Actor::inventory` is the sole owner collection for directly carried items.
-`Actor::wieldedItem` is one typed, generational, non-owning handle into that
-collection. Wielding never adds a second mass contribution. Selecting a carried
-nested item extracts it to direct inventory; the former weapon stays in direct
-inventory. `World::WieldItem(actor, {})` unwields. Wield, swap and unwield return
-100 base ticks on success; redundant selection and refusals return zero.
+`Actor::inventory` owns directly carried items. Equipment holds non-owning left
+and right hand and worn references to direct inventory children. A two-handed grip
+occupies both hands with one item and never duplicates its mass. `wieldedItem` is
+the left-first compatibility projection, not the combat source of truth.
+`World::WieldItem` is an atomic replacement convenience; see
+[equipment lifecycle](combat_lifecycle.md#equipment-mutations) for its selection
+and rollback rules. Successful hold, release and regrip cost 100 base ticks;
+garments use authored wear/remove costs (default 100). Refusals cost nothing.
 
 `World::TransferInventoryItem(actor, id, source, destination)` is the gameplay
 transfer boundary. `ItemStorage` uses persistent identity: Inventory means the
@@ -39,7 +41,7 @@ ownership checks; it does not broaden item-use reach.
 `WorldView::inventory` and `nearbyItems` are flattened, persistent-ID-sorted trees
 with exact immediate `InventoryEntry::storage`. `groundItems` retains the legacy
 current-tile projection. `wieldedItem` and per-entry `wielded` expose persistent
-identity only. `stackable` is true only for unwielded leaves without capabilities,
+identity only; `heldHands` and `worn` expose actual equipment. `stackable` is true only for unequipped leaves without capabilities,
 runtime state or reserved crafting-wrapper semantics.
 
 `itemStorages` separates source metadata from entries. It includes Inventory,
@@ -54,15 +56,12 @@ Other source kinds leave that metadata coordinate zero.
 
 ## Combat and persistence
 
-`ItemMelee` supplies authored damage/cost/hands, or 4 HP blunt, 100 ticks and one
-hand by default. Detailed actors need the required number of functioning hands.
-Disability retains equipment but prevents its use; it never silently substitutes
-unarmed damage. Weapon damage replaces actor unarmed damage. Plain timing scales
-the existing locomotion-adjusted base by weapon cost; heavy windup/recovery scale
-80/120 by weapon cost, rounding upward before actor-speed scaling.
-
-Pending windup captures the weapon's persistent ID (`ActorActionState::weapon`),
-including zero for unarmed. Removal causes existing capability-loss disruption;
-execution also checks the captured identity. Saves store persistent equipment IDs
-and rebind fresh handles only after restoring item ownership. See
-`save_format.md`, `combat_api.md` and `networking.md` for the versioned boundaries.
+Item melee profiles provide damage, explicit handling family, grips and response
+capabilities; improvised items have a neutral one-handed fallback. Disability
+retains equipment but can prevent its use. Committed attacks capture the actual
+source and grip; removing a required item disrupts dependent work, not unrelated
+actions. Armor supplies local coverage, protection and encumbrance. Saves rebind
+persistent equipment identities after restoring ownership. Save format 14 and
+network protocol 21 carry expanded equipment and combat state. See
+[combat API](combat_api.md), [content](combat_content.md), and
+[lifecycle](combat_lifecycle.md).

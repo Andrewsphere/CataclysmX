@@ -93,13 +93,14 @@ TEST_CASE("Item IDs are source-order independent and globally unique", "[content
     const auto reordered = LoadContent({reversed, 2});
     REQUIRE(loaded.has_value());
     REQUIRE(reordered.has_value());
-    CHECK(loaded->ItemCount() == 2);
+    CHECK(loaded->ItemCount() == 3); // Two authored items plus the generated corpse container.
     CHECK(loaded->FindItem("a") == ItemTypeId{1});
-    CHECK(loaded->FindItem("z") == ItemTypeId{2});
+    CHECK(loaded->CorpseItem() == ItemTypeId{2});
+    CHECK(loaded->FindItem("z") == ItemTypeId{3});
     CHECK(loaded->FindItem("z") == reordered->FindItem("z"));
     CHECK(loaded->FindItem("missing") == ItemTypeId{});
     CHECK(loaded->TryGetItem({}) == nullptr);
-    CHECK(loaded->TryGetItem({3}) == nullptr);
+    CHECK(loaded->TryGetItem({4}) == nullptr);
     CHECK(loaded->TryGetItem({0xffffffff}) == nullptr);
     Invalid("{type:'item',id:'same',name:'A',mass_g:1,volume_ml:1},"
             "{type:'item',id:'same',name:'B',mass_g:1,volume_ml:1}");
@@ -110,7 +111,8 @@ TEST_CASE("Item IDs are source-order independent and globally unique", "[content
             "{type:'building_pattern',id:'same',rows:['.'],palette:{'.':'floor'},entrance:{x:0,z:0}}");
     const auto empty = Load("");
     REQUIRE(empty.has_value());
-    CHECK(empty->ItemCount() == 0);
+    CHECK(empty->ItemCount() == 1);
+    CHECK(empty->GetItem(empty->CorpseItem()).id == "combat_corpse");
 }
 
 TEST_CASE("Item physical schema is strict", "[content][item-content]") {
@@ -187,8 +189,8 @@ TEST_CASE("Item capability limit and independent internal stores are accepted", 
     }
     const auto loaded = Load(View(Item(View(capabilities))));
     REQUIRE(loaded.has_value());
-    CHECK(loaded->GetItem({1}).capabilities.size() == 16);
-    CHECK(loaded->GetItem({1}).capabilities[0].config.GetUnsigned("action_cost").value() == 7);
+    CHECK(loaded->GetItem(loaded->FindItem("device")).capabilities.size() == 16);
+    CHECK(loaded->GetItem(loaded->FindItem("device")).capabilities[0].config.GetUnsigned("action_cost").value() == 7);
     capabilities += ",{type:'container',id:'storage',capacity_volume_ml:1}";
     Invalid(View(Item(View(capabilities))));
     const auto independent = Load(View(Item(R"(
@@ -198,7 +200,7 @@ TEST_CASE("Item capability limit and independent internal stores are accepted", 
         {type:'charger',id:'y',power_source:'q',battery_class:'aa',energy_per_turn:4}
     )")));
     REQUIRE(independent.has_value());
-    const auto& definition = independent->GetItem({1});
+    const auto& definition = independent->GetItem(independent->FindItem("device"));
     CHECK(definition.capabilities[2].config.GetString("power_source").value() == "p");
     CHECK(definition.capabilities[2].config.GetUnsigned("action_cost").value() == 9);
     CHECK(definition.capabilities[3].config.GetString("power_source").value() == "q");
@@ -206,7 +208,7 @@ TEST_CASE("Item capability limit and independent internal stores are accepted", 
 
 TEST_CASE("Bundled items expose physical values and capability combinations", "[content][item-content]") {
     const auto& catalog = TestContent();
-    CHECK(catalog.ItemCount() == 16); // Includes the crafting demo and reserved-item wrapper.
+    CHECK(catalog.ItemCount() == 17); // Includes the crafting demo, unfinished wrapper, and corpse container.
     for (const char* id : {"blinking_lightbulb", "toggle_lightbulb", "single_blink_lightbulb"}) {
         const auto& bulb = catalog.GetItem(catalog.FindItem(id));
         CHECK(bulb.massGrams == 50);
@@ -307,14 +309,15 @@ TEST_CASE("Explicit builtin registry may die before its loaded catalog", "[conte
     const auto separate = load();
     REQUIRE(loaded.has_value());
     REQUIRE(separate.has_value());
-    const auto& item = loaded->GetItem({1});
-    CHECK(item == separate->GetItem({1}));
+    const auto& item = loaded->GetItem(loaded->FindItem("device"));
+    const auto& separateItem = separate->GetItem(separate->FindItem("device"));
+    CHECK(item == separateItem);
     REQUIRE(item.behaviors.size() == 1);
-    CHECK(item.behaviors[0].definition.get() != separate->GetItem({1}).behaviors[0].definition.get());
+    CHECK(item.behaviors[0].definition.get() != separateItem.behaviors[0].definition.get());
     CHECK(ItemBehaviorConfig(item, {1})->Schema().maximumDelay == 7);
     auto copy = *loaded;
-    CHECK(copy.GetItem({1}) == item);
-    CHECK(copy.GetItem({1}).behaviors[0].definition == item.behaviors[0].definition);
+    CHECK(copy.GetItem(copy.FindItem("device")) == item);
+    CHECK(copy.GetItem(copy.FindItem("device")).behaviors[0].definition == item.behaviors[0].definition);
     ItemBehaviorRegistry empty;
     CHECK_FALSE(LoadContent({&source, 1}, empty).has_value());
 }
@@ -341,8 +344,8 @@ TEST_CASE("Shared capability configs normalize defaults and object field order",
         "{capacity_volume_ml:9,id:'bag',type:'container'}")));
     REQUIRE(implicit.has_value());
     REQUIRE(explicitDefaults.has_value());
-    CHECK(implicit->GetItem({1}) == explicitDefaults->GetItem({1}));
-    const auto& item = implicit->GetItem({1});
+    CHECK(implicit->GetItem(implicit->FindItem("device")) == explicitDefaults->GetItem(explicitDefaults->FindItem("device")));
+    const auto& item = implicit->GetItem(implicit->FindItem("device"));
     REQUIRE(item.container.has_value());
     CHECK(item.container->capability == ItemCapabilityId{1});
     CHECK(item.capabilities[0].config.GetUnsigned("capacity_volume_ml").value() == 9);
@@ -465,19 +468,19 @@ TEST_CASE("Valid extension schema boundaries load with default composition valid
         capability += "'}";
         const auto loaded = LoadSchemaTest(View(capability));
         REQUIRE(loaded.has_value());
-        const auto* definition = ItemBehaviorConfig(loaded->GetItem({1}), {1});
+        const auto* definition = ItemBehaviorConfig(loaded->GetItem(loaded->FindItem("device")), {1});
         REQUIRE(definition != nullptr);
         CHECK(ValidItemBehaviorSchema(definition->Schema()));
     }
     const auto noActions = LoadSchemaTest("{type:'schema_test',id:'extension',actions:0}");
     REQUIRE(noActions.has_value());
-    CHECK(ItemBehaviorConfig(noActions->GetItem({1}), {1})->Schema().actions.empty());
+    CHECK(ItemBehaviorConfig(noActions->GetItem(noActions->FindItem("device")), {1})->Schema().actions.empty());
 }
 
 TEST_CASE("Declared action bounds apply to both individual schemas and item composition", "[content][item-content]") {
     const auto maximum = LoadSchemaTest("{type:'schema_test',id:'extension',actions:64}");
     REQUIRE(maximum.has_value());
-    CHECK(ItemBehaviorConfig(maximum->GetItem({1}), {1})->Schema().actions.size() == maxItemActionsPerItem);
+    CHECK(ItemBehaviorConfig(maximum->GetItem(maximum->FindItem("device")), {1})->Schema().actions.size() == maxItemActionsPerItem);
     Diagnostics diagnostics;
     const auto oversized = LoadSchemaTest("{type:'schema_test',id:'extension',actions:65}", &diagnostics);
     REQUIRE_FALSE(oversized.has_value());

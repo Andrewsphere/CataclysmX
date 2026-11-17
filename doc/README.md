@@ -39,6 +39,14 @@
   overlays, shared movement costs, and owned frontend captures.
 - [Combat API](combat_api.md): body, injury, moves, disruption and recovery.
 - [Combat presentation](combat_presentation.md): frontend status and feedback text.
+- [Combat runtime](combat_runtime.md): action resolution, training and local costs.
+- [Combat content](combat_content.md): authored definitions, bounds and starter roster.
+- [Combat learning](combat_learning.md): arts and repeatable manual study.
+- [Combat lifecycle](combat_lifecycle.md): equipment, death and replacement.
+- [Combat UI](combat_ui.md): frontend-neutral menus, commands and inspection.
+- [Combat experiments](combat_experiments.md): headless runner and interpretation.
+- [Runtime skills](skills.md) and [skill content](skills_content.md): progression,
+  books, crafting gates and shipped definitions.
 - [Objects API](objects_api.md): furniture, storage, movement, lighting, crafting machines and saved state.
 - [Object gameplay](object_gameplay.md): interaction, collection and push/pull scheduling.
 - [Grabbing](grabbing.md): persistent eight-direction furniture movement, timing and feedback.
@@ -102,7 +110,7 @@
   crossings, parcels/buildings, terrain materialization and debug inspection.
 - [Diagnostics](diagnostics.md): structured error causes and contextual frames.
 - [Terrain rendering](terrain_rendering.md): UTF-8 symbols, colors, and frontend behavior.
-- [Save format](save_format.md): SQLite v12, furniture identity, equipment, snapshots, player memory, validation and checkpoints.
+- [Save format](save_format.md): SQLite persistence, snapshots, validation and checkpoints; current combat save format is v14.
 - [Furniture sprites](furniture_sprites.md): imported artwork, normalization, object mappings and remembered identity.
 - [LAN networking](networking.md): ENet hosting, joining, authoritative messages and discovery.
 - [Network presentation](network_presentation.md): owned map visuals, interaction
@@ -123,8 +131,8 @@ successful checkpoint permits eviction.
 
 ## Gameplay design
 
-These documents include agreed future rules and explicitly identify implementation
-gaps; they are not additions to the current content/API contracts:
+These documents describe implemented direction alongside remaining design work;
+the API pages document current contracts:
 
 - [Combat design](../md/CombatDesign.md): JSON-defined arts, progression, weighted
   move/target selection, reactions, active abilities, two-hand equipment, armor,

@@ -397,6 +397,8 @@ struct PendingBook {
     BookDefinition definition;
     Vector<PendingBenefit> benefits;
     Vector<String> recipes;
+    struct Manual { String art, skill; ArtManualDefinition definition; };
+    Vector<Manual> manuals;
     std::size_t inputOrder = 0;
     Context context;
 };
@@ -467,15 +469,35 @@ bool ParseUniqueIds(yyjson_val* array, Vector<String>& output, const Context& co
     return true;
 }
 
+#include "content/combat_content.h"
+
 bool ParseBook(yyjson_val* object, PendingBook& pending) {
     auto& definition = pending.definition;
     const auto& context = pending.context;
-    if (!CheckObject(object, {"type", "id", "name", "study_work", "benefits", "recipes"}, context)
+    if (!CheckObject(object, {"type", "id", "name", "study_work", "benefits", "recipes", "art_manuals"}, context)
         || !ReadId(yyjson_obj_get(object, "id"), definition.id, context.Child("id"))
         || !ReadString(yyjson_obj_get(object, "name"), definition.name, context.Child("name"))
         || !ReadBoundedInteger(yyjson_obj_get(object, "study_work"), 1, UINT32_MAX,
                                definition.studyWork, context.Child("study_work"))
         || !ParseUniqueIds(yyjson_obj_get(object, "recipes"), pending.recipes, context.Child("recipes"))) { return false; }
+    if (auto* manuals = yyjson_obj_get(object, "art_manuals")) {
+        if (!yyjson_is_arr(manuals)) { return context.Child("art_manuals").Fail("expected art manuals array"); }
+        std::size_t i, n; yyjson_val* value;
+        yyjson_arr_foreach(manuals, i, n, value) {
+            auto child = ArrayElement(context.Child("art_manuals"), i);
+            PendingBook::Manual manual; std::uint32_t level = 0;
+            if (!CheckObject(value, {"art", "skill", "level", "success_chance", "base_duration"}, child)
+                || !ReadId(yyjson_obj_get(value, "art"), manual.art, child.Child("art"))
+                || !ReadId(yyjson_obj_get(value, "skill"), manual.skill, child.Child("skill"))
+                || !ReadBoundedInteger(yyjson_obj_get(value, "level"), 0, maximumSkillLevel, level, child.Child("level"))
+                || !ReadBoundedInteger(yyjson_obj_get(value, "success_chance"), 1, ratioScale, manual.definition.successChance, child.Child("success_chance"))
+                || !CombatTick(value, "base_duration", manual.definition.baseDuration, child)
+                || !manual.definition.baseDuration) { return child.Fail("manual requires positive study duration"); }
+            manual.definition.prerequisite.level = static_cast<std::uint8_t>(level);
+            for (const auto& previous : pending.manuals) { if (previous.art == manual.art) { return child.Fail("duplicate art manual"); } }
+            pending.manuals.push_back(eastl::move(manual));
+        }
+    }
     auto* array = yyjson_obj_get(object, "benefits");
     if (!array) { return true; }
     if (!yyjson_is_arr(array)) { return context.Child("benefits").Fail("expected an array"); }
@@ -682,6 +704,7 @@ struct PendingItem {
     String powerStore;
     Vector<String> books;
     String readingPower;
+    String handlingSkill;
     std::size_t inputOrder = 0;
     Context context;
 };
@@ -1102,7 +1125,9 @@ ContentResult<void> ResolveItemArt(PendingItem& item, const ContentAssetReader& 
 }
 
 bool ParseItemMelee(yyjson_val* object, MeleeProfile& profile, const Context& context) {
-    if (!CheckObject(object, {"damage", "attack_cost", "hands"}, context)) { return false; }
+    if (!CheckObject(object, {"damage", "attack_cost", "hands", "handling_skill", "grips", "block_capacity", "allowed_responses"}, context)
+        || !CombatUInt(object, "block_capacity", profile.blockCapacity, context)
+        || !ParseDefenseMask(yyjson_obj_get(object, "allowed_responses"), profile.allowedResponses, context.Child("allowed_responses"))) { return false; }
     if (auto* cost = yyjson_obj_get(object, "attack_cost")) {
         if (!ReadBoundedInteger(cost, 1, 1000000, profile.attackCost, context.Child("attack_cost"))) { return false; }
     }
@@ -1110,6 +1135,22 @@ bool ParseItemMelee(yyjson_val* object, MeleeProfile& profile, const Context& co
         std::uint32_t amount = 0;
         if (!ReadBoundedInteger(hands, 1, 2, amount, context.Child("hands"))) { return false; }
         profile.hands = static_cast<std::uint8_t>(amount);
+    }
+    if (auto* grips = yyjson_obj_get(object, "grips")) {
+        if (yyjson_obj_get(object, "hands")) { return context.Fail("hands and grips are mutually exclusive"); }
+        if (!yyjson_is_arr(grips) || !yyjson_arr_size(grips) || yyjson_arr_size(grips) > 2) { return context.Fail("expected one or two unique grips"); }
+        std::size_t i, n; yyjson_val* value;
+        yyjson_arr_foreach(grips, i, n, value) {
+            GripDefinition grip;
+            if (!ParseGrip(value, grip, ArrayElement(context.Child("grips"), i))) { return false; }
+            for (const auto& previous : profile.grips) { if (previous.kind == grip.kind) { return context.Fail("duplicate grip kind"); } }
+            profile.grips.push_back(grip);
+        }
+        profile.hands = profile.grips.front().kind == GripKind::TwoHanded ? 2 : 1;
+    } else {
+        GripDefinition grip;
+        grip.kind = profile.hands == 2 ? GripKind::TwoHanded : GripKind::OneHanded;
+        profile.grips.push_back(grip);
     }
     auto* damage = yyjson_obj_get(object, "damage");
     const auto damageContext = context.Child("damage");
@@ -1153,11 +1194,17 @@ bool ParseItemMelee(yyjson_val* object, MeleeProfile& profile, const Context& co
 bool ParseItem(yyjson_val* object, PendingItem& item, const ItemBehaviorRegistry& registry) {
     const auto& context = item.context;
     auto& definition = item.definition;
-    if (!CheckObject(object, {"type", "id", "name", "description", "art", "flags", "melee", "mass_g", "volume_ml", "capabilities", "tool_traits", "recovery_allowed", "crafting_power", "books", "reading_power"}, context)
+    if (!CheckObject(object, {"type", "id", "name", "description", "art", "flags", "melee", "armor", "mass_g", "volume_ml", "capabilities", "tool_traits", "recovery_allowed", "crafting_power", "books", "reading_power"}, context)
         || !ReadId(yyjson_obj_get(object, "id"), definition.id, context.Child("id"))
         || !ReadString(yyjson_obj_get(object, "name"), definition.name, context.Child("name"))
         || !ReadItemInteger(object, "mass_g", 0, definition.massGrams, context)
         || !ReadItemInteger(object, "volume_ml", 1, definition.volumeMl, context)) { return false; }
+    if (definition.id == "combat_corpse") { return context.Child("id").Fail("reserved generated item id"); }
+    if (auto* armor = yyjson_obj_get(object, "armor")) {
+        ArmorDefinition parsed;
+        if (!ParseArmor(armor, parsed, context.Child("armor"))) { return false; }
+        definition.armor = eastl::move(parsed);
+    }
     if (auto* description = yyjson_obj_get(object, "description")) {
         if (!yyjson_is_str(description)) { return context.Child("description").Fail("expected a description string"); }
         const auto text = JsonString(description);
@@ -1178,6 +1225,9 @@ bool ParseItem(yyjson_val* object, PendingItem& item, const ItemBehaviorRegistry
     if (auto* melee = yyjson_obj_get(object, "melee")) {
         MeleeProfile profile;
         if (!ParseItemMelee(melee, profile, context.Child("melee"))) { return false; }
+        if (auto* skill = yyjson_obj_get(melee, "handling_skill")) {
+            if (!ReadId(skill, item.handlingSkill, context.Child("melee").Child("handling_skill"))) { return false; }
+        }
         definition.melee = eastl::move(profile);
     }
     if (!ParseTraits(yyjson_obj_get(object, "tool_traits"), item.traits, context.Child("tool_traits"))) { return false; }
@@ -1297,6 +1347,7 @@ struct PendingLootPool {
 struct PendingMonster {
     MonsterDefinition definition;
     String profile;
+    String combatStyle;
     Context context;
     std::size_t inputOrder = 0;
 };
@@ -1356,7 +1407,9 @@ bool ParseLootPool(yyjson_val* object, PendingLootPool& pending) {
 bool ParseMonster(yyjson_val* object, PendingMonster& pending) {
     const auto& context = pending.context;
     auto& definition = pending.definition;
-    if (!CheckObject(object, {"type", "id", "name", "ai_profile", "body", "faction", "speed", "attack_damage", "accuracy"}, context)
+    if (!CheckObject(object, {"type", "id", "name", "ai_profile", "body", "faction", "speed", "attack_damage", "accuracy",
+            "combat_style", "authored_training_ranks", "offensive_training_rank", "defensive_training_rank",
+            "attack_rating100", "defense_rating100", "inexhaustible", "reach"}, context)
         || !ReadId(yyjson_obj_get(object, "id"), definition.id, context.Child("id"))
         || !ReadString(yyjson_obj_get(object, "name"), definition.name, context.Child("name"))
         || !ReadId(yyjson_obj_get(object, "ai_profile"), pending.profile, context.Child("ai_profile"))
@@ -1364,6 +1417,19 @@ bool ParseMonster(yyjson_val* object, PendingMonster& pending) {
         || !ReadOptionalInteger(object, "attack_damage", 0, 100000, definition.attackDamage, context)
         || !ReadOptionalInteger(object, "accuracy", 0, ratioScale, definition.accuracy, context)) { return false; }
     if (definition.accuracy % 100 != 0) { return context.Child("accuracy").Fail("accuracy must convert exactly to whole percent (divisible by 100)"); }
+    if (auto* style = yyjson_obj_get(object, "combat_style")) {
+        if (!ReadId(style, pending.combatStyle, context.Child("combat_style"))) { return false; }
+    }
+    std::uint32_t offense = 0, defense = 0;
+    if (!CombatBool(object, "authored_training_ranks", definition.authoredTrainingRanks, context)
+        || !CombatBool(object, "inexhaustible", definition.inexhaustible, context)
+        || !CombatUInt(object, "offensive_training_rank", offense, context, maximumSkillLevel)
+        || !CombatUInt(object, "defensive_training_rank", defense, context, maximumSkillLevel)
+        || !CombatSigned(object, "attack_rating100", definition.attackRating100, context)
+        || !CombatSigned(object, "defense_rating100", definition.defenseRating100, context)
+        || !ParseReach(yyjson_obj_get(object, "reach"), definition.reach, context.Child("reach"))) { return false; }
+    definition.offensiveTrainingRank = static_cast<std::uint8_t>(offense);
+    definition.defensiveTrainingRank = static_cast<std::uint8_t>(defense);
     if (auto* body = yyjson_obj_get(object, "body")) {
         if (!yyjson_is_str(body)) { return context.Child("body").Fail("expected a body name"); }
         if (JsonString(body) == "simple") { definition.body = BodyKind::Simple; }
@@ -1692,7 +1758,7 @@ ContentResult<bool> ParseSource(const ContentSource& source, Vector<PendingTerra
                                 Vector<PendingToolTrait>& traits,
                                 PendingSpawns& spawns, Vector<PendingFlag>& flags,
                                 Vector<PendingSkill>& skills, Vector<PendingBook>& books,
-                                const ItemBehaviorRegistry& registry, Diagnostics* diagnostics) {
+                                Vector<PendingCombat>& combat, const ItemBehaviorRegistry& registry, Diagnostics* diagnostics) {
     Context context{diagnostics, source.name, {}};
     yyjson_alc allocator{JsonMalloc, JsonRealloc, JsonFree, nullptr};
     yyjson_read_err error{};
@@ -1803,6 +1869,11 @@ ContentResult<bool> ParseSource(const ContentSource& source, Vector<PendingTerra
                 if (!ParseSkill(value, skill)) { return eastl::unexpected(ContentError::InvalidData); }
                 skills.push_back(eastl::move(skill));
                 continue;
+            } else if (JsonString(type) == "combat_move" || JsonString(type) == "combat_style"
+                || JsonString(type) == "combat_art" || JsonString(type) == "ability") {
+                if (!CaptureCombat(value, definitionContext, combat)) { return eastl::unexpected(ContentError::InvalidData); }
+                combat.back().inputOrder = terrain.inputOrder;
+                continue;
             } else if (JsonString(type) == "book") {
                 PendingBook book;
                 book.context = definitionContext;
@@ -1904,7 +1975,7 @@ ContentResult<bool> ParseSource(const ContentSource& source, Vector<PendingTerra
                 String message = "unsupported definition type '";
                 const auto typeName = JsonString(type);
                 message.append(typeName.data(), typeName.size());
-                message += "' (expected terrain, building_pattern, item, flag, skill, book, tool_trait, recipe, recycling_recipe, loot_pool, monster, or monster_group)";
+                message += "' (expected terrain, building_pattern, item, flag, skill, book, tool_trait, recipe, recycling_recipe, loot_pool, monster, monster_group, combat_move, combat_style, combat_art, or ability)";
                 terrain.context.Child("type").Fail(View(message));
             }
         }
@@ -2074,6 +2145,7 @@ struct DefinitionIdentity {
     bool aiProfile = false;
     bool craftingContent = false;
     bool spawnContent = false;
+    bool combatContent = false;
 };
 
 bool CheckDefinitionIds(const Vector<PendingTerrain>& terrains, const Vector<PendingPattern>& patterns,
@@ -2081,7 +2153,7 @@ bool CheckDefinitionIds(const Vector<PendingTerrain>& terrains, const Vector<Pen
                           const Vector<PendingAiProfile>& aiProfiles, const Vector<PendingCrafting>& recipes,
                           const Vector<PendingRecycling>& recyclers, const Vector<PendingToolTrait>& traits,
                           const PendingSpawns& spawns, const Vector<PendingSkill>& skills, const Vector<PendingBook>& books,
-                          Diagnostics* diagnostics) {
+                          const Vector<PendingCombat>& combat, Diagnostics* diagnostics) {
     Vector<DefinitionIdentity> identities;
     identities.reserve(terrains.size() + patterns.size() + items.size() + objects.size() + aiProfiles.size());
     for (const auto& terrain : terrains) {
@@ -2107,6 +2179,7 @@ bool CheckDefinitionIds(const Vector<PendingTerrain>& terrains, const Vector<Pen
     for (const auto& pool : spawns.pools) { identities.push_back({View(pool.definition.id), &pool.context, pool.inputOrder, false, false, false, false, false, true}); }
     for (const auto& monster : spawns.monsters) { identities.push_back({View(monster.definition.id), &monster.context, monster.inputOrder, false, false, false, false, false, true}); }
     for (const auto& group : spawns.groups) { identities.push_back({View(group.definition.id), &group.context, group.inputOrder, false, false, false, false, false, true}); }
+    for (const auto& entry : combat) { identities.push_back({View(entry.id), &entry.context, entry.inputOrder, false, false, false, false, false, false, true}); }
     eastl::sort(identities.begin(), identities.end(), [](const DefinitionIdentity& left, const DefinitionIdentity& right) {
         if (left.id == right.id) { return left.inputOrder < right.inputOrder; }
         return left.id < right.id;
@@ -2116,13 +2189,14 @@ bool CheckDefinitionIds(const Vector<PendingTerrain>& terrains, const Vector<Pen
         const auto& previous = identities[i - 1];
         if (previous.id != current.id) { continue; }
         if (diagnostics) {
-            String message = (current.craftingContent || current.spawnContent) ? "duplicate content definition '" : current.aiProfile ? "duplicate AI profile definition '" : current.object ? "duplicate object definition '" : current.item ? "duplicate item definition '" :
+            String message = (current.combatContent || current.craftingContent || current.spawnContent) ? "duplicate content definition '" : current.aiProfile ? "duplicate AI profile definition '" : current.object ? "duplicate object definition '" : current.item ? "duplicate item definition '" :
                 (current.pattern ? "duplicate building pattern definition '" : "duplicate terrain definition '");
             message.append(current.id.data(), current.id.size());
             message += '\'';
             current.context->Child("id").Fail(View(message));
             previous.context->Child("id").Fail("previous definition is here");
-            if (current.spawnContent) { current.context->Fail("while loading spawn content definition"); }
+            if (current.combatContent) { current.context->Fail("while loading combat content definition"); }
+            else if (current.spawnContent) { current.context->Fail("while loading spawn content definition"); }
             else if (current.craftingContent) { current.context->Fail("while loading crafting content definition"); }
             else if (current.aiProfile) { current.context->Fail("while loading AI profile definition"); }
             else if (current.object) { current.context->Fail("while loading object definition"); }
@@ -2286,6 +2360,16 @@ bool ResolveTraining(const Vector<PendingSkillEntry>& pending, const SmallVector
 }
 
 bool ResolveBook(PendingBook& pending, const ContentCatalog& catalog) {
+    for (const auto& manual : pending.manuals) {
+        auto definition = manual.definition;
+        definition.art = catalog.FindCombatArt(View(manual.art));
+        definition.prerequisite.skill = catalog.FindSkill(View(manual.skill));
+        if (!definition.art.value || !definition.prerequisite.skill.value
+            || catalog.GetSkill(definition.prerequisite.skill).category != SkillCategory::Combat) {
+            return pending.context.Child("art_manuals").Fail("unknown art or combat skill reference");
+        }
+        pending.definition.artManuals.push_back(definition);
+    }
     for (std::size_t i = 0; i < pending.benefits.size(); ++i) {
         auto benefit = pending.benefits[i].definition;
         const auto child = ArrayElement(pending.context.Child("benefits"), i);
@@ -2982,6 +3066,49 @@ ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sourc
     return LoadContent(sources, registry, assets, diagnostics);
 }
 
+CombatMoveId ContentCatalog::FindCombatMove(eastl::string_view id) const {
+    return {static_cast<std::uint32_t>(FindDefinition(combatMoves_, id))};
+}
+const CombatMoveDefinition* ContentCatalog::TryGetCombatMove(CombatMoveId id) const {
+    return id.value && id.value <= combatMoves_.size() ? &combatMoves_[id.value - 1] : nullptr;
+}
+const CombatMoveDefinition& ContentCatalog::GetCombatMove(CombatMoveId id) const {
+    const auto* result = TryGetCombatMove(id); if (!result) { std::abort(); } return *result;
+}
+std::size_t ContentCatalog::CombatMoveCount() const { return combatMoves_.size(); }
+CombatStyleId ContentCatalog::FindCombatStyle(eastl::string_view id) const {
+    return {static_cast<std::uint32_t>(FindDefinition(combatStyles_, id))};
+}
+const CombatStyleDefinition* ContentCatalog::TryGetCombatStyle(CombatStyleId id) const {
+    return id.value && id.value <= combatStyles_.size() ? &combatStyles_[id.value - 1] : nullptr;
+}
+const CombatStyleDefinition& ContentCatalog::GetCombatStyle(CombatStyleId id) const {
+    const auto* result = TryGetCombatStyle(id); if (!result) { std::abort(); } return *result;
+}
+std::size_t ContentCatalog::CombatStyleCount() const { return combatStyles_.size(); }
+CombatArtId ContentCatalog::FindCombatArt(eastl::string_view id) const {
+    return {static_cast<std::uint32_t>(FindDefinition(combatArts_, id))};
+}
+const CombatArtDefinition* ContentCatalog::TryGetCombatArt(CombatArtId id) const {
+    return id.value && id.value <= combatArts_.size() ? &combatArts_[id.value - 1] : nullptr;
+}
+const CombatArtDefinition& ContentCatalog::GetCombatArt(CombatArtId id) const {
+    const auto* result = TryGetCombatArt(id); if (!result) { std::abort(); } return *result;
+}
+std::size_t ContentCatalog::CombatArtCount() const { return combatArts_.size(); }
+AbilityId ContentCatalog::FindAbility(eastl::string_view id) const {
+    return {static_cast<std::uint32_t>(FindDefinition(abilities_, id))};
+}
+const AbilityDefinition* ContentCatalog::TryGetAbility(AbilityId id) const {
+    return id.value && id.value <= abilities_.size() ? &abilities_[id.value - 1] : nullptr;
+}
+const AbilityDefinition& ContentCatalog::GetAbility(AbilityId id) const {
+    const auto* result = TryGetAbility(id); if (!result) { std::abort(); } return *result;
+}
+std::size_t ContentCatalog::AbilityCount() const { return abilities_.size(); }
+CombatSkillIds ContentCatalog::GetCombatSkills() const { return combatSkills_; }
+ItemTypeId ContentCatalog::CorpseItem() const { return corpseItem_; }
+
 ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sources,
     const ItemBehaviorRegistry& registry, const ContentAssetReader& assets, Diagnostics* diagnostics) {
     Vector<PendingTerrain> pending;
@@ -2996,12 +3123,29 @@ ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sourc
     Vector<PendingSkill> skills;
     Vector<PendingBook> books;
     PendingSpawns spawns;
+    Vector<PendingCombat> combat;
     for (const auto& source : sources) {
-        auto result = ParseSource(source, pending, patterns, items, objects, aiProfiles, recipes, recyclers, traits, spawns, flags, skills, books, registry, diagnostics);
+        auto result = ParseSource(source, pending, patterns, items, objects, aiProfiles, recipes, recyclers, traits, spawns, flags, skills, books, combat, registry, diagnostics);
         if (!result) {
             Context{diagnostics, source.name, {}}.Fail("could not load content source");
             return eastl::unexpected(result.error());
         }
+    }
+    {
+        PendingItem corpse;
+        corpse.context = Context{diagnostics, "<generated corpse>", {}};
+        corpse.definition.id = "combat_corpse";
+        corpse.definition.name = "corpse";
+        corpse.definition.volumeMl = 60000;
+        corpse.definition.massGrams = 60000;
+        corpse.definition.container = ItemContainerDefinition{{1}, {UINT32_MAX}};
+        ItemCapabilityDefinition capability;
+        capability.id = "container"; capability.type = "container";
+        capability.config.SetString("id", "container"); capability.config.SetString("type", "container");
+        capability.config.SetUnsigned("capacity_volume_ml", UINT32_MAX);
+        capability.config = CanonicalContentData(capability.config);
+        corpse.definition.capabilities.push_back(eastl::move(capability));
+        items.push_back(eastl::move(corpse));
     }
     if (!recipes.empty() || !recyclers.empty()) {
         PendingItem internal;
@@ -3042,7 +3186,7 @@ ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sourc
         if (left.definition.id == right.definition.id) { return left.inputOrder < right.inputOrder; }
         return left.definition.id < right.definition.id;
     });
-    if (!CheckDefinitionIds(pending, patterns, items, objects, aiProfiles, recipes, recyclers, traits, spawns, skills, books, diagnostics)) { return eastl::unexpected(ContentError::InvalidData); }
+    if (!CheckDefinitionIds(pending, patterns, items, objects, aiProfiles, recipes, recyclers, traits, spawns, skills, books, combat, diagnostics)) { return eastl::unexpected(ContentError::InvalidData); }
     if (!CheckPatternFamilies(patterns, diagnostics)) { return eastl::unexpected(ContentError::InvalidData); }
     if (!Resolve(pending)) {
         Context{diagnostics, {}, {}}.Fail("could not load content catalog");
@@ -3051,6 +3195,77 @@ ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sourc
     ContentCatalog catalog;
     eastl::sort(skills.begin(), skills.end(), [](const PendingSkill& a, const PendingSkill& b) { return a.definition.id < b.definition.id; });
     for (auto& skill : skills) { catalog.skills_.push_back(eastl::move(skill.definition)); }
+    catalog.combatSkills_ = {catalog.FindSkill("melee"), catalog.FindSkill("unarmed"), catalog.FindSkill("knives"),
+        catalog.FindSkill("swords"), catalog.FindSkill("clubs_hammers"), catalog.FindSkill("axes"),
+        catalog.FindSkill("polearms"), catalog.FindSkill("shields"), catalog.FindSkill("dodge")};
+    for (auto skill : {catalog.combatSkills_.melee, catalog.combatSkills_.unarmed, catalog.combatSkills_.knives,
+            catalog.combatSkills_.swords, catalog.combatSkills_.clubsHammers, catalog.combatSkills_.axes,
+            catalog.combatSkills_.polearms, catalog.combatSkills_.shields, catalog.combatSkills_.dodge}) {
+        if ((!combat.empty() && !skill.value) || (skill.value && catalog.GetSkill(skill).category != SkillCategory::Combat)) {
+            Context{diagnostics, {}, {}}.Fail("combat catalogs require all nine named combat skills with category combat");
+            return eastl::unexpected(ContentError::InvalidData);
+        }
+    }
+    if (combat.empty()) { InstallBasicCombat(catalog.combatMoves_, catalog.combatStyles_); }
+    else {
+        eastl::sort(combat.begin(), combat.end(), [](const auto& a, const auto& b) { return a.id < b.id; });
+        for (const auto& entry : combat) {
+            if (entry.kind == "combat_move") { CombatMoveDefinition d; d.id = entry.id; catalog.combatMoves_.push_back(eastl::move(d)); }
+            else if (entry.kind == "combat_style") { CombatStyleDefinition d; d.id = entry.id; catalog.combatStyles_.push_back(eastl::move(d)); }
+            else if (entry.kind == "combat_art") { CombatArtDefinition d; d.id = entry.id; catalog.combatArts_.push_back(eastl::move(d)); }
+            else { AbilityDefinition d; d.id = entry.id; catalog.abilities_.push_back(eastl::move(d)); }
+        }
+        // Resolve moves before abilities, then reciprocal art/style links after all identities exist.
+        for (const char* kind : {"combat_move", "ability", "combat_style", "combat_art"}) {
+            for (const auto& entry : combat) {
+                if (entry.kind != kind) { continue; }
+                yyjson_alc allocator{JsonMalloc, JsonRealloc, JsonFree, nullptr};
+                Document document;
+                document.value = yyjson_read_opts(const_cast<char*>(entry.json.data()), entry.json.size(), 0, &allocator, nullptr);
+                if (!document.value) { std::abort(); }
+                auto* object = yyjson_doc_get_root(document.value);
+                bool valid = false;
+                if (entry.kind == "combat_move") { valid = ParseCombatMove(object, catalog.combatMoves_[catalog.FindCombatMove(View(entry.id)).value - 1], catalog, entry.context); }
+                else if (entry.kind == "ability") { valid = ParseAbility(object, catalog.abilities_[catalog.FindAbility(View(entry.id)).value - 1], catalog, entry.context); }
+                else if (entry.kind == "combat_style") { valid = ParseCombatStyle(object, catalog.combatStyles_[catalog.FindCombatStyle(View(entry.id)).value - 1], catalog, entry.context); }
+                else { valid = ParseCombatArt(object, catalog.combatArts_[catalog.FindCombatArt(View(entry.id)).value - 1], catalog, entry.context); }
+                if (!valid) { return eastl::unexpected(ContentError::InvalidData); }
+            }
+        }
+        if (!ValidateBasicCombat(catalog, Context{diagnostics, {}, {}})) { return eastl::unexpected(ContentError::InvalidData); }
+        for (std::size_t i = 0; i < catalog.combatArts_.size(); ++i) {
+            const auto artId = CombatArtId{static_cast<std::uint32_t>(i + 1)};
+            const auto& art = catalog.combatArts_[i];
+            bool starter = false;
+            for (auto styleId : art.styles) {
+                const auto& style = catalog.GetCombatStyle(styleId);
+                if (style.art != artId) { Context{diagnostics, {}, {}}.Fail("art/style ownership mismatch"); return eastl::unexpected(ContentError::InvalidData); }
+                for (auto weighted : style.moves) {
+                    const auto& move = catalog.GetCombatMove(weighted.move);
+                    if (move.trigger == CombatTrigger::Attack && !move.requirements.exhaustedOnly
+                        && !move.requirements.requiresOpening && move.unlock.artXp == 0 && move.unlock.skills.empty()) { starter = true; }
+                }
+            }
+            if (!starter) { Context{diagnostics, {}, {}}.Fail("art requires a usable ungated starter attack"); return eastl::unexpected(ContentError::InvalidData); }
+        }
+        for (std::size_t i = 0; i < catalog.combatStyles_.size(); ++i) {
+            const auto& style = catalog.combatStyles_[i];
+            if (style.art.value) {
+                bool owned = false;
+                for (auto id : catalog.GetCombatArt(style.art).styles) { if (id.value == i + 1) { owned = true; } }
+                if (!owned) { Context{diagnostics, {}, {}}.Fail("style missing from owning art"); return eastl::unexpected(ContentError::InvalidData); }
+            }
+            for (auto weighted : style.moves) {
+                if (!style.art.value && catalog.GetCombatMove(weighted.move).unlock.artXp) {
+                    Context{diagnostics, {}, {}}.Fail("art-XP-gated moves require a style with an owning art");
+                    return eastl::unexpected(ContentError::InvalidData);
+                }
+                for (const auto& ability : catalog.abilities_) {
+                    if (ability.sweepMove == weighted.move) { Context{diagnostics, {}, {}}.Fail("sweep-only move cannot be weighted"); return eastl::unexpected(ContentError::InvalidData); }
+                }
+            }
+        }
+    }
     eastl::sort(books.begin(), books.end(), [](const PendingBook& a, const PendingBook& b) { return a.definition.id < b.definition.id; });
     // Publish book identities before resolving carriers; recipe references resolve after recipes.
     for (const auto& book : books) { catalog.books_.push_back(book.definition); }
@@ -3083,6 +3298,14 @@ ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sourc
     catalog.items_.reserve(items.size());
     Vector<CachedArt> artCache;
     for (auto& item : items) {
+        if (item.definition.melee) {
+            item.definition.melee->handlingSkill = item.handlingSkill.empty() ? catalog.combatSkills_.melee : catalog.FindSkill(View(item.handlingSkill));
+            if (!item.handlingSkill.empty() && (!item.definition.melee->handlingSkill.value
+                || catalog.GetSkill(item.definition.melee->handlingSkill).category != SkillCategory::Combat)) {
+                item.context.Child("melee").Child("handling_skill").Fail("unknown combat handling skill");
+                return eastl::unexpected(ContentError::InvalidData);
+            }
+        }
         if (!ResolveItemFlags(item, catalog)) { return eastl::unexpected(ContentError::InvalidData); }
         for (std::size_t i = 0; i < item.books.size(); ++i) {
             const auto book = catalog.FindBook(View(item.books[i]));
@@ -3100,6 +3323,7 @@ ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sourc
         }
         catalog.items_.push_back(eastl::move(item.definition));
     }
+    catalog.corpseItem_ = catalog.FindItem("combat_corpse");
     if (!recipes.empty() || !recyclers.empty()) { catalog.unfinishedCraftItem_ = catalog.FindItem("unfinished_craft"); }
     eastl::sort(recipes.begin(), recipes.end(), [](const PendingCrafting& left, const PendingCrafting& right) {
         return left.definition.id < right.definition.id;
@@ -3172,6 +3396,17 @@ ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sourc
     catalog.definitions_.reserve(pending.size());
     for (auto& terrain : pending) { catalog.definitions_.push_back(eastl::move(terrain.definition)); }
     Vector<LootBounds> lootBounds;
+    for (auto& monster : spawns.monsters) {
+        monster.definition.combatStyle = catalog.FindCombatStyle(monster.combatStyle.empty() ? eastl::string_view("basic_balanced") : View(monster.combatStyle));
+        if (!monster.definition.combatStyle.value) {
+            monster.context.Child("combat_style").Fail("unknown combat style");
+            return eastl::unexpected(ContentError::InvalidData);
+        }
+        if (catalog.GetCombatStyle(monster.definition.combatStyle).art.value) {
+            monster.context.Child("combat_style").Fail("monster default style cannot require an ungranted art");
+            return eastl::unexpected(ContentError::InvalidData);
+        }
+    }
     if (!ResolveSpawns(spawns, catalog, catalog.lootPools_, catalog.monsters_, catalog.monsterGroups_, lootBounds)) {
         Context{diagnostics, {}, {}}.Fail("could not load content catalog");
         return eastl::unexpected(ContentError::InvalidData);

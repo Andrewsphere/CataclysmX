@@ -1,12 +1,72 @@
 # LAN networking API
 
-## Current protocol 19
+## Current protocol 21
 
-The current protocol constant is `0x43584e13`. Peers need matching updated builds
-and content; protocol 19 is incompatible with protocol 18. It adds observed object
-types to visible and remembered cells. Protocol 18 introduced owned player
-presentation, remote typed inspection and expanded authoritative input context.
+The current protocol constant is `0x43584e15`. Peers need matching updated builds
+and content; protocol 21 is incompatible with protocol 20. Protocol 20 introduced
+learning views and book study. Protocol 21 adds expanded combat and character
+lifecycle. Protocol 19 added observed object types; protocol 18 introduced owned
+player presentation, typed inspection and authoritative input context.
 See [network presentation](network_presentation.md) for the current contracts.
+
+### Expanded combat wire contract
+
+Commands append `EquipmentRequest` (u8 operation, u64 persistent item, u8 hand,
+u8 grip), u32 combat style ID, and `AbilityRequest` (u32 ability ID, u8 grant
+source kind, u32 source art ID, u8 target kind, u64 actor, three i32 tile
+coordinates in X/Z/Y order, u8 cardinal direction), followed by u32 art ID.
+The command enum includes equipment, style selection, ability use, art study,
+pause art study and fresh-character creation. These fields are always present.
+The codec and local submissions call the same `ValidCommandShape` admission
+function, requiring canonical unused fields for **all** commands, including
+historical commands. Innate ability sources have zero art;
+art sources require a nonzero art. Only the selected target branch may carry
+actor/tile/direction data. Hotkeys are client-local and are never serialized.
+
+Receipts append u8 `CombatRefusal` and accept outcomes through
+`character_created`. Player status appends u64 character ID and u8 life state.
+Inventory entries append boolean worn and u8 held-hand mask after the historical
+wielded/stackable flags. Worn/held entries must be direct inventory roots and
+cannot form interchangeable UI stacks.
+
+Both ordinary and inspection combat views carry catalog style ID, life state,
+inexhaustibility, stagger/focus durations, and expanded attack results (move ID,
+refusal, strike counts, actual HP loss). World views append character ID,
+`CombatInfoView` and combat events after learning. Combat info includes a full
+combat view, two held-item records, worn IDs, per-contact encumbrance, moves,
+source-qualified abilities and availability/cost/cooldowns, art XP and manual
+study progress. Events include all strike/defense/contact IDs and outcomes,
+block/armor absorption, incoming/post-protection damage, actual/max HP loss,
+disruption, death, action costs and learning metadata. No runtime handles cross
+the boundary.
+
+Each event appends a u64 session-local presentation `serial`, assigned by the
+server after outcome ordering. Published view histories require strictly
+increasing nonzero serials (gaps are legal); equal ticks are legal. Raw combat
+runner events may retain serial zero before publication. Serials are not save
+identities or simulation inputs. Each encoded history record is 133 bytes.
+
+Combat variable lists use u32 counts checked before iteration against the packet
+budget and their minimum encoded record size; worn items retain the 2048-entry
+inventory limit. There is no small fixed catalog limit on moves, grants, arts or
+manuals. Enum ranges, booleans, grant shapes, duplicate keys, unit ratios,
+remaining study work and resolved strike counts are checked. Effective costs
+are u32 values, including scaling, rather than being capped to authored costs.
+Catalog validation checks nested style/move/ability/art/book IDs, ability source
+grant membership, target kinds and manual book/art mappings before publication.
+Default/empty expanded views remain valid for existing fixture callers.
+
+`ContentFingerprint` hashes the canonical `WriteCombatContent(content)` object
+in addition to historical content. This includes equipment armor/grips, weighted
+moves/contacts/styles, abilities, art unlocks, manual study and combat bindings.
+Object members are hashed by sorted name and list ordering remains meaningful.
+
+The connection, input context and receipt player ID identify a stable **session**.
+`WorldView::characterId` and `PlayerStatus::character` identify its current actor;
+they may differ from the session ID after death and character replacement.
+`new_character` travels through the ordinary sequenced input path to
+`Server::Submit`, which owns its special lifecycle handling. Transport never
+creates a character or substitutes an actor ID for a session ID.
 
 ## Inventory protocol 17 history
 
@@ -14,7 +74,7 @@ Protocol 17 introduced commands with two canonical
 `ItemStorage` values (u8 kind, three i32 coordinates in X/Z/Y order, u64 ID).
 `wield_item` uses an explicit item ID or zero to unwield; `transfer_item` requires
 a nonzero item and exact source/destination. These two commands reject unused
-fields. Legacy commands preserve their prior unused-field behavior but reject
+fields. Historically, legacy commands preserved unused-field behavior but rejected
 nondefault source/destination fields. The
 connection remains the sole authority for the acting actor identity.
 

@@ -7,7 +7,7 @@
    flags:['tool','electrically_conductive','ferromagnetic','combustible','water_absorbent','opaque','rigid','porous','thermally_conductive'],
    art:'/art/items/claw_hammer/art.txt',
    tool_traits:[{id:'hammering',tier:1}],
-   melee:{damage:[{type:'blunt',amount:1200,penetration:0}],attack_cost:110,hands:1}},
+    melee:{damage:[{type:'blunt',amount:1200,penetration:0}],attack_cost:110,handling_skill:'clubs_hammers',grips:[{kind:'one_handed'}],block_capacity:250,allowed_responses:['parry','block']}},
   {type:'item', id:'glass_bottle', name:'empty glass bottle', mass_g:200, volume_ml:600,
    description:'An uncapped clear-glass bottle with a narrow neck and a half-liter interior. It holds small supplies, but the missing cap makes it a poor traveling flask.',
    flags:['container','brittle','transparent','rigid','electrically_insulating'],

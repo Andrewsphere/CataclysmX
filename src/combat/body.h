@@ -56,12 +56,13 @@ struct InjurySummary {
     bool transferredToCore = false;
     bool lostCapability = false;
     bool broken = false; // Newly broken by this injury.
-    bool defeated = false; // Simple Core only; detailed/player defeat is deferred.
+    bool defeated = false; // Head or Torso zero for detailed; Core zero for simple.
 };
 
 BodyState MakeBody(BodyKind kind);
 bool HasPart(BodyKind kind, BodyPart part);
 bool Functional(const BodyState& body, BodyPart part);
+bool BodyAlive(const BodyState& body);
 // Ordinary step cost: 100 healthy, 150 one disabled detailed leg, 200 crawling.
 std::uint32_t LocomotionBaseCost(const BodyState& body);
 // Detailed parts and simple Core have 100 HP; simple attached zones have 60.

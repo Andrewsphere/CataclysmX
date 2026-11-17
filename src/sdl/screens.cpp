@@ -7,6 +7,170 @@
 
 namespace cataclysmx::sdl {
 namespace {
+bool SameCombatChoice(const Command& a, const Command& b) {
+    return a.kind == b.kind && a.combatStyle == b.combatStyle && a.book == b.book && a.art == b.art
+        && a.ability.ability == b.ability.ability && a.ability.source == b.ability.source;
+}
+void TextLines(eastl::string_view text, Vector<String>& lines) {
+    std::size_t start = 0;
+    for (std::size_t i = 0; i <= text.size(); ++i) {
+        if (i == text.size() || text[i] == '\n') {
+            lines.push_back(String(text.data() + start, i - start)); start = i + 1;
+        }
+    }
+}
+}
+
+void CombatUi::Refresh(const ContentCatalog& content, const WorldView& view) {
+    if (pendingAbility_ && origin_ != view.player_position) {
+        pendingAbility_.reset(); feedback_ = "Player position changed; choose the ability target again.";
+    }
+    eastl::optional<Command> selection;
+    if (selected_ < rows_.size()) { selection = rows_[selected_].command; }
+    CollectCombatMenu(content, view, rows_);
+    selected_ = 0;
+    if (selection) {
+        for (std::size_t i = 0; i < rows_.size(); ++i) {
+            if (SameCombatChoice(*selection, rows_[i].command)) { selected_ = i; break; }
+        }
+    }
+}
+void CombatUi::MoveSelection(int delta) {
+    if (rows_.empty()) { return; }
+    selected_ = delta < 0 ? (selected_ + rows_.size() - 1) % rows_.size() : (selected_ + 1) % rows_.size();
+    feedback_.clear();
+}
+bool CombatUi::SelectHotkey(InputAction action, const ContentCatalog& content) {
+    const char* name = nullptr;
+    switch (action) {
+    case InputAction::FocusAbility: name = "focus"; break;
+    case InputAction::LeapAbility: name = "leap"; break;
+    case InputAction::SweepAbility: name = "sweep"; break;
+    default: return false;
+    }
+    const auto id = content.FindAbility(name);
+    // Menu order is the deterministic tie breaker among available grants.
+    for (std::size_t i = 0; i < rows_.size(); ++i) {
+        if (rows_[i].command.kind == CommandKind::use_ability && rows_[i].command.ability.ability == id && rows_[i].enabled) {
+            selected_ = i; feedback_.clear(); return true;
+        }
+    }
+    feedback_ = String(name) + " is not available. Inspect granted abilities and their refusal reasons below.";
+    return false;
+}
+bool CombatUi::BeginChoice(TileCoord origin) {
+    if (selected_ >= rows_.size()) { return false; }
+    const auto& row = rows_[selected_];
+    if (!row.enabled) { feedback_ = row.details; return false; }
+    feedback_.clear();
+    if (row.command.kind == CommandKind::use_ability) {
+        if (row.targeting != AbilityTargetKind::Self && row.targeting != AbilityTargetKind::Tile && row.targeting != AbilityTargetKind::CardinalDirection) {
+            feedback_ = "This ability's target selection is not supported."; return false;
+        }
+        pendingAbility_ = row.command; origin_ = origin;
+        if (row.targeting == AbilityTargetKind::Tile) { pendingAbility_->ability.target.tile = origin; }
+        pendingAbility_->ability.target.direction = CardinalDirection::North;
+    }
+    return true;
+}
+void CombatUi::MoveTarget(InputAction action) {
+    if (!pendingAbility_) { return; }
+    auto& target = pendingAbility_->ability.target;
+    if (target.kind == AbilityTargetKind::CardinalDirection) {
+        switch (action) {
+        case InputAction::North: target.direction = CardinalDirection::North; break;
+        case InputAction::East: target.direction = CardinalDirection::East; break;
+        case InputAction::South: target.direction = CardinalDirection::South; break;
+        case InputAction::West: target.direction = CardinalDirection::West; break;
+        default: break;
+        }
+        return;
+    }
+    int dx = 0, dz = 0;
+    switch (action) {
+    case InputAction::North: dz = -1; break;
+    case InputAction::South: dz = 1; break;
+    case InputAction::West: dx = -1; break;
+    case InputAction::East: dx = 1; break;
+    case InputAction::Northwest: dx = -1; dz = -1; break;
+    case InputAction::Northeast: dx = 1; dz = -1; break;
+    case InputAction::Southwest: dx = -1; dz = 1; break;
+    case InputAction::Southeast: dx = 1; dz = 1; break;
+    default: return;
+    }
+    target.tile.x = std::clamp(target.tile.x + dx, origin_.x - 2, origin_.x + 2);
+    target.tile.z = std::clamp(target.tile.z + dz, origin_.z - 2, origin_.z + 2);
+    target.tile.y = origin_.y;
+}
+eastl::optional<Command> CombatUi::Accept() {
+    const Command* choice = pendingAbility_ ? &*pendingAbility_ : selected_ < rows_.size() ? &rows_[selected_].command : nullptr;
+    if (!choice) { return {}; }
+    for (const auto& row : rows_) {
+        if (!SameCombatChoice(*choice, row.command)) { continue; }
+        if (!row.enabled) { feedback_ = row.details; return {}; }
+        if (!pendingAbility_ && row.command.kind == CommandKind::use_ability && row.targeting != AbilityTargetKind::Self) { return {}; }
+        if (pendingAbility_ && choice->ability.target.kind == AbilityTargetKind::Tile && choice->ability.target.tile == origin_) {
+            feedback_ = "Choose a landing tile away from the player."; return {};
+        }
+        return *choice;
+    }
+    feedback_ = "Combat choice changed; cancel and choose again."; return {};
+}
+void CombatUi::Present(ScreenFrame& frame) const {
+    frame.title = "Combat | Styles, abilities and art manuals";
+    frame.footer = "Up/Down choose | Enter accept | PgUp/PgDn details | Escape close";
+    if (Targeting()) {
+        frame.presentation = ScreenPresentation::Anchored;
+        const auto& target = pendingAbility_->ability.target;
+        if (target.kind == AbilityTargetKind::Tile) {
+            frame.title = "Leap | Preview landing"; frame.cursor = target.tile;
+            frame.highlights.push_back(target.tile);
+            frame.rows.push_back({"Move landing cursor within 2 tiles, same Y. Server checks landing on acceptance."});
+        } else {
+            frame.title = "Directional sweep | Preview three tiles";
+            int dx = 0, dz = 0;
+            switch (target.direction) {
+            case CardinalDirection::North: dz = -1; break;
+            case CardinalDirection::East: dx = 1; break;
+            case CardinalDirection::South: dz = 1; break;
+            case CardinalDirection::West: dx = -1; break;
+            }
+            frame.cursor = origin_;
+            for (int i = -1; i <= 1; ++i) {
+                frame.highlights.push_back({origin_.x + dx - dz * i, origin_.z + dz + dx * i, origin_.y});
+            }
+            frame.rows.push_back({"Choose one of four cardinal directions with arrows."});
+        }
+        frame.footer = "Arrows preview | Enter accept | Escape cancel target";
+    } else {
+        for (const auto& row : rows_) { frame.rows.push_back({row.label, !row.enabled}); }
+        frame.selected = rows_.empty() ? -1 : static_cast<int>(selected_);
+    }
+    if (!feedback_.empty()) { TextLines({feedback_.data(), feedback_.size()}, frame.details); }
+    if (selected_ < rows_.size()) {
+        const auto& details = rows_[selected_].details;
+        TextLines({details.data(), details.size()}, frame.details);
+    }
+}
+void PresentCombatInfo(const ContentCatalog& content, const WorldView& view, ScreenFrame& frame) {
+    frame.title = "Player combat information";
+    frame.scrollText = true;
+    const auto text = CombatDetailsText(content, view);
+    frame.rows.push_back({text});
+    frame.footer = "Up/Down / PgUp/PgDn scroll | Escape / Enter close";
+}
+void CombatEventCursor::Drain(const ContentCatalog& content, const WorldView& view,
+    std::uint64_t generation, Vector<String>& messages) {
+    messages.clear();
+    if (generation_ != generation) { generation_ = generation; serial_ = 0; }
+    for (const auto& event : view.combatEvents) {
+        if (event.serial <= serial_) { continue; }
+        serial_ = event.serial;
+        if (event.kind != CombatEventKind::ActionCommitted) { messages.push_back(CombatEventText(event, content)); }
+    }
+}
+
+namespace {
 constexpr InputContext contexts[] = {InputContext::Gameplay, InputContext::Interaction, InputContext::Menu,
     InputContext::Debug, InputContext::Items};
 constexpr SettingsField fields[] = {SettingsField::Language, SettingsField::ViewRadius,
@@ -248,6 +412,15 @@ bool DrawScreen(SDL_Renderer* renderer, SdlText& text, ScreenFrame& frame,
             }
         }
         if (!columns) { y += mapHeight + 8; }
+    } else if (frame.scrollText) {
+        String body;
+        for (const auto& row : frame.rows) { body += row.text; body += '\n'; }
+        if (!text.Draw(6, body.c_str(), -10000, -10000, normal, listWidth - 6)) { return false; }
+        const int maxScroll = std::max(0, (text.Height(6) - bodyHeight + lineHeight - 1) / lineHeight);
+        frame.scroll = std::clamp(frame.scroll, 0, maxScroll);
+        const SDL_Rect bodyClip{clip.x, y, listWidth, bodyHeight};
+        if (!SDL_SetRenderClipRect(renderer, &bodyClip)
+            || !text.Draw(6, body.c_str(), left + 8, y - frame.scroll * lineHeight, normal, listWidth - 6)) { return false; }
     } else {
         if (!text.Draw(7,"M",-100,-100,normal)) { return false; }
         const int rowHeight = std::max(24,text.Height(7) * 2 + 6);

@@ -34,11 +34,11 @@ ContentCatalog SightedContent() {
 }
 
 struct Rig {
-    ContentCatalog content = SightedContent();
-    World world{content};
+    ContentCatalog content;
+    World world;
     LoadRequest request;
 
-    Rig() {
+    explicit Rig(ContentCatalog fixture = SightedContent()) : content(eastl::move(fixture)), world(content) {
         request = Take(world.RequestChunks({{}, 0}, LoadMode::active));
         REQUIRE(world.ReconcileChunks());
         // Clear generated roofs explicitly: skylight is an input to detection.
@@ -353,12 +353,21 @@ TEST_CASE("Sighted pursuit retains paired stairs and records missing stair suppo
 }
 
 TEST_CASE("World executes sighted pursuit and commits an attack on an NPC", "[ai][sighted][world]") {
-    Rig rig;
+    auto content = SightedContent();
+    const auto moveId = content.FindCombatMove("basic_natural");
+    auto& move = const_cast<CombatMoveDefinition&>(content.GetCombatMove(moveId));
+    // Pursuit/execution coverage needs one nonlethal contact, independent of
+    // repertoire weights, intrinsic misses, defender reactions or native damage.
+    move.cost = {0, 100, 0}; move.strikes.resize(1);
+    move.strikes[0] = StrikeDefinition{}; move.strikes[0].intrinsicMiss = 0;
+    move.strikes[0].defenses = DefenseMask::None;
+    move.strikes[0].contacts = {{ContactRegion::Core, 1}};
+    move.strikes[0].damage = {{DamageType::Blunt, 100, 0}};
+    auto& style = const_cast<CombatStyleDefinition&>(content.GetCombatStyle(content.FindCombatStyle("basic_balanced")));
+    style.moves = {{moveId, 1}};
+    Rig rig(eastl::move(content));
     const auto self = rig.Create({2, 2}, CombatFaction::Undead);
     const auto target = rig.Create({6, 2}, CombatFaction::Survivors);
-    auto combat = rig.world.GetActor(self)->combat;
-    combat.accuracy = 100;
-    REQUIRE(rig.world.Combat().Configure(self, combat));
     REQUIRE(rig.world.SetActorController(self, AiControllerKind::Sighted));
     const auto targetId = rig.world.GetActor(target)->id;
     const auto initialBody = rig.world.GetActor(target)->combat.body;
@@ -396,13 +405,16 @@ TEST_CASE("World executes sighted pursuit and commits an attack on an NPC", "[ai
     const auto feedback = rig.world.Combat().Describe(self).feedback;
     CHECK_FALSE(feedback.incoming);
     CHECK(feedback.result.committed);
+    CHECK(feedback.result.moveId == moveId);
     CHECK(feedback.result.outcome == AttackOutcome::Hit);
     CHECK(feedback.result.target == targetId);
-    CHECK(feedback.result.injury > 0);
-    CHECK(feedback.result.cost > 0);
+    CHECK(feedback.result.injury == 1);
+    CHECK(feedback.result.cost == 100);
     CHECK(rig.world.GetActor(self)->actionDeadline.Remaining(rig.world.GetTick()) == feedback.result.cost);
     REQUIRE(rig.world.GetActor(target));
     CHECK(rig.world.GetActor(target)->combat.body != initialBody);
+    CHECK(rig.world.GetActor(target)->combat.body.parts[static_cast<unsigned>(BodyPart::Core)].hp ==
+        initialBody.parts[static_cast<unsigned>(BodyPart::Core)].hp - body_hp_scale);
     const auto received = rig.world.Combat().Describe(target).feedback;
     CHECK(received.incoming);
     CHECK(received.result.target == targetId);

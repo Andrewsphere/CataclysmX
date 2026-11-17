@@ -70,12 +70,20 @@ bool ValidateCombatState(const CombatState& state) {
     case CombatFaction::Undead: break;
     default: return false;
     }
-    return state.action.kind != ActorActionKind::MeleeWindup
+    return state.action.definitionDriven || state.action.kind != ActorActionKind::MeleeWindup
         || state.action.move == static_cast<std::uint32_t>(CombatMove::HeavyAttack);
 }
 
 DataObject CaptureCombatState(const CombatState& state) {
     if (!ValidateCombatState(state)) { std::abort(); }
+    CombatState legacy;
+    legacy.body = state.body; legacy.injury = state.injury;
+    legacy.action = {state.action.kind, state.action.target, state.action.move, state.action.recoveryTicks,
+        state.action.accuracyPenalty, state.action.weapon};
+    legacy.style = state.style; legacy.faction = state.faction; legacy.protection = state.protection;
+    legacy.attackDamage = state.attackDamage; legacy.accuracy = state.accuracy; legacy.stamina = state.stamina;
+    legacy.staminaElapsed = state.staminaElapsed; legacy.reactionCooldown = state.reactionCooldown; legacy.heavyCooldown = state.heavyCooldown;
+    if (legacy != state) { std::abort(); } // Expanded snapshots require the catalog overload.
     DataObject data;
     data.SetUnsigned("version", 2);
     DataObject body;

@@ -22,36 +22,28 @@
 
 ## Status and scope
 
-This document records the agreed next combat design. It is a design contract,
-not a claim that these systems are implemented. The implemented first melee slice
-is described in [combat API](../doc/combat_api.md),
-[combat presentation](../doc/combat_presentation.md), and
-[inventory/equipment](../doc/inventory_engine.md). Existing numerical defaults
-remain provisional. Examples below illustrate capabilities, not promised moves.
+The expanded melee core is implemented: authored weighted styles and moves, combat
+skills and arts, equipment and armor, abilities, death and character replacement.
+See [combat API](../doc/combat_api.md), [runtime](../doc/combat_runtime.md),
+[content](../doc/combat_content.md), [learning](../doc/combat_learning.md),
+[lifecycle](../doc/combat_lifecycle.md), and [presentation](../doc/combat_presentation.md)
+for current contracts. Numeric defaults and bounds are tunable, not claims of
+balance. Some examples below describe future possibilities rather than shipped moves.
 
 The first expanded version focuses on melee, including dual wielding, learned
-arts, skills, wearable armor, and manually activated abilities. Detailed firearms
-and exceptional MindOverMatter-style arts are later work. Gameplay and clarity
+arts, skills, wearable armor, and manually activated abilities. Detailed firearms,
+ranged precision, tall-creature cross-Y combat and exceptional arts are later work. Gameplay and clarity
 take priority over physical simulation. See [skills](SkillsDesign.md) for skill
 levels, books, practice, and recipe requirements, and
-[entity AI](EntityAIDesign.md) for intent production. Implemented API documentation
-belongs under `doc/`; this pass changes Markdown only.
+[entity AI](EntityAIDesign.md) for intent production.
 
 ### Implementation baseline and superseded decisions
 
-The existing engine already has shared melee resolution, weapon damage/cost/hand
-requirements, injury and recovery, windup disruption, explicit RNG, and saved
-pending actions. It still has one wielded-item reference, three hard-coded styles,
-highest-priority move selection, lowest-persistent-ID automatic targeting,
-guaranteed eligible parries, no ordinary-attack stamina cost, and numeric protection
-without worn armor. It has no character skill/art progression or human vital-part
-death rule.
-
-This design supersedes the earlier agreements to select moves without randomness,
-choose the oldest adjacent target, and defer the ordinary human death condition.
-Seeded reproducibility remains required. Weighted choices, equipment, skills, and
-death must be implemented explicitly before the runtime documentation describes
-them as available.
+The earlier slice used one wielded reference, fixed styles, priority selection and
+no human vital-part death. The expansion supersedes those choices: selection is
+weighted and seeded, equipment represents both hands and worn items, skills and
+arts progress, and vital injury triggers death. The legacy wielded reference is a
+compatibility projection; seeded reproducibility remains required.
 
 ## Goals and agreed direction
 
@@ -80,7 +72,8 @@ them as available.
 - Support physical damage types and environmental harm, with groundwork for
   status effects on both players and NPCs.
 - Ordinary human characters die when head or torso HP reaches zero, including
-  player characters and character NPCs. Post-death handling is separate work.
+  player characters and character NPCs; corpse and replacement handling preserve
+  the world.
 
 ## Combatants and control
 
@@ -121,9 +114,8 @@ small explicit state/facts over an unrestricted event-history or scripting syste
 There is one active style. Basic fighting styles are generally available; learned
 arts provide specialized repertoires. NPCs can use the same mechanisms with smaller
 or hidden repertoires. Changing style is a small paid action while ready; it does
-not rewrite a committed attack or refresh already spent cooldowns/openings. Exact
-switching cost and disposition of style-specific temporary effects remain tuning
-and transition details to specify.
+not rewrite a committed attack or refresh already spent cooldowns/openings. The
+authored switch cost defaults to 20 base ticks.
 
 ### Learning an art
 
@@ -131,7 +123,7 @@ Art acquisition is separate from ordinary skill-book benefits:
 
 - A manual permits repeated, time-consuming learning attempts. Failure does not
   consume the manual or permanently exhaust the character's opportunity to learn.
-- Learning is chance-based and depends on Melee skill. Display the chance and
+- Learning is chance-based with an authored combat-skill prerequisite. Display the chance and
   applicable prerequisites; roll once on completion of a valid study attempt,
   using simulation RNG. Inspection or cancellation does not grant another roll.
 - NPC teaching, character creation, and other authored sources can grant an art.
@@ -140,7 +132,7 @@ Art acquisition is separate from ordinary skill-book benefits:
 - Once learned, the art is known. Re-reading for acquisition does not repeatedly
   grant it or manufacture art XP. Manuals remain physical items.
 
-The reading duration, learning curve, and teacher costs still need content/tuning.
+Shipped manual durations and chances are authored defaults; teacher costs are future work.
 If an item also provides an ordinary skill-book benefit, that benefit follows the
 separate once-per-book rules in [skills](SkillsDesign.md#books-and-study).
 
@@ -191,16 +183,15 @@ different weapon into an already committed strike.
 
 Weights replace highest-priority-always-wins selection. Randomly breaking ties
 only within the highest priority would retain the repeated-move problem. Authored
-weights, conditional opportunities, and cooldowns shape the repertoire. Optional
-recent-use weight reductions can discourage repetition where appropriate; ordinary
+weights, conditional opportunities, and cooldowns shape the repertoire. Ordinary
 attacks may repeat. Random selection is not a guarantee of alternating moves.
 
 Order candidates by stable definition identity before drawing. Selection history
 that affects weights is authoritative state. Equivalent logical state, inputs,
 content, and RNG state must reproduce choices independently of runtime handles.
 Inspection, menu rendering, and eligibility queries do not consume selection RNG.
-Specify draw boundaries and integer sampling during implementation; probabilities
-and modifiers follow [ratioScale](../doc/ratios.md).
+The runtime defines draw boundaries; probabilities and modifiers follow
+[ratioScale](../doc/ratios.md).
 
 ### Target selection
 
@@ -237,9 +228,10 @@ costs continue to apply across them.
 Defenses are fallible. A normal bare-handed parry does not automatically negate
 every weapon attack. Incoming attacks declare which defense kinds can apply;
 melee defenses do not implicitly stop bullets, area effects, or self-only powers.
-Attack skill versus Dodge skill is part of dodge resolution. Exact contact and
-defense curves, response selection weights, and any intrinsic-miss stage remain
-to be specified together so the same defense is not counted twice.
+Attack skill versus Dodge skill is part of dodge resolution. Initial defense bases
+are 40/40/60%, with 5 percentage points per rating-level difference and a 5–90%
+clamp; intrinsic miss defaults to 5%. Ratings use hundredths. Authored weights
+choose eligible responses; values remain tunable.
 
 Committed attempts pay stamina and start their cooldown even when unsuccessful.
 Availability includes awareness, body function, equipment, resources, cooldowns,
@@ -263,8 +255,9 @@ A successful defense may grant a short-lived opening associated with the relevan
 opponent. A counter requires and consumes that opening once, along with its own
 resources, timing, and eligibility. Counterattacks do not generate further counter
 opportunities. This prevents recursive counter chains while retaining explicit
-out-of-turn attacks. Exact durations, costs, and ordering of simultaneous effects
-remain tuning/execution details.
+out-of-turn attacks. Immediate counters run after triggering contacts and
+follow-through; windup counters use the scheduler and overlap existing recovery.
+See [runtime](../doc/combat_runtime.md#execution-and-presentation).
 
 ## Active abilities
 
@@ -278,8 +271,9 @@ resource costs, cooldown/charges, effects, and interruption rules. Targeting can
 be self/no external target, actor, world object, terrain location, direction, or
 area as supported by the effect. Walls and trees need not be actor entities.
 
-- A separate abilities screen lists available actions and explains unavailable
-  ones. An ability can be bound to a world hotkey using stable ability identity.
+- A separate combat menu lists available actions and explains unavailable ones.
+  Configurable keys 4/5/6 resolve the stable starter names Focus, Leap and Sweep;
+  this is not a general arbitrary-ability binding editor.
 - Menu and hotkey activation invoke the same authoritative action and validation.
   AI can request the same action through its intent path.
 - Opening the menu, choosing a target, inspecting, or canceling before commitment
@@ -293,9 +287,9 @@ area as supported by the effect. Walls and trees need not be actor entities.
 
 Active abilities and automatic moves may reuse typed effects while preserving
 their distinct activation rules. Ability grants do not require implementing the
-whole bionics or mutation systems in the first melee expansion. Multiple grant
-sources, removal of a grant during windup, and source-specific cooldown ownership
-still need explicit identity/lifetime rules before those combinations ship.
+whole bionics or mutation systems in the first melee expansion. Grants retain their
+source identity and have independent source-specific cooldowns. See
+[combat learning](../doc/combat_learning.md#acquisition).
 
 ## Hands and equipment
 
@@ -324,7 +318,7 @@ can be selected on a later request.
 Furniture grabbing is an intentional convenience exception: actors may grab/move
 furniture while holding weapons. It does not require unequipping a loadout, and
 does not imply free hands for martial-art moves or other hand-gated actions. Exact
-equipment-action costs and compatibility rules remain to be authored.
+equipment-action rules are in [lifecycle](../doc/combat_lifecycle.md#equipment-mutations).
 
 ## Melee process and timing
 
@@ -379,9 +373,10 @@ Training can improve efficiency; equipment, grip, and encumbrance affect effort.
 The balance target is net expenditure: sustained ordinary fighting slowly drains
 stamina, heavy activity drains it faster, and rest restores it. A nominal attack
 cost that is always refunded during ordinary recovery would not achieve this.
-Regeneration during activity/rest and exhaustion penalties need explicit formulas
-and simulation measurements. Exhaustion reduces available options without making
-the character completely unable to act; the exact exhausted fallback is open.
+Combat locks regeneration through recovery; resting/working restores one stamina
+per 10 active ticks and moving restores half that rate. Exhaustion selects explicit
+zero-stamina fallback moves when no ordinary attack is affordable. Measurement and
+tuning remain useful; see [runtime](../doc/combat_runtime.md#stamina-and-training-policy).
 
 [Skills](SkillsDesign.md) influence contact, defenses, efficiency, bounded handling
 speed improvements, and move unlocks. Avoid unconstrained multiplicative growth
@@ -399,10 +394,9 @@ The existing detailed injury layout is head, torso, left and right hands, and le
 and right legs. Keep those coarse injury categories. Contact selection gains
 authored weights; the torso should be more likely than an individual extremity.
 
-Consider incoming attack reach: a short enemy such as a dwarf zombie or an angry
-fish may only reach the player's legs. Tall creatures may extend beyond a single
-Y layer. The body model needs to accommodate these interactions without requiring
-unnecessarily detailed anatomy.
+Reach profiles and authored region masks can restrict contact, for example to lower
+regions. Reach distance is bounded to two on the same Y layer; tall creatures
+attacking across Y layers remain future work.
 
 ### Separate contact, injury, and clothing
 
@@ -414,11 +408,11 @@ unnecessarily detailed anatomy.
 
 A glove protects its covered contact region, and injury maps to the appropriate
 injury pool. Coverage does not require an HP pool for every garment or anatomical
-detail. The exact initial contact-region list and sleeve/arm-to-hand injury
-mapping must be specified so a glove cannot accidentally protect a whole upper
-limb. Prefer coarse reach categories to detailed body geometry. Long-reach weapon
-identity is desired, but distances, obstruction rules, posture, and cross-Y-layer
-combat still need their own explicit rules.
+detail. Eyes, Mouth and Ears are distinct contacts sharing head HP; arms and hands
+share their corresponding hand pool, and feet share their corresponding leg pool.
+Coverage and encumbrance remain local, so a glove does not protect an entire arm.
+Long reach uses endpoint and obstruction checks; posture and cross-Y combat remain
+future work. See [runtime reach](../doc/combat_runtime.md#reach-and-setup-validation).
 
 ### Worn equipment and layers
 
@@ -442,14 +436,18 @@ special supported clothing behavior. Exemptions name what they bypass; bypassing
 layer overlap does not automatically remove intrinsic burden or rigid equipment
 incompatibility. Cloaks and zentai illustrate why special clothing needs support,
 not why all such items must ignore every equipment rule. A few explicit layers
-and exceptions are preferable to a large physical clothing simulation. Final
-layer names, overlap formula, and rigid-slot incompatibilities remain open.
+and exceptions are preferable to a large physical clothing simulation. Layers
+are under, normal, outer and strapped; same-layer intersecting rigid regions
+conflict even when overlap-exempt. See [content](../doc/combat_content.md#items-armor-manuals-monsters).
 
 Encumbrance has local, action-specific effects: hands/upper limbs affect handling,
 parries, and manipulation; torso burden affects attack effort and evasion; legs
 affect movement, dodging, and kicks. Avoid charging the same penalty again through
 both global speed and overlapping action modifiers. Inventory mass and equipment
-references count each physical item only once.
+references count each physical item only once. Eye burden is exposed locally for
+inspection; its effect on future shooting is not implemented. Movement starts
+with authored base cost (normally 100), applies the locomotion factor, then adds
+1% per ceiling-average leg/foot encumbrance unit before direction and speed.
 
 ### Protection resolution
 
@@ -466,9 +464,8 @@ references count each physical item only once.
 An attack can be stopped entirely by armor. A mixed blunt/slashing contact must
 not independently find a gap in the same garment for each damage component.
 Defensive blocking precedes this armor step and can leave damage to resolve here.
-Coverage correlation between overlapping garments and the exact block-reduction
-formula still need specification; the per-contact/per-component distinction above
-is settled.
+Each garment rolls independently; its result is shared across the contact's damage
+packets. The per-contact/per-component distinction prevents packet-count exploits.
 
 ### Simple NPC zones
 
@@ -523,9 +520,10 @@ death, not merely temporary incapacitation. This applies to players and characte
 NPCs. Losing a hand or leg alone is not the death condition. Natural limb recovery
 does not revive a dead character or restore a failed vital pool.
 
-This replaces the earlier deferral of the human death condition. Corpse creation,
-inventory disposition, player-session/death presentation, and other post-death
-consequences still need implementation design. Special anatomies or future effects
+This replaces the earlier deferral of the human death condition. At safe boundaries
+inventory trees transfer to a corpse; a dead player may create a fresh character
+in the same world, retaining the session while the old character and corpse remain.
+See [lifecycle](../doc/combat_lifecycle.md). Special anatomies or future effects
 must explicitly define any exception rather than inheriting human rules by accident.
 
 ### Temporary maximum HP reduction
@@ -599,10 +597,11 @@ Mechanical detail should remain compatible with straightforward routine inputs.
 
 ## Balance simulation
 
-Build a headless combat experiment runner early, using the real content, combat
-rules, and scheduler. It supplies automated inputs to the game simulation rather
-than copying combat formulas into a separate approximation. Headless execution
-already exists; the experiment runner and reports are planned work.
+The [headless combat experiment runner](../doc/combat_experiments.md) uses real
+content, combat rules and scheduler rather than an approximation. It provides
+duel, crowd, passive and attrition scenarios, fixed skill comparisons and CSV
+reports. Its fixed input policy is not optimal-play or balance proof; the broader
+experiment matrix below describes useful future comparisons.
 
 ### Scenarios and controlled variables
 
@@ -636,17 +635,14 @@ seeds do not promise identical random draws after different moves consume RNG.
 Export machine-readable summaries such as CSV and optional per-run event traces;
 last-interaction UI feedback alone is insufficient to explain a whole encounter.
 
-Human trials stop at the agreed head/torso death condition. Until implemented,
-the runner must identify any equivalent external stopping rule as a provisional
-benchmark condition, not claim that the current runtime already kills humans.
+Human trials stop at the implemented head/torso death condition.
 Report stalemates/timeouts rather than forcing a winner. Numeric targets and
 sample counts are tunable; simulated results do not replace playtesting controls
 and readability.
 
 ## Design acceptance scenarios
 
-These are design examples for later gameplay verification, not tests run during
-this Markdown pass.
+These design examples express intended gameplay behavior; they are not a test report.
 
 | Scenario | Expected outcome |
 | --- | --- |
@@ -668,24 +664,10 @@ this Markdown pass.
 
 ## Open questions
 
-The core policies above are agreed. Remaining choices are narrower but must be
-resolved before implementing their corresponding behavior:
-
-- Initial art/move/ability roster, weapon-handling families, thresholds, and costs.
-- Contact/defense curves, defensive-response selection, exact RNG draw boundaries,
-  move repetition weights, and simultaneous reaction/follow-through ordering.
-- Stamina regeneration during activity/rest and the exhausted-action fallback.
-- Equipment-action costs, supported grips, limb commitments, and style-effect
-  transitions on switching.
-- Contact-region mapping, hit weights, layer names, overlap penalties, rigid
-  incompatibilities, coverage correlation, and exact block absorption.
-- Long-reach targeting controls, distances, obstructions, posture, and cross-Y reach.
-- Additional enemy capability/defeat rules, absent versus attached disabled zones,
-  status stacking/immunity, and regeneration aids.
-- Manual learning durations/chance curve and teacher acquisition conditions.
-- Ability identity across multiple grant sources and grant removal during an action.
-- Post-death world/session handling and later firearm/special-art mechanics.
-
-Exact JSON schemas, C++ interfaces, saved-state migrations, network contracts, and
-UI layouts are implementation design work. This document does not introduce
-unsupported content fields or silently change existing public contracts.
+Core roster, costs, skill families, defense curves, local contacts, layers,
+equipment rules, manual attempts, source-specific cooldowns, and death/session
+handling have implemented contracts in the linked API pages. Remaining work is
+principally measurement and tuning of those defaults, broader content and activity
+coverage, future teacher acquisition, posture and cross-Y reach, additional anatomy
+and statuses, regeneration aids, firearms and exceptional arts. See
+[experiments](../doc/combat_experiments.md) for the current measurement scope.

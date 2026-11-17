@@ -66,7 +66,9 @@ String Hints(const Keymap& keys) {
         InputAction::Northwest, InputAction::Northeast, InputAction::Southwest, InputAction::Southeast,
         InputAction::MoveDown, InputAction::MoveUp, InputAction::Examine, InputAction::Settings, InputAction::Debug, InputAction::Wait, InputAction::PickUp,
         InputAction::Drop, InputAction::Interact, InputAction::Grab, InputAction::Attack, InputAction::StyleBalanced,
-        InputAction::StyleAggressive, InputAction::StyleDefensive, InputAction::Crafting, InputAction::Help, InputAction::Quit}) {
+        InputAction::StyleAggressive, InputAction::StyleDefensive, InputAction::CombatMenu, InputAction::CombatInfo,
+        InputAction::FocusAbility, InputAction::LeapAbility, InputAction::SweepAbility,
+        InputAction::Crafting, InputAction::Help, InputAction::Quit}) {
         text += BindingHint(keys, InputContext::Gameplay, action);
         text += " ";
         const auto name = ActionName(action);
@@ -197,6 +199,10 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
     bool inspectionNeeded = false;
     Vector<InteractionChoice> actions;
     Vector<CraftingMenuRow> craftingRows;
+    CombatUi combatUi;
+    CombatEventCursor combatEventCursor;
+    Vector<String> combatMessages;
+    eastl::optional<InputAction> combatHotkey;
     Vector<String> learningLines;
     eastl::optional<Command> craftingSelection;
     eastl::optional<std::uint64_t> craftingRequest;
@@ -284,7 +290,8 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
         const bool isCommand = request.kind == RequestKind::Command || request.kind == RequestKind::ResumeAndCommand
             || request.kind == RequestKind::ItemCommand;
         if (isCommand && commandPending) { return false; }
-        if (isCommand && (inputGeneration != snapshot.generation || !input.opportunity
+        const bool newCharacter = request.command.kind == CommandKind::new_character;
+        if (isCommand && (inputGeneration != snapshot.generation || (!input.opportunity && !newCharacter)
             || (snapshot.mode == SessionMode::Guest && snapshot.connectionState != network::ConnectionState::Active))) { return false; }
         request.generation = snapshot.generation; request.id = nextId;
         request.player = snapshot.view.playerId; request.opportunity = input.opportunity;
@@ -302,6 +309,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
         return accepted;
     };
     const auto close = [&] {
+        combatUi.CancelTarget(); combatHotkey.reset();
         itemBrowser.Close();
         heldKey.Reset();
         if (modal.Active() == Screen::Lan) { submit(RequestKind::StopDiscovery); }
@@ -429,6 +437,16 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             heldKey.Reset();
         }
     };
+    const auto acceptCombat = [&] {
+        combatUi.Refresh(content, snapshot.view);
+        if (const auto command = combatUi.Accept()) {
+            if (submit(RequestKind::ResumeAndCommand, *command)) {
+                combatUi.CancelTarget(); combatHotkey.reset();
+                modal.Closed(); frame.visible = false; heldKey.Reset();
+                SetMessage("Awaiting combat action admission...");
+            }
+        }
+    };
     const auto handleEvent = [&](const SDL_Event& event) {
         if (event.type == SDL_EVENT_QUIT || event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) { running = false; return; }
         if (event.type == SDL_EVENT_WINDOW_MINIMIZED) { minimized = true; animationDeadline.reset(); }
@@ -526,7 +544,8 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
         const auto context = modal.Active() == Screen::Debug ? InputContext::Debug
             : modal.CapturesInput() ? InputContext::Menu : InputContext::Gameplay;
         auto action = ResolveAction(keys, context, *chord);
-        if (modal.Active() == Screen::Examine || modal.Active() == Screen::Targets) {
+        if (modal.Active() == Screen::Examine || modal.Active() == Screen::Targets
+            || (modal.Active() == Screen::Combat && combatUi.Targeting())) {
             const auto gameAction = ResolveAction(keys,InputContext::Gameplay,*chord);
             if (gameAction == InputAction::Northwest || gameAction == InputAction::Northeast
                 || gameAction == InputAction::Southwest || gameAction == InputAction::Southeast
@@ -566,20 +585,37 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
         if (modal.Active() == Screen::Targets && (chord->key == "." || chord->key == "Home")) {
             cursor = snapshot.view.player_position; openActions(); return;
         }
-        if ((modal.Active() == Screen::Examine || modal.Active() == Screen::Help || modal.Active() == Screen::Actions || modal.Active() == Screen::Players)
+        if ((modal.Active() == Screen::Examine || modal.Active() == Screen::Help || modal.Active() == Screen::Actions || modal.Active() == Screen::Players
+            || modal.Active() == Screen::Combat || modal.Active() == Screen::CombatInfo)
             && ((chord->ctrl && (chord->key == "Up" || chord->key == "Down"))
                 || chord->key == "PageUp" || chord->key == "PageDown")) {
             const bool down = chord->key == "Down" || chord->key == "PageDown";
-            auto& scroll = modal.Active() == Screen::Actions ? frame.detailScroll : frame.scroll;
+            auto& scroll = modal.Active() == Screen::Actions || modal.Active() == Screen::Combat ? frame.detailScroll : frame.scroll;
             scroll = std::max(0,scroll + (down ? 1 : -1)); return;
         }
         if (!action) { return; }
         if (modal.Active() != Screen::None) {
             if (*action == InputAction::Cancel || (modal.Active() == Screen::Debug && *action == InputAction::Debug)) {
+                if (modal.Active() == Screen::Combat && combatUi.Targeting()) {
+                    combatUi.CancelTarget(); heldKey.Reset(); frame.detailScroll = 0; return;
+                }
                 if (modal.Active() == Screen::Actions) { modal.BackToTargets(frame.scroll); return; }
                 close(); return;
             }
-            if (modal.Active() == Screen::Players) {
+            if (modal.Active() == Screen::Combat) {
+                combatUi.Refresh(content, snapshot.view);
+                if (combatUi.Targeting()) {
+                    if (*action == InputAction::Accept) { acceptCombat(); }
+                    else { combatUi.MoveTarget(*action); }
+                } else if (*action == InputAction::North || *action == InputAction::South) {
+                    combatUi.MoveSelection(*action == InputAction::North ? -1 : 1); frame.detailScroll = 0;
+                } else if (*action == InputAction::Accept && combatUi.BeginChoice(snapshot.view.player_position)) {
+                    heldKey.Reset(); frame.detailScroll = 0;
+                    if (!combatUi.Targeting()) { acceptCombat(); }
+                }
+                return;
+            }
+            if (modal.Active() == Screen::Players || modal.Active() == Screen::CombatInfo) {
                 if (*action == InputAction::North || *action == InputAction::South) {
                     frame.scroll = std::max(0, frame.scroll + (*action == InputAction::South ? 1 : -1));
                 } else if (*action == InputAction::Accept) { close(); }
@@ -709,6 +745,17 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             return;
         }
         if (*action == InputAction::Quit || *action == InputAction::Cancel) { running = false; return; }
+        if (*action == InputAction::CombatMenu || *action == InputAction::CombatInfo
+            || *action == InputAction::FocusAbility || *action == InputAction::LeapAbility || *action == InputAction::SweepAbility) {
+            if (!snapshot.view.playerId || commandPending
+                || (snapshot.mode == SessionMode::Guest && snapshot.connectionState != network::ConnectionState::Active)) { return; }
+            combatUi = {}; combatHotkey.reset();
+            if (*action == InputAction::FocusAbility || *action == InputAction::LeapAbility || *action == InputAction::SweepAbility) { combatHotkey = *action; }
+            const auto screen = *action == InputAction::CombatInfo ? Screen::CombatInfo : Screen::Combat;
+            // Death removes readiness, but the session and its menu still exist.
+            if (submit(RequestKind::Pause)) { modal.BeginOpen(screen); }
+            heldKey.Reset(); return;
+        }
         if (!started || assetState != AssetState::Ready || !mapValid
             || (snapshot.mode == SessionMode::Guest && snapshot.connectionState != network::ConnectionState::Active)) { return; }
         if (*action == InputAction::Save) {
@@ -773,6 +820,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
         itemBrowser = ItemBrowser{}; browserRequest.reset();
         commandPending = false; choosingGrab = false;
         craftingRows.clear(); learningLines.clear(); craftingSelection.reset(); craftingRequest.reset(); craftingFeedback.clear();
+        combatUi = {}; combatHotkey.reset();
         actions.clear(); inspection.clear(); inspectionView = {}; inspectionItems.clear();
         inspectionValid = false; inspectedCursor.reset(); inspectionId.reset(); inspectionNeeded = false;
         candidateSettings.reset(); candidateText.reset(); settingsId.reset(); saveSettings = false; reloadSettings = false; multiplayerSettings = false;
@@ -800,7 +848,20 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
         const auto statusVersion = snapshot.statusVersion;
         const bool viewChanged = incoming.view.revision != snapshot.view.revision;
         const auto previousY = snapshot.view.origin.y;
+        const auto previousCharacter = snapshot.view.characterId;
         snapshot = eastl::move(incoming);
+        if (previousCharacter && snapshot.view.characterId != previousCharacter) {
+            combatUi = {}; combatHotkey.reset(); choosingGrab = false;
+            itemUi = {}; itemRequest.reset(); commandRequest.reset(); commandPending = false;
+            craftingSelection.reset(); craftingRequest.reset(); browserRequest.reset(); itemBrowser.Close();
+            modalRequest.reset(); modal.Closed(); frame = {}; initializeScreen = false;
+            inspectionId.reset(); inspectionNeeded = false; inspectionValid = false;
+            inspection.clear(); inspectionView = {}; inspectionItems.clear(); inspectedCursor.reset(); actions.clear();
+            SDL_StopTextInput(platform.window);
+            heldKey.Reset(); reconcileMenu = true;
+        }
+        combatEventCursor.Drain(content, snapshot.view, snapshot.generation, combatMessages);
+        for (auto& combatMessage : combatMessages) { SetMessage(eastl::move(combatMessage)); }
         multiplayerUi.Refresh(snapshot);
         snapshotGeneration = snapshot.generation;
         started |= snapshot.view.playerId != 0;
@@ -1069,6 +1130,14 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             initializeScreen = false; cursor = snapshot.view.player_position;
             if (localSmoke) { smokeModalTick = snapshot.view.tick; }
             frame.scroll = 0; frame.detailScroll = 0; inspection.clear(); inspectedCursor.reset();
+            if (modal.Active() == Screen::Combat) {
+                combatUi.Refresh(content, snapshot.view);
+                if (combatHotkey) {
+                    const auto hotkey = *combatHotkey; combatHotkey.reset();
+                    if (combatUi.SelectHotkey(hotkey, content) && combatUi.BeginChoice(snapshot.view.player_position)
+                        && !combatUi.Targeting()) { acceptCombat(); }
+                }
+            }
             if (modal.Active() == Screen::ItemInventory) { itemUi.Open(itemAdvanced, itemUse); }
             if (modal.Active() == Screen::Options) {
                 optionsUi.Open(store,snapshot.runtimeSettings,snapshot.mode == SessionMode::Guest);
@@ -1105,6 +1174,16 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
         if (modal.Active() == Screen::ItemInventory && !modal.Pending()) {
             const auto previous = itemUi.Frame().screen;
             itemUi.Refresh(snapshot.view, content, localization, keys);
+            const auto itemScreen = itemUi.Frame().screen;
+            if (itemScreen == ItemUiScreen::Inventory || itemScreen == ItemUiScreen::Advanced
+                || itemScreen == ItemUiScreen::Examine || itemScreen == ItemUiScreen::Actions) {
+                for (auto equipmentAction : {InputAction::HoldLeft, InputAction::HoldRight, InputAction::TwoHanded,
+                    InputAction::Regrip, InputAction::Wear, InputAction::RemoveWorn, InputAction::ReleaseHand}) {
+                    itemUi.Frame().footer += " | " + BindingHint(keys, InputContext::Items, equipmentAction) + " ";
+                    const auto name = ActionName(equipmentAction);
+                    itemUi.Frame().footer.append(name.data(), name.size());
+                }
+            }
             if (previous != itemUi.Frame().screen) { heldKey.Reset(); dirty = true; }
             const bool itemsReady = snapshot.menuOpen && (snapshot.mode == SessionMode::Local ? snapshot.paused
                 : (snapshot.mode == SessionMode::Host || snapshot.connectionState == network::ConnectionState::Active)
@@ -1544,9 +1623,12 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             frame.presentation = modal.Active() == Screen::Examine || modal.Active() == Screen::Targets || modal.Active() == Screen::Actions
                 ? ScreenPresentation::Anchored : ScreenPresentation::Large;
             frame.followCursor = modal.Active() == Screen::Examine;
+            frame.scrollText = false;
             frame.cursor.reset(); frame.highlights.clear(); frame.debugImage = nullptr;
             frame.rows.clear(); frame.details.clear(); frame.selected = -1;
             if (modal.Active() == Screen::Options) { optionsUi.Present(store,localization,frame); }
+            if (modal.Active() == Screen::Combat) { combatUi.Refresh(content, snapshot.view); combatUi.Present(frame); }
+            if (modal.Active() == Screen::CombatInfo) { PresentCombatInfo(content, snapshot.view, frame); }
             if (modal.Active() == Screen::Lan) {
                 multiplayerUi.Present(snapshot, lanRequest.has_value() || settingsId.has_value(), frame);
             }

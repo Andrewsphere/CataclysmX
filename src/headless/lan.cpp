@@ -1,12 +1,14 @@
 #include "headless/lan.h"
 #include "client/lan_profile.h"
 #include "client/text.h"
+#include "client/combat_menu.h"
 #include "network/network.h"
 
 #include <charconv>
 #include <chrono>
 #include <cstdio>
 #include <thread>
+#include <EASTL/array.h>
 
 namespace cataclysmx::headless {
 namespace {
@@ -22,8 +24,120 @@ bool Endpoint(const std::string& endpoint, std::string& address, std::uint16_t& 
     }
     return true;
 }
-bool ParseCommand(const std::string& text, Command& command) {
+template<class T> bool Number(eastl::string_view text, T& value) {
+    const auto parsed = std::from_chars(text.data(), text.data() + text.size(), value);
+    return !text.empty() && parsed.ec == std::errc{} && parsed.ptr == text.data() + text.size();
+}
+bool ParseCombatCommand(const std::string& text, const ContentCatalog& content, Command& command) {
+    eastl::array<eastl::string_view, 8> words{};
+    eastl::string_view remaining(text.data(), text.size());
+    std::size_t count = 0;
+    while (!remaining.empty()) {
+        const auto start = remaining.find_first_not_of(" \t\r");
+        if (start == eastl::string_view::npos) { break; }
+        remaining.remove_prefix(start);
+        const auto end = remaining.find_first_of(" \t\r");
+        if (count == words.size()) { return false; }
+        words[count++] = remaining.substr(0, end);
+        if (end == eastl::string_view::npos) { break; }
+        remaining.remove_prefix(end);
+    }
+    if (!count) { return false; }
+    const auto name = words[0];
+    if (name == "new-character" && count == 1) { command.kind = CommandKind::new_character; return true; }
+    if (name == "pause-art" && count == 1) { command.kind = CommandKind::pause_art_study; return true; }
+    if (name == "style" && count == 2 && words[1] != "balanced" && words[1] != "aggressive" && words[1] != "defensive") {
+        command.kind = CommandKind::select_combat_style;
+        if (!Number(words[1], command.combatStyle.value)) { command.combatStyle = content.FindCombatStyle(words[1]); }
+        return content.TryGetCombatStyle(command.combatStyle) != nullptr;
+    }
+    if (name == "study-art" && count == 3) {
+        command.kind = CommandKind::study_art;
+        if (!Number(words[1], command.book.value)) { command.book = content.FindBook(words[1]); }
+        if (!Number(words[2], command.art.value)) { command.art = content.FindCombatArt(words[2]); }
+        return content.TryGetBook(command.book) && content.TryGetCombatArt(command.art);
+    }
+    if ((name == "hold" && (count == 3 || count == 4)) || (name == "releasehand" && count == 2)
+        || (name == "regrip" && count == 3) || ((name == "wear" || name == "remove") && count == 2)) {
+        command.kind = CommandKind::equipment;
+        auto& request = command.equipment;
+        request.operation = name == "hold" ? EquipmentOperation::Hold : name == "releasehand" ? EquipmentOperation::Release
+            : name == "regrip" ? EquipmentOperation::Regrip : name == "wear" ? EquipmentOperation::Wear : EquipmentOperation::Remove;
+        if (name == "hold" || name == "wear" || name == "remove") {
+            if (!Number(words[1], request.item) || !request.item) { return false; }
+        }
+        if (name == "hold" || name == "releasehand" || name == "regrip") {
+            const auto hand = words[name == "hold" ? 2 : 1];
+            if (hand == "left") { request.hand = Hand::Left; }
+            else if (hand == "right") { request.hand = Hand::Right; }
+            else { return false; }
+        }
+        if ((name == "hold" && count == 4) || name == "regrip") {
+            const auto grip = words[name == "hold" ? 3 : 2];
+            if (grip == "two") { request.grip = GripKind::TwoHanded; }
+            else if (grip != "one") { return false; }
+        }
+        return true;
+    }
+    if (name != "use" || count < 2) { return false; }
+    const std::size_t idIndex = words[1] == "ability" ? 2 : 1;
+    if (count <= idIndex) { return false; }
+    command.kind = CommandKind::use_ability;
+    auto& request = command.ability;
+    if (!Number(words[idIndex], request.ability.value)) { request.ability = content.FindAbility(words[idIndex]); }
+    if (!content.TryGetAbility(request.ability)) { return false; }
+    const std::size_t targetIndex = idIndex + 1;
+    if (count == targetIndex || (count == targetIndex + 1 && words[targetIndex] == "self")) {
+        request.target.kind = AbilityTargetKind::Self;
+    } else if (count == targetIndex + 3 && words[targetIndex] == "tile") {
+        request.target.kind = AbilityTargetKind::Tile;
+        if (!Number(words[targetIndex + 1], request.target.tile.x) || !Number(words[targetIndex + 2], request.target.tile.z)) { return false; }
+    } else if (count == targetIndex + 1) {
+        request.target.kind = AbilityTargetKind::CardinalDirection;
+        const auto direction = words[targetIndex];
+        if (direction == "north") { request.target.direction = CardinalDirection::North; }
+        else if (direction == "east") { request.target.direction = CardinalDirection::East; }
+        else if (direction == "south") { request.target.direction = CardinalDirection::South; }
+        else if (direction == "west") { request.target.direction = CardinalDirection::West; }
+        else { return false; }
+    } else { return false; }
+    return true;
+}
+bool BindAbility(Command& command, const WorldView& view, const ContentCatalog& content) {
+    if (command.kind != CommandKind::use_ability) { return true; }
+    const AbilityView* selected = nullptr;
+    for (const auto& ability : view.combatInfo.abilities) {
+        if (ability.ability != command.ability.ability) { continue; }
+        if (!selected || static_cast<unsigned>(ability.source.kind) < static_cast<unsigned>(selected->source.kind)
+            || (ability.source.kind == AbilityGrantSourceKind::Art && selected->source.kind == AbilityGrantSourceKind::Art
+                && content.GetCombatArt(ability.source.art).id < content.GetCombatArt(selected->source.art).id)) { selected = &ability; }
+    }
+    if (!selected) { std::fputs("Ability has no grant in the current character snapshot\n", stderr); return false; }
+    command.ability.source = selected->source;
+    if (command.ability.target.kind == AbilityTargetKind::Tile) { command.ability.target.tile.y = view.player_position.y; }
+    return true;
+}
+void PrintCombat(const WorldView& view, const ContentCatalog& content, eastl::string_view inspection) {
+    if (inspection == "combat") { std::puts(CombatDetailsText(content, view).c_str()); }
+    Vector<CombatMenuEntry> rows;
+    CollectCombatMenu(content, view, rows);
+    for (const auto& row : rows) {
+        if (inspection == "styles" && row.command.kind != CommandKind::select_combat_style) { continue; }
+        if (inspection == "abilities" && row.command.kind != CommandKind::use_ability) { continue; }
+        if (row.command.kind == CommandKind::select_combat_style) {
+            std::printf("style %s\n", content.GetCombatStyle(row.command.combatStyle).id.c_str());
+        } else if (row.command.kind == CommandKind::use_ability) {
+            std::printf("ability %s\n", content.GetAbility(row.command.ability.ability).id.c_str());
+        }
+        std::printf("%s%s\n%s\n", row.enabled ? "" : "[unavailable] ", row.label.c_str(), row.details.c_str());
+    }
+}
+bool ParseCommand(const std::string& text, const ContentCatalog& content, Command& command) {
     if (ParseItemCommand({text.data(), text.size()}, command)) { return true; }
+    // Item syntax is tried first to retain `use ITEM_ID ACTION` compatibility.
+    command = {};
+    if (ParseCombatCommand(text, content, command)) { return true; }
+    command = {};
     if (text == "wait") { command.kind = CommandKind::wait; return true; }
     if (text == "pickup") { command.kind = CommandKind::pick_up; return true; }
     if (text == "drop") { command.kind = CommandKind::drop; return true; }
@@ -71,11 +185,13 @@ int RunLan(Server& server, const ContentCatalog& content, const LanOptions& opti
     std::string address;
     std::uint16_t remotePort = 0;
     if (!options.join.empty() && !Endpoint(options.join, address, remotePort, options.port)) { return 2; }
-    Vector<Command> commands;
+    struct PlannedCommand { Command command; String inspection; };
+    Vector<PlannedCommand> commands;
     for (const auto& text : options.commands) {
+        if (text == "combat" || text == "styles" || text == "abilities") { commands.push_back({{}, text.c_str()}); continue; }
         Command command;
-        if (!ParseCommand(text, command)) { std::fprintf(stderr, "Invalid LAN command: %s\n", text.c_str()); return 2; }
-        commands.push_back(command);
+        if (!ParseCommand(text, content, command)) { std::fprintf(stderr, "Invalid LAN command: %s\n", text.c_str()); return 2; }
+        commands.push_back({command, {}});
     }
     auto runtime = network::NetworkRuntime::Create();
     if (!runtime) { std::fprintf(stderr, "LAN runtime: %s\n", network::NetworkErrorMessage(runtime.error())); return 1; }
@@ -126,7 +242,15 @@ int RunLan(Server& server, const ContentCatalog& content, const LanOptions& opti
         last = now;
         if (options.host) {
             // Queue one new command per poll; every input shares the authoritative host pipeline.
-            if (sent == resolved && sent < commands.size()) { std::printf("submitted sequence=%llu\n", static_cast<unsigned long long>(host.QueueLocal(commands[sent++]))); }
+            while (sent == resolved && sent < commands.size() && !commands[sent].inspection.empty()) {
+                PrintCombat(server.View(0), content, commands[sent].inspection); ++sent; ++resolved;
+            }
+            if (sent == resolved && sent < commands.size()) {
+                auto command = commands[sent].command;
+                if (!BindAbility(command, server.View(0), content)) { return 2; }
+                ++sent;
+                std::printf("submitted sequence=%llu\n", static_cast<unsigned long long>(host.QueueLocal(command)));
+            }
             auto update = host.Pump(static_cast<std::uint64_t>(elapsed));
             for (const auto& receipt : update.commandResults) {
                 if (receipt.player == server.GetHostPlayerId() && receipt.result.outcome != Outcome::queued) { ++resolved; }
@@ -169,8 +293,13 @@ int RunLan(Server& server, const ContentCatalog& content, const LanOptions& opti
                     client.View().player_position.x, client.View().player_position.z, client.View().player_position.y,
                     static_cast<unsigned long long>(client.View().tick));
             }
+            while (accepted && sent == resolved && sent < commands.size() && !commands[sent].inspection.empty()) {
+                PrintCombat(client.View(), content, commands[sent].inspection); ++sent; ++resolved;
+            }
             if (accepted && sent == resolved && sent < commands.size()) {
-                auto submitted = client.Submit(commands[sent]);
+                auto command = commands[sent].command;
+                if (!BindAbility(command, client.View(), content)) { return 2; }
+                auto submitted = client.Submit(command);
                 if (!submitted) { std::fprintf(stderr, "Submit: %s\n", network::NetworkErrorMessage(submitted.error())); return 1; }
                 ++sent;
                 std::printf("submitted sequence=%llu\n", static_cast<unsigned long long>(*submitted));

@@ -6,8 +6,10 @@
    tool_traits:[{id:'house_cutting', tier:1}]},
   {type:'item', id:'electrical_cord', name:'electrical cord', mass_g:300, volume_ml:500, flags:['obsolete']},
   {type:'item', id:'work_shirt', name:'work shirt', mass_g:300, volume_ml:1200,
+    armor:{layer:'normal',regions:[{region:'torso',encumbrance:2},{region:'left_arm',encumbrance:2},{region:'right_arm',encumbrance:2}],protection:{blunt:70,slashing:100}},
    description:'A heavy cotton work shirt with a button front and two chest pockets. The faded company patch has outlasted the company.',
    flags:['clothing','combustible','water_absorbent','flexible','opaque','porous','electrically_insulating'],
    art:'/art/items/work_shirt/art.txt'},
-  {type:'item', id:'work_trousers', name:'work trousers', mass_g:500, volume_ml:1800, flags:['obsolete']},
+  {type:'item', id:'work_trousers', name:'work trousers', mass_g:500, volume_ml:1800, flags:['obsolete'],
+   armor:{layer:'normal',regions:[{region:'left_leg',encumbrance:2},{region:'right_leg',encumbrance:2}],protection:{blunt:70,slashing:100}}},
 ]}

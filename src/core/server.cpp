@@ -170,7 +170,11 @@ void AppendItemTreeDescription(const World& world, ActorHandle actor, ItemHandle
     InventoryEntry entry{item->id, item->type, static_cast<unsigned int>(item->contents.size())};
     entry.storage = world.GetItemStorage(handle);
     entry.wielded = world.GetActor(actor)->wieldedItem == handle;
-    entry.stackable = !entry.wielded && !item->location.installation.value && item->contents.empty() && !definition.unfinishedCraft
+    const auto& equipment = world.GetActor(actor)->equipment;
+    entry.worn = eastl::find(equipment.worn.begin(), equipment.worn.end(), handle) != equipment.worn.end();
+    entry.heldHands = static_cast<HandMask>((equipment.hands[0].item == handle ? 1 : 0)
+        | (equipment.hands[1].item == handle ? 2 : 0));
+    entry.stackable = !entry.worn && entry.heldHands == HandMask::None && !item->location.installation.value && item->contents.empty() && !definition.unfinishedCraft
         && definition.capabilities.empty();
     if (item->location.kind == LocationKind::item) {
         entry.parent = world.GetItem(item->location.item)->id;
@@ -215,11 +219,17 @@ Outcome MovementFailure(WorldError error) {
 
 bool Ready(const World& world, ActorHandle handle) {
     const auto* actor = world.GetActor(handle);
-    return actor && !actor->actionDeadline.suspended
+    return actor && world.IsActorAlive(handle) && !actor->parked && !actor->actionDeadline.suspended
         && actor->combat.action.kind == ActorActionKind::None && world.GetActorRemainingTicks(handle) == 0;
 }
 
 bool ActiveWorkInterrupt(const World& world, ActorHandle actor, const Command& command) {
+    if (!world.IsActorAlive(actor)) { return false; }
+    if (command.kind == CommandKind::pause_art_study) {
+        const auto* worker = world.GetActor(actor);
+        return worker->characterCombat && eastl::any_of(worker->characterCombat->manuals.begin(),
+            worker->characterCombat->manuals.end(), [](const ManualAttemptProgress& attempt) { return attempt.active; });
+    }
     if (command.kind == CommandKind::pause_study) {
         const auto* worker = world.GetActor(actor);
         const auto remaining = world.Learning().ActorEventIn(actor);
@@ -279,7 +289,10 @@ CommandResult CraftingCommand(World& world, ActorHandle actor, const Command& co
     default: return result;
     }
     result.advanced = used->outcome == CraftingOutcome::Started || used->outcome == CraftingOutcome::Resumed;
-    if (result.advanced) { result.cost = world.GetActorRemainingTicks(actor); }
+    if (result.advanced) {
+        result.cost = world.GetActorRemainingTicks(actor);
+        Require(world.SetActorExertion(actor, ExertionKind::Working).has_value());
+    }
     world.UpdatePlayerObservations();
     return result;
 }
@@ -304,6 +317,76 @@ Outcome CombatOutcome(AttackOutcome outcome) {
 }
 
 bool ValidCommandShape(const Command& command) {
+    // Every unused field is canonical, including historical command fields.
+    // Transport and local submissions share this admission policy; catalog,
+    // ownership and ability-grant authority are checked at execution.
+    const auto kind = command.kind;
+    const bool direction = kind == CommandKind::move || kind == CommandKind::interact
+        || kind == CommandKind::grab || kind == CommandKind::use_item;
+    const bool item = kind == CommandKind::pick_up || kind == CommandKind::drop
+        || kind == CommandKind::use_item || kind == CommandKind::store_item
+        || kind == CommandKind::wield_item || kind == CommandKind::transfer_item
+        || (kind >= CommandKind::recycle && kind <= CommandKind::cancel_craft);
+    if ((!direction && (command.dx || command.dz || command.dy))
+        || (!item && command.item)
+        || (kind != CommandKind::wait && command.waitCost != ticks_per_turn)
+        || (kind != CommandKind::use_item && (command.capability.value || !command.itemAction.empty()))
+        || (kind != CommandKind::use_item && kind != CommandKind::store_item && command.otherItem)
+        || (kind != CommandKind::attack && command.target)
+        || (kind != CommandKind::combat_style && command.style != CombatStyle::Balanced)
+        || (kind != CommandKind::interact_action && command.interaction != InteractionRequest{})
+        || (kind != CommandKind::craft && command.recipe.value)
+        || (kind != CommandKind::transfer_item && (command.source != ItemStorage{} || command.destination != ItemStorage{}))
+        || (kind != CommandKind::study_book && kind != CommandKind::study_art && command.book.value)
+        || (kind != CommandKind::equipment && command.equipment != EquipmentRequest{})
+        || (kind != CommandKind::select_combat_style && command.combatStyle.value)
+        || (kind != CommandKind::use_ability && command.ability != AbilityRequest{})
+        || (kind != CommandKind::study_art && command.art.value)) { return false; }
+    if (command.kind >= CommandKind::equipment && command.kind <= CommandKind::new_character) {
+        if (command.dx || command.dz || command.dy || command.item || command.waitCost != ticks_per_turn
+            || command.capability.value || !command.itemAction.empty() || command.otherItem || command.target
+            || command.style != CombatStyle::Balanced || command.interaction != InteractionRequest{}
+            || command.recipe.value || command.source != ItemStorage{} || command.destination != ItemStorage{}) { return false; }
+        if (command.kind != CommandKind::equipment && command.equipment != EquipmentRequest{}) { return false; }
+        if (command.kind != CommandKind::select_combat_style && command.combatStyle.value) { return false; }
+        if (command.kind != CommandKind::use_ability && command.ability != AbilityRequest{}) { return false; }
+        if (command.kind != CommandKind::study_art && (command.book.value || command.art.value)) { return false; }
+        switch (command.kind) {
+        case CommandKind::equipment: {
+            const auto& request = command.equipment;
+            if (request.operation > EquipmentOperation::Remove || request.hand > Hand::Right || request.grip > GripKind::TwoHanded) { return false; }
+            switch (request.operation) {
+            case EquipmentOperation::Hold: return request.item != 0;
+            case EquipmentOperation::Release: return !request.item && request.grip == GripKind::OneHanded;
+            case EquipmentOperation::Regrip: return !request.item;
+            case EquipmentOperation::Wear:
+            case EquipmentOperation::Remove: return request.item && request.hand == Hand::Left && request.grip == GripKind::OneHanded;
+            }
+            return false;
+        }
+        case CommandKind::select_combat_style: return command.combatStyle.value != 0;
+        case CommandKind::use_ability: {
+            const auto& request = command.ability;
+            if (!request.ability.value || request.source.kind > AbilityGrantSourceKind::Innate
+                || (request.source.kind == AbilityGrantSourceKind::Art ? !request.source.art.value : request.source.art.value != 0)) { return false; }
+            const auto& target = request.target;
+            if (target.direction > CardinalDirection::West) { return false; }
+            switch (target.kind) {
+            case AbilityTargetKind::Self: return !target.actor && target.tile == TileCoord{} && target.direction == CardinalDirection::North;
+            case AbilityTargetKind::Actor: return target.actor && target.tile == TileCoord{} && target.direction == CardinalDirection::North;
+            case AbilityTargetKind::Tile: return !target.actor && ValidPosition(target.tile) && target.direction == CardinalDirection::North;
+            case AbilityTargetKind::CardinalDirection: return !target.actor && target.tile == TileCoord{};
+            }
+            return false;
+        }
+        case CommandKind::study_art: return command.book.value && command.art.value;
+        case CommandKind::pause_art_study:
+        case CommandKind::new_character: return true;
+        default: return false;
+        }
+    }
+    if (command.equipment != EquipmentRequest{} || command.combatStyle.value
+        || command.ability != AbilityRequest{} || command.art.value) { return false; }
     if (command.kind == CommandKind::study_book || command.kind == CommandKind::pause_study) {
         return command.dx == 0 && command.dz == 0 && command.dy == 0 && command.item == 0
             && command.waitCost == ticks_per_turn && command.capability.value == 0
@@ -322,8 +405,7 @@ bool ValidCommandShape(const Command& command) {
                 ? command.source == ItemStorage{} && command.destination == ItemStorage{}
                 : command.item != 0 && ValidItemStorage(command.source) && ValidItemStorage(command.destination));
     }
-    // Legacy commands retain their established treatment of unused legacy
-    // fields; only the newly introduced storage fields must stay default.
+    // Historical semantic checks follow the common canonical-field checks.
     if (command.source != ItemStorage{} || command.destination != ItemStorage{}) { return false; }
     if (command.style > CombatStyle::Defensive) { return false; }
     if (command.kind >= CommandKind::craft && command.kind <= CommandKind::cancel_craft) {
@@ -367,6 +449,13 @@ bool ValidCommandShape(const Command& command) {
 
 const char* OutcomeMessage(Outcome outcome) {
     switch (outcome) {
+    case Outcome::equipment_changed: return "You adjust your equipment.";
+    case Outcome::ability_used: return "You use the ability.";
+    case Outcome::combat_refused: return "You cannot perform that combat action.";
+    case Outcome::art_study_started: return "You start studying the combat art.";
+    case Outcome::art_study_paused: return "You pause studying the combat art.";
+    case Outcome::character_dead: return "Your character is dead.";
+    case Outcome::character_created: return "You begin with a fresh character.";
     case Outcome::study_started: return "You start studying.";
     case Outcome::study_paused: return "You pause studying after the funded work finishes.";
     case Outcome::study_refused: return "You cannot study that book.";
@@ -672,7 +761,36 @@ CommandResult Server::Execute(ActorHandle handle, PlayerSlot& slot, Command comm
     Require(actor != nullptr);
     const TileCoord position = actor->position;
     const auto failed = [this](Outcome outcome) { return CommandResult{outcome, false, GetTick()}; };
+    if (!world_.IsActorAlive(handle)) { return failed(Outcome::character_dead); }
     if (!Ready(world_, handle) && !ActiveWorkInterrupt(world_, handle, command)) { return failed(Outcome::not_ready); }
+    if (command.kind == CommandKind::select_combat_style || command.kind == CommandKind::combat_style) {
+        const auto style = command.kind == CommandKind::select_combat_style ? command.combatStyle
+            : world_.GetContent().FindCombatStyle(command.style == CombatStyle::Aggressive ? "basic_aggressive"
+                : command.style == CombatStyle::Defensive ? "basic_defensive" : "basic_balanced");
+        const auto changed = world_.Combat().ChangeStyle(handle, style);
+        auto result = failed(changed.committed ? Outcome::combat_style_changed : Outcome::combat_refused);
+        result.advanced = changed.committed; result.cost = changed.cost; result.combatReason = changed.reason;
+        return result;
+    }
+    if (command.kind == CommandKind::use_ability) {
+        const auto used = world_.Combat().UseAbility(handle, command.ability, rng_state_);
+        world_.FinalizeActorDeaths();
+        auto result = failed(used.committed ? Outcome::ability_used : Outcome::combat_refused);
+        result.advanced = used.committed; result.cost = used.cost; result.combatReason = used.reason;
+        if (used.committed) { world_.UpdatePlayerObservations(); }
+        return result;
+    }
+    if (command.kind == CommandKind::study_art) {
+        const auto used = world_.Combat().StudyArt(handle, {command.book, command.art});
+        auto result = failed(used.committed ? Outcome::art_study_started : Outcome::combat_refused);
+        result.advanced = used.committed; result.cost = used.committed ? world_.GetActorRemainingTicks(handle) : 0;
+        result.combatReason = used.reason;
+        if (used.committed) { Require(world_.SetActorExertion(handle, ExertionKind::Working).has_value()); }
+        return result;
+    }
+    if (command.kind == CommandKind::pause_art_study) {
+        return failed(world_.Combat().PauseArtStudy(handle) ? Outcome::art_study_paused : Outcome::combat_refused);
+    }
     if (command.kind == CommandKind::study_book || command.kind == CommandKind::pause_study) {
         const auto used = command.kind == CommandKind::study_book
             ? world_.Learning().Study(handle, command.book) : world_.Learning().PauseStudy(handle);
@@ -680,6 +798,7 @@ CommandResult Server::Execute(ActorHandle handle, PlayerSlot& slot, Command comm
         if (!used) { return result; }
         result.studyOutcome = used->outcome;
         if (used->outcome == StudyOutcome::Started) {
+            Require(world_.SetActorExertion(handle, ExertionKind::Working).has_value());
             result.outcome = Outcome::study_started;
             result.advanced = true;
             result.cost = world_.GetActorRemainingTicks(handle);
@@ -693,9 +812,11 @@ CommandResult Server::Execute(ActorHandle handle, PlayerSlot& slot, Command comm
     }
     const auto attack = [this, handle](ActorHandle target) {
         const auto result = world_.Combat().Attack(handle, target, rng_state_);
+        world_.FinalizeActorDeaths();
         if (result.committed) { world_.UpdatePlayerObservations(); }
         CommandResult command{CombatOutcome(result.outcome), result.committed, GetTick()};
         command.cost = result.cost;
+        command.combatReason = result.reason;
         return command;
     };
     Outcome outcome = Outcome::invalid_command;
@@ -723,14 +844,32 @@ CommandResult Server::Execute(ActorHandle handle, PlayerSlot& slot, Command comm
         return result;
     }
     case CommandKind::attack: {
-        const auto target = command.target ? world_.FindActor(command.target) : world_.Combat().FindTarget(handle);
+        const auto target = command.target ? world_.FindActor(command.target) : world_.Combat().ChooseAdjacentTarget(handle, rng_state_);
         const auto* other = world_.GetActor(target);
         if (!other || !world_.CanPlayerSee(handle, other->position)) { return failed(Outcome::no_target); }
         return attack(target);
     }
-    case CommandKind::combat_style:
-        if (!world_.Combat().SetStyle(handle, command.style)) { return failed(Outcome::invalid_command); }
-        return {Outcome::combat_style_changed, false, GetTick()};
+    case CommandKind::equipment: {
+        const auto& request = command.equipment;
+        const auto item = world_.FindItem(request.item);
+        const auto query = world_.QueryEquipment(handle, request);
+        if (query.reason != CombatRefusal::None) {
+            auto result = failed(Outcome::combat_refused); result.combatReason = query.reason; return result;
+        }
+        InventoryResult changed;
+        switch (request.operation) {
+        case EquipmentOperation::Hold: changed = world_.HoldItem(handle, item, request.hand, request.grip); break;
+        case EquipmentOperation::Release: changed = world_.ReleaseHand(handle, request.hand); break;
+        case EquipmentOperation::Regrip: changed = world_.RegripItem(handle, request.hand, request.grip); break;
+        case EquipmentOperation::Wear: changed = world_.WearItem(handle, item); break;
+        case EquipmentOperation::Remove: changed = world_.RemoveWornItem(handle, item); break;
+        }
+        if (changed.outcome != InventoryOutcome::Succeeded) {
+            auto result = failed(Outcome::inventory_refused); result.inventoryOutcome = changed.outcome; return result;
+        }
+        baseCost = static_cast<std::uint32_t>(changed.baseCost); outcome = Outcome::equipment_changed;
+        break;
+    }
     case CommandKind::wield_item:
     case CommandKind::transfer_item: {
         const auto selected = world_.FindItem(command.item);
@@ -807,7 +946,7 @@ CommandResult Server::Execute(ActorHandle handle, PlayerSlot& slot, Command comm
             outcome = Outcome::opened;
             break;
         }
-        baseCost = ActorStepBaseCost(LocomotionBaseCost(actor->combat.body),
+        baseCost = ActorStepBaseCost(world_.ActorMovementBaseCost(handle),
             {command.dx, command.dz, command.dy});
         // Validate the complete future bubble before acquiring any demand.
         if (!ResidencyFits(destination, active_radius_, resident_radius_, circleResidency_)) {
@@ -972,6 +1111,8 @@ CommandResult Server::Execute(ActorHandle handle, PlayerSlot& slot, Command comm
         return failed(Outcome::invalid_command);
     }
     const Tick cost = ActionTicks(baseCost, world_.GetActor(handle)->speed);
+    Require(world_.SetActorExertion(handle, outcome == Outcome::moved ? ExertionKind::Moving
+        : command.kind == CommandKind::wait ? ExertionKind::Rest : ExertionKind::Working).has_value());
     Require(world_.ScheduleActorAction(handle, baseCost).has_value());
     // Observe the completed action for every participant, even between two
     // commands at the same tick. Snapshot/viewport cadence never grants memory.
@@ -982,11 +1123,14 @@ CommandResult Server::Execute(ActorHandle handle, PlayerSlot& slot, Command comm
 }
 
 void Server::SynchronizePacing() {
+    if (!hostPlayerId_ && !players_.empty()) { hostPlayerId_ = players_.front().id; }
     StaticList<PlayerReadiness, maxOnlinePlayers> players;
-    for (const PlayerSlot& slot : players_) {
+    for (PlayerSlot& slot : players_) {
+        if (!slot.character) { slot.character = slot.id; }
         if (slot.state != PlayerConnectionState::Active) { continue; }
         const ActorHandle handle = PlayerActor(slot);
         const Actor* actor = world_.GetActor(handle);
+        if (!world_.IsActorAlive(handle)) { continue; }
         Require(actor && actor->player && !actor->parked && world_.IsActive(actor->position));
         Require(players.PushBack({handle, slot.id, actor->speed,
             Ready(world_, handle), slot.pending.has_value()}));
@@ -1005,10 +1149,10 @@ const Server::PlayerSlot* Server::FindPlayer(PersistentId id) const {
 }
 
 ActorHandle Server::PlayerActor(const PlayerSlot& slot) const {
-    return world_.FindActor(slot.id);
+    return world_.FindActor(slot.character ? slot.character : slot.id);
 }
 
-PersistentId Server::GetHostPlayerId() const { return world_.GetActor(player_)->id; }
+PersistentId Server::GetHostPlayerId() const { return hostPlayerId_; }
 std::uint64_t Server::GetRevision() const { return revision_ + world_.GetRevision(); }
 PlayerInputContext Server::GetInputContext(PersistentId id) const {
     const auto* slot = FindPlayer(id);
@@ -1026,7 +1170,8 @@ Vector<PlayerStatus> Server::GetPlayers() const {
             && actor && Ready(world_, PlayerActor(slot));
         result.push_back({slot.id, slot.name, slot.state, ready,
             slot.pending.has_value(), slot.opportunity,
-            ready ? pacer_.GraceMicroseconds(PlayerActor(slot)) : 0});
+            ready ? pacer_.GraceMicroseconds(PlayerActor(slot)) : 0,
+            slot.character ? slot.character : slot.id, actor ? actor->combat.life : slot.cachedView.combat.life});
     }
     return result;
 }
@@ -1050,7 +1195,7 @@ SessionResult<PlayerJoin> Server::JoinPlayer(eastl::string_view name,
             if (slot.state != PlayerConnectionState::Parked) {
                 return eastl::unexpected(SessionError::AlreadyConnected);
             }
-            const auto position = world_.FindPlayerPosition(slot.id);
+            const auto position = world_.FindPlayerPosition(slot.character ? slot.character : slot.id);
             if (!position) { return eastl::unexpected(SessionError::Unavailable); }
             if (!ValidPosition(*position)) {
                 return eastl::unexpected(SessionError::Unavailable);
@@ -1107,6 +1252,7 @@ SessionResult<PlayerJoin> Server::JoinPlayer(eastl::string_view name,
     Require(world_.SetActorParked(actor, true).has_value());
     PlayerSlot slot;
     slot.id = world_.GetActor(actor)->id;
+    slot.character = slot.id;
     slot.name = String(name.data(), name.size());
     slot.token = newToken;
     slot.position = world_.GetActor(actor)->position;
@@ -1142,6 +1288,14 @@ SessionResult<void> Server::ActivatePlayer(PersistentId id) {
     if (!world_.GetActor(actor)) {
         rollback();
         return eastl::unexpected(SessionError::Unavailable);
+    }
+    if (!world_.IsActorAlive(actor)) {
+        slot->state = PlayerConnectionState::Active;
+        slot->activeRequest = Take(world_.RequestChunks({BubbleCenter(slot->position), active_radius_}, LoadMode::active));
+        UpdateResident(world_, slot->residentRequest, slot->position, resident_radius_, circleResidency_);
+        ReleaseStaging(world_, staging);
+        Require(world_.ReconcileChunks().has_value());
+        ++revision_; SynchronizePacing(); return {};
     }
     TileCoord spawn{};
     bool found = false;
@@ -1202,7 +1356,8 @@ SessionResult<void> Server::DisconnectPlayer(PersistentId id) {
         return eastl::unexpected(SessionError::Unavailable);
     }
     const ActorHandle actor = PlayerActor(*slot);
-    if (const auto position = world_.FindPlayerPosition(id)) { slot->position = *position; }
+    if (const auto position = world_.FindPlayerPosition(slot->character ? slot->character : slot->id)) { slot->position = *position; }
+    if (world_.GetActor(actor)) { slot->cachedView.combat = world_.Combat().Describe(actor); }
     if (actor.value != 0) { Require(world_.SetActorParked(actor, true).has_value()); }
     slot->pending.reset();
     slot->lastSequence = 0;
@@ -1230,6 +1385,17 @@ CommandResult Server::Submit(PersistentId id, PlayerInput input) {
     if (input.opportunity != slot->opportunity) { return {Outcome::stale_input, false, GetTick()}; }
     if (input.sequence <= slot->lastSequence) { return {Outcome::duplicate_input, false, GetTick()}; }
     const ActorHandle actor = PlayerActor(*slot);
+    if (input.command.kind == CommandKind::new_character) {
+        slot->lastSequence = input.sequence;
+        const auto created = CreateFreshCharacter(id);
+        if (!created) { ++revision_; return {Outcome::unavailable, false, GetTick()}; }
+        return {Outcome::character_created, false, GetTick()};
+    }
+    if (!world_.IsActorAlive(actor)) {
+        slot->lastSequence = input.sequence;
+        ++revision_;
+        return {Outcome::character_dead, false, GetTick()};
+    }
     // A shorter grace may expire while a different player still holds the
     // round. Its automatic wait is already decided, even though no action can
     // resolve until the entire cohort is satisfied.
@@ -1241,7 +1407,7 @@ CommandResult Server::Submit(PersistentId id, PlayerInput input) {
     if (!Ready(world_, actor) && ActiveWorkInterrupt(world_, actor, input.command)) {
         const auto result = Execute(actor, *slot, input.command);
         if (result.outcome == Outcome::craft_paused || result.outcome == Outcome::craft_cancelled
-            || result.outcome == Outcome::study_paused) {
+            || result.outcome == Outcome::study_paused || result.outcome == Outcome::art_study_paused) {
             slot->pending.reset();
             Require(slot->opportunity != eastl::numeric_limits<std::uint64_t>::max());
             ++slot->opportunity;
@@ -1276,6 +1442,17 @@ bool Server::ResolveRound(SessionUpdate& result, eastl::span<const ActorHandle> 
         return a->id < b->id;
     });
     for (PlayerSlot* slot : cohort) {
+        if (!Ready(world_, PlayerActor(*slot))) {
+            if (slot->pending) {
+                const auto input = *slot->pending;
+                CommandResult dead{world_.IsActorAlive(PlayerActor(*slot)) ? Outcome::not_ready : Outcome::character_dead, false, GetTick()};
+                result.commandResults.push_back({slot->id, input.sequence, input.opportunity, dead});
+                if (slot->id == GetHostPlayerId()) { result.commandResult = dead; }
+            }
+            slot->pending.reset(); slot->grabbedObject = {};
+            Require(slot->opportunity != UINT64_MAX); ++slot->opportunity; ++revision_;
+            continue;
+        }
         bool committed = false;
         if (slot->pending) {
             const PlayerInput input = *slot->pending;
@@ -1296,7 +1473,52 @@ bool Server::ResolveRound(SessionUpdate& result, eastl::span<const ActorHandle> 
         ++revision_;
     }
     SynchronizePacing();
+    CollectCombatEvents();
     return true;
+}
+
+SessionResult<PersistentId> Server::CreateFreshCharacter(PersistentId id) {
+    auto* slot = FindPlayer(id);
+    if (!slot || slot->state != PlayerConnectionState::Active) { return eastl::unexpected(SessionError::InvalidPlayer); }
+    const auto old = PlayerActor(*slot);
+    if (!world_.GetActor(old) || world_.IsActorAlive(old)) { return eastl::unexpected(SessionError::Unavailable); }
+    world_.FinalizeActorDeaths();
+    const auto origin = world_.GetActor(old)->position;
+    for (int radius = 0; radius <= 64; ++radius) {
+        for (int dz = -radius; dz <= radius; ++dz) for (int dx = -radius; dx <= radius; ++dx) {
+            if (eastl::max(std::abs(dx), std::abs(dz)) != radius) { continue; }
+            const TileCoord position{origin.x + dx, origin.z + dz, origin.y};
+            const auto* tile = world_.GetTile(position);
+            if (!tile || world_.BlocksMovement(position) || world_.GetContent().GetTerrain(tile->terrain).openSpace
+                || world_.ActorAt(position).value || !world_.IsActive(position)
+                || !ResidencyFits(position, active_radius_, resident_radius_, circleResidency_)) { continue; }
+            const auto created = world_.CreateActor(position, true);
+            if (!created) { continue; }
+            slot->character = world_.GetActor(*created)->id;
+            if (slot->id == GetHostPlayerId()) { player_ = *created; }
+            slot->pending.reset(); slot->grabbedObject = {}; slot->cachedMapRevision = 0; slot->cachedView = {};
+            Require(slot->opportunity != UINT64_MAX); ++slot->opportunity;
+            CommitPlayerBubble(*slot);
+            Require(world_.ReconcileChunks().has_value());
+            world_.UpdatePlayerObservations();
+            ++revision_; SynchronizePacing(); CollectCombatEvents();
+            return slot->character;
+        }
+    }
+    return eastl::unexpected(SessionError::Unavailable);
+}
+
+void Server::CollectCombatEvents() {
+    world_.Combat().DrainEvents(drainedCombatEvents_);
+    constexpr std::size_t historyLimit = 128;
+    if (drainedCombatEvents_.empty()) { return; }
+    for (auto& event : drainedCombatEvents_) {
+        Require(nextCombatEventSerial_ != UINT64_MAX);
+        event.serial = nextCombatEventSerial_++;
+        if (combatEvents_.size() == historyLimit) { combatEvents_.erase(combatEvents_.begin()); }
+        combatEvents_.push_back(event);
+    }
+    ++revision_;
 }
 
 bool Server::SetPacing(PacingSettings settings) {
@@ -1321,6 +1543,7 @@ eastl::optional<SaveError> Server::Autosave() {
 }
 
 SessionUpdate Server::Update(std::uint64_t elapsedMicroseconds) {
+    world_.FinalizeActorDeaths();
     SessionUpdate result;
     std::uint64_t remaining = elapsedMicroseconds;
     constexpr Tick maximum = eastl::numeric_limits<Tick>::max();
@@ -1354,6 +1577,18 @@ SessionUpdate Server::Update(std::uint64_t elapsedMicroseconds) {
         remaining -= step;
     }
     result.tick = GetTick();
+    for (auto& slot : players_) {
+        if (world_.IsActorAlive(PlayerActor(slot))) { continue; }
+        slot.grabbedObject = {};
+        if (!slot.pending) { continue; }
+        const auto input = *slot.pending;
+        CommandResult dead{Outcome::character_dead, false, GetTick()};
+        result.commandResults.push_back({slot.id, input.sequence, input.opportunity, dead});
+        if (slot.id == GetHostPlayerId()) { result.commandResult = dead; }
+        slot.pending.reset();
+        Require(slot.opportunity != UINT64_MAX); ++slot.opportunity; ++revision_;
+    }
+    CollectCombatEvents();
     result.needsInput = Ready(world_, player_);
     if (const auto error = Autosave()) {
         if (!result.storageError) { result.storageError = error; }
@@ -1401,6 +1636,14 @@ WorldView Server::ViewForPlayerAtLayer(PersistentId id, int radius, int layerY) 
     result.tick = GetTick();
     result.remainingTicks = world_.GetActorRemainingTicks(player);
     result.combat = world_.Combat().Describe(player);
+    result.characterId = actor->id;
+    world_.Combat().CollectInfo(player, result.combatInfo);
+    for (const auto& event : combatEvents_) {
+        if (event.actor == actor->id || event.opponent == actor->id
+            || event.strike.attacker == actor->id || event.strike.target == actor->id) {
+            result.combatEvents.push_back(event);
+        }
+    }
     result.speed = actor->speed;
     result.pacing = pacer_.GetSettings();
     result.commandQueued = slot->pending.has_value();
@@ -1499,7 +1742,7 @@ WorldView Server::ViewForPlayerAtLayer(PersistentId id, int radius, int layerY) 
                         }
                         knownColumnOpen = terrain->openSpace;
                     } else if (knownColumnOpen) {
-                        const auto remembered = world_.GetRememberedTile(id, position);
+                        const auto remembered = world_.GetRememberedTile(actor->id, position);
                         if (remembered.terrain.value == 0) {
                             knownColumnOpen = false;
                         } else {
@@ -1689,9 +1932,10 @@ SessionState Server::Checkpoint() const {
         active_radius_, resident_radius_, autosaveInterval_, pacer_.GetSettings()};
     session.circleResidency = circleResidency_;
     for (const PlayerSlot& slot : players_) {
-        const auto position = world_.FindPlayerPosition(slot.id);
+        const auto character = slot.character ? slot.character : slot.id;
+        const auto position = world_.FindPlayerPosition(character);
         Require(position.has_value());
-        session.players.push_back({slot.id, *position, slot.name, slot.token});
+        session.players.push_back({character, *position, slot.name, slot.token, slot.id});
     }
     return session;
 }
@@ -1759,7 +2003,7 @@ SaveResult<eastl::unique_ptr<Server>> Server::LoadSave(const ContentCatalog& con
     }
     server->player_ = server->world_.FindActor(session.player);
     const Actor* actor = server->world_.GetActor(server->player_);
-    if (!actor || !actor->player || actor->parked || actor->position != session.playerPosition) {
+    if (!actor || !actor->player || (actor->parked && server->world_.IsActorAlive(server->player_)) || actor->position != session.playerPosition) {
         if (diagnostics) {
             diagnostics->Add("Saved player does not match server session");
         }
@@ -1767,19 +2011,21 @@ SaveResult<eastl::unique_ptr<Server>> Server::LoadSave(const ContentCatalog& con
     }
     Vector<ActorHandle> guests;
     if (session.players.empty()) {
+        server->hostPlayerId_ = session.player;
         server->players_.push_back({session.player, "Host", 0, session.playerPosition,
             PlayerConnectionState::Active, {}, {}, server->bubbleCenter_});
     } else {
         for (const SavedPlayer& saved : session.players) {
             PlayerSlot slot;
-            slot.id = saved.actor;
+            slot.id = saved.session ? saved.session : saved.actor;
+            slot.character = saved.actor;
             slot.name = saved.name;
             slot.token = saved.reconnectToken;
             slot.position = saved.position;
             slot.center = BubbleCenter(saved.position);
             slot.state = saved.actor == session.player
                 ? PlayerConnectionState::Active : PlayerConnectionState::Parked;
-            const ActorHandle handle = server->world_.FindActor(slot.id);
+            const ActorHandle handle = server->PlayerActor(slot);
             const Actor* value = server->world_.GetActor(handle);
             if (!value || !value->player || value->position != slot.position) {
                 if (diagnostics) { diagnostics->Add("Saved player does not match roster"); }
@@ -1788,6 +2034,8 @@ SaveResult<eastl::unique_ptr<Server>> Server::LoadSave(const ContentCatalog& con
             if (slot.state == PlayerConnectionState::Parked) {
                 guests.push_back(handle);
             }
+            slot.cachedView.combat = server->world_.Combat().Describe(handle);
+            if (saved.actor == session.player) { server->hostPlayerId_ = slot.id; }
             server->players_.push_back(eastl::move(slot));
         }
     }
@@ -1800,7 +2048,7 @@ SaveResult<eastl::unique_ptr<Server>> Server::LoadSave(const ContentCatalog& con
     const auto released = server->world_.ReconcileChunks(diagnostics);
     if (!released) { return eastl::unexpected(released.error()); }
     for (PlayerSlot& slot : server->players_) {
-        const auto position = server->world_.FindPlayerPosition(slot.id);
+        const auto position = server->world_.FindPlayerPosition(slot.character ? slot.character : slot.id);
         Require(position.has_value());
         slot.position = *position;
         slot.center = BubbleCenter(*position);

@@ -212,7 +212,24 @@ void HandleInventoryKey(ItemUi& ui, HeldKey& held, const KeyChord& key, const Ke
     const WorldView& view, const ContentCatalog& content, const Localization& localization) {
     const auto previous = ui.Frame().screen;
     const bool neededTime = ui.NeedsTime();
-    ui.Handle(key, keys, view, content, localization);
+    const auto action = ResolveAction(keys, InputContext::Items, key);
+    eastl::optional<ItemUiAction> equipment;
+    if (action) {
+        switch (*action) {
+        case InputAction::HoldLeft: equipment = ItemUiAction::HoldLeft; break;
+        case InputAction::HoldRight: equipment = ItemUiAction::HoldRight; break;
+        case InputAction::TwoHanded: equipment = ItemUiAction::TwoHanded; break;
+        case InputAction::Regrip: equipment = ItemUiAction::Regrip; break;
+        case InputAction::Wear: equipment = ItemUiAction::Wear; break;
+        case InputAction::RemoveWorn: equipment = ItemUiAction::Remove; break;
+        case InputAction::ReleaseHand: equipment = ItemUiAction::Release; break;
+        default: break;
+        }
+    }
+    if (equipment) {
+        ui.Refresh(view, content, localization, keys);
+        ui.HandleAction(*equipment, view); held.Reset();
+    } else { ui.Handle(key, keys, view, content, localization); }
     const bool cancelled = key == KeyChord{"Escape"}
         || ResolveAction(keys, InputContext::Items, key) == InputAction::Cancel
         || ResolveAction(keys, InputContext::Menu, key) == InputAction::Cancel;

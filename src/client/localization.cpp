@@ -1,4 +1,5 @@
 #include "client/localization.h"
+#include "client/combat_menu.h"
 
 #include <EASTL/sort.h>
 #include <EASTL/utility.h>
@@ -167,6 +168,16 @@ String Localization::OutcomeText(Outcome outcome) const {
     case Outcome::unwielded: return Text("outcome.unwielded", OutcomeMessage(outcome));
     case Outcome::transferred: return Text("outcome.transferred", OutcomeMessage(outcome));
     case Outcome::inventory_refused: return Text("outcome.inventory_refused", OutcomeMessage(outcome));
+    case Outcome::equipment_changed: return Text("outcome.equipment_changed", OutcomeMessage(outcome));
+    case Outcome::ability_used: return Text("outcome.ability_used", OutcomeMessage(outcome));
+    case Outcome::combat_refused: return Text("outcome.combat_refused", OutcomeMessage(outcome));
+    case Outcome::art_study_started: return Text("outcome.art_study_started", OutcomeMessage(outcome));
+    case Outcome::art_study_paused: return Text("outcome.art_study_paused", OutcomeMessage(outcome));
+    case Outcome::character_dead: return Text("outcome.character_dead", OutcomeMessage(outcome));
+    case Outcome::character_created: return Text("outcome.character_created", OutcomeMessage(outcome));
+    case Outcome::study_started: return Text("outcome.study_started", OutcomeMessage(outcome));
+    case Outcome::study_paused: return Text("outcome.study_paused", OutcomeMessage(outcome));
+    case Outcome::study_refused: return Text("outcome.study_refused", OutcomeMessage(outcome));
     case Outcome::item_use_failed: return Text("outcome.item_use_failed", OutcomeMessage(outcome));
     case Outcome::capacity_exceeded: return Text("outcome.capacity_exceeded", OutcomeMessage(outcome));
     case Outcome::invalid_container: return Text("outcome.invalid_container", OutcomeMessage(outcome));
@@ -188,6 +199,10 @@ String Localization::OutcomeText(Outcome outcome) const {
     std::abort();
 }
 String Localization::ResultText(const CommandResult& result) const {
+    if (result.outcome == Outcome::combat_refused) {
+        return OutcomeText(result.outcome) + " " + CombatRefusalText(result.combatReason);
+    }
+    if (result.outcome == Outcome::study_refused) { return CommandResultMessage(result); }
     if (result.outcome == Outcome::inventory_refused) { return CommandResultMessage(result); }
     if (result.outcome == Outcome::grabbed || result.outcome == Outcome::released || result.outcome == Outcome::grab_blocked) {
         const auto key = result.outcome == Outcome::grabbed ? "grab.started"

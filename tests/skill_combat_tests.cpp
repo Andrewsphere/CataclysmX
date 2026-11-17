@@ -2,6 +2,7 @@
 #include "core/world.h"
 #include "skills/learning_system.h"
 #include "skills/skill_state.h"
+#include "combat_runtime_fixture.h"
 #include <catch2/catch_test_macros.hpp>
 
 namespace {
@@ -23,7 +24,15 @@ ContentCatalog CombatContent() {
        melee:{damage:[{type:'blunt',amount:450},{type:'slashing',amount:450}]}}
     ]})"};
     Diagnostics diagnostics; auto content = LoadContent({&source, 1}, &diagnostics);
-    INFO(FormatDiagnostics(diagnostics).c_str()); REQUIRE(content); return eastl::move(*content);
+    INFO(FormatDiagnostics(diagnostics).c_str()); REQUIRE(content);
+    ConfigureCombatRuntimeTestContent(*content);
+    auto& style = const_cast<CombatStyleDefinition&>(content->GetCombatStyle(content->FindCombatStyle("basic_balanced")));
+    style.moves.push_back({content->FindCombatMove("basic_weapon"), 1});
+    auto& fist = const_cast<CombatMoveDefinition&>(content->GetCombatMove(content->FindCombatMove("basic_fist")));
+    fist.requirements.primary.freeHands = HandMask::Both;
+    auto& weapon = const_cast<CombatMoveDefinition&>(content->GetCombatMove(content->FindCombatMove("basic_weapon")));
+    weapon.strikes[0].intrinsicMiss = 0;
+    return eastl::move(*content);
 }
 
 struct Rig {
@@ -49,16 +58,17 @@ struct Rig {
     }
 };
 
-TEST_CASE("Missed strikes train unarmed attack and dodge participation", "[skills][combat]") {
+TEST_CASE("Missed strikes split attack training and pay only committed defense training", "[skills][combat]") {
     Rig r;
-    auto state = r.world.GetActor(r.attacker)->combat; state.accuracy = 0;
+    auto state = r.world.GetActor(r.attacker)->combat;
+    state.legacyAccuracyOverride = true; state.intrinsicMissOverride = ratioScale;
     REQUIRE(r.world.Combat().Configure(r.attacker, state));
     REQUIRE(r.world.Combat().SetStyle(r.defender, CombatStyle::Defensive));
     REQUIRE(r.world.Combat().Attack(r.attacker, r.defender, r.rng).outcome == AttackOutcome::Miss);
-    CHECK(r.Xp(r.attacker, "melee") == ratioScale);
-    CHECK(r.Xp(r.attacker, "unarmed") == ratioScale);
-    CHECK(r.Xp(r.defender, "dodge") == ratioScale);
-    CHECK(r.Xp(r.defender, "melee") == 0);
+    CHECK(r.Xp(r.attacker, "melee") == 4000);
+    CHECK(r.Xp(r.attacker, "unarmed") == 6000);
+    CHECK(r.Xp(r.defender, "dodge") == 0);
+    CHECK(r.Xp(r.defender, "melee") == 4000);
 }
 
 TEST_CASE("Multiple weapon packets train melee once and no unarmed", "[skills][combat]") {
@@ -68,16 +78,16 @@ TEST_CASE("Multiple weapon packets train melee once and no unarmed", "[skills][c
     REQUIRE(r.world.Combat().Attack(r.attacker, r.defender, r.rng).outcome == AttackOutcome::Hit);
     CHECK(r.Xp(r.attacker, "melee") == ratioScale);
     CHECK(r.Xp(r.attacker, "unarmed") == 0);
-    CHECK(r.Xp(r.defender, "dodge") == ratioScale);
+    CHECK(r.Xp(r.defender, "dodge") == 0);
 }
 
 TEST_CASE("Parrying trains defender melee instead of dodge", "[skills][combat]") {
     Rig r; REQUIRE(r.world.Combat().SetStyle(r.defender, CombatStyle::Defensive));
-    REQUIRE(r.world.Combat().Attack(r.attacker, r.defender, r.rng).outcome == AttackOutcome::Parried);
-    CHECK(r.Xp(r.attacker, "melee") == ratioScale);
-    CHECK(r.Xp(r.defender, "melee") == ratioScale);
+    REQUIRE(r.world.Combat().Attack(r.attacker, r.defender, r.rng).committed);
+    CHECK(r.Xp(r.attacker, "melee") == 4000);
+    CHECK(r.Xp(r.defender, "melee") == 4000);
     CHECK(r.Xp(r.defender, "dodge") == 0);
-    CHECK(r.Xp(r.defender, "unarmed") == 0);
+    CHECK(r.Xp(r.defender, "unarmed") == 6000);
 }
 
 TEST_CASE("Heavy attacks train only when the windup reaches a valid target", "[skills][combat]") {
@@ -86,9 +96,9 @@ TEST_CASE("Heavy attacks train only when the windup reaches a valid target", "[s
     CHECK(r.Xp(r.attacker, "melee") == 0);
     SECTION("target remains in reach") {
         r.world.ElapseTicks(80); r.world.Combat().ProcessEvents(r.rng);
-        CHECK(r.Xp(r.attacker, "melee") == ratioScale);
-        CHECK(r.Xp(r.attacker, "unarmed") == ratioScale);
-        CHECK(r.Xp(r.defender, "dodge") == ratioScale);
+        CHECK(r.Xp(r.attacker, "melee") == 4000);
+        CHECK(r.Xp(r.attacker, "unarmed") == 6000);
+        CHECK(r.Xp(r.defender, "dodge") == 0);
     }
     SECTION("target leaves reach") {
         REQUIRE(r.world.MoveActor(r.defender, {5, 3}));

@@ -9,5 +9,11 @@
   {type:'skill',id:'medicine',name:'Medicine',category:'noncombat'},
   {type:'skill',id:'melee',name:'Melee',category:'combat'},
   {type:'skill',id:'unarmed',name:'Unarmed',category:'combat'},
+  {type:'skill',id:'knives',name:'Knives',category:'combat'},
+  {type:'skill',id:'swords',name:'Swords',category:'combat'},
+  {type:'skill',id:'clubs_hammers',name:'Clubs & Hammers',category:'combat'},
+  {type:'skill',id:'axes',name:'Axes',category:'combat'},
+  {type:'skill',id:'polearms',name:'Polearms',category:'combat'},
+  {type:'skill',id:'shields',name:'Shields',category:'combat'},
   {type:'skill',id:'dodge',name:'Dodge',category:'combat'},
 ]}

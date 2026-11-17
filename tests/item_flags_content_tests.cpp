@@ -55,10 +55,10 @@ TEST_CASE("Item flags resolve cross-source forward references in their own names
     const ContentSource reversed[] = {sources[1], sources[0]};
     const auto reordered = LoadContent({reversed, 2});
     REQUIRE(reordered.has_value());
-    CHECK(loaded->GetItem({1}) == reordered->GetItem({1}));
+    CHECK(loaded->GetItem(loaded->FindItem("armor")) == reordered->GetItem(reordered->FindItem("armor")));
     CHECK(loaded->GetFlag({1}) == reordered->GetFlag({1}));
     CHECK(loaded->GetFlag({2}) == reordered->GetFlag({2}));
-    CHECK(loaded->ItemCount() == 1);
+    CHECK(loaded->ItemCount() == 2);
     CHECK(loaded->FlagCount() == 2);
     CHECK(loaded->FindItem("armor") == ItemTypeId{1});
     CHECK(loaded->FindFlag("armor") == FlagId{1});
@@ -108,8 +108,8 @@ TEST_CASE("Flag vocabulary and attachment order produce canonical catalog values
     REQUIRE(reordered.has_value());
     CHECK(loaded->GetFlag({1}) == reordered->GetFlag({1}));
     CHECK(loaded->GetFlag({2}) == reordered->GetFlag({2}));
-    const auto& item = loaded->GetItem({1});
-    CHECK(item == reordered->GetItem({1}));
+    const auto& item = loaded->GetItem(loaded->FindItem("armor"));
+    CHECK(item == reordered->GetItem(reordered->FindItem("armor")));
     REQUIRE(ItemContainer(item) != nullptr);
     CHECK(ItemContainer(item)->capacityVolumeMl == 9);
     auto withoutFlags = item;
@@ -125,13 +125,13 @@ TEST_CASE("Absent and empty item flags have identical empty values", "[content][
     REQUIRE(absent.has_value());
     REQUIRE(empty.has_value());
     CHECK(absent->FlagCount() == 0);
-    CHECK(absent->GetItem({1}).flags.Empty());
-    CHECK(absent->GetItem({1}).flags.Ids().empty());
-    CHECK(absent->GetItem({1}) == empty->GetItem({1}));
+    CHECK(absent->GetItem(absent->FindItem("armor")).flags.Empty());
+    CHECK(absent->GetItem(absent->FindItem("armor")).flags.Ids().empty());
+    CHECK(absent->GetItem(absent->FindItem("armor")) == empty->GetItem(empty->FindItem("armor")));
     const auto vocabularyOnly = Load(Vocabulary);
     REQUIRE(vocabularyOnly.has_value());
     CHECK(vocabularyOnly->FlagCount() == 2);
-    CHECK(vocabularyOnly->ItemCount() == 0);
+    CHECK(vocabularyOnly->ItemCount() == 1);
 }
 
 TEST_CASE("Item flag attachments reject unknown ineligible duplicate and malformed names", "[content][item-flags]") {
@@ -215,7 +215,7 @@ TEST_CASE("A bad flag reference prevents publication and does not contaminate la
     definitions.erase(definitions.find(",{type:'item',id:'bad'"));
     const auto valid = Load(View(definitions));
     REQUIRE(valid.has_value());
-    CHECK(valid->ItemCount() == 1);
+    CHECK(valid->ItemCount() == 2);
     CHECK(valid->FlagCount() == 2);
     CHECK(valid->FindItem("bad") == ItemTypeId{});
 }

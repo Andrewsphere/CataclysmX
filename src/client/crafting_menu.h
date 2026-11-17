@@ -14,7 +14,8 @@ void CollectCraftingMenu(const WorldView& view, const ContentCatalog& content,
     const Localization& localization, Vector<CraftingMenuRow>& rows);
 // Identity excludes presentation, so refreshed progress cannot retarget a choice.
 bool SameCraftingChoice(const Command& left, const Command& right);
-// Read-only character learning presentation; output storage is reusable.
+// Read-only learning, combat rates/equipment, and art-manual summaries.
+// Output storage is reusable.
 void CollectLearningSummary(const WorldView& view, const ContentCatalog& content, Vector<String>& lines);
 
 }

@@ -1,108 +1,72 @@
 # Combat API
 
-This page describes the implemented first melee slice. The expanded
-[combat design](../md/CombatDesign.md) specifies planned JSON-defined arts, weighted
-selection, equipment/armor, skills, and ordinary human death. Those rules are not
-implemented merely by documenting them; the current contracts below still apply.
+`World::Combat()` exposes the world-owned `CombatSystem`. Actors own combat
+state; callers use typed identities and value views rather than retaining entity
+pointers across world mutations. Anatomy, control and allegiance are independent.
+Queries such as `CanAttack`, `CanReach` and `Describe` do not commit an attack;
+actual execution validates readiness, sources, target and reach. RNG is passed
+explicitly. See [runtime integration](combat_runtime.md) for execution details,
+[content](combat_content.md) for schema and bounds, and
+[lifecycle](combat_lifecycle.md) for ownership, death and persistence.
 
-The first melee slice is implemented by [`CombatSystem`](../src/combat/combat_system.h),
-accessed through `world.Combat()`. The world owns the coordinator and actor storage;
-each actor owns its `CombatState`, including body, injury profile, faction, style,
-stamina and pending action. World inspection is const and combat uses narrow scoped
-mutation, so callers do not retain actor pointers across mutations or deletion.
-Anatomy, controller and allegiance are independent. New players are detailed,
-Survivors and regenerating; new NPCs are simple, Neutral and non-regenerating.
-Only Survivors and Undead are mutually hostile.
+## Actions and timing
 
-`Configure` installs validated state on a ready actor with no pending action;
-`SetStyle`, `Describe`, `FindTarget`, `CanReach`, `Attack`, `Damage`, `Disrupt`,
-`StartAiming`, `Elapse`, `ProcessEvents` and `NextEventIn` expose the coordinator's
-operations. `Attack` returns an `AttackResult` distinguishing uncommitted failures,
-windup, miss, parry, blocked contact, hit and defeat; RNG is explicitly passed by
-reference. `Damage` applies local, type-specific protection and penetration in
-hundredths, then passes whole post-protection injury to the body; less than 1 HP
-is blocked. `Describe` produces a value-only view. These boundaries keep rules in
-combat while World owns identity, scheduling and persistence.
+Styles, moves, arts and abilities are catalog definitions identified persistently
+by stable names. Basic styles are available without an art; learned styles require
+their art. Switching style is a paid action, with authored `switch_cost` defaulting
+to 20 base ticks. The selector filters eligible moves and chooses by authored
+weight in stable definition order. A definition's multiple source bindings do not
+multiply its weight. Queries draw no RNG. Attacks commit costs and capture source
+identities, speed, work and recovery; execution revalidates each planned strike.
+Lost sources or targets do not yield a free replacement or refund.
 
-`CanAttack(actor)` queries the actor's own attack capability for AI decisions;
-it does not establish readiness, target hostility, reach or range. `Attack` and
-the scheduling/execution path remain responsible for validating an actual attack.
+Each strike has at most one chosen defense; separate strikes have separate contacts
+and pay applicable costs and cooldowns. Immediate counters execute after all
+triggering contacts and follow-through, through an action-local queue. Windup
+counters use the scheduler; counter recovery overlaps existing recovery as
+specified in [runtime integration](combat_runtime.md#execution-and-presentation).
+Ability grants retain their source identity and independent source-specific
+cooldowns. See [manual study](combat_learning.md) and [combat UI](combat_ui.md).
 
-## Body and recovery
+Stamina ranges from 0 to 100. Combat locks regeneration through commitment and
+recovery; rest/working restore one per 10 active ticks, movement half that rate.
+Exhausted-only attacks provide an explicit fallback. Effective handling skill
+reduces positive windup/recovery base costs by 1% per level to at most 10%; the
+separate stamina efficiency discount is bounded at 20%. Combat ratings combine
+Melee and handling at 40/60; ratings are in hundredths of a level. Defense chances use 40/40/60 base percentages, 5 percentage points
+per skill difference, clamped to 5–90%. These are initial tunable rules, not a
+claim of balance. [Runtime](combat_runtime.md#local-encumbrance-and-costs) documents
+rounding and local encumbrance.
 
-### Wielded melee contacts
+## Body, protection and recovery
 
-Equipment belongs to World inventory ownership (`inventory_engine.md`). A wielded
-item replaces unarmed `attackDamage` with `ItemMelee` packets and scales attack
-timing from its attack cost. Required hands gate use but disability does not drop
-equipment. Heavy actions capture persistent weapon identity with their recovery
-duration; execution cannot substitute a replacement weapon or unarmed attack.
+Detailed injury pools include head, torso, hands and legs; Eyes, Mouth and Ears
+are distinct local contacts sharing the head pool, and feet share the corresponding
+leg pool. Arms and hands likewise map to the corresponding hand pool. Garment
+coverage and encumbrance remain local to the contacted region despite shared HP.
+Simple bodies use Core, AttackApparatus and Locomotion. Coverage is rolled per
+garment per physical contact and shared across damage packets; intrinsic and
+covering garment protection combine before penetration. Raw body-part damage
+bypasses garments. See [combat content](combat_content.md#items-armor-manuals-monsters).
 
-`DamageContact(actor, source, part, span<const DamagePacket>)` applies protection
-and penetration independently to each component, sums remaining hundredths, then
-rounds once to whole HP and calls injury/disruption once. `Damage` delegates a
-single component to this path. A strike draws accuracy, parry and hit location
-once, irrespective of component count. This prevents duplicated reactions and
-fractional rounding loss in mixed damage profiles.
+Initial HP and injury policies are tunable: detailed pools start at 100 HP;
+simple apparatus and locomotion start at 60 and Core at 100. Broken detailed limbs
+at zero HP incur bounded maximum-HP loss on later injuries, default 10% up to a
+50% cap. Regeneration, when enabled, mends after seven logical days by default,
+heals 1 HP per game hour and restores maximum HP 1 per day after regular HP is
+full. Recovery advances only during active simulation. Head or torso zero, or
+simple Core zero, is terminal; dead bodies do not recover.
 
-Initial balancing defaults, subject to tuning, are 100 HP per detailed head, torso,
-hand and leg; simple attack apparatus and locomotion have 60 each, and Core 100.
-HP above zero is fully functional; detailed extremities at zero are broken. The
-hit that breaks a limb does not transfer overkill to maximum loss. Subsequent whole
-injury to an already broken limb reduces maximum HP by 10%, accumulated in
-hundredths, capped at 50% of unreduced maximum. Further hits do not reset mending.
-Simple disabled attached zones redirect subsequent hits to Core; a defeated simple
-non-player is destroyed. Detailed vital defeat is not implemented; the
-[ordinary human death rule](../md/CombatDesign.md#ordinary-human-death) is now
-specified for future implementation.
+`ActorMovementBaseCost` starts from the authored movement base (normally 100),
+multiplies by the locomotion factor (100%, 150% for one disabled detailed leg,
+200% for both or disabled simple locomotion), then applies the ceiling-average
+leg/foot encumbrance at 1% per unit. Direction and speed scaling follow. Eye
+encumbrance is exposed locally for inspection; shooting effects are future work.
 
-With regeneration enabled, broken limbs mend after seven logical game days to
-40 HP, clamped to effective maximum; `InjuryProfile::mendedHp` can instead be 60.
-This slice defines one logical second as `ticks_per_turn` (100 ticks), and a day
-as 86,400 such seconds; wall-clock pacing never changes recovery durations.
-Regular HP heals at 1 per game hour up to effective maximum; maximum HP restores
-at 1 per game day only at full regular HP, then regular healing resumes for the
-new capacity. Profile intervals and loss policy are configurable. Disabling
-regeneration freezes mending and healing. Detailed zero-HP head/torso do not
-implicitly revive. Recovery progresses only during active simulation, not while
-parked, inactive or archived.
-
-`LocomotionBaseCost` returns 100 healthy, 150 with one disabled detailed leg,
-and 200 with both disabled or a disabled simple locomotion zone. NPC movement
-scales its authored base cost by this factor before speed scaling.
-
-## Moves and disruption
-
-The initial selector filters eligible moves, chooses highest priority and breaks
-ties by stable `CombatMove` enum value, without RNG: aggressive heavy priority
-100, plain and fallback bite priority 10. Hit and region use the explicit seeded
-LCG (`state = state * 1664525 + 1013904223`, modulo 2^32). Reach includes eight immediate neighbors on the
-same Y, with passable endpoint tiles and no adjoining-wall restriction. Automatic player targeting requires perception
-and picks the lowest persistent ID among adjacent reachable hostiles.
-
-Default plain attacks resolve immediately, base cost 100 and damage 12; fallback
-bite for a simple actor with disabled attack apparatus deals half base damage
-(minimum 1 for nonzero damage). Plain/bite base cost is 150 without functioning
-legs/locomotion. Heavy costs 20 stamina, has 80 base windup plus 120 base recovery,
-400 active-tick cooldown, and doubles base damage. Both phases capture the speed
-at commitment; losing the target does not undo recovery. Defensive style can parry
-an incoming hit for 10 stamina and a 100 active-tick cooldown. Stamina regenerates
-1 per 10 active ticks up to 100. These are initial balancing defaults, not approved
-final numbers.
-
-`ActorActionState` stores a persistent target ID, not a handle; it may become
-stale. Shared `ApplyDisruption` handles damaging hits and forced movement: a heavy
-windup retains its deadline and the strongest accuracy penalty (default 15, cap
-30), rather than accumulating penalties. Aiming cancels into default 20-tick
-disruption recovery. Required capability loss or stagger cancels pending windup or
-aiming; None, ordinary recovery and disruption recovery ignore disruption, so
-repeated events do not reset cancellation recovery or shorten committed recovery.
-The aiming API is a headless pending-action foundation, not a firearm feature.
-See [entity scheduling](entity_scheduling.md) and [combat presentation](combat_presentation.md).
-
-No body geometry, clothing system, general status engine or firearms are implemented
-by this slice. See [combat design](../md/CombatDesign.md) for agreed and deferred ideas.
-
-Melee reach includes all eight immediate horizontal neighbors on the same Y level.
-It checks source/destination passability and normal perception; adjoining diagonal
-walls add no restriction. Target ties remain ordered by persistent identity.
+Death is marked immediately and finalized at safe boundaries. Inventory trees
+move to an ordinary corpse container; a dead player can request a fresh character
+in the same world, leaving the old character and corpse behind. See
+[lifecycle](combat_lifecycle.md#death-boundary). Save format 14 and network
+protocol 21 carry the expanded state; stable names are used for persisted content.
+The aiming foundation is not a firearm implementation; cross-Y melee and ranged
+precision remain future work. See [combat design](../md/CombatDesign.md).

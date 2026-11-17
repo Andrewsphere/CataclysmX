@@ -139,7 +139,7 @@ TEST_CASE("Gen1 zombie batch loads and resolves every authored monster appearanc
             used[mapping.index] = true;
         }
     }
-    CHECK(mapped == 34);
+    CHECK(mapped == 35); // Long-arms reuses existing art; the doctor still has no dedicated mapping.
     unsigned appearances = 0;
     for (std::size_t i = 0; i < used.size(); ++i) {
         if (!used[i]) { continue; }
@@ -149,17 +149,37 @@ TEST_CASE("Gen1 zombie batch loads and resolves every authored monster appearanc
         CHECK(tileset->sprites[i].layer == SpriteLayer::Upright);
     }
     CHECK(appearances == 64);
+    const auto longArms = content->FindMonster("zombie_longarms");
+    const auto worker = content->FindMonster("zombie_construction_worker");
+    REQUIRE(longArms.value != 0); REQUIRE(worker.value != 0);
+    const auto alias = tileset->monsters[longArms.value];
+    REQUIRE(alias.kind == TilesetMappingKind::Sprite);
+    CHECK(tileset->sprites[alias.index].id == "sprite.character.zombie.construction_worker");
+    const auto workerVariants = tileset->monsters[worker.value];
+    REQUIRE(workerVariants.kind == TilesetMappingKind::Visual);
+    bool sharesWorkerAppearance = false;
+    for (const auto& alternative : tileset->visuals[workerVariants.index].alternatives) {
+        sharesWorkerAppearance |= alternative.mapping == alias;
+    }
+    CHECK(sharesWorkerAppearance);
     CHECK(tileset->monsters[content->FindMonster("zombie_doctor").value].kind == TilesetMappingKind::Missing);
     Vector<SDL_Surface*> pages;
     const auto built = BuildSourceAtlases(path.parent_path().string().c_str(), *tileset, pages, {});
     for (auto* page : pages) { SDL_DestroySurface(page); }
     REQUIRE(built);
-    for (const auto* pack : {CATACLYSMX_TERRAIN_FILE, CATACLYSMX_FIRST_HOUSE_PACK}) {
+    for (const auto* pack : {CATACLYSMX_TERRAIN_FILE, CATACLYSMX_FIRST_HOUSE_PACK, CATACLYSMX_ZOMBIE_SHOWCASE_PACK}) {
         auto subset = LoadContentPack(pack, &diagnostics);
         REQUIRE(subset);
         auto subsetTileset = LoadTilesetFile(path.string().c_str(), *subset, &diagnostics);
         INFO(FormatDiagnostics(diagnostics).c_str());
         REQUIRE(subsetTileset);
+        if (String(pack) == CATACLYSMX_ZOMBIE_SHOWCASE_PACK) {
+            CHECK(subset->MonsterCount() == 67);
+            const auto exhibit = subset->FindMonster("zombie_longarms"); REQUIRE(exhibit.value != 0);
+            const auto shared = subset->FindMonster("showcase_construction_worker"); REQUIRE(shared.value != 0);
+            CHECK(subsetTileset->monsters[exhibit.value] == subsetTileset->monsters[shared.value]);
+            CHECK(subsetTileset->monsters[exhibit.value].kind == TilesetMappingKind::Sprite);
+        }
     }
 }
 

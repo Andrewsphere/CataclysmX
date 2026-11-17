@@ -149,7 +149,7 @@ TEST_CASE("Monster archive and disk reload preserve identity and changed state a
         REQUIRE(world.ScheduleActorAction(monster));
         const auto item = Take(world.CreateItem(content.FindItem("keepsake"), ItemLocation::Carried(monster)));
         itemId = world.GetItem(item)->id;
-        combat = CaptureCombatState(world.GetActor(monster)->combat);
+        combat = CaptureCombatState(world.GetActor(monster)->combat, content);
         controller = world.CaptureActorController(monster);
         delay = world.GetActorRemainingTicks(monster);
         REQUIRE(delay > 0);
@@ -163,7 +163,7 @@ TEST_CASE("Monster archive and disk reload preserve identity and changed state a
         REQUIRE(world.GetActor(restored));
         CHECK(world.GetActor(restored)->monsterType == content.FindMonster("walker"));
         CHECK(world.GetActor(restored)->speed == 73);
-        CHECK(CaptureCombatState(world.GetActor(restored)->combat) == combat);
+        CHECK(CaptureCombatState(world.GetActor(restored)->combat, content) == combat);
         CHECK(world.CaptureActorController(restored) == controller);
         CHECK(world.GetActorRemainingTicks(restored) == delay);
         REQUIRE(world.GetItem(world.FindItem(itemId)));
@@ -177,7 +177,7 @@ TEST_CASE("Monster archive and disk reload preserve identity and changed state a
         restored = world.FindActor(id);
         REQUIRE(world.GetActor(restored));
         CHECK(world.GetActor(restored)->monsterType == content.FindMonster("walker"));
-        CHECK(CaptureCombatState(world.GetActor(restored)->combat) == combat);
+        CHECK(CaptureCombatState(world.GetActor(restored)->combat, content) == combat);
         CHECK(world.CheckInvariants());
     }
     {
@@ -203,7 +203,7 @@ TEST_CASE("Monster archive and disk reload preserve identity and changed state a
     REQUIRE(restored.GetActor(monster));
     CHECK(restored.GetActor(monster)->monsterType == reordered.FindMonster("walker"));
     CHECK(restored.GetActor(monster)->speed == 73);
-    CHECK(CaptureCombatState(restored.GetActor(monster)->combat) == combat);
+    CHECK(CaptureCombatState(restored.GetActor(monster)->combat, reordered) == combat);
     CHECK(restored.CaptureActorController(monster) == controller);
     CHECK(restored.GetActorRemainingTicks(monster) == delay);
     REQUIRE(restored.GetItem(restored.FindItem(itemId)));
@@ -319,7 +319,9 @@ TEST_CASE("Legacy v7 through v9 actors remain untyped and reject the optional v1
         Populate(content, file.path.c_str());
         {
             RawDatabase raw(file.path.c_str());
-            raw.Exec("UPDATE chunks SET payload=json_set(payload,'$.actors',json((SELECT json_group_array(json_remove(value,'$.combat','$.monster_type','$.wielded_item','$.learning')) FROM json_each(chunks.payload,'$.actors'))))");
+            raw.Exec("UPDATE chunks SET payload=json_set(payload,'$.actors',json((SELECT json_group_array(json_remove(value,'$.combat','$.monster_type','$.wielded_item','$.learning','$.equipment','$.character_combat')) FROM json_each(chunks.payload,'$.actors'))))");
+            raw.Exec("UPDATE world_state SET payload=json_set(payload,'$.session.players',json((SELECT json_group_array("
+                "json_remove(value,'$.session')) FROM json_each(world_state.payload,'$.session.players'))))");
             if (version < 9) {
                 raw.Exec("UPDATE chunks SET payload=json_set(payload,'$.actors',json((SELECT json_group_array(json_remove(value,'$.controller')) FROM json_each(chunks.payload,'$.actors'))))");
             }

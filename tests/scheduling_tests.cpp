@@ -518,11 +518,20 @@ TEST_CASE("Server capped commands commit immediately and buffer busy input witho
     CHECK_FALSE(invalid.advanced);
     CHECK(server.GetTick() == 105);
     Command move{CommandKind::move, -1, 0};
-    move.waitCost = 250; // Only wait honors the caller's base cost.
+    move.waitCost = 250; // Only wait may carry a nondefault wait cost.
+    CHECK(server.Send(move).outcome == Outcome::invalid_command);
+    CHECK(server.GetTick() == 105);
+    CHECK(server.View().remainingTicks == 70);
+    CHECK_FALSE(server.View().commandQueued);
+    CHECK(server.View().player_position == TileCoord{1, 0});
+    move.waitCost = ticks_per_turn;
     CHECK(server.Send(move).outcome == Outcome::queued);
     const auto next = server.Update(700'000);
     REQUIRE(next.commandResult);
+    CHECK(next.commandResult->outcome == Outcome::moved);
+    CHECK(next.commandResult->tick == 175);
     CHECK(next.commandResult->cost == 70);
+    CHECK_FALSE(server.View().commandQueued);
     CHECK(server.View().player_position == TileCoord{0, 0});
 }
 

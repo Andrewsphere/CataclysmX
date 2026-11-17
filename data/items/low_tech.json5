@@ -7,5 +7,5 @@
    description:'A crude one-handed sword shaped from a long salvaged steel strip, ground to an edge and point, with a bent scrap guard and wire-bound wooden grip. It borrows a historical outline, not a smith-made blade\'s temper or balance.',
    flags:['melee_weapon','electrically_conductive','ferromagnetic','combustible','water_absorbent','sharp_edge','pointed','opaque','rigid','porous','thermally_conductive'],
    art:'/art/items/arming_sword/art.txt',
-   melee:{damage:[{type:'slashing',amount:1800,penetration:0}],attack_cost:130,hands:1}},
+    melee:{damage:[{type:'slashing',amount:1800,penetration:0}],attack_cost:130,handling_skill:'swords',grips:[{kind:'one_handed'},{kind:'two_handed',damage_ratio:11500,cost_ratio:10500,rating_bonus100:25}],block_capacity:450,allowed_responses:['parry','block']}},
 ]}

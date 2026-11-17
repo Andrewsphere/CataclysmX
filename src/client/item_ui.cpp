@@ -1,5 +1,7 @@
 #include "client/item_ui.h"
 #include "client/text.h"
+#include "client/combat_text.h"
+#include "client/combat_menu.h"
 #include <algorithm>
 #include <charconv>
 
@@ -62,8 +64,25 @@ void AddRow(ItemUiPane& pane, std::size_t& rowCount, const InventoryEntry& item,
     auto& row = pane.rows[rowCount++]; row.items.clear();
     row.type = item.type; row.name = loc.ItemName(content, item.type);
     row.items.push_back(item.id); row.massGrams = item.massGrams; row.volumeMl = item.volumeMl;
-    row.depth = depth; row.wielded = item.wielded;
+    row.depth = depth; row.wielded = item.wielded; row.worn = item.worn; row.heldHands = item.heldHands;
+    if (item.heldHands == HandMask::Both) { row.name += " [2H]"; }
+    else if (item.heldHands == HandMask::Left) { row.name += " [L]"; }
+    else if (item.heldHands == HandMask::Right) { row.name += " [R]"; }
+    else if (item.wielded) { row.name += " [wielded]"; }
+    if (item.worn) { row.name += " [worn]"; }
 }
+}
+const char* ItemUiActionLabel(ItemUiAction action) {
+    switch (action) {
+    case ItemUiAction::HoldLeft: return "Hold in left hand";
+    case ItemUiAction::HoldRight: return "Hold in right hand";
+    case ItemUiAction::TwoHanded: return "Hold two-handed";
+    case ItemUiAction::Regrip: return "Regrip (toggle one/two hands)";
+    case ItemUiAction::Wear: return "Wear";
+    case ItemUiAction::Remove: return "Remove worn item";
+    case ItemUiAction::Release: return "Release held item";
+    }
+    return "Unknown equipment action";
 }
 String ItemMassText(std::uint64_t grams) { return ScaledMeasurement(grams, "g", "kg"); }
 String ItemVolumeText(std::uint64_t milliliters) { return ScaledMeasurement(milliliters, "mL", "L"); }
@@ -80,15 +99,50 @@ void DescribeInventoryItem(const InventoryEntry& i, const ContentCatalog& conten
     out.description = loc.RenderItemText({key, def.description}); out.art = def.art.lines.empty() ? nullptr : &def.art;
     out.stats.push_back("Mass: " + ItemMassText(def.massGrams) + " | Volume: " + ItemVolumeText(def.volumeMl));
     if (i.contained_items) { out.stats.push_back("Mass with contents: " + ItemMassText(i.massGrams)); }
-    if (i.wielded) { out.stats.push_back("Currently wielded"); }
+    if (i.heldHands != HandMask::None) {
+        out.stats.push_back(i.heldHands == HandMask::Both ? "Held: 2H" : i.heldHands == HandMask::Left ? "Held: L" : "Held: R");
+    } else if (i.wielded) { out.stats.push_back("Currently wielded"); }
+    if (i.worn) { out.stats.push_back("Currently worn"); }
     const auto& melee = ItemMelee(def);
     constexpr const char* names[] = {"Blunt", "Slashing", "Piercing", "Ballistic", "Heat", "Chemical", "Choking"};
     for (const auto& d : melee.damage) {
         String s = names[static_cast<unsigned>(d.type)]; s += " damage: "; s += Hundredths(d.amount);
         s += " HP | Penetration: "; s += Hundredths(d.penetration);
-        s += " HP | Normal player damage: "; s += Hundredths(d.amount); s += " HP"; out.stats.push_back(eastl::move(s));
+        s += " HP (authored base; actual damage depends on move, grip, defense and armor)"; out.stats.push_back(eastl::move(s));
     }
     out.stats.push_back("Attack cost: " + UnsignedText(melee.attackCost) + " ticks | Hands: " + UnsignedText(melee.hands));
+    const auto family = melee.handlingSkill.value ? melee.handlingSkill : content.GetCombatSkills().melee;
+    const auto* handling = content.TryGetSkill(family);
+    out.stats.push_back("Weapon family: " + (handling ? handling->name : String("improvised fallback")));
+    for (const auto& grip : melee.grips) {
+        out.stats.push_back(String(grip.kind == GripKind::TwoHanded ? "2H grip" : "1H grip")
+            + " | damage ratio " + UnsignedText(grip.damageRatio) + "/" + UnsignedText(ratioScale)
+            + " | time ratio " + UnsignedText(grip.costRatio) + "/" + UnsignedText(ratioScale)
+            + " | stamina ratio " + UnsignedText(grip.staminaRatio) + "/" + UnsignedText(ratioScale));
+    }
+    if (def.armor) {
+        const auto& armor = *def.armor;
+        const char* layer = "normal";
+        switch (armor.layer) {
+        case ArmorLayer::Under: layer = "under"; break;
+        case ArmorLayer::Normal: break;
+        case ArmorLayer::Outer: layer = "outer"; break;
+        case ArmorLayer::Strapped: layer = "strapped"; break;
+        }
+        out.stats.push_back(String("Armor layer: ") + layer + " | wear/remove base ticks "
+            + UnsignedText(armor.wearCost) + "/" + UnsignedText(armor.removeCost));
+        for (const auto& region : armor.regions) {
+            String line = CombatRegionName(region.region);
+            line += " | coverage " + Hundredths(region.coverage) + "% | encumbrance " + UnsignedText(region.encumbrance);
+            if (region.overlapExempt) { line += " | overlap-penalty exempt"; }
+            if (armor.rigidRegions & ContactBit(region.region)) { line += " | rigid"; }
+            out.stats.push_back(eastl::move(line));
+        }
+        for (std::size_t n = 0; n < damage_type_count; ++n) {
+            out.stats.push_back(String(names[n]) + " armor protection: " + Hundredths(armor.protection[n]) + " HP");
+        }
+        out.stats.push_back("Coverage is rolled per garment/contact; same-layer overlaps add regional encumbrance. Protection is not guaranteed damage prevention.");
+    }
     if (i.capacityVolumeMl) { out.stats.push_back("Storage: " + ItemVolumeText(i.usedVolumeMl) + " / " + ItemVolumeText(i.capacityVolumeMl)); }
     for (const auto& cap : def.capabilities) { out.stats.push_back("Capability: " + cap.id + " (" + cap.type + ")"); }
     for (const auto& trait : def.toolTraits) { out.stats.push_back("Tool: " + content.GetToolTrait(trait.trait).name + " tier " + UnsignedText(trait.tier)); }
@@ -125,13 +179,14 @@ void ItemUi::SelectStorage(ItemStorage s) {
     }
 }
 void ItemUi::Refresh(const WorldView& v, const ContentCatalog& content, const Localization& loc, const Keymap& keys) {
-    if (initialized_ && player_ != v.playerId) {
+    const auto character = v.characterId ? v.characterId : v.playerId;
+    if (initialized_ && player_ != character) {
         if (!opening_) { Close(); }
         outstanding_ = false; waitingForReady_ = false; pending_.clear(); nextCommand_ = 0;
         selected_ = {}; selectionLost_ = {}; initialized_ = false;
     }
     opening_ = false;
-    player_ = v.playerId;
+    player_ = character;
     if (waitingForReady_ && !outstanding_ && !v.remainingTicks && !v.commandQueued && v.tick >= finishedTick_
         && (v.revision != issuedRevision_ || v.tick != issuedTick_)) { waitingForReady_ = false; }
     if (!IsOpen()) { return; }
@@ -157,11 +212,12 @@ void ItemUi::Refresh(const WorldView& v, const ContentCatalog& content, const Lo
             if (!meta->accessible) { pane.capacity += " — "; pane.capacity += InventoryOutcomeMessage(meta->reason); }
         }
         const auto add = [&](const InventoryEntry& i, unsigned depth) {
-            if (i.stackable && !i.wielded) {
+            if (i.stackable && !i.wielded && !i.worn && i.heldHands == HandMask::None) {
                 for (std::size_t n = 0; n < rowCount; ++n) {
                     auto& row = pane.rows[n];
                     const auto* first = FindInventoryEntry(v, row.items.front());
-                    if (first && first->stackable && !row.wielded && row.type == i.type && first->storage == i.storage && row.depth == depth) {
+                    if (first && first->stackable && !row.wielded && !row.worn && row.heldHands == HandMask::None
+                        && row.type == i.type && first->storage == i.storage && row.depth == depth) {
                         row.items.push_back(i.id); std::sort(row.items.begin(), row.items.end()); row.massGrams += i.massGrams; row.volumeMl += i.volumeMl; return;
                     }
                 }
@@ -246,7 +302,7 @@ void ItemUi::Examine(PersistentId id, const WorldView& v, const ContentCatalog& 
 void ItemUi::BeginActions(PersistentId id, bool manage, const WorldView& v, const ContentCatalog& c, const Localization& l) {
     const auto* i = FindInventoryEntry(v, id); if (!i) { frame_.feedback = "Selected item is no longer accessible."; return; }
     actionReturn_ = frame_.screen;
-    actionSource_ = id; managing_ = manage; actions_.clear(); frame_.choices.clear(); frame_.choice = 0;
+    actionSource_ = id; managing_ = manage; actions_.clear(); equipmentActions_.clear(); frame_.choices.clear(); frame_.choice = 0;
     for (const auto& a : i->actions) {
         if (a.category != (manage ? ItemActionCategory::ManageContents : ItemActionCategory::Operate)) { continue; }
         actions_.push_back(a);
@@ -255,9 +311,14 @@ void ItemUi::BeginActions(PersistentId id, bool manage, const WorldView& v, cons
         frame_.choices.push_back(eastl::move(label));
     }
     if (manage) { frame_.choices.push_back("Store in container"); frame_.choices.push_back("Extract to inventory"); }
+    else if (actions_.empty()) {
+        equipmentActions_ = {ItemUiAction::HoldLeft, ItemUiAction::HoldRight, ItemUiAction::TwoHanded,
+            ItemUiAction::Regrip, ItemUiAction::Wear, ItemUiAction::Remove, ItemUiAction::Release};
+        for (auto action : equipmentActions_) { frame_.choices.push_back(ItemUiActionLabel(action)); }
+    }
     if (frame_.choices.empty()) { frame_.feedback = "No functional actions available."; return; }
     frame_.screen = ItemUiScreen::Actions;
-    if (!manage && actions_.size() == 1) { frame_.screen = actionReturn_; ChooseAction(v, c, l); }
+    if (!manage && frame_.choices.size() == 1) { frame_.screen = actionReturn_; ChooseAction(v, c, l); }
 }
 void ItemUi::ChooseAction(const WorldView& v, const ContentCatalog& c, const Localization& l) {
     actionChoice_ = frame_.choice;
@@ -272,6 +333,8 @@ void ItemUi::ChooseAction(const WorldView& v, const ContentCatalog& c, const Loc
         actionCommand_.kind = CommandKind::use_item; actionCommand_.capability = info->capability; actionCommand_.itemAction = info->action;
         if (info->argument == ItemActionArgument::None) { QueueCommand(actionCommand_); return; }
         if (info->argument == ItemActionArgument::Direction) { frame_.screen = ItemUiScreen::Direction; return; }
+    } else if (!managing_ && frame_.choice - actions_.size() < equipmentActions_.size()) {
+        HandleAction(equipmentActions_[frame_.choice - actions_.size()], v); return;
     } else {
         actionCommand_.kind = CommandKind::store_item;
         if (frame_.choice == actions_.size() + 1) { QueueCommand(actionCommand_); return; }
@@ -287,6 +350,40 @@ void ItemUi::QueueCommand(const Command& command) {
     pending_.clear(); pending_.push_back(command); nextCommand_ = 0; requested_ = 0; moved_ = 0;
     frame_.feedback.clear(); frame_.busy = true;
 }
+void ItemUi::HandleAction(ItemUiAction action, const WorldView& view) {
+    if (!IsOpen() || NeedsTime()) { return; }
+    if (frame_.screen != ItemUiScreen::Inventory && frame_.screen != ItemUiScreen::Advanced
+        && frame_.screen != ItemUiScreen::Examine && frame_.screen != ItemUiScreen::Actions) { return; }
+    const auto& pane = frame_.panes[frame_.activePane];
+    const bool actionMenu = frame_.screen == ItemUiScreen::Actions;
+    const auto id = actionMenu ? actionSource_ : frame_.screen == ItemUiScreen::Examine
+        ? examined_ : pane.selectionValid ? selected_[frame_.activePane] : 0;
+    const auto* item = FindInventoryEntry(view, id);
+    if (!item) { frame_.feedback = "Selected item is no longer accessible."; return; }
+    if ((action == ItemUiAction::Regrip || action == ItemUiAction::Release) && item->heldHands == HandMask::None) {
+        frame_.feedback = "Selected item is not held."; return;
+    }
+    actionSource_ = id;
+    Command command; command.kind = CommandKind::equipment; command.equipment.item = id;
+    command.equipment.hand = item->heldHands == HandMask::Right ? Hand::Right : Hand::Left;
+    switch (action) {
+    case ItemUiAction::HoldLeft: command.equipment.hand = Hand::Left; break;
+    case ItemUiAction::HoldRight: command.equipment.hand = Hand::Right; break;
+    case ItemUiAction::TwoHanded: command.equipment.grip = GripKind::TwoHanded; break;
+    case ItemUiAction::Regrip:
+        command.equipment.operation = EquipmentOperation::Regrip;
+        command.equipment.item = 0;
+        command.equipment.grip = item->heldHands == HandMask::Both ? GripKind::OneHanded : GripKind::TwoHanded;
+        break;
+    case ItemUiAction::Wear:
+        command.equipment.operation = EquipmentOperation::Wear; command.equipment.hand = Hand::Left; break;
+    case ItemUiAction::Remove:
+        command.equipment.operation = EquipmentOperation::Remove; command.equipment.hand = Hand::Left; break;
+    case ItemUiAction::Release:
+        command.equipment.operation = EquipmentOperation::Release; command.equipment.item = 0; break;
+    }
+    QueueCommand(command);
+}
 void ItemUi::QueueTransfer(const ItemUiRow& row, std::size_t count) {
     pending_.clear(); nextCommand_ = 0; moved_ = 0; requested_ = std::min(count, row.items.size());
     for (std::size_t n = 0; n < requested_; ++n) {
@@ -299,6 +396,15 @@ eastl::optional<Command> ItemUi::TakeCommand(const WorldView& v) {
     if (outstanding_ || waitingForReady_ || v.remainingTicks || v.commandQueued || nextCommand_ >= pending_.size()) { return {}; }
     outstanding_ = true; issuedRevision_ = v.revision; issuedTick_ = v.tick;
     const Command command = pending_[nextCommand_++];
+    if (command.kind == CommandKind::equipment
+        && (command.equipment.operation == EquipmentOperation::Release || command.equipment.operation == EquipmentOperation::Regrip)) {
+        const auto* expected = FindInventoryEntry(v, actionSource_);
+        const auto hand = command.equipment.hand == Hand::Left ? HandMask::Left : HandMask::Right;
+        if (!expected || (static_cast<unsigned>(expected->heldHands) & static_cast<unsigned>(hand)) == 0) {
+            CommandResult refused; refused.outcome = Outcome::combat_refused; refused.combatReason = CombatRefusal::MissingSource;
+            CommandFinished(refused); return {};
+        }
+    }
     const auto* item = FindInventoryEntry(v, command.item);
     if (command.kind == CommandKind::transfer_item && (!item || !(item->storage == command.source) || item->installation.value)) {
         CommandResult refused; refused.outcome = Outcome::inventory_refused;
@@ -313,12 +419,17 @@ void ItemUi::CommandFinished(const CommandResult& result) {
     finishedTick_ = result.tick;
     const bool success = result.outcome == Outcome::used_item || result.outcome == Outcome::stored_item
         || result.outcome == Outcome::dropped || result.outcome == Outcome::transferred
-        || result.outcome == Outcome::wielded || result.outcome == Outcome::unwielded;
+        || result.outcome == Outcome::wielded || result.outcome == Outcome::unwielded
+        || result.outcome == Outcome::equipment_changed;
     waitingForReady_ = (success || result.advanced) && result.cost != 0;
     if (success) { ++moved_; }
     else { pending_.resize(nextCommand_); }
     frame_.feedback = requested_ ? "Moved " + UnsignedText(moved_) + "/" + UnsignedText(requested_) : String{};
-    if (!success) { if (!frame_.feedback.empty()) { frame_.feedback += ": "; } frame_.feedback += CommandResultMessage(result); }
+    if (!success) {
+        if (!frame_.feedback.empty()) { frame_.feedback += ": "; }
+        frame_.feedback += result.outcome == Outcome::combat_refused
+            ? CombatRefusalText(result.combatReason) : CommandResultMessage(result);
+    }
     if (success && !advanced_) { Close(); }
     if (nextCommand_ >= pending_.size()) { pending_.clear(); nextCommand_ = 0; }
     frame_.busy = NeedsTime();
@@ -347,6 +458,7 @@ void ItemUi::Handle(const KeyChord& key, const Keymap& keys, const WorldView& v,
             if (managing_ || actions_.size() > 1) {
                 frame_.screen = ItemUiScreen::Actions; frame_.choices.clear(); frame_.choice = actionChoice_;
                 for (const auto& info : actions_) { frame_.choices.push_back(l.ItemActionText(info)); }
+                for (auto action : equipmentActions_) { frame_.choices.push_back(ItemUiActionLabel(action)); }
                 if (managing_) { frame_.choices.push_back("Store in container"); frame_.choices.push_back("Extract to inventory"); }
             } else { frame_.screen = actionReturn_; }
         } else if (frame_.screen == ItemUiScreen::Actions) { frame_.screen = actionReturn_; }

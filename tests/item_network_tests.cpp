@@ -321,6 +321,10 @@ TEST_CASE("Item decoder rejects malformed bounded fields before catalog lookup",
     REQUIRE(cursor.U8(byte));
     for (int i = 0; i < 3; ++i) REQUIRE(cursor.I32(coordinate));
     REQUIRE(cursor.U64(wide)); REQUIRE(cursor.U8(byte)); REQUIRE(cursor.U8(byte));
+    const auto wornOffset = cursor.offset;
+    REQUIRE(cursor.U8(byte)); // Worn.
+    const auto heldHandsOffset = cursor.offset;
+    REQUIRE(cursor.U8(byte)); // Held-hand mask.
     const auto energyOffset = cursor.offset;
     REQUIRE(cursor.U8(byte)); REQUIRE(byte == 1);
     REQUIRE(cursor.U16(shortValue)); REQUIRE(cursor.U32(number)); REQUIRE(cursor.U32(number));
@@ -343,6 +347,8 @@ TEST_CASE("Item decoder rejects malformed bounded fields before catalog lookup",
         WorldView result; CHECK_FALSE(reader.View(result));
     };
     rejects(countOffset, 9); // count > 2048
+    rejects(wornOffset, 2);
+    rejects(heldHandsOffset, 4);
     rejects(energyOffset, 17);
     rejects(energyOffset + 2, 17); // capability low byte
     rejects(activityOffset, 17);

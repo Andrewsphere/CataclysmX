@@ -36,16 +36,35 @@ struct BrowserFixture {
     }
 };
 
-TEST_CASE("Item browser debug binding lists stable IDs and omits unfinished craft wrappers", "[item-browser]") {
+TEST_CASE("Item browser debug binding lists stable IDs and omits generated internal items", "[item-browser]") {
     BrowserFixture f;
     CHECK(ResolveAction(f.keys, InputContext::Debug, {"i"}) == InputAction::Inventory);
     const auto supply = f.content.FindItem("a_supply");
     const auto tool = f.content.FindItem("z_tool");
     REQUIRE(f.content.FindItem("unfinished_craft").value != 0);
+    REQUIRE(f.content.CorpseItem().value != 0);
+    CHECK(f.content.ItemCount() == 4); // Two authored entries and two internal generated definitions.
     CHECK(f.browser.Frame().matches == Vector<ItemTypeId>{supply, tool});
     CHECK(supply.value < tool.value);
     CHECK(f.browser.Label(tool) == "Alpha Hammer [z_tool]");
     CHECK(f.browser.Label(supply) == "Zulu Dressing [a_supply]");
+}
+
+TEST_CASE("Item browser cannot find or queue generated internal items through search", "[item-browser]") {
+    BrowserFixture f;
+    for (const char* name : {"combat_corpse", "unfinished_craft"}) {
+        CAPTURE(name);
+        REQUIRE(f.content.FindItem(name).value != 0);
+        f.Search(name);
+        CHECK(f.browser.Frame().matches.empty());
+        f.Key({"Enter"});
+        for (const char* key : {"e", "m", "Enter"}) { f.Key({key}); }
+        CHECK(f.browser.Frame().screen == ItemBrowserScreen::List);
+        CHECK_FALSE(f.browser.TakeGiveRequest());
+        CHECK_FALSE(f.browser.Frame().busy);
+    }
+    f.Search("");
+    CHECK(f.browser.Frame().matches == Vector<ItemTypeId>{f.content.FindItem("a_supply"), f.content.FindItem("z_tool")});
 }
 
 TEST_CASE("Item browser searches names and IDs live and cancels back to the committed query", "[item-browser]") {
@@ -148,7 +167,9 @@ TEST_CASE("Item browser examination borrows canonical art and shows definition d
     CHECK(sheet.art == &f.content.GetItem(type).art);
     for (const auto* line : {"Flag: waterproof | Keeps water out", "ID: z_tool",
         "Attack cost: 150 ticks | Hands: 2",
-        "Blunt damage: 6.00 HP | Penetration: 1.25 HP | Normal player damage: 6.00 HP"}) {
+        "Blunt damage: 6.00 HP | Penetration: 1.25 HP (authored base; actual damage depends on move, grip, defense and armor)",
+        "Weapon family: improvised fallback",
+        "2H grip | damage ratio 10000/10000 | time ratio 10000/10000 | stamina ratio 10000/10000"}) {
         CHECK(eastl::find(sheet.stats.begin(), sheet.stats.end(), String(line)) != sheet.stats.end());
     }
     CHECK_FALSE(f.browser.TakeGiveRequest());
@@ -156,6 +177,35 @@ TEST_CASE("Item browser examination borrows canonical art and shows definition d
     CHECK(f.browser.Frame().screen == ItemBrowserScreen::List);
     CHECK_FALSE(f.browser.TakeGiveRequest());
     CHECK_FALSE(f.browser.Frame().busy);
+}
+
+TEST_CASE("Item browser identifies an occupied-hand Unarmed weapon by its authored handling skill", "[item-browser]") {
+    const ContentSource source{"unarmed-browser.json5", R"({format_version:1,definitions:[
+        {type:'skill',id:'unarmed',name:'Unarmed',category:'combat'},
+        {type:'item',id:'knuckles',name:'Knuckles',description:'An occupied-hand fist weapon.',mass_g:250,volume_ml:150,
+         melee:{handling_skill:'unarmed',grips:[{kind:'one_handed'}],damage:[{type:'blunt',amount:650}]}}
+    ]})"};
+    const auto loaded = LoadContent({&source, 1}); REQUIRE(loaded);
+    const auto type = loaded->FindItem("knuckles"); REQUIRE(type.value != 0);
+    Localization localization;
+    const auto keys = DefaultKeymap();
+    ItemBrowser browser; browser.Open(*loaded, localization);
+    REQUIRE(browser.Frame().matches == Vector<ItemTypeId>{type});
+    browser.Handle({"e"}, keys, *loaded, localization);
+    REQUIRE(browser.Frame().screen == ItemBrowserScreen::Examine);
+    const auto& sheet = browser.Frame().examination.examination;
+    CHECK(sheet.type == type);
+    CHECK(sheet.art == nullptr);
+    for (const char* line : {"Weapon family: Unarmed", "Attack cost: 100 ticks | Hands: 1",
+            "1H grip | damage ratio 10000/10000 | time ratio 10000/10000 | stamina ratio 10000/10000"}) {
+        CHECK(eastl::find(sheet.stats.begin(), sheet.stats.end(), String(line)) != sheet.stats.end());
+    }
+    CHECK_FALSE(browser.TakeGiveRequest());
+    browser.Handle({"Escape"}, keys, *loaded, localization);
+    browser.Handle({"Enter"}, keys, *loaded, localization);
+    const auto grant = browser.TakeGiveRequest(); REQUIRE(grant);
+    CHECK(grant->type == type);
+    CHECK(grant->count == 1);
 }
 
 TEST_CASE("Item browser queues Enter once and blocks duplicates until completion", "[item-browser]") {

@@ -133,7 +133,7 @@ TEST_CASE("External item art is cached per load and owned by each item", "[conte
     const auto again = LoadContent({sources, 2}, asset.Reader());
     REQUIRE(again.has_value());
     CHECK(asset.paths.size() == 2);
-    CHECK(again->GetItem({1}).art.lines[0][0].text == "new");
+    CHECK(again->GetItem(again->FindItem("one")).art.lines[0][0].text == "new");
     CHECK(two.art.lines[0][1].text == "MM");
 }
 
@@ -169,8 +169,8 @@ TEST_CASE("External art requires an explicit reader while inline art remains sup
     ]})"};
     const auto behavior = LoadContent({&behaviorSource, 1}, registry, asset.Reader());
     REQUIRE(behavior.has_value());
-    CHECK(behavior->GetItem({1}).behaviors.size() == 1);
-    CHECK(FindItemCapability(behavior->GetItem({1}), "timer") == ItemCapabilityId{1});
+    CHECK(behavior->GetItem(behavior->FindItem("sample")).behaviors.size() == 1);
+    CHECK(FindItemCapability(behavior->GetItem(behavior->FindItem("sample")), "timer") == ItemCapabilityId{1});
     ItemBehaviorRegistry noBehaviors;
     const auto unregistered = LoadContent({&behaviorSource, 1}, noBehaviors, asset.Reader());
     REQUIRE_FALSE(unregistered.has_value());
@@ -267,7 +267,7 @@ TEST_CASE("External asset callback and version errors preserve typed failure and
     asset.text = Asset;
     const auto recovered = LoadContent({sources, 2}, asset.Reader());
     REQUIRE(recovered.has_value());
-    CHECK(recovered->ItemCount() == 2);
+    CHECK(recovered->ItemCount() == 3);
 }
 
 TEST_CASE("External art fingerprint depends on resolved art rather than path palette names or line endings", "[content][item-assets][fingerprint]") {
@@ -278,7 +278,7 @@ TEST_CASE("External art fingerprint depends on resolved art rather than path pal
     asset.text += '\n';
     const auto terminated = Load(View(Document()), asset.Reader());
     REQUIRE(terminated.has_value());
-    CHECK(terminated->GetItem({1}) == baseline->GetItem({1}));
+    CHECK(terminated->GetItem(terminated->FindItem("sample")) == baseline->GetItem(baseline->FindItem("sample")));
     CHECK(network::ContentFingerprint(*terminated) == fingerprint);
     asset.text = "@text-art 1\r\n@color ember #DC5353\r\n---\r\n <ember>MM<reset>! ";
     const auto crlf = Load(View(Document()), asset.Reader());
@@ -288,7 +288,7 @@ TEST_CASE("External art fingerprint depends on resolved art rather than path pal
     const auto renamed = Load(View(Document("'/other/renamed.txt'")), asset.Reader());
     REQUIRE(renamed.has_value());
     CHECK(network::ContentFingerprint(*renamed) == fingerprint);
-    CHECK(renamed->GetItem({1}) == baseline->GetItem({1}));
+    CHECK(renamed->GetItem(renamed->FindItem("sample")) == baseline->GetItem(baseline->FindItem("sample")));
     asset.text = "@text-art 1\n@color renamed #DC5354\n---\n <renamed>MM<reset>! ";
     const auto recolored = Load(View(Document()), asset.Reader());
     REQUIRE(recolored.has_value());
@@ -303,12 +303,12 @@ TEST_CASE("Content packs root item art at the manifest instead of nested definit
     files.Write("definitions/nested/art/items/sample.txt", "@text-art 1\n---\nwrong");
     const auto loaded = LoadContentPack(files.Path("pack.json5").c_str());
     REQUIRE(loaded.has_value());
-    CHECK(loaded->GetItem({1}).art.lines[0][1].text == "MM");
+    CHECK(loaded->GetItem(loaded->FindItem("sample")).art.lines[0][1].text == "MM");
     ItemBehaviorRegistry registry;
     RegisterBuiltinItemBehaviors(registry);
     const auto explicitRegistry = LoadContentPack(files.Path("pack.json5").c_str(), registry);
     REQUIRE(explicitRegistry.has_value());
-    CHECK(explicitRegistry->GetItem({1}) == loaded->GetItem({1}));
+    CHECK(explicitRegistry->GetItem(explicitRegistry->FindItem("sample")) == loaded->GetItem(loaded->FindItem("sample")));
     files.Write("definitions/nested/items.json5", View(Document("'/art/items/missing.txt'")));
     const auto missing = LoadContentPack(files.Path("pack.json5").c_str());
     REQUIRE_FALSE(missing.has_value());
@@ -324,12 +324,12 @@ TEST_CASE("Definition file asset loading requires an explicit data root", "[cont
     const eastl::string_view paths[] = {View(path)};
     const auto loaded = LoadContentFiles({paths, 1}, View(root));
     REQUIRE(loaded.has_value());
-    CHECK(loaded->GetItem({1}).art.lines[0][1].color == ArtColor::Rgb(220, 83, 83));
+    CHECK(loaded->GetItem(loaded->FindItem("sample")).art.lines[0][1].color == ArtColor::Rgb(220, 83, 83));
     ItemBehaviorRegistry registry;
     RegisterBuiltinItemBehaviors(registry);
     const auto explicitRegistry = LoadContentFiles({paths, 1}, registry, View(root));
     REQUIRE(explicitRegistry.has_value());
-    CHECK(explicitRegistry->GetItem({1}) == loaded->GetItem({1}));
+    CHECK(explicitRegistry->GetItem(explicitRegistry->FindItem("sample")) == loaded->GetItem(loaded->FindItem("sample")));
     const auto noRoot = LoadContentFiles({paths, 1});
     REQUIRE_FALSE(noRoot.has_value());
     CHECK(noRoot.error() == ContentError::InvalidData);
@@ -474,7 +474,7 @@ TEST_CASE("Windows pack roots preserve native encoding while art references use 
     write(root / L"art" / L"\u4e2d.txt", Asset);
     const auto loaded = LoadContentPack((nativeRoot + "/pack.json5").c_str());
     REQUIRE(loaded);
-    CHECK(loaded->GetItem({1}).art.lines[0][1].text == "MM");
+    CHECK(loaded->GetItem(loaded->FindItem("sample")).art.lines[0][1].text == "MM");
     const auto direct = ReadContentAssetFile(View(nativeRoot), "/art/\xe4\xb8\xad.txt");
     REQUIRE(direct);
     CHECK(*direct == Asset);

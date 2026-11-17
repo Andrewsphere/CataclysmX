@@ -2,6 +2,8 @@
 
 #include "actors/actor_types.h"
 #include "combat/combat_types.h"
+#include "combat/contact.h"
+#include "combat/combat_ids.h"
 #include "content/ai_definition.h"
 #include "core/containers.h"
 #include "items/item_types.h"
@@ -63,6 +65,14 @@ struct MonsterDefinition {
     std::uint32_t attackDamage = 12; // Whole HP, as in CombatState.
     // ratioScale units, 0..10000, divisible by 100 for exact percent conversion.
     std::uint32_t accuracy = 9000;
+    CombatStyleId combatStyle{};
+    bool authoredTrainingRanks = true;
+    std::uint8_t offensiveTrainingRank = 0;
+    std::uint8_t defensiveTrainingRank = 0;
+    std::int32_t attackRating100 = 0;
+    std::int32_t defenseRating100 = 0;
+    bool inexhaustible = false;
+    ReachProfile reach;
     bool operator==(const MonsterDefinition&) const = default;
 };
 

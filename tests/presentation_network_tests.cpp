@@ -80,10 +80,14 @@ TEST_CASE("Inspection transports visible status and nested items with canonical 
     const auto cursor = server.View(0).player_position;
     PlayerInspection source;
     REQUIRE(CapturePlayerInspection(server, server.GetHostPlayerId(), 1, cursor, 2, source));
-    REQUIRE(source.details.actor == server.GetHostPlayerId());
+    REQUIRE(source.details.actor == source.view.characterId);
+    CHECK(source.view.playerId == server.GetHostPlayerId());
     REQUIRE(source.details.items.size() >= 2);
     CHECK(source.details.items[0].depth == 0);
     CHECK(source.details.items[1].depth == 1);
+    source.details.combat.action = ActorActionKind::AbilityWindup;
+    source.details.combat.staggerRemaining = 17;
+    source.details.combat.focusRemaining = 23;
     wire::Writer writer; REQUIRE(writer.Inspection(source));
     wire::Reader reader{{writer.bytes.data(), writer.bytes.size()}};
     PlayerInspection result; REQUIRE(reader.Inspection(result)); REQUIRE(reader.Done());

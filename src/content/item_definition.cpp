@@ -45,6 +45,7 @@ const MeleeProfile& ItemMelee(const ItemDefinition& definition) {
     static const MeleeProfile fallback = [] {
         MeleeProfile profile;
         profile.damage.push_back({DamageType::Blunt, 400, 0});
+        profile.grips.push_back(GripDefinition{});
         return profile;
     }();
     return fallback;
@@ -58,7 +59,8 @@ bool ItemDefinition::operator==(const ItemDefinition& other) const {
         || behaviors.size() != other.behaviors.size() || toolTraits != other.toolTraits
         || craftingPower != other.craftingPower || craftingEnergyPerWork != other.craftingEnergyPerWork
         || books != other.books || readingPower != other.readingPower
-        || recoveryAllowed != other.recoveryAllowed || unfinishedCraft != other.unfinishedCraft) { return false; }
+        || recoveryAllowed != other.recoveryAllowed || unfinishedCraft != other.unfinishedCraft
+        || armor != other.armor) { return false; }
     for (std::size_t i = 0; i < behaviors.size(); ++i) {
         const auto& left = behaviors[i];
         const auto& right = other.behaviors[i];

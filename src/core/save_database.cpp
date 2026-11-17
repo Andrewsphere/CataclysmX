@@ -7,6 +7,7 @@
 #include "objects/object_behavior.h"
 #include "worldgen/worldgen.h"
 #include "crafting/crafting_state.h"
+#include "combat/combat_persistence.h"
 
 #include <EASTL/algorithm.h>
 #include <EASTL/sort.h>
@@ -340,6 +341,57 @@ bool EmptyController(const DataObject& controller) {
     return controller.Type() == DataType::Object && controller.Size() == 0;
 }
 
+DataObject EquipmentPayload(const SavedActor& actor, const ChunkArchive& chunk, const ContentCatalog& content) {
+    if (!EmptyController(actor.equipment)) { return actor.equipment; }
+    GripKind grip = GripKind::OneHanded;
+    if (actor.wieldedItem) {
+        for (const auto& item : chunk.items) {
+            if (item.id != actor.wieldedItem) { continue; }
+            const auto* definition = content.TryGetItem(item.type);
+            if (!definition) { return DataObject::List(); } // Rejected by ReadEquipment.
+            if (definition->melee && definition->melee->hands == 2) { grip = GripKind::TwoHanded; }
+        }
+    }
+    DataObject d; d.SetUnsigned("version", 1); DataObject hands = DataObject::List();
+    for (unsigned i = 0; i < 2; ++i) {
+        DataObject h; h.SetUnsigned("item", i == 0 || grip == GripKind::TwoHanded ? actor.wieldedItem : 0);
+        h.SetUnsigned("grip", static_cast<unsigned>(grip)); hands.Append(eastl::move(h));
+    }
+    d.Set("hands", eastl::move(hands)); d.Set("worn", DataObject::List()); return d;
+}
+
+StateResult<CombatState> ActorCombat(const SavedActor& actor, const ChunkArchive& chunk,
+    const ContentCatalog& content, Diagnostics* diagnostics = nullptr) {
+    auto state = ReadCombatState(actor.combat, content, diagnostics);
+    if (!state) { return state; }
+    const auto version = actor.combat.GetUnsigned("version");
+    if ((!version || *version < 3) && state->life == ActorLifeState::Alive) {
+        if (state->action.kind == ActorActionKind::MeleeWindup) {
+            if (state->action.recoveryTicks > UINT64_MAX - actor.remainingTicks) {
+                if (diagnostics) { diagnostics->Add("Legacy combat commitment duration overflows"); }
+                return eastl::unexpected(StateError::InvalidData);
+            }
+            state->combatLockRemaining = actor.remainingTicks + state->action.recoveryTicks;
+        } else if (state->action.kind == ActorActionKind::Recovery) {
+            state->combatLockRemaining = actor.remainingTicks;
+        }
+    }
+    if ((!version || *version < 3) && state->action.kind == ActorActionKind::MeleeWindup) {
+        if (state->action.weapon != actor.wieldedItem) {
+            if (diagnostics) { diagnostics->Add("Legacy windup weapon differs from equipped item"); }
+            return eastl::unexpected(StateError::InvalidData);
+        }
+        auto equipment = ReadEquipment(EquipmentPayload(actor, chunk, content), diagnostics);
+        if (!equipment) { return eastl::unexpected(equipment.error()); }
+        if (equipment->hands[0].grip == GripKind::TwoHanded) {
+            auto& sources = state->action.sources;
+            sources.hands[0].grip = GripKind::TwoHanded;
+            sources.hands[1] = sources.hands[0]; sources.functionalHands = HandMask::Both;
+        }
+    }
+    return state;
+}
+
 SaveResult<void> ValidateEntityState(const ContentCatalog& content, const ChunkArchive& chunk,
     Diagnostics* diagnostics) {
     for (const auto& actor : chunk.actors) {
@@ -347,7 +399,28 @@ SaveResult<void> ValidateEntityState(const ContentCatalog& content, const ChunkA
             && (actor.player || !content.FindMonster(actor.monsterType).value)) {
             return Failure(SaveError::InvalidData, "Unknown monster type or typed player actor", diagnostics);
         }
-        const auto combat = ReadCombatState(actor.combat, diagnostics);
+        const auto combat = ActorCombat(actor, chunk, content, diagnostics);
+        const auto equipment = ReadEquipment(EquipmentPayload(actor, chunk, content), diagnostics);
+        const auto character = ReadCharacterCombat(actor.characterCombat, content, diagnostics);
+        if (!equipment || !character) {
+            const auto error = !equipment ? equipment.error() : character.error();
+            return eastl::unexpected(error == StateError::UnsupportedVersion ? SaveError::UnsupportedVersion : SaveError::InvalidData);
+        }
+        const auto owns = [&chunk, &actor](PersistentId id) {
+            return eastl::any_of(chunk.items.begin(), chunk.items.end(), [&actor, id](const SavedItem& item) {
+                return item.id == id && item.location == LocationKind::actor && item.owner == actor.id;
+            });
+        };
+        for (const auto& hand : equipment->hands) {
+            if (hand.item && !owns(hand.item)) { return Failure(SaveError::InvalidData, "Invalid held item ownership", diagnostics); }
+        }
+        for (const auto id : equipment->worn) {
+            if (!owns(id)) { return Failure(SaveError::InvalidData, "Invalid worn item ownership", diagnostics); }
+        }
+        if (!EmptyController(actor.equipment)) {
+            const auto projected = equipment->hands[0].item ? equipment->hands[0].item : equipment->hands[1].item;
+            if (projected != actor.wieldedItem) { return Failure(SaveError::InvalidData, "Invalid equipment projection", diagnostics); }
+        }
         const auto learning = ReadLearningState(actor.learning, content, diagnostics);
         if (!learning) {
             return eastl::unexpected(learning.error() == StateError::UnsupportedVersion
@@ -369,13 +442,27 @@ SaveResult<void> ValidateEntityState(const ContentCatalog& content, const ChunkA
                 }
             }
         }
-        if ((combat && combat->action.kind == ActorActionKind::MeleeWindup && combat->action.weapon != actor.wieldedItem)
+        if ((combat && !combat->action.definitionDriven && combat->action.kind == ActorActionKind::MeleeWindup && combat->action.weapon != actor.wieldedItem)
             || (actor.wieldedItem && eastl::none_of(chunk.items.begin(), chunk.items.end(), [&actor](const SavedItem& item) {
                 return item.id == actor.wieldedItem && item.location == LocationKind::actor && item.owner == actor.id;
             }))) { return Failure(SaveError::InvalidData, "Invalid wielded item ownership", diagnostics); }
         if (!combat) {
             return eastl::unexpected(combat.error() == StateError::UnsupportedVersion
                 ? SaveError::UnsupportedVersion : SaveError::InvalidData);
+        }
+        bool manualActive = false;
+        if (*character) {
+            for (const auto& manual : (*character)->manuals) {
+                if (!manual.active) { continue; }
+                manualActive = true;
+                if (learning->study.active || combat->action.kind != ActorActionKind::None
+                    || actor.remainingTicks != manual.fundedTicks) {
+                    return Failure(SaveError::InvalidData, "Conflicting manual study and actor action", diagnostics);
+                }
+            }
+        }
+        if (combat->life == ActorLifeState::Dead && (actor.remainingTicks || learning->study.active || manualActive)) {
+            return Failure(SaveError::InvalidData, "Dead actor has active work", diagnostics);
         }
         auto controller = EmptyController(actor.controller)
             ? MakeAiController(actor.player ? AiControllerKind::None : AiControllerKind::Wander, nullptr, diagnostics)
@@ -424,9 +511,13 @@ bool ValidSnapshot(const SaveSnapshot& snapshot) {
         return false;
     }
     Vector<PersistentId> actorIds;
+    Vector<PersistentId> sessionIds;
     Vector<std::uint64_t> tokens;
     bool hostFound = false;
     for (const SavedPlayer& player : session.players) {
+        const auto stable = player.session ? player.session : player.actor;
+        if (!stable || stable >= snapshot.nextId) { return false; }
+        sessionIds.push_back(stable);
         if (player.actor == 0 || player.actor >= snapshot.nextId || !ValidPosition(player.position)
             || player.name.empty() || player.name.size() > 32
             || std::memchr(player.name.data(), '\0', player.name.size())
@@ -438,7 +529,7 @@ bool ValidSnapshot(const SaveSnapshot& snapshot) {
         if (player.reconnectToken != 0) { tokens.push_back(player.reconnectToken); }
     }
     eastl::sort(tokens.begin(), tokens.end());
-    if (!Unique(actorIds) || eastl::adjacent_find(tokens.begin(), tokens.end()) != tokens.end()
+    if (!Unique(actorIds) || !Unique(sessionIds) || eastl::adjacent_find(tokens.begin(), tokens.end()) != tokens.end()
         || (session.player != 0 && !session.players.empty() && !hostFound)) { return false; }
     const auto center = ChunkOf(session.playerPosition);
     constexpr int limit = world_coordinate_limit / chunk_size;
@@ -700,11 +791,15 @@ bool ValidateChunk(const ContentCatalog& content, const ChunkArchive& chunk,
     };
     for (std::size_t i = 0; i < chunk.actors.size(); ++i) {
         const auto& actor = chunk.actors[i];
+        const auto combat = ReadCombatState(actor.combat, content);
+        if (!combat || (combat->corpse && (combat->corpse >= nextId || combat->corpse == actor.id))) { return false; }
         if (!ValidLightEmission(actor.light) || actor.speed == 0 || (actor.parked && !actor.player)
             || !addId(actor.id) || !ValidPosition(actor.position)
             || ChunkOf(actor.position) != chunk.position) { return false; }
         for (std::size_t j = 0; j < i; ++j) {
-            if (!actor.parked && !chunk.actors[j].parked
+            const auto otherCombat = ReadCombatState(chunk.actors[j].combat, content);
+            if (!actor.parked && combat->life == ActorLifeState::Alive && !chunk.actors[j].parked
+                && otherCombat && otherCombat->life == ActorLifeState::Alive
                 && actor.position == chunk.actors[j].position) { return false; }
         }
     }
@@ -721,7 +816,8 @@ bool ValidateChunk(const ContentCatalog& content, const ChunkArchive& chunk,
         const auto* definition = content.TryGetObject(object.type);
         if (definition && definition->blocksMovement) {
             for (const auto& actor : chunk.actors) {
-                if (!actor.parked && actor.position == object.position) {
+                const auto combat = ReadCombatState(actor.combat, content);
+                if (!actor.parked && combat && combat->life == ActorLifeState::Alive && actor.position == object.position) {
                     if (diagnostics) { diagnostics->Add("Blocking object overlaps an unparked actor"); }
                     return false;
                 }
@@ -794,6 +890,7 @@ String EncodeSnapshot(const SaveSnapshot& snapshot) {
     for (const SavedPlayer& player : snapshot.session.players) {
         auto* entry = writer.Object();
         writer.Counter(entry, "actor", player.actor);
+        writer.Counter(entry, "session", player.session ? player.session : player.actor);
         writer.Position(entry, player.position);
         writer.Text(entry, "name", player.name.c_str());
         writer.Counter(entry, "reconnect_token", player.reconnectToken);
@@ -870,8 +967,10 @@ SaveResult<SaveSnapshot> DecodeSnapshot(const char* text, std::size_t length,
     while (auto* entry = yyjson_arr_iter_next(&playerIterator)) {
         SavedPlayer player;
         auto* name = Get(entry, "name");
-        if (!Fields(entry, {"actor", "position", "name", "reconnect_token"})
+        if (!(formatVersion >= 14 ? Fields(entry, {"actor", "session", "position", "name", "reconnect_token"})
+                : Fields(entry, {"actor", "position", "name", "reconnect_token"}))
             || !Counter(Get(entry, "actor"), player.actor)
+            || (formatVersion >= 14 && (!Counter(Get(entry, "session"), player.session) || !player.session))
             || !Position(Get(entry, "position"), player.position)
             || !Counter(Get(entry, "reconnect_token"), player.reconnectToken)
             || !yyjson_is_str(name) || yyjson_get_len(name) == 0 || yyjson_get_len(name) > 32
@@ -879,6 +978,7 @@ SaveResult<SaveSnapshot> DecodeSnapshot(const char* text, std::size_t length,
             return Failure(SaveError::InvalidData, "Invalid player roster entry", diagnostics);
         }
         player.name.assign(yyjson_get_str(name), yyjson_get_len(name));
+        if (formatVersion < 14) { player.session = player.actor; }
         state.players.push_back(eastl::move(player));
     }
     if (!ValidSnapshot(snapshot)) {
@@ -914,7 +1014,9 @@ String EncodeChunk(const ContentCatalog& content, const ChunkArchive& chunk) {
         writer.Counter(value, "remaining_ticks", actor.remainingTicks);
         writer.Counter(value, "carry_capacity_g", actor.carryCapacityGrams);
         EncodeLight(writer, value, actor.light);
-        writer.Add(value, "combat", EncodeValue(writer, actor.combat));
+        writer.Add(value, "combat", EncodeValue(writer, CaptureCombatState(*ActorCombat(actor, chunk, content), content)));
+        writer.Add(value, "equipment", EncodeValue(writer, EquipmentPayload(actor, chunk, content)));
+        writer.Add(value, "character_combat", EncodeValue(writer, actor.characterCombat));
         // Source-constructed neutral actors use the core's empty-state sentinel.
         writer.Add(value, "learning", EncodeValue(writer, CaptureLearningState(*ReadLearningState(actor.learning, content), content)));
         writer.Counter(value, "wielded_item", actor.wieldedItem);
@@ -1104,7 +1206,11 @@ SaveResult<ChunkArchive> DecodeChunk(const ContentCatalog& content, const char* 
     yyjson_arr_iter actorIterator = yyjson_arr_iter_with(actors);
     while (auto* value = yyjson_arr_iter_next(&actorIterator)) {
         SavedActor actor{};
-        const bool fields = formatVersion >= 13
+        const bool fields = formatVersion >= 14
+            ? Get(value, "monster_type")
+                ? Fields(value, {"id", "position", "player", "parked", "turns", "inventory", "speed", "remaining_ticks", "carry_capacity_g", "light", "controller", "combat", "monster_type", "wielded_item", "learning", "equipment", "character_combat"})
+                : Fields(value, {"id", "position", "player", "parked", "turns", "inventory", "speed", "remaining_ticks", "carry_capacity_g", "light", "controller", "combat", "wielded_item", "learning", "equipment", "character_combat"})
+            : formatVersion >= 13
             ? Get(value, "monster_type")
                 ? Fields(value, {"id", "position", "player", "parked", "turns", "inventory", "speed", "remaining_ticks", "carry_capacity_g", "light", "controller", "combat", "monster_type", "wielded_item", "learning"})
                 : Fields(value, {"id", "position", "player", "parked", "turns", "inventory", "speed", "remaining_ticks", "carry_capacity_g", "light", "controller", "combat", "wielded_item", "learning"})
@@ -1130,6 +1236,12 @@ SaveResult<ChunkArchive> DecodeChunk(const ContentCatalog& content, const char* 
             return Failure(SaveError::InvalidData, "Invalid actor", diagnostics);
         }
         actor.player = yyjson_get_bool(Get(value, "player"));
+        if (formatVersion >= 14) {
+            auto equipment = DecodeValue(Get(value, "equipment"));
+            auto character = DecodeValue(Get(value, "character_combat"));
+            if (!equipment || !character) { return Failure(SaveError::InvalidData, "Invalid equipment or character combat payload", diagnostics); }
+            actor.equipment = eastl::move(*equipment); actor.characterCombat = eastl::move(*character);
+        }
         if (formatVersion >= 11 && !Counter(Get(value, "wielded_item"), actor.wieldedItem)) {
             return Failure(SaveError::InvalidData, "Invalid wielded item", diagnostics);
         }
@@ -1156,8 +1268,17 @@ SaveResult<ChunkArchive> DecodeChunk(const ContentCatalog& content, const char* 
         if (formatVersion < 10) { actor.combat = CaptureCombatState(MakeCombatState(actor.player)); }
         else {
             auto combat = DecodeValue(Get(value, "combat"));
-            if (!combat) { return Failure(SaveError::InvalidData, "Invalid actor combat state", diagnostics); }
+            if (!combat || EmptyController(*combat)) { return Failure(SaveError::InvalidData, "Invalid actor combat state", diagnostics); }
             actor.combat = eastl::move(*combat);
+        }
+        if (formatVersion >= 14) {
+            const auto version = actor.combat.GetUnsigned("version");
+            if (version && *version > 3) {
+                return Failure(SaveError::UnsupportedVersion, "Unsupported combat envelope", diagnostics);
+            }
+            if (!version || *version != 3 || EmptyController(actor.equipment)) {
+                return Failure(SaveError::InvalidData, "Format 14 requires combat and equipment envelopes", diagnostics);
+            }
         }
         if (formatVersion < 9) { actor.controller = DefaultController(actor.player); }
         else {
@@ -1207,11 +1328,28 @@ SaveResult<ChunkArchive> DecodeChunk(const ContentCatalog& content, const char* 
         auto decoded = DecodeItems(content, Get(value, "contents"), LocationKind::object, object.id, 1, chunk, diagnostics);
         if (!decoded) { return eastl::unexpected(decoded.error()); }
     }
+    auto decoded = DecodeItems(content, Get(root, "ground_items"), LocationKind::ground, 0, 1, chunk, diagnostics);
+    if (!decoded) { return eastl::unexpected(decoded.error()); }
+    if (formatVersion < 14) {
+        for (auto& actor : chunk.actors) {
+            auto combat = ActorCombat(actor, chunk, content, diagnostics);
+            if (!combat) {
+                return Failure(combat.error() == StateError::UnsupportedVersion ? SaveError::UnsupportedVersion : SaveError::InvalidData,
+                    "Invalid legacy combat migration", diagnostics);
+            }
+            actor.equipment = EquipmentPayload(actor, chunk, content);
+            actor.combat = CaptureCombatState(*combat, content);
+            if (combat->life == ActorLifeState::Dead) {
+                actor.remainingTicks = 0;
+                auto learning = ReadLearningState(actor.learning, content, diagnostics);
+                if (!learning) { return Failure(SaveError::InvalidData, "Invalid legacy learning state", diagnostics); }
+                learning->study = {}; actor.learning = CaptureLearningState(*learning, content);
+            }
+        }
+    }
     Vector<PersistentId> ids;
     auto entitiesValid = ValidateEntityState(content, chunk, diagnostics);
     if (!entitiesValid) { return eastl::unexpected(entitiesValid.error()); }
-    auto decoded = DecodeItems(content, Get(root, "ground_items"), LocationKind::ground, 0, 1, chunk, diagnostics);
-    if (!decoded) { return eastl::unexpected(decoded.error()); }
     const auto validated = ValidateItemSnapshot(content, chunk, diagnostics);
     if (!validated) {
         return eastl::unexpected(validated.error() == StateError::UnsupportedVersion
@@ -1387,7 +1525,7 @@ SaveResult<int> ReadFormatVersion(sqlite3* db, Diagnostics* diagnostics) {
         return Failure(SaveError::InvalidData, "Invalid save metadata", diagnostics);
     }
     const auto version = sqlite3_column_int64(metadata.value, 1);
-    if (version != 7 && version != 8 && version != 9 && version != 10 && version != 11 && version != 12 && version != save_format_version) {
+    if (version < 7 || version > save_format_version) {
         return Failure(SaveError::UnsupportedVersion, "Unsupported save format version", diagnostics);
     }
     code = sqlite3_step(metadata.value);
@@ -1556,11 +1694,17 @@ SaveResult<void> ValidateDatabase(const ContentCatalog& content, sqlite3* db,
             const auto learning = ReadLearningState(actor.learning, content);
             if (learning->study.active) { studyingActors.push_back(actor.id); }
             if (actor.player) { memoryOwners.push_back(actor.id); }
+            const auto combat = ReadCombatState(actor.combat, content);
+            const bool validHostOccupancy = !actor.parked || combat->life == ActorLifeState::Dead;
             if (actor.id == snapshot.session.player && actor.player
-                && !actor.parked && actor.position == snapshot.session.playerPosition) {
+                && validHostOccupancy && actor.position == snapshot.session.playerPosition) {
                 playerFound = true;
             }
-            if (actor.player && authoritative
+            const auto character = ReadCharacterCombat(actor.characterCombat, content);
+            if (character && *character) {
+                for (const auto& manual : (*character)->manuals) { if (manual.active) { studyingActors.push_back(actor.id); } }
+            }
+            if (actor.player && authoritative && combat->life != ActorLifeState::Dead
                 && actor.id != snapshot.session.player
                 && eastl::none_of(snapshot.session.players.begin(), snapshot.session.players.end(),
                     [&actor](const SavedPlayer& player) { return player.actor == actor.id; })) {
@@ -1568,7 +1712,7 @@ SaveResult<void> ValidateDatabase(const ContentCatalog& content, sqlite3* db,
             }
             for (const SavedPlayer& player : snapshot.session.players) {
                 if (actor.id == player.actor && actor.player && actor.position == player.position
-                    && (actor.id != snapshot.session.player || !actor.parked)) {
+                    && (actor.id != snapshot.session.player || validHostOccupancy)) {
                     rosterFound.push_back(player.actor);
                 }
             }
@@ -1670,7 +1814,7 @@ SaveResult<void> SaveDatabase::Create(const char* path, Diagnostics* diagnostics
         "BEGIN IMMEDIATE;"
         "CREATE TABLE metadata(singleton INTEGER PRIMARY KEY CHECK(singleton=1),"
         "format_version INTEGER NOT NULL,game_version TEXT NOT NULL);"
-        "INSERT INTO metadata VALUES(1,13,'0.1.0');"
+        "INSERT INTO metadata VALUES(1,14,'0.1.0');"
         "CREATE TABLE world_state(singleton INTEGER PRIMARY KEY CHECK(singleton=1),payload TEXT NOT NULL);"
         "CREATE TABLE chunks(x INTEGER NOT NULL,z INTEGER NOT NULL,y INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(x,z,y));"
         "CREATE TABLE player_memories(player_id TEXT NOT NULL,x INTEGER NOT NULL,z INTEGER NOT NULL,y INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(player_id,x,z,y));"
@@ -1843,7 +1987,7 @@ SaveResult<void> SaveDatabase::Begin(Diagnostics* diagnostics) {
         if (code == SQLITE_OK) { code = sqlite3_step(statement.value); }
         if (code != SQLITE_DONE) { return impl_->WriteFailure(code, diagnostics); }
     }
-    auto upgraded = Execute(db, "UPDATE metadata SET format_version=13 WHERE singleton=1", diagnostics);
+    auto upgraded = Execute(db, "UPDATE metadata SET format_version=14 WHERE singleton=1", diagnostics);
     if (!upgraded) { impl_->Rollback(); return upgraded; }
     impl_->effectiveVersion = save_format_version;
     return {};

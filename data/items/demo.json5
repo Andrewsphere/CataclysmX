@@ -3,7 +3,7 @@
       type: 'item', id: 'rock', name: 'rock', mass_g: 500, volume_ml: 250, flags:['obsolete'],
       description: 'A fist-sized stone with a rough, weathered surface. Heavy enough to make a serviceable improvised weapon.',
       art: '/art/items/rock/art.txt',
-      melee: {damage: [{type: 'blunt', amount: 600}], attack_cost: 110, hands: 1},
+      melee: {damage: [{type: 'blunt', amount: 600}], attack_cost: 110, handling_skill:'melee', grips:[{kind:'one_handed'}]},
     },
     {type: 'item', id: 'stone_marker', name: 'stone marker', mass_g: 500, volume_ml: 250, flags:['obsolete']},
     {
@@ -18,7 +18,7 @@
       type: 'item', id: 'metal_pipe', name: 'metal pipe', mass_g: 1500, volume_ml: 1000, flags:['obsolete'],
       description: 'A length of heavy metal pipe, scarred by rust and old tool marks. A two-handed swing puts considerable weight behind it.',
       art: '/art/items/metal_pipe/art.txt',
-      melee: {damage: [{type: 'blunt', amount: 2000, penetration: 0}], attack_cost: 150, hands: 2},
+      melee: {damage: [{type: 'blunt', amount: 2000, penetration: 0}], attack_cost: 150, handling_skill:'clubs_hammers', grips:[{kind:'two_handed'}], block_capacity:400, allowed_responses:['parry','block']},
     },
     {type: 'item', id: 'wood_plank', name: 'wood plank', mass_g: 2000, volume_ml: 3000, flags:['obsolete']},
     {type: 'item', id: 'blinking_lightbulb', name: 'blinking lightbulb', mass_g: 50, volume_ml: 100, flags:['obsolete']},

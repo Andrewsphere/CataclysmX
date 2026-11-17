@@ -4,7 +4,8 @@
 
 `data/skills/core.json5` defines the noncombat skills Cooking & Chemistry
 (`cooking_chemistry`), Fabrication, Mechanics, Electronics, Computers, Tailoring,
-Survival and Medicine, plus the combat skills Melee, Unarmed and Dodge. The main
+Survival and Medicine, plus nine combat skills: Melee, Unarmed, Knives, Swords,
+Clubs & Hammers, Axes, Polearms, Shields and Dodge. The main
 and FirstHouse packs include these definitions; activity coverage is a starter
 slice, not a complete ten-tier progression for each skill.
 
@@ -21,6 +22,13 @@ benefits. Their printed carriers are `workshop_primer_print` and
 `salvage_notes_print`. `workshop_ebook_reader` carries `workshop_primer_text`,
 sharing its once-per-character benefit with the printed primer; its own `cell`
 must have charge. FirstHouse offers the manuals through debug spawning.
+
+The separate `boxing_manual` and `weapon_forms_manual` carriers appear in
+ordinary loot; their repeatable art-acquisition attempts are distinct from ordinary
+book benefits. See [combat content](combat_content.md#shipped-identities-and-starter-tuning)
+and [combat learning](combat_learning.md). Town has 17 skills and 98 items;
+the demo has 17 items, including the generated corpse container. These counts
+describe the current packs, not fixed content limits.
 
 ## Authoring schema
 

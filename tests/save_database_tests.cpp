@@ -107,7 +107,23 @@ void Replace(std::string& text, const char* before, const char* after) {
     text.replace(position, std::char_traits<char>::length(before), after);
 }
 
+void StripV14Fields(RawDatabase& raw) {
+    // Restore an actual v2 combat envelope, rather than relabeling v3 as legacy.
+    raw.Exec("UPDATE chunks SET payload=json_set(payload,'$.actors',json((SELECT json_group_array("
+        "json_remove(CASE WHEN json_extract(value,'$.combat.version')=3 THEN "
+        "json_set(value,'$.combat',json_extract(value,'$.combat.legacy')) ELSE value END,"
+        "'$.equipment','$.character_combat')) FROM json_each(chunks.payload,'$.actors'))))");
+    raw.Exec("UPDATE world_state SET payload=json_set(payload,'$.session.players',json((SELECT "
+        "json_group_array(json_remove(value,'$.session')) FROM json_each(world_state.payload,'$.session.players'))))");
+}
+
+DataObject MigratedCombat(const CombatState& state) {
+    const auto migrated = ReadCombatState(CaptureCombatState(state), TestContent());
+    REQUIRE(migrated); return CaptureCombatState(*migrated, TestContent());
+}
+
 void StripV9ChunkFields(RawDatabase& raw) {
+    StripV14Fields(raw);
     raw.Exec("UPDATE chunks SET payload=json_set(payload,"
         "'$.actors',json((SELECT json_group_array(json_remove(value,'$.controller','$.combat','$.wielded_item','$.learning')) FROM json_each(chunks.payload,'$.actors'))),"
         "'$.objects',json((SELECT json_group_array(json_remove(value,'$.type','$.state')) FROM json_each(chunks.payload,'$.objects'))))");
@@ -531,7 +547,7 @@ TEST_CASE("Save database rejects unknown versions and incomplete or extended sch
     Populate(file.path.c_str());
     {
         RawDatabase raw(file.path.c_str());
-        SECTION("future version") { raw.Exec("UPDATE metadata SET format_version=14"); }
+        SECTION("future version") { raw.Exec("UPDATE metadata SET format_version=15"); }
         SECTION("previous v6 format") { raw.Exec("UPDATE metadata SET format_version=6"); }
         SECTION("previous v5 format") { raw.Exec("UPDATE metadata SET format_version=5"); }
         SECTION("previous v4 format") { raw.Exec("UPDATE metadata SET format_version=4"); }
@@ -1136,7 +1152,7 @@ TEST_CASE("Legacy checkpoints rewrite every chunk before accepting new v10 write
     CHECK((*npc)->Kind() == AiControllerKind::Wander);
     CHECK((**remote).objects[0].type == ObjectTypeId{});
     CHECK((**remote).objects[0].state == DataObject{});
-    CHECK((**remote).actors[0].combat == CaptureCombatState(MakeCombatState(false)));
+    CHECK((**remote).actors[0].combat == MigratedCombat(MakeCombatState(false)));
 
     // A failed checkpoint must undo migration of untouched remote rows too.
     REQUIRE(database.Begin());
@@ -1144,7 +1160,7 @@ TEST_CASE("Legacy checkpoints rewrite every chunk before accepting new v10 write
     REQUIRE(local);
     REQUIRE(*local);
     CHECK((**local).actors[0].controller == CaptureAiController(nullptr));
-    CHECK((**local).actors[0].combat == CaptureCombatState(MakeCombatState(true)));
+    CHECK((**local).actors[0].combat == MigratedCombat(MakeCombatState(true)));
     REQUIRE(database.WriteChunk(SampleChunk()));
     auto bad = *snapshot;
     bad.nextId = 9; // Remote ID 9 remains present.
@@ -1584,7 +1600,7 @@ TEST_CASE("V10 combat state round trips injuries protection and stale pending ta
     combat.style = CombatStyle::Aggressive;
     combat.faction = CombatFaction::Undead;
     combat.action = {ActorActionKind::MeleeWindup, UINT64_MAX,
-        static_cast<std::uint32_t>(CombatMove::HeavyAttack), UINT64_MAX, 30};
+        static_cast<std::uint32_t>(CombatMove::HeavyAttack), 73, 30};
     SECTION("heavy windup") {}
     SECTION("aiming") { combat.action = {ActorActionKind::Aiming, UINT64_MAX}; }
     combat.stamina = 42;
@@ -1593,6 +1609,7 @@ TEST_CASE("V10 combat state round trips injuries protection and stale pending ta
     combat.heavyCooldown = UINT64_MAX - 1;
     combat.protection[2][3] = UINT32_MAX;
     chunk.actors[0].combat = CaptureCombatState(combat);
+    chunk.actors[0].remainingTicks = 41;
     {
         SaveDatabase database(TestContent());
         REQUIRE(database.Create(file.path.c_str()));
@@ -1606,9 +1623,11 @@ TEST_CASE("V10 combat state round trips injuries protection and stale pending ta
     auto loaded = database.ReadChunk({}, 8);
     REQUIRE(loaded);
     REQUIRE(*loaded);
-    const auto restored = ReadCombatState((**loaded).actors[0].combat);
+    const auto restored = ReadCombatState((**loaded).actors[0].combat, TestContent());
     REQUIRE(restored);
-    CHECK(*restored == combat);
+    auto migrated = ReadCombatState(chunk.actors[0].combat, TestContent()); REQUIRE(migrated);
+    if (combat.action.kind == ActorActionKind::MeleeWindup) { migrated->combatLockRemaining = 114; }
+    CHECK(*restored == *migrated);
     REQUIRE(database.Begin());
     REQUIRE(database.Commit());
 }
@@ -1618,6 +1637,7 @@ TEST_CASE("V10 equipment migration defaults to unarmed and writes V11 transactio
     Populate(file.path.c_str());
     {
         RawDatabase raw(file.path.c_str());
+        StripV14Fields(raw);
         raw.Exec("UPDATE chunks SET payload=json_set(payload,'$.actors',json((SELECT json_group_array("
             "json_set(json_remove(value,'$.wielded_item','$.combat.action.weapon','$.learning'),'$.combat.version',1)) "
             "FROM json_each(chunks.payload,'$.actors'))));UPDATE metadata SET format_version=10");
@@ -1628,7 +1648,7 @@ TEST_CASE("V10 equipment migration defaults to unarmed and writes V11 transactio
         auto chunk = database.ReadChunk({}, 8); REQUIRE(chunk); REQUIRE(*chunk);
         for (const auto& actor : (**chunk).actors) {
             CHECK(actor.wieldedItem == 0);
-            const auto combat = ReadCombatState(actor.combat); REQUIRE(combat);
+            const auto combat = ReadCombatState(actor.combat, TestContent()); REQUIRE(combat);
             CHECK(combat->action.weapon == 0);
         }
         REQUIRE(database.Begin()); REQUIRE(database.Commit());
@@ -1643,6 +1663,10 @@ TEST_CASE("V11 requires strict valid combat envelopes on disk and before writing
     SaveError expected = SaveError::InvalidData;
     {
         RawDatabase raw(file.path.c_str());
+        StripV14Fields(raw);
+        raw.Exec("UPDATE chunks SET payload=json_set(payload,'$.actors',json((SELECT json_group_array("
+            "json_remove(value,'$.learning')) FROM json_each(chunks.payload,'$.actors'))));"
+            "UPDATE metadata SET format_version=11");
         SECTION("missing combat") { raw.Exec("UPDATE chunks SET payload=json_remove(payload,'$.actors[0].combat')"); }
         SECTION("missing wield selection") { raw.Exec("UPDATE chunks SET payload=json_remove(payload,'$.actors[0].wielded_item')"); }
         SECTION("stale wield selection") { raw.Exec("UPDATE chunks SET payload=json_set(payload,'$.actors[0].wielded_item','999')"); }
@@ -1654,7 +1678,7 @@ TEST_CASE("V11 requires strict valid combat envelopes on disk and before writing
         SECTION("overflow before cast") { raw.Exec("UPDATE chunks SET payload=json_set(payload,'$.actors[0].combat.accuracy',256)"); }
         SECTION("invalid body") { raw.Exec("UPDATE chunks SET payload=json_set(payload,'$.actors[0].combat.body.parts[0].hp',1)"); }
         SECTION("future combat version") {
-            raw.Exec("UPDATE chunks SET payload=json_set(payload,'$.actors[0].combat.version',3)");
+            raw.Exec("UPDATE chunks SET payload=json_set(payload,'$.actors[0].combat.version',4)");
             expected = SaveError::UnsupportedVersion;
         }
         SECTION("duplicate combat version") {
@@ -1698,6 +1722,7 @@ TEST_CASE("V9 migration synthesizes combat defaults and preserves existing actor
     std::string original;
     {
         RawDatabase raw(file.path.c_str());
+        StripV14Fields(raw);
         raw.Exec("UPDATE chunks SET payload=json_set(payload,'$.actors',json((SELECT json_group_array(json_remove(value,'$.combat','$.wielded_item','$.learning')) FROM json_each(chunks.payload,'$.actors'))));"
             "UPDATE metadata SET format_version=9");
         original = raw.Text("SELECT payload FROM chunks");
@@ -1707,8 +1732,8 @@ TEST_CASE("V9 migration synthesizes combat defaults and preserves existing actor
     auto loaded = database.ReadChunk({}, 9);
     REQUIRE(loaded);
     REQUIRE(*loaded);
-    CHECK((**loaded).actors[0].combat == CaptureCombatState(MakeCombatState(true)));
-    CHECK((**loaded).actors[1].combat == CaptureCombatState(MakeCombatState(false)));
+    CHECK((**loaded).actors[0].combat == MigratedCombat(MakeCombatState(true)));
+    CHECK((**loaded).actors[1].combat == MigratedCombat(MakeCombatState(false)));
     CHECK((**loaded).actors[1].controller == chunk.actors[1].controller);
     CHECK((**loaded).actors[1].light == chunk.actors[1].light);
     CHECK((**loaded).actors[1].turns == 77);

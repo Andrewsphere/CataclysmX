@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
 
 namespace cataclysmx {
 namespace {
@@ -44,6 +45,181 @@ bool Normalize(eastl::string_view input, String& output) {
     }
     return !output.empty();
 }
+
+DataObject Numbers(std::initializer_list<std::uint64_t> values) {
+    DataObject out = DataObject::List();
+    for (auto value : values) { out.Append(DataObject::Unsigned(value)); }
+    return out;
+}
+DataObject WriteReach(const ReachProfile& value) {
+    return Numbers({value.distance, static_cast<unsigned>(value.height), value.regions});
+}
+DataObject WriteSource(const SourceRequirement& value) {
+    return Numbers({static_cast<unsigned>(value.kind), static_cast<unsigned>(value.hand),
+        static_cast<unsigned>(value.freeHands), static_cast<unsigned>(value.functionalHands),
+        static_cast<unsigned>(value.functionalLegs), value.requiresGrip, static_cast<unsigned>(value.grip), value.requiresNaturalApparatus});
+}
+DataObject WriteCost(const ActionCost& value) {
+    return Numbers({value.windupCost, value.recoveryCost, value.staminaCost});
+}
+DataObject WriteCombatTraining(const CombatTrainingDefinition& value) {
+    return Numbers({value.work, value.meleeShare, value.handlingShare, value.artXpPerWork});
+}
+DataObject WriteUnlock(const MoveUnlock& value, const ContentCatalog& catalog) {
+    DataObject out;
+    out.SetUnsigned("art_xp", value.artXp);
+    DataObject skills = DataObject::List();
+    for (const auto& skill : value.skills) {
+        DataObject entry;
+        entry.SetString("skill", catalog.GetSkill(skill.skill).id); entry.SetUnsigned("level", skill.level);
+        skills.Append(eastl::move(entry));
+    }
+    out.Set("skills", eastl::move(skills));
+    return out;
+}
+DataObject WriteDamage(eastl::span<const DamagePacket> packets) {
+    DataObject out = DataObject::List();
+    for (const auto& packet : packets) { out.Append(Numbers({static_cast<unsigned>(packet.type), packet.amount, packet.penetration})); }
+    return out;
+}
+DataObject WriteGrip(const GripDefinition& value) {
+    DataObject out;
+    out.Set("ratios", Numbers({static_cast<unsigned>(value.kind), value.damageRatio, value.costRatio, value.staminaRatio, value.blockRatio}));
+    out.SetSigned("rating_bonus100", value.ratingBonus100);
+    return out;
+}
+}
+
+DataObject WriteCombatContent(const ContentCatalog& catalog) {
+    DataObject out;
+    out.SetUnsigned("version", 2);
+    DataObject skills = DataObject::List();
+    const auto bindings = catalog.GetCombatSkills();
+    for (auto skill : {bindings.melee, bindings.unarmed, bindings.knives, bindings.swords, bindings.clubsHammers,
+            bindings.axes, bindings.polearms, bindings.shields, bindings.dodge}) {
+        skills.Append(DataObject::Text(skill.value ? eastl::string_view(catalog.GetSkill(skill).id) : eastl::string_view{}));
+    }
+    out.Set("skills", eastl::move(skills));
+    DataObject moves = DataObject::List();
+    for (std::uint32_t i = 1; i <= catalog.CombatMoveCount(); ++i) {
+        const auto& move = catalog.GetCombatMove({i});
+        DataObject entry;
+        entry.SetString("id", move.id); entry.SetString("name", move.name);
+        entry.SetUnsigned("trigger", static_cast<unsigned>(move.trigger)); entry.SetUnsigned("execution", static_cast<unsigned>(move.execution));
+        const auto& req = move.requirements;
+        entry.Set("primary", WriteSource(req.primary)); entry.Set("secondary", WriteSource(req.secondary));
+        entry.Set("requirements", Numbers({req.paired, req.requiresAwareness, req.requiresOpening,
+            req.allowedDuringRecovery, req.allowedDuringWindup, req.exhaustedOnly}));
+        DataObject handling = DataObject::List();
+        for (auto skill : req.handlingSkills) { handling.Append(DataObject::Text(catalog.GetSkill(skill).id)); }
+        entry.Set("handling_skills", eastl::move(handling)); entry.Set("unlock", WriteUnlock(move.unlock, catalog));
+        entry.Set("cost", WriteCost(move.cost)); entry.SetUnsigned("cooldown", move.cooldown);
+        DataObject strikes = DataObject::List();
+        for (const auto& strike : move.strikes) {
+            DataObject s;
+            s.SetUnsigned("source", static_cast<unsigned>(strike.source)); s.Set("reach", WriteReach(strike.reach));
+            DataObject contacts = DataObject::List();
+            for (const auto& contact : strike.contacts) { contacts.Append(Numbers({static_cast<unsigned>(contact.region), contact.weight})); }
+            s.Set("contacts", eastl::move(contacts)); s.Set("damage", WriteDamage({strike.damage.data(), strike.damage.size()}));
+            s.SetUnsigned("damage_ratio", strike.damageRatio); s.SetSigned("rating_bonus100", strike.ratingBonus100);
+            s.SetUnsigned("intrinsic_miss", strike.intrinsicMiss); s.SetUnsigned("defenses", static_cast<unsigned>(strike.defenses));
+            strikes.Append(eastl::move(s));
+        }
+        entry.Set("strikes", eastl::move(strikes));
+        entry.Set("defense", Numbers({static_cast<unsigned>(move.defense.kind), move.defense.blockCapacity,
+            move.defense.usesSourceCapacity, move.defense.permitsArmedAttack}));
+        entry.SetSigned("defense_rating_bonus100", move.defense.ratingBonus100);
+        entry.SetUnsigned("expose_opening", move.preparation.exposeOpening);
+        entry.Set("follow_through", Numbers({static_cast<unsigned>(move.followThrough.condition), move.followThrough.stagger,
+            move.followThrough.knockbackTiles, move.followThrough.counterOpening}));
+        entry.Set("training", WriteCombatTraining(move.training)); moves.Append(eastl::move(entry));
+    }
+    out.Set("moves", eastl::move(moves));
+    DataObject styles = DataObject::List();
+    for (std::uint32_t i = 1; i <= catalog.CombatStyleCount(); ++i) {
+        const auto& style = catalog.GetCombatStyle({i});
+        DataObject entry;
+        entry.SetString("id", style.id); entry.SetString("name", style.name);
+        entry.SetString("art", style.art.value ? eastl::string_view(catalog.GetCombatArt(style.art).id) : eastl::string_view{});
+        entry.SetUnsigned("switch_cost", style.switchCost);
+        DataObject weighted = DataObject::List();
+        for (const auto& move : style.moves) {
+            DataObject m; m.SetString("move", catalog.GetCombatMove(move.move).id); m.SetUnsigned("weight", move.weight); weighted.Append(eastl::move(m));
+        }
+        entry.Set("moves", eastl::move(weighted)); styles.Append(eastl::move(entry));
+    }
+    out.Set("styles", eastl::move(styles));
+    DataObject arts = DataObject::List();
+    for (std::uint32_t i = 1; i <= catalog.CombatArtCount(); ++i) {
+        const auto& art = catalog.GetCombatArt({i}); DataObject entry;
+        entry.SetString("id", art.id); entry.SetString("name", art.name);
+        DataObject styleNames = DataObject::List();
+        for (auto style : art.styles) { styleNames.Append(DataObject::Text(catalog.GetCombatStyle(style).id)); }
+        entry.Set("styles", eastl::move(styleNames));
+        DataObject grants = DataObject::List();
+        for (const auto& grant : art.abilities) {
+            DataObject g; g.SetString("ability", catalog.GetAbility(grant.ability).id); g.Set("unlock", WriteUnlock(grant.unlock, catalog)); grants.Append(eastl::move(g));
+        }
+        entry.Set("abilities", eastl::move(grants)); arts.Append(eastl::move(entry));
+    }
+    out.Set("arts", eastl::move(arts));
+    DataObject abilities = DataObject::List();
+    for (std::uint32_t i = 1; i <= catalog.AbilityCount(); ++i) {
+        const auto& ability = catalog.GetAbility({i}); DataObject entry;
+        entry.SetString("id", ability.id); entry.SetString("name", ability.name);
+        entry.Set("properties", Numbers({static_cast<unsigned>(ability.execution), static_cast<unsigned>(ability.targeting),
+            ability.cooldown, ability.interruptOnDamage, ability.interruptOnForcedMovement, ability.focusDuration, ability.leapDistance}));
+        entry.SetSigned("focus_rating_bonus100", ability.focusRatingBonus100); entry.Set("cost", WriteCost(ability.cost));
+        entry.SetString("sweep_move", ability.sweepMove.value ? eastl::string_view(catalog.GetCombatMove(ability.sweepMove).id) : eastl::string_view{});
+        entry.Set("training", WriteCombatTraining(ability.training)); abilities.Append(eastl::move(entry));
+    }
+    out.Set("abilities", eastl::move(abilities));
+    DataObject items = DataObject::List();
+    for (std::uint32_t i = 1; i <= catalog.ItemCount(); ++i) {
+        const auto& item = catalog.GetItem({i}); DataObject entry; entry.SetString("id", item.id);
+        entry.SetBoolean("has_melee", item.melee.has_value()); entry.SetBoolean("has_armor", item.armor.has_value());
+        if (item.melee) {
+            const auto& melee = *item.melee; DataObject m;
+            m.Set("damage", WriteDamage({melee.damage.data(), melee.damage.size()}));
+            m.Set("properties", Numbers({melee.attackCost, melee.hands, melee.blockCapacity, static_cast<unsigned>(melee.allowedResponses)}));
+            m.SetString("handling_skill", melee.handlingSkill.value ? eastl::string_view(catalog.GetSkill(melee.handlingSkill).id) : eastl::string_view{});
+            DataObject grips = DataObject::List(); for (const auto& grip : melee.grips) { grips.Append(WriteGrip(grip)); }
+            m.Set("grips", eastl::move(grips)); entry.Set("melee", eastl::move(m));
+        }
+        if (item.armor) {
+            const auto& armor = *item.armor; DataObject a;
+            a.Set("properties", Numbers({static_cast<unsigned>(armor.layer), armor.rigidRegions, armor.wearCost, armor.removeCost}));
+            DataObject protection = DataObject::List(); for (auto p : armor.protection) { protection.Append(DataObject::Unsigned(p)); }
+            a.Set("protection", eastl::move(protection)); DataObject regions = DataObject::List();
+            for (const auto& r : armor.regions) { regions.Append(Numbers({static_cast<unsigned>(r.region), r.coverage, r.encumbrance, r.overlapExempt})); }
+            a.Set("regions", eastl::move(regions)); entry.Set("armor", eastl::move(a));
+        }
+        items.Append(eastl::move(entry));
+    }
+    out.Set("items", eastl::move(items));
+    DataObject books = DataObject::List();
+    for (std::uint32_t i = 1; i <= catalog.BookCount(); ++i) {
+        const auto& book = catalog.GetBook({i}); DataObject entry; entry.SetString("id", book.id);
+        DataObject manuals = DataObject::List();
+        for (const auto& manual : book.artManuals) {
+            DataObject m; m.SetString("art", catalog.GetCombatArt(manual.art).id); m.SetString("skill", catalog.GetSkill(manual.prerequisite.skill).id);
+            m.Set("properties", Numbers({manual.prerequisite.level, manual.successChance, manual.baseDuration})); manuals.Append(eastl::move(m));
+        }
+        entry.Set("art_manuals", eastl::move(manuals)); books.Append(eastl::move(entry));
+    }
+    out.Set("books", eastl::move(books));
+    DataObject monsters = DataObject::List();
+    for (std::uint32_t i = 1; i <= catalog.MonsterCount(); ++i) {
+        const auto& monster = catalog.GetMonster({i}); DataObject entry;
+        entry.SetString("id", monster.id); entry.SetString("combat_style", catalog.GetCombatStyle(monster.combatStyle).id);
+        entry.Set("properties", Numbers({monster.authoredTrainingRanks, monster.offensiveTrainingRank, monster.defensiveTrainingRank, monster.inexhaustible}));
+        entry.SetSigned("attack_rating100", monster.attackRating100); entry.SetSigned("defense_rating100", monster.defenseRating100);
+        entry.Set("reach", WriteReach(monster.reach)); monsters.Append(eastl::move(entry));
+    }
+    out.Set("monsters", eastl::move(monsters));
+    const auto* corpse = catalog.TryGetItem(catalog.CorpseItem());
+    out.SetString("corpse_item", corpse ? eastl::string_view(corpse->id) : eastl::string_view{});
+    return out;
 }
 
 ContentResult<ContentCatalog> LoadContentPack(const char* path, Diagnostics* diagnostics) {

@@ -4,6 +4,7 @@
 #include "client/message_history.h"
 #include "client/crafting_menu.h"
 #include "client/item_ui.h"
+#include "client/combat_menu.h"
 
 #include <ftxui/component/event.hpp>
 #include <ftxui/dom/elements.hpp>
@@ -49,7 +50,12 @@ public:
     void RefreshItems(const WorldView& view, const ContentCatalog& content,
         const Localization& localization, const Keymap& keys, const std::function<bool(Command)>& submit);
     void ItemCommandFinished(const CommandResult& result);
-    void ResetItems(); // Call when switching worlds/endpoints, even when closed.
+    void ResetItems(); // Resets transient UI and event cursor on world/connection changes.
+    // Ability shortcuts and menu choices share exact command/grant targeting.
+    bool CombatAction(InputAction action, const WorldView& view, const ContentCatalog& content,
+        const std::function<bool(Command)>& submit);
+    // Call on snapshot updates; repeated snapshots never duplicate history.
+    void RecordCombatEvents(const WorldView& view, const ContentCatalog& content, MessageHistory& history);
     // Temporary snapshots transfer their cells into the node; lvalues are copied.
     ftxui::Element Render(WorldView view, const ContentCatalog& content,
         const Localization& localization, const Keymap& keys, const GameplayPresentation& presentation);
@@ -72,7 +78,24 @@ private:
     ItemUi items_;
     const ContentCatalog* itemContent_ = nullptr;
     std::shared_ptr<TerminalMapCache> mapCache_;
-    enum class Modal { None, Inventory, Players, Controls, QuickActions, Crafting };
+    enum class Modal { None, Inventory, Players, Controls, QuickActions, Crafting, Combat, CombatInfo, CombatTarget };
+    Vector<CombatMenuEntry> combatRows_;
+    eastl::optional<Command> combatSelection_;
+    eastl::optional<Command> pendingCommand_;
+    TileCoord targetOrigin_{};
+    std::uint64_t targetOpportunity_ = 0;
+    bool targetChosen_ = false;
+    std::size_t combatIndex_ = 0;
+    int combatScroll_ = 0;
+    int combatInfoScroll_ = 0;
+    PersistentId character_ = 0;
+    PersistentId contextPlayer_ = 0;
+    bool contextInitialized_ = false;
+    eastl::optional<InputAction> openingAction_;
+    std::uint64_t combatSerial_ = 0;
+    void ObserveCharacter(const WorldView& view);
+    void BeginCombatChoice(const CombatMenuEntry& entry, const WorldView& view,
+        const std::function<bool(Command)>& submit);
     Vector<CraftingMenuRow> craftingRows_;
     Vector<String> learningLines_;
     eastl::optional<Command> craftingSelection_;

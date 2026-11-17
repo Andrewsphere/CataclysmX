@@ -98,6 +98,11 @@ bool Functional(const BodyState& body, BodyPart part) {
     return state.hp != 0 && !state.broken;
 }
 
+bool BodyAlive(const BodyState& body) {
+    return body.kind == BodyKind::Simple ? Functional(body, BodyPart::Core) :
+        Functional(body, BodyPart::Head) && Functional(body, BodyPart::Torso);
+}
+
 bool ValidateProfile(const InjuryProfile& profile) {
     return profile.mendingDuration != 0 && profile.healingInterval != 0 &&
         profile.maxHealingInterval != 0 && profile.mendedHp != 0 &&
@@ -146,7 +151,7 @@ InjurySummary ApplyInjury(BodyState& body, BodyPart part,
     Require(ValidateBody(body, profile) && HasPart(body.kind, part));
     InjurySummary result;
     result.affectedPart = part;
-    result.defeated = body.kind == BodyKind::Simple && !Functional(body, BodyPart::Core);
+    result.defeated = !BodyAlive(body);
     if (integerInjury == 0) { return result; }
     if (body.kind == BodyKind::Simple && part != BodyPart::Core && !Functional(body, part)) {
         part = BodyPart::Core;
@@ -175,14 +180,13 @@ InjurySummary ApplyInjury(BodyState& body, BodyPart part,
         }
     }
     result.lostCapability = wasFunctional && !Functional(body, part);
-    result.defeated = body.kind == BodyKind::Simple && !Functional(body, BodyPart::Core);
+    result.defeated = !BodyAlive(body);
     return result;
 }
 
 void ElapseBody(BodyState& body, const InjuryProfile& profile, Tick elapsed) {
     Require(ValidateBody(body, profile));
-    if (!profile.regeneration || elapsed == 0 ||
-        (body.kind == BodyKind::Simple && !Functional(body, BodyPart::Core))) { return; }
+    if (!profile.regeneration || elapsed == 0 || !BodyAlive(body)) { return; }
     for (std::size_t i = 0; i < body_part_count; ++i) {
         const auto part = static_cast<BodyPart>(i);
         if (HasPart(body.kind, part)) { RecoverPart(body, part, profile, elapsed); }

@@ -2,7 +2,10 @@
 
 Open **F11**, then **i** (the Debug-context Inventory binding) in either SDL or
 the terminal. The browser lists the current content pack's item definitions in
-stable-ID order, excluding the internal unfinished-craft wrapper. Names are
+stable-ID order, excluding the internal unfinished-craft wrapper and the generated
+`ContentCatalog::CorpseItem()` container. Corpses emerge from death rather than
+ordinary debug-browser spawning; both internal entries remain part of catalog
+item counts but are absent even from exact-ID browser searches. Names are
 localized; stable IDs appear alongside them.
 
 | Key | Action |
@@ -19,7 +22,7 @@ localized; stable IDs appear alongside them.
 
 Enter in search commits the query; it does not give an item. Search folds ASCII
 case; non-ASCII names match their literal UTF-8 text. Queries are bounded to 128
-bytes. Empty queries show all items. Invalid quantities remain in the amount
+bytes. Empty queries show all authored items. Invalid quantities remain in the amount
 prompt with feedback. Empty/no-match lists cannot give or examine an item.
 Examination is a definition preview: containers are empty and energy stores show
 their authored initial charge. No runtime entity is created for examination.
@@ -78,7 +81,10 @@ components without the callback can browse/examine and report giving unavailable
 ## Coverage
 
 `item_browser_tests.cpp` covers search/editing, definition examination, quantities,
-selection, and request lifecycle. `debug_items_tests.cpp` covers initialized
+selection, omission of generated definitions, authored Unarmed weapon families,
+and request lifecycle. The Town browser has 96 authored entries; SDL keeps its
+60-item artwork checks and three learning-carrier checks separate from the six
+combat additions that use fallback art. `debug_items_tests.cpp` covers initialized
 instances, complete-batch preflight, rejected requests, and the count boundary.
 Terminal debug-menu tests exercise the actual key workflow; SDL session tests
 cover owner-thread grants, pause/live-host behavior, and rejection boundaries.

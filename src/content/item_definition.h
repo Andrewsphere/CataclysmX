@@ -5,6 +5,7 @@
 #include "content/text_art.h"
 #include "content/definition_flags.h"
 #include "combat/melee_profile.h"
+#include "content/armor_definition.h"
 #include "items/item_types.h"
 #include <EASTL/optional.h>
 #include <EASTL/shared_ptr.h>
@@ -66,6 +67,7 @@ struct ItemDefinition {
     SmallVector<BookId, 1> books;
     // Optional electronic-reader store. Nonzero requires charge to read/reference.
     ItemCapabilityId readingPower{};
+    eastl::optional<ArmorDefinition> armor;
     bool operator==(const ItemDefinition& other) const;
 };
 

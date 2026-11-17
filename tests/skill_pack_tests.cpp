@@ -20,7 +20,7 @@ TEST_CASE("Town skill pack supplies progression and equivalent reading carriers"
     const auto loaded = LoadContentPack(CATACLYSMX_CONTENT_PACK, &diagnostics);
     REQUIRE(loaded.has_value());
     const auto& content = *loaded;
-    CHECK(content.SkillCount() == 11);
+    CHECK(content.SkillCount() == 17); // Eight noncombat and nine combat skills.
     for (const char* name : {"cooking_chemistry", "fabrication", "mechanics", "electronics",
                              "computers", "tailoring", "survival", "medicine"}) {
         CAPTURE(name);
@@ -31,7 +31,7 @@ TEST_CASE("Town skill pack supplies progression and equivalent reading carriers"
         CHECK(skill.xpToNext[0] == 100);
         CHECK(skill.xpToNext[9] == 6400);
     }
-    for (const char* name : {"melee", "unarmed", "dodge"}) {
+    for (const char* name : {"melee", "unarmed", "knives", "swords", "clubs_hammers", "axes", "polearms", "shields", "dodge"}) {
         const auto id = content.FindSkill(name);
         REQUIRE(id.value);
         CHECK(content.GetSkill(id).category == SkillCategory::Combat);
@@ -107,6 +107,13 @@ TEST_CASE("Town skill pack supplies progression and equivalent reading carriers"
         CHECK(PoolContains(content, pool, "salvage_notes_print"));
     }
     CHECK(PoolContains(content, "loot_electronics", "workshop_ebook_reader"));
+    for (const char* pool : {"loot_reading_room_supplies", "loot_hobby", "house_storage"}) {
+        CHECK(PoolContains(content, pool, "boxing_manual"));
+        CHECK(PoolContains(content, pool, "weapon_forms_manual"));
+    }
+    CHECK(PoolContains(content, "house_storage", "wooden_shield"));
+    CHECK(PoolContains(content, "house_storage", "brass_knuckles"));
+    CHECK(PoolContains(content, "loot_outdoors", "brass_knuckles"));
 }
 
 TEST_CASE("Town starter recipes and recyclers offer ungated training", "[content][skill-pack]") {

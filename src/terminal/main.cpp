@@ -168,6 +168,7 @@ int main(int argc, char** argv) {
     std::string connectedAddress;
     std::uint16_t connectedPort = 0;
     std::uint64_t persistedToken = 0;
+    bool connectionChanged = false;
     auto Connect = [&](const std::string& endpoint, bool newCharacter) {
         if (!profileUsable) { SetMessage("Cannot join with an unreadable LAN profile: " + profilePath); return; }
         if (host.IsOpen()) { SetMessage("Close LAN hosting before joining another game."); return; }
@@ -180,6 +181,7 @@ int main(int argc, char** argv) {
         connectionSettings.port = remotePort;
         connectionSettings.playerName = playerName.c_str();
         connectionSettings.reconnectToken = newCharacter || !saved ? 0 : saved->token;
+        connectionChanged = true;
         guest.Disconnect();
         auto result = guest.Connect(connectionSettings);
         if (!result) { SetMessage(std::string("Connect failed: ") + cataclysmx::network::NetworkErrorMessage(result.error())); return; }
@@ -221,6 +223,8 @@ int main(int argc, char** argv) {
     ftxui::Component debugMenu;
     ftxui::Component settingsMenu;
     GameplayUi gameplayUi;
+    PersistentId viewedCharacter = 0;
+    bool viewedCharacterInitialized = false;
     auto CurrentView = [&] {
         return guest.GetState() == cataclysmx::network::ConnectionState::Active && guest.HasView()
             ? guest.View() : server.View(settings.Effective().viewRadius);
@@ -249,6 +253,12 @@ int main(int argc, char** argv) {
             case cataclysmx::CommandKind::resume_craft: return std::string("resume craft");
             case cataclysmx::CommandKind::pause_craft: return std::string("pause craft");
             case cataclysmx::CommandKind::cancel_craft: return std::string("cancel craft");
+            case CommandKind::select_combat_style: return std::string("change combat style");
+            case CommandKind::use_ability: return std::string("use ability");
+            case CommandKind::study_art: return std::string("study combat art");
+            case CommandKind::pause_art_study: return std::string("pause art study");
+            case CommandKind::new_character: return std::string("create new character");
+            case CommandKind::equipment: return std::string("change equipment");
             }
             return std::string("action");
         }();
@@ -265,7 +275,8 @@ int main(int argc, char** argv) {
             gameplayUi.ItemCommandFinished(result);
             accepted = result.advanced || result.outcome == Outcome::queued || result.outcome == Outcome::craft_paused
                 || result.outcome == Outcome::craft_cancelled || result.outcome == Outcome::study_started
-                || result.outcome == Outcome::study_paused;
+                || result.outcome == Outcome::study_paused || result.outcome == Outcome::art_study_started
+                || result.outcome == Outcome::art_study_paused || result.outcome == Outcome::character_created;
             SetMessage(Frontend(localization.ResultText(result)));
             if (result.storageError) {
                 SetMessage(Frontend(localization.Text(result.advanced ? "game.autosave_failed" : "game.load_failed"))
@@ -410,10 +421,27 @@ int main(int argc, char** argv) {
             }
         }
         // A changed endpoint must not reuse selected persistent IDs from another world.
-        if (stateBefore != guest.GetState()) {
-            gameplayUi.Close(); gameplayUi.ResetItems(); lastUpdate = std::chrono::steady_clock::now(); return true;
+        const bool activeChanged = (stateBefore == cataclysmx::network::ConnectionState::Active)
+            != (guest.GetState() == cataclysmx::network::ConnectionState::Active);
+        if (connectionChanged || activeChanged) {
+            gameplayUi.ResetItems(); pending.clear(); pendingSequence = 0;
+            interacting = false; choosingGrab = false; viewedCharacterInitialized = false;
+            connectionChanged = false;
+            lastUpdate = std::chrono::steady_clock::now();
+            gameplayUi.RecordCombatEvents(CurrentView(), *content, messageHistory);
+            return true;
         }
-        gameplayUi.RefreshItems(CurrentView(), *content, localization, settings.Keys(), SubmitCommand);
+        const auto currentView = CurrentView();
+        const bool promptWasOpen = gameplayUi.IsOpen();
+        const bool characterChanged = viewedCharacterInitialized && viewedCharacter != currentView.characterId;
+        viewedCharacter = currentView.characterId; viewedCharacterInitialized = true;
+        gameplayUi.RecordCombatEvents(currentView, *content, messageHistory);
+        if (characterChanged) {
+            pending.clear(); pendingSequence = 0; interacting = false; choosingGrab = false;
+            return true;
+        }
+        gameplayUi.RefreshItems(currentView, *content, localization, settings.Keys(), SubmitCommand);
+        if (promptWasOpen && !gameplayUi.IsOpen()) { return true; }
         if (gameplayUi.IsOpen()) {
             eastl::optional<InputAction> activated;
             gameplayUi.HandleEvent(event, CurrentView(), localization, settings.Keys(), SubmitCommand,
@@ -429,7 +457,11 @@ int main(int argc, char** argv) {
             return settingsOpen ? settingsMenu->OnEvent(event) : debugMenu->OnEvent(event);
         }
         if (!lanOpen && action && gameplayUi.Open(*action)) {
+            if (action == InputAction::CombatMenu) { interacting = false; choosingGrab = false; }
             lastUpdate = now; return true;
+        }
+        if (!lanOpen && action && gameplayUi.CombatAction(*action, currentView, *content, SubmitCommand)) {
+            interacting = false; choosingGrab = false; lastUpdate = now; return true;
         }
         if (!lanOpen && action == InputAction::Settings) {
             interacting = false; lastUpdate = now;
@@ -482,7 +514,7 @@ int main(int argc, char** argv) {
                 return true;
             }
             if (event == ftxui::Event::Character('C')) { host.Close(); SetMessage("LAN closed; guests parked."); return true; }
-            if (event == ftxui::Event::Character('D')) { guest.Disconnect(); gameplayUi.ResetItems(); pending.clear(); SetMessage("Left LAN session; local game resumed."); return true; }
+            if (event == ftxui::Event::Character('D')) { guest.Disconnect(); connectionChanged = true; gameplayUi.ResetItems(); pending.clear(); SetMessage("Left LAN session; local game resumed."); return true; }
             if (event == ftxui::Event::Character('X')) { gameplayUi.ResetItems(); Connect(directAddress, true); return true; }
             if (event == ftxui::Event::Return) { gameplayUi.ResetItems(); Connect(directAddress, false); return true; }
             for (int i = 1; i <= 9; ++i) {

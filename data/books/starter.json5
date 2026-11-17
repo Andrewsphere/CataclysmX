@@ -1,4 +1,10 @@
 {format_version:1, definitions:[
+  {type:'book',id:'boxing_manual_text',name:'Practical Boxing',study_work:100,
+   art_manuals:[{art:'boxing',skill:'unarmed',level:0,success_chance:7000,base_duration:600}],
+   benefits:[{skill:'unarmed',first_level:1,last_level:3,multiplier:11000}]},
+  {type:'book',id:'weapon_forms_manual_text',name:'Practical Weapon Forms',study_work:100,
+   art_manuals:[{art:'weapon_forms',skill:'melee',level:0,success_chance:6000,base_duration:800}],
+   benefits:[{skill:'melee',first_level:1,last_level:3,multiplier:11000}]},
   {type:'book',id:'workshop_primer_text',name:'The Neighborhood Workshop',study_work:100,
    recipes:['make_coil_spear'],benefits:[
      {skill:'fabrication',first_level:1,last_level:3,direct_xp:20,theory_xp:100,multiplier:20000},

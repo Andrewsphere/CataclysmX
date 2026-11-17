@@ -7,6 +7,7 @@
 #include "core/world_types.h"
 #include "combat/combat_types.h"
 #include "skills/skill_state.h"
+#include "combat/character_combat.h"
 #include <EASTL/unique_ptr.h>
 
 namespace cataclysmx {
@@ -40,6 +41,10 @@ public:
     // Assigned by CreateMonster; zero for players and legacy/untyped actors.
     MonsterTypeId monsterType{};
     LearningState learning;
+    // Expansion authority after integration. wieldedItem is then a derived
+    // left-first projection only; never an additional owner or source selector.
+    EquipmentState equipment;
+    eastl::unique_ptr<CharacterCombatState> characterCombat;
 
 private:
     friend class World;

@@ -7,6 +7,13 @@
 namespace {
 using namespace cataclysmx;
 using namespace cataclysmx::network;
+std::size_t LastChangedByte(const wire::Writer& before, const wire::Writer& after) {
+    REQUIRE(before.bytes.size() == after.bytes.size());
+    for (std::size_t i = before.bytes.size(); i > 0; --i)
+        if (before.bytes[i - 1] != after.bytes[i - 1]) return i - 1;
+    FAIL("Expected a changed wire field");
+    return 0;
+}
 constexpr char LearningData[] = R"({format_version:1,definitions:[
  {type:'skill',id:'making',name:'Making',category:'noncombat',xp_to_next:[100,200,400,800,1200,1800,2600,3600,4800,6400]},
  {type:'book',id:'manual',name:'Manual',study_work:250,benefits:[{skill:'making',first_level:1,last_level:5,direct_xp:10,theory_xp:20,multiplier:11000}],recipes:['make']},
@@ -45,7 +52,13 @@ TEST_CASE("Study command and result codecs preserve authoritative outcomes", "[s
             wire::Reader truncated{{w.bytes.data(), size}}; CHECK_FALSE(truncated.CommandValue(decoded));
         }
         if (kind == CommandKind::pause_study) {
-            w.bytes.back() = 1; wire::Reader bad{{w.bytes.data(), w.bytes.size()}}; CHECK_FALSE(bad.CommandValue(decoded));
+            Command study; study.kind = CommandKind::study_book; study.book = {1};
+            wire::Writer reference; REQUIRE(reference.CommandValue(study));
+            // Kind differs earlier; book is the last difference. Appended
+            // equipment/ability/art fields remain identical canonical defaults.
+            const auto bookOffset = LastChangedByte(w, reference);
+            w.bytes[bookOffset] = 1;
+            wire::Reader bad{{w.bytes.data(), w.bytes.size()}}; CHECK_FALSE(bad.CommandValue(decoded));
         }
     }
     for (auto outcome : {StudyOutcome::Started, StudyOutcome::PauseRequested, StudyOutcome::Paused,
@@ -59,7 +72,16 @@ TEST_CASE("Study command and result codecs preserve authoritative outcomes", "[s
         wire::Writer w; REQUIRE(w.Result(receipt)); wire::Reader r{{w.bytes.data(), w.bytes.size()}}; PlayerCommandResult decoded;
         REQUIRE(r.Result(decoded)); CHECK(r.Done()); CHECK(decoded.result.studyOutcome == outcome);
         CHECK(decoded.result.outcome == receipt.result.outcome); CHECK(decoded.result.cost == receipt.result.cost);
-        w.bytes.back() = 255; wire::Reader bad{{w.bytes.data(), w.bytes.size()}}; CHECK_FALSE(bad.Result(decoded));
+        auto referenceReceipt = receipt;
+        referenceReceipt.result = {Outcome::study_refused, false, 40};
+        referenceReceipt.result.studyOutcome = outcome == StudyOutcome::ActorUnavailable ? StudyOutcome::ActorBusy : StudyOutcome::ActorUnavailable;
+        wire::Writer reference; REQUIRE(reference.Result(referenceReceipt));
+        // Outcome/cost may differ earlier; studyOutcome is the last changed
+        // field, before the unchanged appended combat refusal.
+        const auto studyOffset = LastChangedByte(w, reference);
+        REQUIRE(w.bytes[studyOffset] == static_cast<std::uint8_t>(outcome));
+        w.bytes[studyOffset] = 255;
+        wire::Reader bad{{w.bytes.data(), w.bytes.size()}}; CHECK_FALSE(bad.Result(decoded));
         receipt.result.advanced = !receipt.result.advanced; wire::Writer invalid; CHECK_FALSE(invalid.Result(receipt));
     }
 }
@@ -73,7 +95,14 @@ TEST_CASE("Learning snapshots roundtrip with strict shape and catalog validation
     for (std::size_t size = 0; size < w.bytes.size(); ++size) {
         wire::Reader truncated{{w.bytes.data(), size}}; CHECK_FALSE(truncated.View(decoded));
     }
-    w.bytes.back() = 2; wire::Reader bad{{w.bytes.data(), w.bytes.size()}}; CHECK_FALSE(bad.View(decoded));
+    // Locate the learning pause flag without assuming it is the snapshot tail.
+    auto unpaused = v; unpaused.learning.studyPauseRequested = false;
+    wire::Writer other; REQUIRE(other.View(unpaused)); REQUIRE(other.bytes.size() == w.bytes.size());
+    std::size_t pauseOffset = 0;
+    while (pauseOffset < w.bytes.size() && w.bytes[pauseOffset] == other.bytes[pauseOffset]) ++pauseOffset;
+    REQUIRE(pauseOffset < w.bytes.size());
+    w.bytes[pauseOffset] = 2;
+    wire::Reader bad{{w.bytes.data(), w.bytes.size()}}; CHECK_FALSE(bad.View(decoded));
     SECTION("duplicate skills") { v.learning.skills.push_back(v.learning.skills[0]); }
     SECTION("duplicate books") { v.learning.books.push_back(v.learning.books[0]); }
     SECTION("duplicate recipes") { v.learning.recipes.push_back(v.learning.recipes[0]); }

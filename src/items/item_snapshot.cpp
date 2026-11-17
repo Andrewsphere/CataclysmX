@@ -261,7 +261,7 @@ StateResult<void> ValidateItemSnapshot(const ContentCatalog& content, const Chun
             volume += amount;
         }
         const auto* container = ItemContainer(context.Definition(item.id));
-        if (volume && (!container || volume > container->capacityVolumeMl)) {
+        if (volume && (!container || (item.type != content.CorpseItem() && volume > container->capacityVolumeMl))) {
             return Invalid(item.id, "contents", "Container volume capacity exceeded", diagnostics);
         }
     }

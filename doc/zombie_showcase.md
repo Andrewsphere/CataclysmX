@@ -2,8 +2,9 @@
 
 Start any frontend with `--scenario zombie-showcase` (optionally `--seed 42`).
 The default pack is `data/zombie_showcase.json5`. SDL with the default Gen1
-32x32 tileset shows all 64 authored zombie sprites, once each, plus the cellar zombie and the doctor
-with generic NPC art. Terminal and headless frontends show the same named actors.
+32x32 tileset shows all 64 authored zombie sprites, once each, plus the cellar zombie
+and the doctor with fallback art, and a long-armed combat-type exhibit sharing the
+existing construction-worker sprite. Terminal and headless frontends show the same named actors.
 Use ordinary movement and tile inspection to browse the gallery.
 
 `Server(content, seed, NewGameScenario::ZombieShowcase)` builds a square,
@@ -19,8 +20,25 @@ type and visual appearance. Optional Gen1 mappings bind each display recipe
 directly to a sprite. This guarantees coverage without relying on randomized
 variant selection, adding simulation appearance state, or changing normal town
 spawns. The cellar zombie retains its production ID and shared civilian variant art;
-the doctor retains its production ID and missing sprite mapping. There are 66
-exhibits in total.
+the doctor retains its production ID and missing sprite mapping. The added
+`zombie_longarms` retains its production ID, reach 2, aggressive style, native
+damage, training ranks/ratings, and explicit inexhaustibility. There are **67
+exhibits** in total: 64 original art exhibits, two fallback exhibits, and the
+long-arms combat-type exhibit.
+
+The Gen1 monster mapping for `zombie_longarms` uses the existing
+`sprite.character.zombie.construction_worker` visual in both production and the
+showcase. Shared `visual` references are the supported tileset alias mechanism;
+monster `looks_like` is not a supported content field (terrain has a separate
+appearance-inheritance field of that name). No bitmap or sprite metadata is
+generated or replaced. Tests retain the 64 unique sprite checks and separately
+verify the new exhibit's shared identity and matching production recipe.
+
+The gallery's generated layout already enumerates every undead recipe, so the
+additional definition automatically receives a deterministic, three-tile-spaced
+placement. With 67 entries the nine-column layout remains sufficient. The new
+reach-2 exhibit is also explicitly exercised next to the player in the harmless,
+stationary-gallery regression test.
 When adding zombie art or changing production stats, update these display recipes
 and mappings; focused content and tileset coverage tests catch roster drift.
 

@@ -1,7 +1,33 @@
-# Owned player presentation (protocol 18)
+# Owned player presentation (protocol 21)
 
 `core/presentation.h` contains frontend-neutral owned values. They contain persistent
 identities and catalog IDs, never handles, transport objects, or SDL objects.
+
+## Expanded combat presentation
+
+Protocol 21 publishes `WorldView::combatInfo` and `combatEvents` atomically with
+the map, inventory and learning view. The combat info owns equipment hand/grip
+bindings, worn IDs, contact-region encumbrance, move eligibility, source-qualified
+ability grants/costs/cooldowns, learned art XP, and book/art manual attempts
+(duration, remaining work, success ratio and active state). Expanded combat views
+include life state, catalog style, focus/stagger and multi-strike feedback.
+Events preserve contact/defense outcomes and actual damage/absorption/death
+metrics; they are bounded presentation history, never simulation input.
+History records carry strictly increasing nonzero session-local u64 serials,
+assigned after server outcome ordering. Clients can deduplicate by serial even
+when multiple events share a tick; gaps are valid and raw runner events may
+have zero before the server publishes them.
+
+Ability UI bindings use `(ability, source kind, source art)` as identity. Stable
+hotkeys belong to local frontend state and have no wire field. Commands carry
+typed targets rather than UI keys. Catalog-dependent values are validated before
+publication, including every nested event move and ability grant source.
+
+`playerId` remains the stable session identity; `characterId` is the current
+actor identity and can change after death. Player rows include both identities
+and life state. A dead session remains connected and can submit `new_character`
+through the same authoritative sequence/opportunity path; receipts do not
+predict the new actor or mutate the displayed view.
 
 `CapturePlayerPresentation(world, view, output)` captures a cell-aligned
 `Vector<MapItemVisual>` and authoritative nearby `InteractionChoice`s. Empty map

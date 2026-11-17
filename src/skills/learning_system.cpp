@@ -107,17 +107,27 @@ bool LearningSystem::HasRecipeReference(ActorHandle actor, CraftingRecipeId reci
 }
 bool LearningSystem::Busy(ActorHandle handle) const {
     const auto* actor = world_.GetActor(handle);
-    return actor && actor->learning.study.active;
+    if (!actor || actor->combat.life != ActorLifeState::Alive) { return false; }
+    if (actor->learning.study.active) { return true; }
+    if (actor->characterCombat) {
+        for (const auto& attempt : actor->characterCombat->manuals) {
+            // Active ownership includes a fully paid slice awaiting event processing.
+            if (attempt.active) { return true; }
+        }
+    }
+    return false;
 }
 eastl::optional<Tick> LearningSystem::ActorEventIn(ActorHandle handle) const {
     const auto* actor = world_.GetActor(handle);
-    if (!actor || actor->parked || !world_.IsActive(actor->position) || !actor->learning.study.active) { return eastl::nullopt; }
+    if (!actor || actor->combat.life != ActorLifeState::Alive || actor->parked
+        || !world_.IsActive(actor->position) || !actor->learning.study.active) { return eastl::nullopt; }
     return actor->learning.study.remaining;
 }
 bool LearningSystem::FundStudy(ActorHandle handle) {
     auto* actor = world_.MutableActor(handle);
     auto& state = actor->learning.study;
-    if (!CanStudyBook(actor->learning, world_.GetContent(), state.book)
+    if (actor->combat.life != ActorLifeState::Alive
+        || !CanStudyBook(actor->learning, world_.GetContent(), state.book)
         || !HasBookReference(handle, state.book)) { return false; }
     const auto& book = world_.GetContent().GetBook(state.book);
     const auto left = std::uint64_t{book.studyWork} * ratioScale - EnsureBookProgress(actor->learning, state.book).work;
@@ -142,7 +152,8 @@ WorldResult<StudyResult> LearningSystem::Study(ActorHandle handle, BookId book) 
     const auto& content = world_.GetContent();
     if (!content.TryGetBook(book)) { return eastl::unexpected(WorldError::invalid_request); }
     auto* actor = world_.MutableActor(handle);
-    if (!actor || actor->parked || !world_.IsActive(actor->position)) { return StudyResult{StudyOutcome::ActorUnavailable}; }
+    if (!actor || actor->combat.life != ActorLifeState::Alive || actor->parked
+        || !world_.IsActive(actor->position)) { return StudyResult{StudyOutcome::ActorUnavailable}; }
     if (Busy(handle) || CraftingBusy(handle) || actor->actionDeadline.Remaining(world_.GetTick())
         || actor->combat.action.kind != ActorActionKind::None) { return StudyResult{StudyOutcome::ActorBusy}; }
     const auto* progress = FindBookProgress(actor->learning, book);
@@ -176,6 +187,10 @@ void LearningSystem::Elapse(Tick elapsed) {
     for (auto handle : actors_) {
         auto* actor = world_.MutableActor(handle);
         auto& state = actor->learning.study;
+        if (actor->combat.life != ActorLifeState::Alive) {
+            if (state.active) { state = {}; actor->actionDeadline.Set(world_.GetTick(), 0); world_.ActorChanged(handle); }
+            continue;
+        }
         if (!state.active) { continue; }
         state.remaining -= eastl::min(elapsed, state.remaining);
         actor->actionDeadline.Set(world_.GetTick(), CheckedTickAdd(elapsed, state.remaining));
@@ -186,12 +201,16 @@ bool LearningSystem::ProcessEvents() {
     world_.CollectActiveActors(actors_);
     due_.clear();
     for (auto handle : actors_) {
-        const auto& state = world_.GetActor(handle)->learning.study;
+        const auto* actor = world_.GetActor(handle);
+        if (actor->combat.life != ActorLifeState::Alive) { continue; }
+        const auto& state = actor->learning.study;
         if (state.active && !state.remaining) { due_.push_back(handle); }
     }
     eastl::sort(due_.begin(), due_.end(), [this](auto a, auto b) { return world_.GetActor(a)->id < world_.GetActor(b)->id; });
     for (auto handle : due_) {
         auto* actor = world_.MutableActor(handle);
+        if (!actor || actor->combat.life != ActorLifeState::Alive || actor->parked
+            || !world_.IsActive(actor->position)) { continue; }
         auto& state = actor->learning.study;
         auto& progress = EnsureBookProgress(actor->learning, state.book);
         progress.work += state.pendingWork; state.pendingWork = 0;

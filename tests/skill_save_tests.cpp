@@ -153,7 +153,13 @@ TEST_CASE("Version twelve saves migrate to explicit neutral learning envelopes",
         World world(content); Load(world); const auto actor = Reader(world); id = world.GetActor(actor)->id;
         REQUIRE(world.CreateSave(file.path.c_str(), Session(world, actor)));
     }
-    file.Sql("UPDATE chunks SET payload=json_remove(payload,'$.actors[0].learning') WHERE json_array_length(payload,'$.actors')>0; UPDATE metadata SET format_version=12");
+    // Emit a genuine v12 actor: its v2 combat envelope predates the expansion.
+    file.Sql("UPDATE chunks SET payload=json_set(payload,'$.actors',json((SELECT json_group_array("
+        "json_remove(json_set(value,'$.combat',json_extract(value,'$.combat.legacy')),"
+        "'$.learning','$.equipment','$.character_combat')) FROM json_each(chunks.payload,'$.actors'))));"
+        "UPDATE world_state SET payload=json_set(payload,'$.session.players',json((SELECT json_group_array("
+        "json_remove(value,'$.session')) FROM json_each(world_state.payload,'$.session.players'))));"
+        "UPDATE metadata SET format_version=12");
     {
         World world(content); const auto session = Take(world.LoadSave(file.path.c_str())); Load(world);
         CHECK(world.GetActor(world.FindActor(id))->learning == LearningState{});

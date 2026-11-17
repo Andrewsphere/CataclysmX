@@ -1,4 +1,5 @@
 {format_version:1, definitions:[
-  {type:'monster', id:'cellar_zombie', name:'cellar zombie', ai_profile:'sighted_zombie', body:'simple', faction:'undead', speed:100, attack_damage:12, accuracy:9000},
+  {type:'monster', id:'cellar_zombie', name:'cellar zombie', ai_profile:'sighted_zombie', body:'simple', faction:'undead', speed:100, attack_damage:12, accuracy:9000,
+   combat_style:'basic_balanced',inexhaustible:true,authored_training_ranks:true,offensive_training_rank:1,defensive_training_rank:1,attack_rating100:100,defense_rating100:100},
   {type:'monster_group', id:'cellar_zombies', entries:[{monster:'cellar_zombie',weight:1}]},
 ]}

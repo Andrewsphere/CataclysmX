@@ -13,6 +13,8 @@ struct ItemUiRow {
     std::uint64_t volumeMl = 0;
     unsigned depth = 0;
     bool wielded = false;
+    bool worn = false;
+    HandMask heldHands = HandMask::None;
 };
 struct ItemUiPane {
     ItemStorage storage;
@@ -33,6 +35,9 @@ struct ItemExamination {
     int scroll = 0;
 };
 enum class ItemUiScreen { Closed, Inventory, Advanced, Examine, Amount, Actions, Target, Direction };
+// Direct frontend button/key actions; legacy InputAction::Wield remains supported.
+enum class ItemUiAction { HoldLeft, HoldRight, TwoHanded, Regrip, Wear, Remove, Release };
+const char* ItemUiActionLabel(ItemUiAction action);
 struct ItemUiFrame {
     ItemUiScreen screen = ItemUiScreen::Closed;
     eastl::array<ItemUiPane, 2> panes;
@@ -63,6 +68,7 @@ public:
         const Localization& localization, const Keymap& keys);
     void Handle(const KeyChord& key, const Keymap& keys, const WorldView& view,
         const ContentCatalog& content, const Localization& localization);
+    void HandleAction(ItemUiAction action, const WorldView& view);
     // Call after input and fresh snapshots. At most one request is outstanding.
     // A batch's next concrete item is issued only at a new ready opportunity.
     eastl::optional<Command> TakeCommand(const WorldView& view);
@@ -88,6 +94,7 @@ private:
     std::size_t moved_ = 0;
     std::size_t requested_ = 0;
     ItemActionList actions_;
+    Vector<ItemUiAction> equipmentActions_;
     Vector<PersistentId> targets_;
     Command actionCommand_;
     PersistentId actionSource_ = 0;

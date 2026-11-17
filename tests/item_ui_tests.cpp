@@ -174,6 +174,12 @@ TEST_CASE("Unknown behavior-local actions use metadata labels categories and arg
     f.view.inventory[0].actions = {custom};
     f.Open(); f.Event(ftxui::Event::Character('u'));
     CHECK(f.commands.size() == 1);
+    // With no operational actions, Use now offers equipment actions. The
+    // behavior-local management action remains exclusive to Manage.
+    const auto equipment = f.Draw();
+    CHECK(equipment.find("Hold in left hand") != std::string::npos);
+    CHECK(equipment.find("Calibrate instrument") == std::string::npos);
+    f.Event(ftxui::Event::Escape);
     f.Event(ftxui::Event::Character('a'));
     CHECK(f.Draw().find("Calibrate instrument") != std::string::npos);
     f.Event(ftxui::Event::Return); f.Event(ftxui::Event::Return);
@@ -227,6 +233,19 @@ TEST_CASE("Inventory selection belongs to the viewed player rather than a previo
     CHECK(f.commands[1].item == 71);
 }
 
+TEST_CASE("Explicit inventory reopening after avatar replacement selects the new character's carried item", "[terminal][items]") {
+    ItemUiFixture f;
+    f.view.playerId = 1; f.view.characterId = 10;
+    f.view.inventory = {f.Item(70, "rock")};
+    f.Open(); f.Event(ftxui::Event::Character('d'));
+    REQUIRE(f.commands.size() == 1); CHECK(f.commands.back().item == 70);
+    f.view.characterId = 11;
+    f.view.inventory = {f.Item(71, "backpack")};
+    f.view.groundItems = {f.Item(70, "rock")};
+    f.Open(); f.Event(ftxui::Event::Character('d'));
+    REQUIRE(f.commands.size() == 2); CHECK(f.commands.back().item == 71);
+}
+
 TEST_CASE("A player change between rendering and activation cancels the pending item prompt", "[terminal][items]") {
     ItemUiFixture f;
     f.view.playerId = 1;
@@ -242,6 +261,21 @@ TEST_CASE("A player change between rendering and activation cancels the pending 
     f.Open(); f.Event(ftxui::Event::Character('u')); f.Event(ftxui::Event::ArrowRight);
     REQUIRE(f.commands.size() == 1);
     CHECK(f.commands[0].item == 70); CHECK(f.commands[0].dx == 1);
+}
+
+TEST_CASE("An avatar change between rendering and activation cancels the pending item prompt", "[terminal][items]") {
+    ItemUiFixture f;
+    f.view.playerId = 1; f.view.characterId = 10;
+    auto controller = f.Item(70, "door_controller");
+    controller.actions = {f.Action("door_controller", "timer", "arm")};
+    f.view.groundItems = {controller};
+    f.Open(); f.Event(ftxui::Event::Character('u')); f.Draw();
+    ++f.view.characterId;
+    f.Event(ftxui::Event::ArrowLeft);
+    CHECK(f.commands.empty()); CHECK_FALSE(f.ui.IsOpen());
+    f.Open(); f.Event(ftxui::Event::Character('u')); f.Event(ftxui::Event::ArrowRight);
+    REQUIRE(f.commands.size() == 1);
+    CHECK(f.commands.back().item == 70); CHECK(f.commands.back().dx == 1);
 }
 
 TEST_CASE("Item management sends authoritative storage and extraction commands", "[terminal][items]") {
