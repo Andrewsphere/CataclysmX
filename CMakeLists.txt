@@ -98,6 +98,9 @@ add_library(cataclysmx_engine STATIC
     src/content/crafting_definition.h src/core/static_list.h src/core/ratio.h
     src/crafting/crafting_types.h src/crafting/crafting_state.cpp src/crafting/crafting_state.h
     src/crafting/crafting_system.cpp src/crafting/crafting_system.h
+    src/skills/skill_types.h src/skills/skill_state.cpp src/skills/skill_state.h
+    src/skills/learning_system.cpp src/skills/learning_system.h src/skills/learning_types.h
+    src/content/skill_definition.h src/content/book_definition.h
     src/actors/actor.cpp src/actors/actor.h
     src/actors/ai_controller.cpp src/actors/ai_controller.h
     src/actors/ai_vision.cpp src/actors/ai_vision.h
@@ -289,6 +292,11 @@ if(CATACLYSMX_BUILD_TESTS)
         tests/crafting_content_tests.cpp tests/crafting_world_tests.cpp tests/crafting_save_tests.cpp
         tests/crafting_server_tests.cpp tests/crafting_network_tests.cpp tests/crafting_ui_tests.cpp
         tests/crafting_demo_tests.cpp
+        tests/skill_progression_tests.cpp tests/skill_content_tests.cpp
+        tests/skill_world_tests.cpp tests/skill_save_tests.cpp tests/skill_crafting_tests.cpp
+        tests/skill_server_tests.cpp tests/skill_network_tests.cpp
+        tests/skill_ui_tests.cpp tests/skill_pack_tests.cpp
+        tests/skill_combat_tests.cpp
         tests/actor_controller_tests.cpp tests/entity_world_tests.cpp
         tests/ai_vision_tests.cpp tests/ai_content_tests.cpp tests/ai_world_tests.cpp
         tests/sighted_ai_tests.cpp tests/ai_debug_tests.cpp

@@ -48,6 +48,8 @@ the complete controls reference. **a** opens Quick actions: use **Up/Down** and
 These windows are hidden by default; **Escape**
 closes them. Their opening keys and navigation are configurable in Settings.
 See the [gameplay UI overview](doc/gameplay_ui.md) for layouts and modal behavior.
+The crafting panel also provides skill and study controls; see [runtime skills](doc/skills.md)
+and [skill content](doc/skills_content.md).
 
 ```powershell
 ./out/build/win-msvc-debug/cataclysmx_game.exe --host --port 24680 --name Host
@@ -73,6 +75,7 @@ all-idle pause, then select **Apply pacing changes**.
 See [SDL multiplayer](doc/sdl_multiplayer.md) for controls, cross-frontend
 commands and persistent hosts. Peers require matching content and updated builds
 using protocol 18 (`0x43584e12`).
+using protocol 20 (`0x43584e14`).
 Press **F11** in-game for the world-generation debug menu; arrows move its
 cursor, **Shift+arrows** jump by region, **1–5/Tab/Shift+Tab** change layers, **+/-** zoom,
 **Home/c** recenter, **PageUp/PageDown** browse details, and **F11/Escape/q** close.

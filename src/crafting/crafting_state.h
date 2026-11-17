@@ -9,6 +9,10 @@ class ContentCatalog;
 // Work is stored in 1/10000 base-work units. Energy debt belongs to the job,
 // not requirement slots or tool identities, so reassignment cannot erase it.
 inline constexpr std::uint64_t craftingEnergyDenominator = 100000000;
+struct CraftingContribution {
+    PersistentId worker = 0;
+    std::uint64_t work = 0;
+};
 struct CraftingJobState {
     CraftingKind kind = CraftingKind::Craft;
     String recipeName;
@@ -21,6 +25,9 @@ struct CraftingJobState {
     PersistentId recyclingTarget = 0;
     std::uint32_t totalWork = 0;
     std::uint64_t work = 0;
+    // Completed fixed-point work only, ordered by persistent worker identity.
+    // Legacy work is deliberately unattributed.
+    Vector<CraftingContribution> contributions;
     std::uint64_t pendingWork = 0;
     Tick remaining = 0;
     std::uint32_t timingSpeed = 100;

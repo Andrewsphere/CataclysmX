@@ -9,6 +9,7 @@
 #include "core/perception.h"
 #include "core/lighting.h"
 #include "combat/combat_system.h"
+#include "skills/learning_system.h"
 #include "objects/object_behavior.h"
 #include "worldgen/worldgen.h"
 
@@ -218,7 +219,14 @@ bool Ready(const World& world, ActorHandle handle) {
         && actor->combat.action.kind == ActorActionKind::None && world.GetActorRemainingTicks(handle) == 0;
 }
 
-bool ActiveCraftingInterrupt(const World& world, ActorHandle actor, const Command& command) {
+bool ActiveWorkInterrupt(const World& world, ActorHandle actor, const Command& command) {
+    if (command.kind == CommandKind::pause_study) {
+        const auto* worker = world.GetActor(actor);
+        const auto remaining = world.Learning().ActorEventIn(actor);
+        return worker && world.Learning().Busy(actor)
+            && worker->combat.action.kind == ActorActionKind::None && !worker->actionDeadline.suspended
+            && remaining && *remaining != 0 && world.GetActorRemainingTicks(actor) == *remaining;
+    }
     if (command.kind != CommandKind::pause_craft && command.kind != CommandKind::cancel_craft) { return false; }
     const auto* worker = world.GetActor(actor);
     const auto job = world.InspectCrafting(world.FindItem(command.item));
@@ -296,6 +304,15 @@ Outcome CombatOutcome(AttackOutcome outcome) {
 }
 
 bool ValidCommandShape(const Command& command) {
+    if (command.kind == CommandKind::study_book || command.kind == CommandKind::pause_study) {
+        return command.dx == 0 && command.dz == 0 && command.dy == 0 && command.item == 0
+            && command.waitCost == ticks_per_turn && command.capability.value == 0
+            && command.itemAction.empty() && command.otherItem == 0 && command.target == 0
+            && command.style == CombatStyle::Balanced && command.interaction == InteractionRequest{}
+            && command.recipe.value == 0 && command.source == ItemStorage{} && command.destination == ItemStorage{}
+            && (command.kind == CommandKind::study_book ? command.book.value != 0 : command.book.value == 0);
+    }
+    if (command.book.value != 0) { return false; }
     if (command.kind == CommandKind::wield_item || command.kind == CommandKind::transfer_item) {
         return command.dx == 0 && command.dz == 0 && command.dy == 0 && command.waitCost == ticks_per_turn
             && command.capability.value == 0 && command.itemAction.empty() && command.otherItem == 0
@@ -350,6 +367,9 @@ bool ValidCommandShape(const Command& command) {
 
 const char* OutcomeMessage(Outcome outcome) {
     switch (outcome) {
+    case Outcome::study_started: return "You start studying.";
+    case Outcome::study_paused: return "You pause studying after the funded work finishes.";
+    case Outcome::study_refused: return "You cannot study that book.";
     case Outcome::wielded: return "You wield the item.";
     case Outcome::unwielded: return "You put away your weapon.";
     case Outcome::transferred: return "You move the item.";
@@ -404,6 +424,16 @@ const char* OutcomeMessage(Outcome outcome) {
 }
 
 String CommandResultMessage(const CommandResult& result) {
+    if (result.outcome == Outcome::study_refused) {
+        switch (result.studyOutcome) {
+        case StudyOutcome::ActorUnavailable: return "You cannot study here now.";
+        case StudyOutcome::ActorBusy: return "You are still busy.";
+        case StudyOutcome::MissingReference: return "You need an accessible, powered copy of that book.";
+        case StudyOutcome::AlreadyUsed: return "You have already studied that book.";
+        case StudyOutcome::OutsideTeachingRange: return "That book cannot teach you at your current skill levels.";
+        default: return OutcomeMessage(result.outcome);
+        }
+    }
     if (result.outcome == Outcome::inventory_refused) { return InventoryOutcomeMessage(result.inventoryOutcome); }
     if (!result.objectName.empty()) {
         if (result.outcome == Outcome::grabbed) { return String("You take hold of the ") + result.objectName + "."; }
@@ -422,6 +452,8 @@ String CommandResultMessage(const CommandResult& result) {
         case CraftingOutcome::MissingTools: return "You lack the required crafting tools.";
         case CraftingOutcome::InsufficientEnergy: return "Your crafting tools lack energy.";
         case CraftingOutcome::CapacityExceeded: return "There is not enough capacity for crafting.";
+        case CraftingOutcome::MissingSkills: return "You lack the required skill levels.";
+        case CraftingOutcome::MissingRecipeReference: return "You need an accessible reference for that recipe.";
         default: return OutcomeMessage(result.outcome);
         }
     }
@@ -640,7 +672,22 @@ CommandResult Server::Execute(ActorHandle handle, PlayerSlot& slot, Command comm
     Require(actor != nullptr);
     const TileCoord position = actor->position;
     const auto failed = [this](Outcome outcome) { return CommandResult{outcome, false, GetTick()}; };
-    if (!Ready(world_, handle) && !ActiveCraftingInterrupt(world_, handle, command)) { return failed(Outcome::not_ready); }
+    if (!Ready(world_, handle) && !ActiveWorkInterrupt(world_, handle, command)) { return failed(Outcome::not_ready); }
+    if (command.kind == CommandKind::study_book || command.kind == CommandKind::pause_study) {
+        const auto used = command.kind == CommandKind::study_book
+            ? world_.Learning().Study(handle, command.book) : world_.Learning().PauseStudy(handle);
+        auto result = failed(Outcome::study_refused);
+        if (!used) { return result; }
+        result.studyOutcome = used->outcome;
+        if (used->outcome == StudyOutcome::Started) {
+            result.outcome = Outcome::study_started;
+            result.advanced = true;
+            result.cost = world_.GetActorRemainingTicks(handle);
+        } else if (used->outcome == StudyOutcome::PauseRequested || used->outcome == StudyOutcome::Paused) {
+            result.outcome = Outcome::study_paused;
+        }
+        return result;
+    }
     if (command.kind >= CommandKind::craft && command.kind <= CommandKind::cancel_craft) {
         return CraftingCommand(world_, handle, command);
     }
@@ -1191,9 +1238,10 @@ CommandResult Server::Submit(PersistentId id, PlayerInput input) {
         return {Outcome::stale_input, false, GetTick()};
     }
     slot->lastSequence = input.sequence;
-    if (!Ready(world_, actor) && ActiveCraftingInterrupt(world_, actor, input.command)) {
+    if (!Ready(world_, actor) && ActiveWorkInterrupt(world_, actor, input.command)) {
         const auto result = Execute(actor, *slot, input.command);
-        if (result.outcome == Outcome::craft_paused || result.outcome == Outcome::craft_cancelled) {
+        if (result.outcome == Outcome::craft_paused || result.outcome == Outcome::craft_cancelled
+            || result.outcome == Outcome::study_paused) {
             slot->pending.reset();
             Require(slot->opportunity != eastl::numeric_limits<std::uint64_t>::max());
             ++slot->opportunity;
@@ -1536,6 +1584,7 @@ WorldView Server::ViewForPlayerAtLayer(PersistentId id, int radius, int layerY) 
         }
     }
     Vector<CraftingJobView> jobs;
+    world_.Learning().CollectView(player, result.learning);
     world_.CollectCraftingJobs(player, jobs);
     result.craftingJobs.reserve(jobs.size());
     for (const auto& job : jobs) {

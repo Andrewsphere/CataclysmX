@@ -1,0 +1,13 @@
+{format_version:1, definitions:[
+  {type:'skill',id:'cooking_chemistry',name:'Cooking & Chemistry',category:'noncombat'},
+  {type:'skill',id:'fabrication',name:'Fabrication',category:'noncombat'},
+  {type:'skill',id:'mechanics',name:'Mechanics',category:'noncombat'},
+  {type:'skill',id:'electronics',name:'Electronics',category:'noncombat'},
+  {type:'skill',id:'computers',name:'Computers',category:'noncombat'},
+  {type:'skill',id:'tailoring',name:'Tailoring',category:'noncombat'},
+  {type:'skill',id:'survival',name:'Survival',category:'noncombat'},
+  {type:'skill',id:'medicine',name:'Medicine',category:'noncombat'},
+  {type:'skill',id:'melee',name:'Melee',category:'combat'},
+  {type:'skill',id:'unarmed',name:'Unarmed',category:'combat'},
+  {type:'skill',id:'dodge',name:'Dodge',category:'combat'},
+]}

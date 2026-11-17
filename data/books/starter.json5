@@ -1,0 +1,10 @@
+{format_version:1, definitions:[
+  {type:'book',id:'workshop_primer_text',name:'The Neighborhood Workshop',study_work:100,
+   recipes:['make_coil_spear'],benefits:[
+     {skill:'fabrication',first_level:1,last_level:3,direct_xp:20,theory_xp:100,multiplier:20000},
+   ]},
+  {type:'book',id:'salvage_notes_text',name:'Notes from the Salvage Bench',study_work:100,
+   recipes:['make_coil_spear'],benefits:[
+     {skill:'fabrication',first_level:1,last_level:10,direct_xp:15,theory_xp:100,multiplier:15000},
+   ]},
+]}

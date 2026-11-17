@@ -305,11 +305,16 @@ TEST_CASE("Item decoder rejects malformed bounded fields before catalog lookup",
     REQUIRE(cursor.U32(number)); REQUIRE(cursor.U32(number));
     for (int i = 0; i < 3; ++i) REQUIRE(cursor.U8(byte));
     REQUIRE(cursor.U16(shortValue));
-    // This single-cell snapshot has one u16 run length before its 40-byte payload.
+    // Walk the single cell's payload, including its catalog-local monster and
+    // object types, rather than assuming the old 40-byte cell layout.
     REQUIRE(cursor.U16(shortValue)); REQUIRE(shortValue == 1);
-    for (int i = 0; i < 40; ++i) REQUIRE(cursor.U8(byte));
+    REQUIRE(cursor.U8(byte)); REQUIRE(cursor.U32(number)); REQUIRE(cursor.U8(byte)); // Terrain.
+    REQUIRE(cursor.U64(wide)); REQUIRE(cursor.U8(byte)); // Actor and player flag.
+    REQUIRE(cursor.U32(number)); REQUIRE(cursor.U64(wide)); // Items and object identity.
+    for (int i = 0; i < 9; ++i) REQUIRE(cursor.U8(byte)); // Appearance, depths, visibility and light.
+    REQUIRE(cursor.U32(number)); REQUIRE(cursor.U32(number)); // Monster and object types.
     const auto countOffset = cursor.offset;
-    REQUIRE(cursor.U16(shortValue));
+    REQUIRE(cursor.U16(shortValue)); REQUIRE(shortValue == 1);
     REQUIRE(cursor.U64(wide)); REQUIRE(cursor.U32(number)); REQUIRE(cursor.U32(number));
     REQUIRE(cursor.U64(wide)); REQUIRE(cursor.U16(shortValue)); REQUIRE(cursor.U64(wide));
     REQUIRE(cursor.U32(number)); REQUIRE(cursor.U32(number)); REQUIRE(cursor.U64(wide));

@@ -1,0 +1,19 @@
+@text-art 1
+@color case #414C52
+@color edge #242D32
+@color screen #B4C5B8
+@color ink #52645D
+@color button #8E9A91
+@default case
+---
+   <edge>╭──────────────────────╮
+   <edge>│<case> ╔══════════════════╗ <edge>│
+   <edge>│<case> ║<screen>                  <case>║ <edge>│
+   <edge>│<case> ║<screen>  <ink>THE WORKSHOP    <case>║ <edge>│
+   <edge>│<case> ║<screen>  <ink>────────────    <case>║ <edge>│
+   <edge>│<case> ║<screen>  <ink>── ───── ───    <case>║ <edge>│
+   <edge>│<case> ║<screen>  <ink>────── ─────    <case>║ <edge>│
+   <edge>│<case> ║<screen>  <ink>──── ───────    <case>║ <edge>│
+   <edge>│<case> ╚══════════════════╝ <edge>│
+   <edge>│<case>         <button>──         <edge>│
+   <edge>╰──────────────────────╯

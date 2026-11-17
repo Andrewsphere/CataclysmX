@@ -4,6 +4,7 @@
 #include "core/interaction.h"
 #include "core/pacing.h"
 #include "core/inventory.h"
+#include "skills/learning_types.h"
 
 #include <EASTL/optional.h>
 #include <EASTL/span.h>
@@ -15,7 +16,7 @@ enum class NewGameScenario { Demo, FirstHouse, Town, ZombieShowcase };
 enum class CommandKind {
     wait, move, pick_up, drop, interact, use_item, store_item, attack, combat_style, interact_action,
     craft, recycle, resume_craft, pause_craft, cancel_craft, grab, release_grab,
-    wield_item, transfer_item
+    wield_item, transfer_item, study_book, pause_study
 };
 struct Command {
     CommandKind kind = CommandKind::wait;
@@ -38,6 +39,7 @@ struct Command {
     // transfer_item checks the exact source before moving to destination.
     ItemStorage source;
     ItemStorage destination;
+    BookId book{}; // study_book uses information identity, any usable copy qualifies.
 };
 bool ValidCommandShape(const Command& command);
 enum class Outcome {
@@ -49,7 +51,7 @@ enum class Outcome {
     target_defeated, no_target, no_combat_move, combat_style_changed, locked, unlocked,
     craft_started, recycling_started, craft_resumed, craft_paused, craft_cancelled, crafting_refused,
     object_moved, grabbed, released, nothing_to_grab, grab_lost, grab_blocked,
-    wielded, unwielded, transferred, inventory_refused
+    wielded, unwielded, transferred, inventory_refused, study_started, study_paused, study_refused
 };
 const char* OutcomeMessage(Outcome outcome);
 // The demo requires floor, wall, and closed_door; floor must be passable.
@@ -69,6 +71,7 @@ struct CommandResult {
     CraftingOutcome craftingOutcome = CraftingOutcome::ActorUnavailable;
     String objectName; // Grab feedback; captured before deletion/movement can invalidate the target.
     InventoryOutcome inventoryOutcome = InventoryOutcome::Succeeded;
+    StudyOutcome studyOutcome = StudyOutcome::ActorUnavailable;
 };
 String CommandResultMessage(const CommandResult& result);
 
@@ -205,6 +208,7 @@ struct WorldView {
     // historical current-tile projection for existing callers.
     Vector<InventoryEntry> nearbyItems;
     Vector<ItemStorageView> itemStorages;
+    LearningView learning;
 };
 
 // Authoritative deterministic endpoint. No transport or clock access.

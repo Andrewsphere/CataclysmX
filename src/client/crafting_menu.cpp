@@ -13,25 +13,136 @@ const char* Status(CraftingStatus status) {
     case CraftingStatus::MissingTools: return "missing tools";
     case CraftingStatus::InsufficientEnergy: return "insufficient energy";
     case CraftingStatus::WorkerUnavailable: return "worker unavailable";
+    case CraftingStatus::MissingSkills: return "missing skills";
+    case CraftingStatus::MissingRecipeReference: return "missing recipe reference";
     }
     return "unknown";
+}
+
+String FixedText(std::uint64_t value) {
+    String result = UnsignedText(value / ratioScale);
+    if (value % ratioScale) {
+        String fraction = UnsignedText(value % ratioScale);
+        while (fraction.size() < 4) { fraction.insert(fraction.begin(), '0'); }
+        while (fraction.back() == '0') { fraction.pop_back(); }
+        result += "." + fraction;
+    }
+    return result;
+}
+
+const SkillView* Skill(const WorldView& view, SkillId id) {
+    for (const auto& skill : view.learning.skills) { if (skill.progress.skill == id) { return &skill; } }
+    return nullptr;
+}
+
+String SkillName(const ContentCatalog& content, SkillId id) {
+    const auto* skill = content.TryGetSkill(id);
+    return skill ? skill->name : "Skill #" + UnsignedText(id.value);
+}
+
+void Requirements(String& label, const ContentCatalog& content,
+    eastl::span<const SkillRequirement> requirements) {
+    for (const auto& requirement : requirements) {
+        label += " " + SkillName(content, requirement.skill) + " " + UnsignedText(requirement.level);
+    }
+}
+
+void Training(String& label, const WorldView& view, const ContentCatalog& content,
+    eastl::span<const SkillTraining> training, bool disassembly) {
+    if (training.empty()) { label += " | no skill XP (no training)"; }
+    for (const auto& reward : training) {
+        const auto* skill = Skill(view, reward.skill);
+        const unsigned level = skill ? skill->progress.level : 0;
+        const unsigned cap = reward.level < maximumSkillLevel ? reward.level + 1 : maximumSkillLevel;
+        label += " | " + SkillName(content, reward.skill) + " training cap " + UnsignedText(cap);
+        if (!reward.xpPerWork) { label += ": no XP (rate zero)"; }
+        else if (skill && level >= cap) { label += ": no XP (learned level at cap)"; }
+        else {
+            label += ": " + FixedText(reward.xpPerWork) + " XP/work";
+            const auto* definition = content.TryGetSkill(reward.skill);
+            if (skill && definition && definition->category == SkillCategory::Noncombat && level >= 5) {
+                label += disassembly ? " theory" : " practice";
+                label += " (advancement needs paired theory + practice)";
+                const auto reserve = disassembly ? skill->progress.theory : skill->progress.practice;
+                if (skill->progress.xp + reserve >= skill->requiredXp) { label += "; no XP (reserve capped)"; }
+            } else if (definition && definition->category == SkillCategory::Noncombat && cap > 5) {
+                label += " (surplus clipped on reaching advanced level 5; then "
+                    + String(disassembly ? "theory" : "practice") + " needs paired theory + practice)";
+            }
+        }
+    }
+}
+
+String BookLabel(const BookStudyView& book, const ContentCatalog& content) {
+    const auto& definition = content.GetBook(book.book);
+    String label = "Book #" + UnsignedText(book.book.value) + " " + definition.name + " (" + definition.id + ")";
+    label += book.accessible ? " [accessible]" : " [reference unavailable]";
+    label += book.used ? " [used; study benefit already consumed]" : book.eligible ? " [eligible]" : " [outside teaching range]";
+    label += " | study " + FixedText(book.completedWork) + "/" + UnsignedText(definition.studyWork) + " base work";
+    label += " (study time " + UnsignedText(definition.studyWork) + " ticks at speed 100)";
+    label += " | clipped XP: direct " + FixedText(book.cappedDirectXp) + ", theory " + FixedText(book.cappedTheoryXp);
+    for (const auto& benefit : definition.benefits) {
+        label += " | " + SkillName(content, benefit.skill) + " teaches next levels "
+            + UnsignedText(benefit.firstLevel) + "-" + UnsignedText(benefit.lastLevel);
+        label += ", direct " + UnsignedText(benefit.directXp) + ", theory " + UnsignedText(benefit.theoryXp)
+            + " XP, boost " + FixedText(benefit.multiplier) + "x until next level";
+    }
+    if (!definition.recipes.empty()) {
+        label += " | recipe reference (also useful after study):";
+        for (auto recipe : definition.recipes) { label += " " + content.GetCraftingRecipe(recipe).name; }
+    }
+    return label;
 }
 }
 
 bool SameCraftingChoice(const Command& left, const Command& right) {
-    return left.kind == right.kind && left.item == right.item && left.recipe == right.recipe;
+    return left.kind == right.kind && left.item == right.item && left.recipe == right.recipe && left.book == right.book;
 }
 
 void CollectCraftingMenu(const WorldView& view, const ContentCatalog& content,
     const Localization& localization, Vector<CraftingMenuRow>& rows) {
     rows.clear();
+    if (view.learning.activeBook.value) {
+        Command command; command.kind = CommandKind::pause_study;
+        const auto* book = content.TryGetBook(view.learning.activeBook);
+        rows.push_back({command, "Pause study #" + UnsignedText(view.learning.activeBook.value)
+            + " " + (book ? book->name : String("unknown book"))
+            + (view.learning.studyPauseRequested ? " [pause requested]" : " [studying]")
+            + " | paid slice remaining " + UnsignedText(view.learning.studyRemaining) + " ticks"});
+    }
+    for (const auto& book : view.learning.books) {
+        if (!book.accessible || book.used || !book.eligible || book.book == view.learning.activeBook
+            || !content.TryGetBook(book.book)) { continue; }
+        Command command; command.kind = CommandKind::study_book; command.book = book.book;
+        rows.push_back({command, String(book.completedWork ? "Resume study " : "Study ") + BookLabel(book, content)});
+    }
     for (std::size_t i = 1; i <= content.CraftingRecipeCount(); ++i) {
         const CraftingRecipeId id{static_cast<std::uint32_t>(i)};
         const auto& recipe = content.GetCraftingRecipe(id);
         if (!recipe.enabled) { continue; }
         Command command; command.kind = CommandKind::craft; command.recipe = id;
-        rows.push_back({command, "Craft #" + UnsignedText(i) + " " + recipe.name
-            + " -> " + localization.ItemName(content, recipe.result.item) + " x" + UnsignedText(recipe.result.count)});
+        String label = "Craft #" + UnsignedText(i) + " " + recipe.name
+            + " -> " + localization.ItemName(content, recipe.result.item) + " x" + UnsignedText(recipe.result.count);
+        for (const auto& knowledge : view.learning.recipes) {
+            if (knowledge.recipe != id) { continue; }
+            if (!knowledge.requirementsMet) { label += " [missing skills]"; }
+            if (!knowledge.known && !knowledge.referenceAvailable) { label += " [missing recipe reference]"; }
+            label += knowledge.known ? " [known]" : knowledge.referenceAvailable ? " [reference available]" : " [unknown]";
+            label += " | memorization " + FixedText(knowledge.learningRatio * std::uint64_t{100}) + "%";
+            break;
+        }
+        if (!recipe.skills.empty()) { label += " | requires learned:"; Requirements(label, content, recipe.skills); }
+        if (!recipe.knownByDefault) {
+            label += " | memorize: " + UnsignedText(recipe.craftsToLearn) + " crafts / "
+                + UnsignedText(recipe.disassembliesToLearn) + " disassemblies (combined progress)";
+        }
+        if (recipe.autolearn) {
+            label += " | autolearn requires recipe skills +";
+            if (recipe.autolearnSkills.empty()) { label += " no extra thresholds"; }
+            Requirements(label, content, recipe.autolearnSkills);
+        }
+        Training(label, view, content, recipe.training, false);
+        rows.push_back({command, eastl::move(label)});
     }
     for (const auto& job : view.craftingJobs) {
         String label = " job #" + UnsignedText(job.id) + " ";
@@ -54,10 +165,47 @@ void CollectCraftingMenu(const WorldView& view, const ContentCatalog& content,
             for (const auto& entry : view.craftingJobs) { job |= entry.id == item.id; }
             if (job) { continue; }
             Command command; command.kind = CommandKind::recycle; command.item = item.id;
-            rows.push_back({command, "Recycle #" + UnsignedText(item.id) + " " + localization.ItemName(content, item.type) + location});
+            String label = "Recycle #" + UnsignedText(item.id) + " " + localization.ItemName(content, item.type) + location;
+            const auto& recipe = content.GetRecyclingRecipe(content.FindRecyclingFor(item.type));
+            if (!recipe.skills.empty()) { label += " | requires learned:"; Requirements(label, content, recipe.skills); }
+            Training(label, view, content, recipe.training, true);
+            rows.push_back({command, eastl::move(label)});
         }
     };
     items(view.inventory, " (carried)");
     items(view.groundItems, " (ground)");
+}
+
+void CollectLearningSummary(const WorldView& view, const ContentCatalog& content, Vector<String>& lines) {
+    lines.clear();
+    for (const auto& skill : view.learning.skills) {
+        const auto& p = skill.progress;
+        const auto* definition = content.TryGetSkill(p.skill);
+        if (!definition) { continue; }
+        String line = definition->name + " | learned " + UnsignedText(p.level) + " / effective "
+            + NumberText(skill.effectiveLevel) + " | XP " + FixedText(p.xp) + "/" + FixedText(skill.requiredXp);
+        if (p.level == maximumSkillLevel) { line += " [maximum level; no XP]"; }
+        else if (definition->category == SkillCategory::Noncombat && p.level >= 5) {
+            line += " | theory " + FixedText(p.theory) + ", practice " + FixedText(p.practice)
+                + " (each reserve capped at " + FixedText(skill.requiredXp - p.xp)
+                + "; paired theory + practice advances XP)";
+        } else {
+            if (definition->category == SkillCategory::Noncombat) {
+                line += " | direct book XP " + FixedText(p.directBookXp) + "/" + FixedText(skill.requiredXp * 3 / 10)
+                    + " (30% per-level cap; study boost cap 4x)";
+            } else { line += " | combat: books grant no direct/theory XP; boost cap 1.2x"; }
+            line += " | study boost " + FixedText(p.multiplier) + "x until next level";
+        }
+        lines.push_back(eastl::move(line));
+    }
+    if (view.learning.activeBook.value) {
+        const auto* book = content.TryGetBook(view.learning.activeBook);
+        lines.push_back("Studying #" + UnsignedText(view.learning.activeBook.value) + " "
+            + (book ? book->name : String("unknown book")) + " | paid slice " + UnsignedText(view.learning.studyRemaining)
+            + " ticks remaining" + (view.learning.studyPauseRequested ? " [pause requested]" : ""));
+    }
+    for (const auto& book : view.learning.books) {
+        if (content.TryGetBook(book.book)) { lines.push_back(BookLabel(book, content)); }
+    }
 }
 }

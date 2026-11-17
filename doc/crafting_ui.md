@@ -4,6 +4,14 @@ Press **&** (the configurable `crafting` action) in terminal or SDL. Terminal al
 
 The menu lists enabled recipes individually, even when they produce the same item. Recipe rows show numeric recipe IDs, names and output counts. Reachable unfinished jobs show their persistent ID, recipe, completed/total work, status, worker, funded ticks and pending pause. Each job has explicit Resume, Pause and Cancel rows. Recycling rows identify visible carried/ground roots and leaf candidates by persistent ID.
 
+The panel also shows learned/effective skill levels, XP, book boost or advanced
+theory/practice reserves, recipe knowledge and accessible references, skill gates,
+training ceilings and capped rewards. Book rows show study progress, eligibility,
+benefits and recipe references; eligible accessible books offer study/resume, and
+an active study offers pause. These are snapshot-based advisory views: the server
+rechecks availability and paid-slice rules. Used books remain useful references.
+See [skills](skills.md) and [skill content](skills_content.md).
+
 Availability is advisory: the server validates tools, inputs, energy, reachability and ownership. Reserved children are excluded by the server snapshot. Frontends never inspect or mutate live crafting state. A retained command selection does not silently change to its neighbor when a snapshot removes a row; stale selections are subject to authoritative refusal.
 
 Terminal crafting stays open after submission and displays authoritative messages. Unlike other local terminal modals, it lets time advance, so accepted work progresses and Pause remains accessible. SDL uses its existing session pause on opening; submitting uses ResumeAndCommand, including for pause/cancel while the actor is working. Successful commands close the SDL menu. Refusals retain the choice and result text and request session pause again. Session pause does not cancel or refund a funded slice; a crafting Pause request is resolved by the server's paid-slice rules.

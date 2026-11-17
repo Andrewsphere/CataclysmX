@@ -74,6 +74,7 @@ private:
     std::shared_ptr<TerminalMapCache> mapCache_;
     enum class Modal { None, Inventory, Players, Controls, QuickActions, Crafting };
     Vector<CraftingMenuRow> craftingRows_;
+    Vector<String> learningLines_;
     eastl::optional<Command> craftingSelection_;
     std::size_t craftingIndex_ = 0;
     int craftingScroll_ = 0;

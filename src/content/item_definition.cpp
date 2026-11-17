@@ -57,6 +57,7 @@ bool ItemDefinition::operator==(const ItemDefinition& other) const {
         || container != other.container || energyStores != other.energyStores
         || behaviors.size() != other.behaviors.size() || toolTraits != other.toolTraits
         || craftingPower != other.craftingPower || craftingEnergyPerWork != other.craftingEnergyPerWork
+        || books != other.books || readingPower != other.readingPower
         || recoveryAllowed != other.recoveryAllowed || unfinishedCraft != other.unfinishedCraft) { return false; }
     for (std::size_t i = 0; i < behaviors.size(); ++i) {
         const auto& left = behaviors[i];

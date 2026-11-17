@@ -6,6 +6,7 @@
 #include "core/timing.h"
 #include "core/world_types.h"
 #include "combat/combat_types.h"
+#include "skills/skill_state.h"
 #include <EASTL/unique_ptr.h>
 
 namespace cataclysmx {
@@ -38,6 +39,7 @@ public:
     CombatFeedback combatFeedback;
     // Assigned by CreateMonster; zero for players and legacy/untyped actors.
     MonsterTypeId monsterType{};
+    LearningState learning;
 
 private:
     friend class World;

@@ -264,7 +264,8 @@ int main(int argc, char** argv) {
             const auto result = server.Send(command);
             gameplayUi.ItemCommandFinished(result);
             accepted = result.advanced || result.outcome == Outcome::queued || result.outcome == Outcome::craft_paused
-                || result.outcome == Outcome::craft_cancelled;
+                || result.outcome == Outcome::craft_cancelled || result.outcome == Outcome::study_started
+                || result.outcome == Outcome::study_paused;
             SetMessage(Frontend(localization.ResultText(result)));
             if (result.storageError) {
                 SetMessage(Frontend(localization.Text(result.advanced ? "game.autosave_failed" : "game.load_failed"))

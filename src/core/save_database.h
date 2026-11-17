@@ -7,7 +7,7 @@ namespace cataclysmx {
 
 class ContentCatalog;
 
-inline constexpr int save_format_version = 12;
+inline constexpr int save_format_version = 13;
 
 // SQLite and JSON remain private to this subsystem. A connection is exclusively
 // owned by one World; transactions are synchronous simulation-boundary calls.
@@ -26,6 +26,9 @@ public:
     // the caller's newer RAM state remains the caller's responsibility.
     SaveResult<eastl::optional<ChunkArchive>> ReadChunk(ChunkCoord position,
         PersistentId nextId, Diagnostics* diagnostics = nullptr);
+    // Disk metadata only; callers must prefer authoritative resident/archive state.
+    SaveResult<eastl::optional<ChunkCoord>> FindActorChunk(PersistentId actor,
+        Diagnostics* diagnostics = nullptr);
     // Legacy chunks and snapshot are upgraded transactionally before returning.
     SaveResult<void> Begin(Diagnostics* diagnostics = nullptr);
     SaveResult<void> WriteChunk(const ChunkArchive& chunk, Diagnostics* diagnostics = nullptr);

@@ -29,6 +29,7 @@ namespace cataclysmx {
 
 struct VisibilityMask;
 class CombatSystem;
+class LearningSystem;
 
 // Authoritative server state captured in the same transaction as chunk values.
 struct SavedPlayer {
@@ -222,6 +223,10 @@ public:
     // World owns the coordinator; combat rules and action transitions live there.
     CombatSystem& Combat();
     const CombatSystem& Combat() const;
+    LearningSystem& Learning();
+    const LearningSystem& Learning() const;
+    // Completion credit reaches a living contributor even while its chunk is archived.
+    void LearnRecipe(PersistentId actor, CraftingRecipeId recipe, std::uint64_t points);
     const Item* GetItem(ItemHandle handle) const;
     const InteractiveObject* GetObject(ObjectHandle handle) const;
     ActorHandle FindActor(PersistentId id) const;
@@ -375,6 +380,7 @@ public:
 private:
     friend class CombatSystem;
     friend class CraftingSystem;
+    friend class LearningSystem;
     void AttachCrafting(ItemHandle item);
     void DetachCrafting(ItemHandle item);
     void BeginCraftingMutation();

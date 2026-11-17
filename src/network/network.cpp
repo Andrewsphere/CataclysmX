@@ -50,6 +50,16 @@ void HashInputs(std::uint64_t& hash, const StaticList<RecipeInput, maxRecipeInpu
     HashNumber(hash, inputs.Size());
     for (const auto& input : inputs) { HashNumber(hash, input.Packed()); }
 }
+void HashRequirements(std::uint64_t& hash, eastl::span<const SkillRequirement> values) {
+    HashNumber(hash, values.size());
+    for (const auto& v : values) { HashNumber(hash, v.skill.value); HashNumber(hash, v.level); }
+}
+void HashTraining(std::uint64_t& hash, eastl::span<const SkillTraining> values) {
+    HashNumber(hash, values.size());
+    for (const auto& v : values) {
+        HashNumber(hash, v.skill.value); HashNumber(hash, v.level); HashNumber(hash, v.xpPerWork);
+    }
+}
 void HashData(std::uint64_t& hash, const DataObject& data) {
     // Tags distinguish values such as signed 1, unsigned 1, and true.
     HashNumber(hash, static_cast<std::uint64_t>(data.Type()));
@@ -214,6 +224,9 @@ std::uint64_t ContentFingerprint(const ContentCatalog& content) {
         HashTraits(hash, item.toolTraits);
         HashNumber(hash, item.craftingPower.value); HashNumber(hash, item.craftingEnergyPerWork);
         HashNumber(hash, item.recoveryAllowed); HashNumber(hash, item.unfinishedCraft);
+        HashNumber(hash, item.books.size());
+        for (const auto book : item.books) HashNumber(hash, book.value);
+        HashNumber(hash, item.readingPower.value);
         HashNumber(hash, item.capabilities.size());
         for (std::size_t c = 0; c < item.capabilities.size(); ++c) {
             const auto& capability = item.capabilities[c];
@@ -275,6 +288,11 @@ std::uint64_t ContentFingerprint(const ContentCatalog& content) {
         HashInputs(hash, recipe.inputs); HashTraits(hash, recipe.toolTraits);
         HashNumber(hash, recipe.result.item.value); HashNumber(hash, recipe.result.count);
         HashNumber(hash, recipe.work); HashNumber(hash, recipe.enabled);
+        HashRequirements(hash, {recipe.skills.data(), recipe.skills.size()});
+        HashTraining(hash, {recipe.training.data(), recipe.training.size()});
+        HashNumber(hash, recipe.knownByDefault); HashNumber(hash, recipe.autolearn);
+        HashRequirements(hash, {recipe.autolearnSkills.data(), recipe.autolearnSkills.size()});
+        HashNumber(hash, recipe.craftsToLearn); HashNumber(hash, recipe.disassembliesToLearn);
     }
     HashNumber(hash, content.RecyclingRecipeCount());
     for (std::size_t i = 0; i < content.RecyclingRecipeCount(); ++i) {
@@ -286,6 +304,10 @@ std::uint64_t ContentFingerprint(const ContentCatalog& content) {
             HashNumber(hash, output.item.value); HashNumber(hash, output.count);
         }
         HashNumber(hash, recipe.work);
+        HashRequirements(hash, {recipe.skills.data(), recipe.skills.size()});
+        HashTraining(hash, {recipe.training.data(), recipe.training.size()});
+        HashNumber(hash, recipe.teachesRecipes.size());
+        for (const auto taught : recipe.teachesRecipes) HashNumber(hash, taught.value);
     }
     // Catalog IDs are assigned lexically after all sources have been loaded.
     // Preserve authored entry order: weighted draws and placement keys use it.
@@ -323,6 +345,25 @@ std::uint64_t ContentFingerprint(const ContentCatalog& content) {
         HashNumber(hash, profile.scanIntervalTicks); HashNumber(hash, profile.memoryTicks);
         HashNumber(hash, profile.searchTicks); HashNumber(hash, profile.candidateBudget);
         HashNumber(hash, profile.bucketBudget); HashNumber(hash, profile.switchAdvantage);
+    }
+    HashNumber(hash, content.SkillCount());
+    for (std::size_t i = 0; i < content.SkillCount(); ++i) {
+        const auto& skill = content.GetSkill({static_cast<std::uint32_t>(i + 1)});
+        HashString(hash, skill.id); HashString(hash, skill.name);
+        HashNumber(hash, static_cast<std::uint8_t>(skill.category));
+        for (const auto xp : skill.xpToNext) HashNumber(hash, xp);
+    }
+    HashNumber(hash, content.BookCount());
+    for (std::size_t i = 0; i < content.BookCount(); ++i) {
+        const auto& book = content.GetBook({static_cast<std::uint32_t>(i + 1)});
+        HashString(hash, book.id); HashString(hash, book.name); HashNumber(hash, book.studyWork);
+        HashNumber(hash, book.benefits.size());
+        for (const auto& benefit : book.benefits) {
+            HashNumber(hash, benefit.skill.value); HashNumber(hash, benefit.firstLevel); HashNumber(hash, benefit.lastLevel);
+            HashNumber(hash, benefit.directXp); HashNumber(hash, benefit.theoryXp); HashNumber(hash, benefit.multiplier);
+        }
+        HashNumber(hash, book.recipes.size());
+        for (const auto recipe : book.recipes) HashNumber(hash, recipe.value);
     }
     return hash;
 }

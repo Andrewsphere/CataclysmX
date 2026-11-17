@@ -7,12 +7,14 @@
 namespace cataclysmx {
 enum class CraftingKind : std::uint8_t { Craft, Recycle };
 enum class CraftingStatus : std::uint8_t {
-    Paused, Working, PauseRequested, MissingTools, InsufficientEnergy, WorkerUnavailable
+    Paused, Working, PauseRequested, MissingTools, InsufficientEnergy, WorkerUnavailable,
+    MissingSkills, MissingRecipeReference
 };
 enum class CraftingOutcome : std::uint8_t {
     Started, Resumed, PauseRequested, Paused, Cancelled, ActorUnavailable,
     ActorBusy, JobBusy, OutOfReach, RecipeDisabled, InvalidTarget,
-    MissingInputs, MissingTools, InsufficientEnergy, CapacityExceeded
+    MissingInputs, MissingTools, InsufficientEnergy, CapacityExceeded,
+    MissingSkills, MissingRecipeReference
 };
 struct CraftingSettings {
     std::uint8_t nearbyRadius = 1;

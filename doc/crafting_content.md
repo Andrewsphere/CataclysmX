@@ -71,6 +71,12 @@ and uses the same four-entry, distinct-ID, tier-1–255 schema as items.
 resolve to a nonzero 20-bit item ID. Several crafting recipes may produce the
 same output item.
 
+Recipes may also specify learned `skills`, work `training`, and `knowledge`.
+Required skills default to training at the same level. Omitting `knowledge`
+preserves legacy known-by-default behavior; an explicit empty object gates
+knowledge. See [skill content](skills_content.md) for fields, rates, explicit
+autolearn, book references, and combined craft/disassembly memorization.
+
 ### Generated recycling
 
 Optional `recycling` requests a separate recycling definition. Its `id`, `work`,
@@ -93,6 +99,10 @@ the ordinary input schema; they are independent requirements and do not
 contribute to generated returns. Recycling `tool_traits` also defaults to empty
 and is independent of the crafting recipe's traits.
 
+Generated recyclers default to teaching their source recipe; `teaches_recipes`
+overrides that list. Recycler skill requirements and training are independent of
+the crafting recipe.
+
 ## Explicit recycling recipes
 
 ```json5
@@ -106,7 +116,8 @@ Required fields are `id`, `target` (an item ID), `returns` (possibly empty), and
 and follow the schemas above. Returns require item/count pairs, with at most
 eight distinct item types and counts 1–255. Duplicate return types and explicitly
 returning an item with `recovery_allowed: false` are errors. Explicit recipes
-do not reference crafting recipes or apply an efficiency calculation.
+do not apply an efficiency calculation. Their recipe-learning list can be
+explicitly authored or inferred as described in [skill content](skills_content.md).
 
 An item target has **at most one recycler**, across explicit and generated
 definitions. A conflict rejects the entire load, with diagnostics naming both

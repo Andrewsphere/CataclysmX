@@ -16,6 +16,14 @@ Recycling resolves the target's unique compiled recycling recipe. Reserved
 children cannot be addressed as crafting targets. World validates reach,
 ownership, recipe availability, tools, energy, and job assignment.
 
+Study uses the same authoritative command path: `study_book` sets `book` to a
+nonzero catalog `BookId`, while `pause_study` leaves it zero. Other fields retain
+their defaults. The book ID identifies the information, not a particular item;
+any accessible usable carrier qualifies. Study starts a timed slice and pause
+requests completion of the current slice. Outcomes distinguish busy actors,
+missing references, used books and teaching-range failures. The active actor's
+pause request can interrupt study at submission time. See [runtime skills](skills.md).
+
 ## Results and scheduling
 
 Successful start and resume return `craft_started`, `recycling_started`, or
@@ -45,8 +53,8 @@ envelopes return `invalid_command` before admission.
 
 ## Snapshot and protocol layout
 
-Protocol 13 adds the recipe ID to command records, the crafting outcome to result
-records, and a bounded list of persistent `CraftingEntry` records to snapshots.
+Protocol 20 carries recipe and book IDs in commands, crafting and study outcomes,
+learning views, and a bounded list of persistent `CraftingEntry` records in snapshots.
 Each job includes its wrapper ID, kind, recipe ID, status, worker's persistent ID,
 total/completed work, funded remaining ticks, and pause-request flag. Runtime
 handles never cross the transport boundary. Counts, enums, recipe-kind exclusivity,
@@ -61,4 +69,5 @@ Numeric catalog IDs are valid within a connection because the content fingerprin
 binds both endpoints to matching catalogs. The fingerprint includes tool traits,
 item crafting/recovery properties, and every compiled crafting and recycling
 recipe, including requirements, flags, outputs, work, and enabled state in stable
-catalog order. Save identities continue to use stable content names.
+catalog order, as well as skill, book, training and learning content. Save identities
+continue to use stable content names.

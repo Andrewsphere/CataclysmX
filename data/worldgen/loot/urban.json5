@@ -36,16 +36,17 @@
     {item:'tiny_electric_motor',weight:3},{item:'servo',weight:3},{item:'soldering_iron',weight:2},
     {item:'aa_alkaline_battery',weight:3,count:{min:1,max:4}},
     {item:'aa_rechargeable_battery',weight:2},{item:'battery_charger',weight:2},
+    {item:'workshop_ebook_reader',weight:1},
   ]},
   {type:'loot_pool', id:'loot_clothing', entries:[
     {item:'work_shirt',weight:4},{item:'cotton_tshirt',weight:4},{item:'denim_jeans',weight:4},
     {item:'rain_jacket',weight:3},{item:'leather_work_gloves',weight:3},{item:'sewing_supplies',weight:2},
     {item:'work_trousers',weight:1}, // Original recycler still has an obtainable target.
   ]},
-  // Reading material is deferred. Reading rooms carry ordinary visitor supplies.
   {type:'loot_pool', id:'loot_reading_room_supplies', entries:[
     {item:'bottled_water',weight:4},{item:'chocolate_bar',weight:2},
     {item:'aa_alkaline_battery',weight:2},{item:'cloth_patch',weight:1},
+    {item:'workshop_primer_print',weight:2},{item:'salvage_notes_print',weight:2},
   ]},
   {type:'loot_pool', id:'loot_office', entries:[
     {pool:'loot_reading_room_supplies',weight:4},{pool:'loot_electronics',weight:1},
@@ -95,5 +96,6 @@
   {type:'loot_pool', id:'loot_hobby', entries:[
     {item:'sewing_supplies',weight:3},{item:'tiny_electric_motor',weight:2},
     {item:'servo',weight:2},{pool:'loot_electronics',weight:2},{pool:'loot_hardware',weight:2},
+    {item:'workshop_primer_print',weight:2},{item:'salvage_notes_print',weight:2},
   ]},
 ]}

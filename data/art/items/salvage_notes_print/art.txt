@@ -1,0 +1,18 @@
+@text-art 1
+@color cover #986A4B
+@color edge #5F4436
+@color paper #D6C7A8
+@color ink #E8D4B4
+@default cover
+---
+   <edge>╔════════════════════╗
+   <edge>║<cover>▌                   <edge>║
+   <edge>║<cover>▌  <ink>SALVAGE NOTES   <edge>║
+   <edge>║<cover>▌  <ink>─────────────   <edge>║
+   <edge>║<cover>▌                   <edge>║
+   <edge>║<cover>▌    <ink>╭──────╮      <edge>║
+   <edge>║<cover>▌    <ink>│ / /  │      <edge>║
+   <edge>║<cover>▌    <ink>╰──────╯      <edge>║
+   <edge>║<cover>▌                   <edge>║
+   <edge>╠<paper>════════════════════<edge>╣
+   <edge>╚<paper>════════════════════<edge>╝

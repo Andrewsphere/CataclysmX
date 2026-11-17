@@ -115,6 +115,12 @@ bool Execute(eastl::unique_ptr<Server>& ownedServer, eastl::string_view line, bo
         return true;
     }
     if (name == "inspect" && count == 1) { Inspect(server); return true; }
+    if (name == "skills" && count == 1) {
+        Vector<String> lines;
+        CollectLearningSummary(server.View(0), server.GetWorld().GetContent(), lines);
+        for (const auto& text : lines) { std::puts(text.c_str()); }
+        return true;
+    }
     if ((name == "recipes" || name == "crafting") && count == 1) {
         Vector<CraftingMenuRow> rows;
         CollectCraftingMenu(server.View(0), server.GetWorld().GetContent(), Localization{}, rows);
@@ -247,7 +253,12 @@ bool Execute(eastl::unique_ptr<Server>& ownedServer, eastl::string_view line, bo
         return true;
     }
     Command command;
-    if (name == "craft" && count == 2) {
+    if (name == "study" && count == 2) {
+        command.kind = CommandKind::study_book;
+        if (!Number(words[1], command.book.value) || command.book.value == 0) { return false; }
+    } else if (name == "pause-study" && count == 1) {
+        command.kind = CommandKind::pause_study;
+    } else if (name == "craft" && count == 2) {
         command.kind = CommandKind::craft;
         if (!Number(words[1], command.recipe.value) || command.recipe.value == 0) { return false; }
     } else if ((name == "recycle" || name == "resume-craft" || name == "pause-craft" || name == "cancel-craft") && count == 2) {
@@ -358,7 +369,7 @@ int main(int argc, char** argv) {
         } else if (argument == "--world-dir" && i + 1 < argc) { configuration.worldDirectory = argv[++i]; configuration.enabled = true;
         } else {
             std::fputs("Usage: cataclysmx_headless [--content path] [--user-dir path] [--world-dir path] [--save path | --load path] [--script | --host | --join address[:port] | --discover] [--port n] [--discovery-port n] [--discovery-address address] [--name name] [--profile path] [--new-character] [--run-for ms] [--command 'move e'] | --probe | --fail-log\nMovement: move n/s/e/w, move down or move < (downstairs), move up or move > (upstairs).\nCombat: attack [persistentId], style balanced|aggressive|defensive.\n", stderr);
-            std::fputs("Content: --content <single definition file> | --content-pack <manifest>. New game: --scenario demo|first-house|town|zombie-showcase (default town) --seed <uint32>.\nGrab (local --script): grab n/ne/e/se/s/sw/w/nw, move in any of those directions, ungrab.\nCrafting (local --script): recipes, crafting, craft ID, recycle ITEM_ID, resume-craft JOB_ID, pause-craft JOB_ID, cancel-craft JOB_ID.\n", stderr);
+            std::fputs("Content: --content <single definition file> | --content-pack <manifest>. New game: --scenario demo|first-house|town|zombie-showcase (default town) --seed <uint32>.\nGrab (local --script): grab n/ne/e/se/s/sw/w/nw, move in any of those directions, ungrab.\nCrafting (local --script): recipes, crafting, craft ID, recycle ITEM_ID, resume-craft JOB_ID, pause-craft JOB_ID, cancel-craft JOB_ID.\nLearning (local --script): skills, study BOOK_ID, pause-study.\n", stderr);
             return 2;
         }
     }

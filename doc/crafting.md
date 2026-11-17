@@ -7,11 +7,19 @@ insufficient energy, unavailable actors and disabled recipes are ordinary typed
 `CraftingOutcome` values. `Started` means reservation and first funding committed.
 Start refusal moves nothing, creates nothing and spends nothing.
 
+Crafting and recycling also check learned skill requirements. Crafting requires
+permanent recipe knowledge or a reachable book reference; missing skills and
+missing reference are distinct outcomes. Checks also apply on resume. See
+[skills and learning](skills.md) for study, knowledge and training rules.
+
 `ResumeCrafting`, `PauseCrafting` and `CancelCrafting` operate on the unfinished
 item handle. An actor can work on one job; a job has at most one worker. Different
 jobs can use the same tool. Pause finishes its paid slice. Cancellation discards
 all work, including pending work, without refunding tool energy. Actual reserved
 items return to the cancelling actor, falling back to ground when too heavy.
+Skill XP earned from completed slices remains; cancellation awards no recipe
+memorization. Completion divides recipe-learning credit among recorded workers,
+including archived workers, in proportion to their completed work.
 
 ## Inspection and ownership
 
@@ -103,12 +111,13 @@ Unavailable transitions clear any pause request, including worker destruction an
 conflicting claims on attachment. Attachment conflicts do not clear the actor's
 unrelated action timer.
 
-The existing item `DataObject` envelope has a versioned `crafting_job` entry for
-unfinished definitions only; the outer save format is unchanged. Recipe stable
+The item `DataObject` envelope has a versioned `crafting_job` entry for
+unfinished definitions only. Recipe stable
 names resolve to current numeric IDs during loading. Snapshot validation checks
 recipe/work consistency, bounded residues and timers, exact reserved child counts,
 leaf ownership, and duplicate worker claims within an archive.
-The initial job payload is version 1 and stores scalar `energy_remainder`, strictly
+Job payload version 2 records worker contributions; version 1 migrates prior work
+as unattributed. It stores scalar `energy_remainder`, strictly
 less than 100000000. Active statuses require a worker; pause status and flag must
 agree. Paused/refused jobs cannot retain pending work or timers. Worker-unavailable
 jobs may retain already funded work for explicit reassignment.

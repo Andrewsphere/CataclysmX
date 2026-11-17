@@ -51,6 +51,9 @@ private:
         const eastl::array<ItemHandle, 4>& tools, bool commit);
     WorldResult<CraftingResult> Begin(ActorHandle actor, CraftingJobState state, ItemHandle target);
     CraftingOutcome ActorAvailability(ActorHandle actor) const;
+    CraftingOutcome LearningAvailability(ActorHandle actor, const CraftingJobState& state, unsigned radius) const;
+    void CompleteSlice(ActorHandle actor, CraftingJobState& state);
+    void AwardRecipe(const CraftingJobState& state, CraftingRecipeId recipe, std::uint64_t budget);
     void Finish(ItemHandle item);
     void ReleaseWorker(CraftingJobState& state);
 };

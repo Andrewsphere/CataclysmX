@@ -13,6 +13,7 @@
 #include "items/item_system.h"
 #include "items/item_snapshot.h"
 #include "crafting/crafting_system.h"
+#include "skills/learning_system.h"
 #include "worldgen/worldgen.h"
 #include "objects/storage_access.h"
 
@@ -133,6 +134,8 @@ SaveResult<void> ValidateArchiveDeadlines(const Archive& saved, const ContentCat
         }
         const auto combat = ReadCombatState(actor.combat, diagnostics);
         if (!combat) { return eastl::unexpected(SaveError::InvalidData); }
+        const auto learning = ReadLearningState(actor.learning, content, diagnostics);
+        if (!learning || learning->study.remaining > room) { return eastl::unexpected(SaveError::InvalidData); }
         const Tick recovery = combat->action.recoveryTicks;
         if (actor.remainingTicks > room || recovery > room - actor.remainingTicks) {
             return SaveFailure(SaveError::InvalidData, "Saved actor delay exceeds simulation clock headroom", diagnostics);
@@ -184,6 +187,19 @@ bool ValidateArchive(const ContentCatalog& content, const Archive& saved,
         if (!ValidateAiControllerContent(actor.controller, content)) { return false; }
         const auto combat = ReadCombatState(actor.combat);
         if (!combat || (combat->action.kind == ActorActionKind::MeleeWindup && combat->action.weapon != actor.wieldedItem)) { return false; }
+        const auto learning = ReadLearningState(actor.learning, content);
+        if (!learning || (learning->study.active && (combat->action.kind != ActorActionKind::None
+            || actor.remainingTicks != learning->study.remaining))) { return false; }
+        if (learning->study.active) {
+            for (const auto& item : saved.items) {
+                const auto* definition = content.TryGetItem(item.type);
+                if (!definition || !definition->unfinishedCraft) { continue; }
+                const auto* payload = item.state.Find("crafting_job");
+                if (!payload) { return false; }
+                const auto job = ReadCraftingState(*payload);
+                if (!job || job->worker == actor.id) { return false; }
+            }
+        }
         if (actor.wieldedItem && eastl::none_of(saved.items.begin(), saved.items.end(), [&actor](const SavedItem& item) {
             return item.id == actor.wieldedItem && item.location == LocationKind::actor && item.owner == actor.id;
         })) { return false; }
@@ -440,6 +456,9 @@ public:
         for (ActorHandle handle : chunk.actors) {
             const Actor* actor = Live(actors, handle);
             Require(actor != nullptr);
+            if (!actor->parked && actor->learning.study.active && actor->learning.study.remaining > room) {
+                return SaveFailure(SaveError::InvalidData, "Suspended study exceeds simulation clock headroom", diagnostics);
+            }
             if (actor->actionDeadline.suspended && !actor->parked && (actor->player || actor->controller_)
                 && (actor->actionDeadline.suspendedTicks > room
                     || actor->combat.action.recoveryTicks > room - actor->actionDeadline.suspendedTicks)) {
@@ -470,6 +489,11 @@ public:
     ankerl::unordered_dense::map<PersistentId, TileCoord> playerPositions; // Survives unload and archive eviction.
     ItemSystem itemSystem;
     CraftingSystem craftingSystem;
+    LearningSystem learningSystem;
+    struct RecipeCredit { PersistentId actor; CraftingRecipeId recipe; std::uint64_t points; };
+    // A failed disk lookup must not lose a completed job's award. Retried before
+    // loading/saving; those fallible boundaries expose the original storage error.
+    Vector<RecipeCredit> pendingRecipeCredits;
     unsigned craftingMutationDepth = 0;
     CombatSystem combatSystem;
     eastl::unique_ptr<SaveDatabase> database;
@@ -758,7 +782,7 @@ public:
 
     explicit Impl(World& world, const ContentCatalog& catalog, std::uint32_t value)
         : content(catalog), floor(catalog.FindTerrain("floor")),
-          wall(catalog.FindTerrain("wall")), seed(value), itemSystem(world), craftingSystem(world), combatSystem(world) {
+          wall(catalog.FindTerrain("wall")), seed(value), itemSystem(world), craftingSystem(world), learningSystem(world), combatSystem(world) {
         Require(floor.value != 0 && wall.value != 0);
     }
 
@@ -1260,7 +1284,8 @@ public:
                 actor->speed, actor->actionDeadline.Remaining(tick), actor->parked, actor->carryCapacityGrams, actor->light,
                 CaptureAiController(actor->controller_.get()), CaptureCombatState(actor->combat),
                 actor->monsterType.value ? content.GetMonster(actor->monsterType).id : String{},
-                actor->wieldedItem.value ? Live(items, actor->wieldedItem)->id : 0});
+                actor->wieldedItem.value ? Live(items, actor->wieldedItem)->id : 0,
+                CaptureLearningState(actor->learning, content)});
             for (ItemHandle item : actor->inventory) {
                 pending.push_back(item);
             }
@@ -1336,6 +1361,9 @@ public:
             const auto combat = ReadCombatState(actor.combat);
             Require(combat.has_value());
             restored.combat = *combat;
+            auto learning = ReadLearningState(actor.learning, content);
+            Require(learning.has_value());
+            restored.learning = eastl::move(*learning);
             auto controller = ReadAiController(actor.controller);
             Require(controller.has_value());
             restored.controller_ = eastl::move(*controller);
@@ -1481,6 +1509,58 @@ public:
         return {};
     }
 
+    SaveResult<void> ApplyRecipeCredit(World& world, RecipeCredit credit, Diagnostics* diagnostics) {
+        if (const auto handle = FindActor(credit.actor); handle.value) {
+            auto* actor = Live(actors, handle);
+            cataclysmx::LearnRecipe(actor->learning, content, credit.recipe, credit.points);
+            world.ActorChanged(handle);
+            return {};
+        }
+        const auto apply = [&](Archive& archive) -> SaveResult<bool> {
+            for (auto& actor : archive.actors) {
+                if (actor.id != credit.actor) { continue; }
+                auto learning = ReadLearningState(actor.learning, content, diagnostics);
+                if (!learning) { return eastl::unexpected(SaveError::InvalidData); }
+                cataclysmx::LearnRecipe(*learning, content, credit.recipe, credit.points);
+                actor.learning = CaptureLearningState(*learning, content);
+                MarkDirty(archive.position, false);
+                return true;
+            }
+            return false;
+        };
+        for (auto& entry : archives) {
+            auto result = apply(entry.second);
+            if (!result) { return eastl::unexpected(result.error()); }
+            if (*result) { return {}; }
+        }
+        // Warm archives never contain actors. Disk lookup works for NPCs too;
+        // playerPositions alone cannot locate arbitrary historical contributors.
+        if (!database) { return {}; }
+        auto position = database->FindActorChunk(credit.actor, diagnostics);
+        if (!position) { return eastl::unexpected(position.error()); }
+        if (!*position) { return {}; } // Destroyed/nonexistent actor.
+        // An old source row may still mention a moved or destroyed actor. Current
+        // RAM ownership supersedes it, even when that actor is absent from RAM.
+        if (GetChunk(**position) || archives.contains(**position) || warmArchives.contains(**position)) { return {}; }
+        auto saved = database->ReadChunk(**position, next_id, diagnostics);
+        if (!saved) { return eastl::unexpected(saved.error()); }
+        if (!*saved) { return SaveFailure(SaveError::InvalidData, "Recipe contributor chunk disappeared", diagnostics); }
+        auto result = apply(**saved);
+        if (!result) { return eastl::unexpected(result.error()); }
+        if (!*result) { return SaveFailure(SaveError::InvalidData, "Recipe contributor disappeared", diagnostics); }
+        Require(archives.try_emplace(**position, eastl::move(**saved)).second);
+        return {};
+    }
+
+    SaveResult<void> FlushRecipeCredits(World& world, Diagnostics* diagnostics) {
+        while (!pendingRecipeCredits.empty()) {
+            const auto result = ApplyRecipeCredit(world, pendingRecipeCredits.front(), diagnostics);
+            if (!result) { return result; }
+            pendingRecipeCredits.erase(pendingRecipeCredits.begin());
+        }
+        return {};
+    }
+
     SaveResult<void> Checkpoint(SaveDatabase& target, const SessionState& session,
         Diagnostics* diagnostics) {
         if (auto valid = ValidateSession(session, &target, diagnostics); !valid) {
@@ -1597,6 +1677,7 @@ WorldResult<void> World::ReleaseRequest(LoadRequest handle) {
 }
 
 SaveResult<void> World::ReconcileChunks(Diagnostics* diagnostics) {
+    if (auto result = impl_->FlushRecipeCredits(*this, diagnostics); !result) { return result; }
     if (!impl_->demandDirty) { return {}; }
     Impl::DemandMap demand;
     for (const Request& request : impl_->requests) {
@@ -1832,6 +1913,7 @@ SaveResult<void> World::ReconcileChunks(Diagnostics* diagnostics) {
 
 SaveResult<void> World::CreateSave(const char* path, const SessionState& session,
     Diagnostics* diagnostics) {
+    if (auto result = impl_->FlushRecipeCredits(*this, diagnostics); !result) { return result; }
     if (impl_->database) {
         return SaveFailure(SaveError::InvalidState, "World already has an attached save", diagnostics);
     }
@@ -1914,6 +1996,7 @@ SaveResult<void> World::Save(const SessionState& session, Diagnostics* diagnosti
     if (!impl_->database) {
         return SaveFailure(SaveError::NotOpen, "World has no attached save", diagnostics);
     }
+    if (auto result = impl_->FlushRecipeCredits(*this, diagnostics); !result) { return result; }
     if (!CheckInvariants()) {
         return SaveFailure(SaveError::InvalidData, "Invalid world state", diagnostics);
     }
@@ -2446,7 +2529,8 @@ void World::ClearWieldedItem(ItemHandle handle) {
 InventoryResult World::WieldItem(ActorHandle handle, ItemHandle selected) {
     auto* actor = MutableActor(handle);
     if (!actor || actor->parked || !IsActive(actor->position)) { return {InventoryOutcome::Inaccessible}; }
-    if (GetActorRemainingTicks(handle) || actor->combat.action.kind != ActorActionKind::None) { return {InventoryOutcome::Busy}; }
+    if (GetActorRemainingTicks(handle) || actor->combat.action.kind != ActorActionKind::None
+        || impl_->learningSystem.Busy(handle)) { return {InventoryOutcome::Busy}; }
     if (actor->wieldedItem == selected) { return {InventoryOutcome::AlreadyThere}; }
     if (selected.value) {
         const auto* item = GetItem(selected);
@@ -2662,16 +2746,28 @@ void World::EndCraftingMutation() {
     impl_->itemSystem.EndCallback();
 }
 WorldResult<void> World::SetCraftingSettings(CraftingSettings settings) { return impl_->craftingSystem.SetSettings(settings); }
+LearningSystem& World::Learning() { return impl_->learningSystem; }
+const LearningSystem& World::Learning() const { return impl_->learningSystem; }
+bool LearningSystem::CraftingBusy(ActorHandle actor) const { return world_.impl_->craftingSystem.Busy(actor); }
+void World::LearnRecipe(PersistentId actor, CraftingRecipeId recipe, std::uint64_t points) {
+    Require(impl_->content.TryGetCraftingRecipe(recipe) != nullptr);
+    if (!actor || !points) { return; }
+    const Impl::RecipeCredit credit{actor, recipe, points};
+    if (!impl_->ApplyRecipeCredit(*this, credit, nullptr)) { impl_->pendingRecipeCredits.push_back(credit); }
+}
 CraftingSettings World::GetCraftingSettings() const { return impl_->craftingSystem.Settings(); }
 WorldResult<CraftingResult> World::StartCrafting(ActorHandle actor, CraftingRecipeId recipe) {
+    if (impl_->learningSystem.Busy(actor)) { return CraftingResult{CraftingOutcome::ActorBusy}; }
     Impl::GravityBatch batch(*this); BeginCraftingMutation();
     auto result = impl_->craftingSystem.Start(actor, recipe); EndCraftingMutation(); return result;
 }
 WorldResult<CraftingResult> World::StartRecycling(ActorHandle actor, ItemHandle target, RecyclingRecipeId recipe) {
+    if (impl_->learningSystem.Busy(actor)) { return CraftingResult{CraftingOutcome::ActorBusy}; }
     Impl::GravityBatch batch(*this); BeginCraftingMutation();
     auto result = impl_->craftingSystem.Recycle(actor, target, recipe); EndCraftingMutation(); return result;
 }
 WorldResult<CraftingResult> World::ResumeCrafting(ActorHandle actor, ItemHandle item) {
+    if (impl_->learningSystem.Busy(actor)) { return CraftingResult{CraftingOutcome::ActorBusy}; }
     Impl::GravityBatch batch(*this); BeginCraftingMutation();
     auto result = impl_->craftingSystem.Resume(actor, item); EndCraftingMutation(); return result;
 }
@@ -2785,7 +2881,7 @@ ObjectMoveResult World::QueryObjectMove(ActorHandle actorHandle, ObjectHandle ha
     if (!actor || !object || actor->parked || !IsActive(actor->position) || !IsActive(object->position)
         || (kind != ObjectMoveKind::Push && kind != ObjectMoveKind::Pull)) { return {}; }
     if (actor->actionDeadline.Remaining(impl_->tick) || actor->combat.action.kind != ActorActionKind::None
-        || impl_->craftingSystem.Busy(actorHandle)
+        || impl_->craftingSystem.Busy(actorHandle) || impl_->learningSystem.Busy(actorHandle)
         || ActionTicks(ticks_per_turn, actor->speed) > UINT64_MAX - impl_->tick) {
         return {ObjectMoveOutcome::NotReady};
     }
@@ -2830,7 +2926,7 @@ ObjectMoveResult World::QueryObjectStep(ActorHandle actorHandle, ObjectHandle ha
         || direction.y != 0 || direction.x < -1 || direction.x > 1 || direction.z < -1 || direction.z > 1
         || (direction.x == 0 && direction.z == 0)) { return {}; }
     if (actor->actionDeadline.Remaining(impl_->tick) || actor->combat.action.kind != ActorActionKind::None
-        || impl_->craftingSystem.Busy(actorHandle)) { return {ObjectMoveOutcome::NotReady}; }
+        || impl_->craftingSystem.Busy(actorHandle) || impl_->learningSystem.Busy(actorHandle)) { return {ObjectMoveOutcome::NotReady}; }
     const TileCoord a = actor->position, o = object->position;
     if (a.y != o.y || a == o || eastl::max(std::abs(o.x - a.x), std::abs(o.z - a.z)) > 1) {
         return {ObjectMoveOutcome::OutOfReach};
@@ -3272,7 +3368,7 @@ WorldResult<void> World::ScheduleActorAction(ActorHandle handle, std::uint32_t b
     if (!value) { return eastl::unexpected(WorldError::invalid_handle); }
     if (!IsActive(value->position) || value->parked) { return eastl::unexpected(WorldError::chunk_unavailable); }
     if (baseCost == 0 || value->actionDeadline.Remaining(impl_->tick) != 0
-        || value->combat.action.kind != ActorActionKind::None || impl_->craftingSystem.Busy(handle)) {
+        || value->combat.action.kind != ActorActionKind::None || impl_->craftingSystem.Busy(handle) || impl_->learningSystem.Busy(handle)) {
         return eastl::unexpected(WorldError::invalid_request);
     }
     Require(value->speed != 0);
@@ -3322,6 +3418,7 @@ void World::ElapseTicks(Tick elapsed) {
     }
     impl_->itemSystem.Elapse(elapsed);
     impl_->craftingSystem.Elapse(elapsed);
+    impl_->learningSystem.Elapse(elapsed);
     impl_->combatSystem.Elapse(elapsed);
     for (Actor& actor : impl_->actors) {
         if (!actor.player && !actor.parked && actor.controller_ && IsActive(actor.position)) {
@@ -3360,7 +3457,8 @@ void World::CollectReadyPlayers(Vector<ActorHandle>& output) const {
     for (const auto& entry : impl_->actors.items()) {
         const Actor& actor = entry.second.get();
         if (actor.player && !actor.actionDeadline.suspended && actor.actionDeadline.dueTick <= impl_->tick
-            && actor.combat.action.kind == ActorActionKind::None && !impl_->craftingSystem.Busy({entry.first.raw})) {
+            && actor.combat.action.kind == ActorActionKind::None && !impl_->craftingSystem.Busy({entry.first.raw})
+            && !impl_->learningSystem.Busy({entry.first.raw})) {
             output.push_back({entry.first.raw});
         }
     }
@@ -3378,14 +3476,16 @@ void World::ProcessNpcActions(std::uint32_t& rng) {
         const Actor& actor = entry.second.get();
         if (!actor.player && !actor.parked && actor.controller_ && IsActive(actor.position)
             && actor.actionDeadline.dueTick <= impl_->tick
-            && actor.combat.action.kind == ActorActionKind::None && !impl_->craftingSystem.Busy({entry.first.raw})) { due.push_back({actor.id, {entry.first.raw}}); }
+            && actor.combat.action.kind == ActorActionKind::None && !impl_->craftingSystem.Busy({entry.first.raw})
+            && !impl_->learningSystem.Busy({entry.first.raw})) { due.push_back({actor.id, {entry.first.raw}}); }
     }
     eastl::sort(due.begin(), due.end(), [](const auto& a, const auto& b) { return a.id < b.id; });
     for (const auto record : due) {
         Actor* actor = Live(impl_->actors, record.handle);
         if (!actor || actor->id != record.id || actor->player || actor->parked || !actor->controller_
             || !IsActive(actor->position) || actor->actionDeadline.dueTick > impl_->tick
-            || actor->combat.action.kind != ActorActionKind::None || impl_->craftingSystem.Busy(record.handle)) { continue; }
+            || actor->combat.action.kind != ActorActionKind::None || impl_->craftingSystem.Busy(record.handle)
+            || impl_->learningSystem.Busy(record.handle)) { continue; }
         const ActorIntent intent = actor->controller_->ChooseAction(ActorReadContext(*this, record.handle), rng);
         Require(intent.baseCost > 0);
         Require(intent.kind == ActorIntentKind::Wait || intent.kind == ActorIntentKind::Move
@@ -3420,6 +3520,11 @@ eastl::optional<Tick> World::NextActorEventIn() const {
     for (const auto& entry : impl_->actors.items()) {
         const Actor& actor = entry.second.get();
         const ActorHandle handle{entry.first.raw};
+        if (impl_->learningSystem.Busy(handle)) {
+            const auto delay = impl_->learningSystem.ActorEventIn(handle);
+            if (delay && (!next || *delay < *next)) { next = *delay; }
+            continue;
+        }
         if (impl_->craftingSystem.Busy(handle)) {
             const auto delay = impl_->craftingSystem.ActorEventIn(handle);
             if (delay && (!next || *delay < *next)) { next = *delay; }
@@ -3594,6 +3699,10 @@ bool World::CheckInvariants() const {
         if (!controller || (value.player && value.controller_)) { return false; }
         if (!ValidateAiControllerContent(CaptureAiController(value.controller_.get()), state.content)) { return false; }
         if (!ValidateCombatState(value.combat)) { return false; }
+        if (!ReadLearningState(CaptureLearningState(value.learning, state.content), state.content)) { return false; }
+        if (value.learning.study.active && (state.craftingSystem.Busy(handle)
+            || value.combat.action.kind != ActorActionKind::None
+            || value.actionDeadline.Remaining(state.tick) != value.learning.study.remaining)) { return false; }
         const auto* wielded = GetItem(value.wieldedItem);
         if (value.wieldedItem.value && (!wielded || wielded->location != ItemLocation::Carried(handle))) { return false; }
         if (value.combat.action.kind == ActorActionKind::MeleeWindup

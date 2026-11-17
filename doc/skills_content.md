@@ -1,0 +1,108 @@
+# Skills, books and learning content
+
+## Shipped starter content
+
+`data/skills/core.json5` defines the noncombat skills Cooking & Chemistry
+(`cooking_chemistry`), Fabrication, Mechanics, Electronics, Computers, Tailoring,
+Survival and Medicine, plus the combat skills Melee, Unarmed and Dodge. The main
+and FirstHouse packs include these definitions; activity coverage is a starter
+slice, not a complete ten-tier progression for each skill.
+
+In `data/crafting/slice.json5`, `cut_timber_scrap` is ungated level-0 Fabrication
+training toward level 1. `make_coil_spear` requires Fabrication 1 and a reference
+or knowledge, and explicitly autolearns at Fabrication 2. Its independent,
+ungated `disassemble_coil_spear` recycler trains Fabrication at level 0 and
+teaches the spear recipe through disassembly. `make_current_arming_sword` requires
+Fabrication 2 and is known by default. Materials and tools still apply.
+
+`data/books/starter.json5` defines `workshop_primer_text` and
+`salvage_notes_text`; both reference `make_coil_spear` and have distinct study
+benefits. Their printed carriers are `workshop_primer_print` and
+`salvage_notes_print`. `workshop_ebook_reader` carries `workshop_primer_text`,
+sharing its once-per-character benefit with the printed primer; its own `cell`
+must have charge. FirstHouse offers the manuals through debug spawning.
+
+## Authoring schema
+
+Definitions use the existing JSON5 `format_version: 1` document and `definitions`
+array. IDs are globally unique, references resolve across files, and invalid or
+duplicate fields/references reject the load. See [crafting content](crafting_content.md)
+for the underlying item and recipe schema. For example, the following definitions
+can appear together in that array:
+
+```json5
+{type:'skill', id:'fabrication', name:'Fabrication'}
+{type:'item', id:'panel', name:'Panel', mass_g:100, volume_ml:100}
+{type:'recipe', id:'make_panel', inputs:[], result:{item:'panel',count:1}, work:100,
+ skills:[{skill:'fabrication',level:1}],
+ knowledge:{autolearn:[{skill:'fabrication',level:2}], crafts_to_learn:2,
+            disassemblies_to_learn:3}}
+{type:'book', id:'panel_manual', name:'Panel manual', study_work:1000,
+ benefits:[{skill:'fabrication',first_level:1,last_level:5,
+            direct_xp:20,multiplier:20000}], recipes:['make_panel']}
+{type:'item', id:'panel_manual_print', name:'Printed manual', mass_g:100, volume_ml:100,
+ books:['panel_manual']}
+```
+
+Add commas between entries in the actual array. The recipe requires level 1;
+its autolearn threshold is level 2. The manual is a reference before and after
+study, but studying it does not itself memorize the recipe.
+
+## Skill and book definitions
+
+`skill` requires `id` and `name`; `category` is `noncombat` (default) or `combat`.
+Optional `xp_to_next` is exactly ten integers, each 1–1000000000, indexed from
+level 0. The default curve is listed in [runtime skills](skills.md).
+
+`book` requires `id`, `name`, and `study_work` (1–UINT32_MAX). `benefits` and
+`recipes` default to empty. Each benefit requires a unique `skill`, `first_level`
+and `last_level` in 1–10, inclusive and ordered. Optional `direct_xp` and
+`theory_xp` default to zero and range through 1000000000; `multiplier` defaults
+to 10000 and ranges from 10000 to 40000. Combat benefits require zero direct and
+theory XP and multiplier at most 12000. Ranges refer to the next level earned.
+
+Book `recipes` is a list of recipe IDs, not skill benefits or an automatic
+memorization list. Duplicate recipe IDs within one book are invalid, but distinct
+books may list the same recipe. Items may list multiple distinct book IDs in
+`books`; different physical or electronic carriers of one book ID share that
+information identity and its once-per-character benefit.
+
+An electronic carrier can specify `reading_power` naming its own energy-store
+capability; it must also list at least one book. For example:
+
+```json5
+{type:'item', id:'panel_reader', name:'Reader', mass_g:100, volume_ml:100,
+ books:['panel_manual'], reading_power:'battery',
+ capabilities:[{id:'battery',type:'energy_store',capacity_energy:10,rechargeable:false}]}
+```
+
+The store must have positive energy to use its references; no reading energy is
+currently consumed.
+
+## Recipe gates and training
+
+Crafting recipes and both explicit and generated recyclers accept `skills` and
+`training` arrays. Each skill requirement is `{skill:'id', level:1}` with level
+1–10. Each required skill automatically trains at its required level and default
+`xp_per_work:100` (0.01 XP per base work). A `training` entry has `skill`,
+`level` 0–10 and optional `xp_per_work` 0–10000; it overrides the same required
+skill only at that requirement's level, or adds an independent training skill.
+An independent skill without a requirement must use training level 0; higher-tier
+training needs the matching learned-skill gate.
+Duplicates in an array are invalid. A zero rate disables that training reward.
+
+Crafting `knowledge` accepts `known_by_default`, `autolearn`, `crafts_to_learn`
+and `disassemblies_to_learn`. Omitting the whole object preserves legacy
+`known_by_default:true`; supplying `knowledge:{}` defaults it to false. Autolearn
+is enabled only when its array is present, even when empty; its skill thresholds
+are 0–10 and must not undercut the same recipe requirement. It requires both
+recipe gates and all listed thresholds. Counts default to 2 and 3 respectively,
+and each must be 1–65535.
+
+Recycler `teaches_recipes` explicitly lists distinct recipe IDs, including an
+empty list to teach none. If omitted, a generated recycler teaches its generating
+recipe; an explicit recycler teaches the single matching output recipe. With
+multiple matches, an explicit list is required if any matching recipe is gated;
+legacy all-known matches default to an empty list. With no matches it is empty.
+This inference affects memorization, not the recycler's independent skill gates
+or returned items.

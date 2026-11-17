@@ -539,7 +539,7 @@ TEST_CASE("Quick actions wrap navigate preserve selection on resize and activate
     f.ui.Open(InputAction::QuickActions);
     f.Event(ftxui::Event::ArrowDown); // Appended Crafting opens its UI without submitting a command.
     f.Event(ftxui::Event::Return);
-    CHECK(f.ui.IsOpen()); CHECK(Find(f.Draw(), "Crafting and recycling"));
+    CHECK(f.ui.IsOpen()); CHECK(Find(f.Draw(), "Crafting, recycling and learning"));
     CHECK(f.activations == 1); CHECK(f.submissions == 0);
     f.Event(ftxui::Event::Escape);
     f.ui.Open(InputAction::QuickActions);

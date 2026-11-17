@@ -3,6 +3,7 @@
 
 #include "core/simulation.h"
 #include "combat/combat_system.h"
+#include "skills/learning_system.h"
 
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
 #error Engine must compile without exceptions
@@ -33,6 +34,7 @@ SimulationResult AdvanceUntilInput(World& world, Tick& tick,
         effectsCompleted |= dueItemEvent && *dueItemEvent == 0;
         world.ProcessItemEvents();
         effectsCompleted |= world.ProcessCraftingEvents();
+        effectsCompleted |= world.Learning().ProcessEvents();
         const auto combatEvent = world.Combat().NextEventIn();
         if (combatEvent && *combatEvent == 0) {
             world.Combat().ProcessEvents(rngState);

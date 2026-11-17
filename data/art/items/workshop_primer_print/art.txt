@@ -1,0 +1,19 @@
+@text-art 1
+@color cover #496D75
+@color edge #30474D
+@color paper #D8C9A3
+@color ink #E9D8A7
+@default cover
+---
+  <edge>╔══════════════════════╗
+  <edge>║<cover>▌                     <edge>║
+  <edge>║<cover>▌  <ink>THE NEIGHBORHOOD   <edge>║
+  <edge>║<cover>▌     <ink>WORKSHOP      <edge>║
+  <edge>║<cover>▌   <ink>────────────    <edge>║
+  <edge>║<cover>▌       <ink>╱╲         <edge>║
+  <edge>║<cover>▌      <ink>╱  ╲        <edge>║
+  <edge>║<cover>▌      <ink>╲  ╱        <edge>║
+  <edge>║<cover>▌       <ink>╲╱         <edge>║
+  <edge>║<cover>▌                  <edge>║
+  <edge>╠<paper>══════════════════════<edge>╣
+  <edge>╚<paper>══════════════════════<edge>╝

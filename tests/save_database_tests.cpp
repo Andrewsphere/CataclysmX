@@ -109,7 +109,7 @@ void Replace(std::string& text, const char* before, const char* after) {
 
 void StripV9ChunkFields(RawDatabase& raw) {
     raw.Exec("UPDATE chunks SET payload=json_set(payload,"
-        "'$.actors',json((SELECT json_group_array(json_remove(value,'$.controller','$.combat','$.wielded_item')) FROM json_each(chunks.payload,'$.actors'))),"
+        "'$.actors',json((SELECT json_group_array(json_remove(value,'$.controller','$.combat','$.wielded_item','$.learning')) FROM json_each(chunks.payload,'$.actors'))),"
         "'$.objects',json((SELECT json_group_array(json_remove(value,'$.type','$.state')) FROM json_each(chunks.payload,'$.objects'))))");
 }
 
@@ -182,7 +182,7 @@ TEST_CASE("Save terrain names survive catalog renumbering and missing content fa
     }
     {
         RawDatabase raw(file.path.c_str());
-        CHECK(raw.Text("SELECT format_version FROM metadata") == "12");
+        CHECK(raw.Text("SELECT format_version FROM metadata") == std::to_string(save_format_version));
         const auto payload = raw.Text("SELECT payload FROM chunks");
         CHECK(payload.find("\"terrain\":\"moss\"") != std::string::npos);
         CHECK(payload.find("\"terrain\":\"floor\"") != std::string::npos);
@@ -531,7 +531,7 @@ TEST_CASE("Save database rejects unknown versions and incomplete or extended sch
     Populate(file.path.c_str());
     {
         RawDatabase raw(file.path.c_str());
-        SECTION("future version") { raw.Exec("UPDATE metadata SET format_version=13"); }
+        SECTION("future version") { raw.Exec("UPDATE metadata SET format_version=14"); }
         SECTION("previous v6 format") { raw.Exec("UPDATE metadata SET format_version=6"); }
         SECTION("previous v5 format") { raw.Exec("UPDATE metadata SET format_version=5"); }
         SECTION("previous v4 format") { raw.Exec("UPDATE metadata SET format_version=4"); }
@@ -711,7 +711,7 @@ TEST_CASE("Save format ten round trips square and tile circle residency", "[save
     }
     {
         RawDatabase raw(file.path.c_str());
-        CHECK(raw.Text("SELECT format_version FROM metadata") == "12");
+        CHECK(raw.Text("SELECT format_version FROM metadata") == std::to_string(save_format_version));
         const auto payload = raw.Text("SELECT payload FROM world_state");
         CHECK(payload.find("\"circle_residency\":") != std::string::npos);
         if (!snapshot.session.circleResidency) {
@@ -972,7 +972,7 @@ TEST_CASE("Opening genuine v7 preserves square residency until the first committ
     REQUIRE(database.Commit());
     {
         RawDatabase raw(file.path.c_str());
-        CHECK(raw.Text("SELECT format_version FROM metadata") == "12");
+        CHECK(raw.Text("SELECT format_version FROM metadata") == std::to_string(save_format_version));
         CHECK(raw.Text("SELECT payload FROM world_state").find("\"circle_residency\":") != std::string::npos);
         CHECK(raw.Text("SELECT payload FROM chunks") != originalChunk);
         CHECK(raw.Text("SELECT payload FROM chunks").find("\"controller\":") != std::string::npos);
@@ -1085,7 +1085,7 @@ TEST_CASE("Failed v7 migration keeps durable version and permits retry on the sa
     REQUIRE(upgraded);
     CHECK_FALSE(upgraded->session.circleResidency);
     RawDatabase raw(file.path.c_str());
-    CHECK(raw.Text("SELECT format_version FROM metadata") == "12");
+    CHECK(raw.Text("SELECT format_version FROM metadata") == std::to_string(save_format_version));
 }
 
 TEST_CASE("Legacy checkpoints rewrite every chunk before accepting new v10 writes and roll back atomically", "[save][database][migration]") {
@@ -1170,7 +1170,7 @@ TEST_CASE("Legacy checkpoints rewrite every chunk before accepting new v10 write
     REQUIRE(database.Commit());
     {
         RawDatabase raw(file.path.c_str());
-        CHECK(raw.Text("SELECT format_version FROM metadata") == "12");
+        CHECK(raw.Text("SELECT format_version FROM metadata") == std::to_string(save_format_version));
         CHECK(raw.Text("SELECT count(*) FROM chunks WHERE json_type(payload,'$.actors[0].controller')='object'") == "2");
         CHECK(raw.Text("SELECT count(*) FROM chunks WHERE json_type(payload,'$.objects[0].type')='text' AND json_type(payload,'$.objects[0].state')='object'") == "2");
     }
@@ -1619,7 +1619,7 @@ TEST_CASE("V10 equipment migration defaults to unarmed and writes V11 transactio
     {
         RawDatabase raw(file.path.c_str());
         raw.Exec("UPDATE chunks SET payload=json_set(payload,'$.actors',json((SELECT json_group_array("
-            "json_set(json_remove(value,'$.wielded_item','$.combat.action.weapon'),'$.combat.version',1)) "
+            "json_set(json_remove(value,'$.wielded_item','$.combat.action.weapon','$.learning'),'$.combat.version',1)) "
             "FROM json_each(chunks.payload,'$.actors'))));UPDATE metadata SET format_version=10");
     }
     {
@@ -1634,7 +1634,7 @@ TEST_CASE("V10 equipment migration defaults to unarmed and writes V11 transactio
         REQUIRE(database.Begin()); REQUIRE(database.Commit());
     }
     RawDatabase raw(file.path.c_str());
-    CHECK(raw.Text("SELECT format_version FROM metadata") == "12");
+    CHECK(raw.Text("SELECT format_version FROM metadata") == std::to_string(save_format_version));
 }
 
 TEST_CASE("V11 requires strict valid combat envelopes on disk and before writing", "[save][database][combat]") {
@@ -1698,7 +1698,7 @@ TEST_CASE("V9 migration synthesizes combat defaults and preserves existing actor
     std::string original;
     {
         RawDatabase raw(file.path.c_str());
-        raw.Exec("UPDATE chunks SET payload=json_set(payload,'$.actors',json((SELECT json_group_array(json_remove(value,'$.combat','$.wielded_item')) FROM json_each(chunks.payload,'$.actors'))));"
+        raw.Exec("UPDATE chunks SET payload=json_set(payload,'$.actors',json((SELECT json_group_array(json_remove(value,'$.combat','$.wielded_item','$.learning')) FROM json_each(chunks.payload,'$.actors'))));"
             "UPDATE metadata SET format_version=9");
         original = raw.Text("SELECT payload FROM chunks");
     }
@@ -1730,7 +1730,7 @@ TEST_CASE("V9 migration synthesizes combat defaults and preserves existing actor
     SECTION("empty checkpoint") {}
     REQUIRE(database.Commit());
     RawDatabase raw(file.path.c_str());
-    CHECK(raw.Text("SELECT format_version FROM metadata") == "12");
+    CHECK(raw.Text("SELECT format_version FROM metadata") == std::to_string(save_format_version));
     CHECK(raw.Text("SELECT payload FROM chunks").find("\"combat\":") != std::string::npos);
     SaveDatabase observer(TestContent());
     REQUIRE(observer.Open(file.path.c_str()));

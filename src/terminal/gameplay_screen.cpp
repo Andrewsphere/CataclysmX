@@ -317,8 +317,8 @@ private:
 
 class ScrollPane final : public ftxui::Node {
 public:
-    ScrollPane(ftxui::Element content, int& offset, int selected = -1)
-        : Node({std::move(content)}), offset_(offset), selected_(selected) {}
+    ScrollPane(ftxui::Element content, int& offset, int selected = -1, std::shared_ptr<ftxui::Box> focus = {})
+        : Node({std::move(content)}), offset_(offset), selected_(selected), focus_(std::move(focus)) {}
     void ComputeRequirement() override {
         Node::ComputeRequirement(); Flexible(requirement_);
         requirement_.min_y = children_[0]->requirement().min_y;
@@ -329,7 +329,15 @@ public:
         contentHeight_ = children_[0]->requirement().min_y;
         const int contentHeight = std::max(height, contentHeight_);
         int wanted = offset_;
-        if (selected_ >= 0 && height > 0) {
+        if (focus_ && selected_ >= 0 && height > 0) {
+            auto measure = box; --measure.x_max;
+            measure.y_max = measure.y_min + contentHeight - 1;
+            children_[0]->SetBox(measure);
+            const int first = focus_->y_min - box.y_min;
+            const int last = focus_->y_max - box.y_min;
+            if (first < wanted || last - first + 1 >= height) { wanted = first; }
+            else if (last >= wanted + height) { wanted = last - height + 1; }
+        } else if (selected_ >= 0 && height > 0) {
             if (selected_ < wanted) { wanted = selected_; }
             if (selected_ >= wanted + height) { wanted = selected_ - height + 1; }
         }
@@ -353,6 +361,7 @@ public:
 private:
     int& offset_;
     int selected_;
+    std::shared_ptr<ftxui::Box> focus_;
     int actualOffset_ = 0;
     int contentHeight_ = 0;
 };
@@ -704,21 +713,31 @@ ftxui::Element GameplayUi::Render(WorldView view, const ContentCatalog& content,
     int preferredWidth = 84;
     int* scroll = nullptr;
     int selected = -1;
+    std::shared_ptr<ftxui::Box> craftingFocus;
     if (modal_ == Modal::Crafting) {
         if (selectionPlayer_ != view.playerId) {
             selectionPlayer_ = view.playerId; craftingSelection_.reset(); craftingIndex_ = 0; craftingScroll_ = 0;
         }
-        title = "Crafting and recycling"; subtitle = "Availability is checked by the server. Work continues while this menu is open.";
+        title = "Crafting, recycling and learning"; subtitle = "Availability is checked by the server. Work continues while this menu is open. Browse past actions for skills and book references.";
         scroll = &craftingScroll_;
         CollectCraftingMenu(view, content, localization, craftingRows_);
-        if (!craftingSelection_ && !craftingRows_.empty()) { craftingSelection_ = craftingRows_.front().command; }
+        CollectLearningSummary(view, content, learningLines_);
+        craftingFocus = std::make_shared<ftxui::Box>();
+        if (!craftingSelection_ && craftingIndex_ == 0 && !craftingRows_.empty()) { craftingSelection_ = craftingRows_.front().command; }
         for (std::size_t i = 0; i < craftingRows_.size(); ++i) {
             const bool chosen = craftingSelection_ && SameCraftingChoice(*craftingSelection_, craftingRows_[i].command);
-            auto row = Text(craftingRows_[i].label);
-            if (chosen) { craftingIndex_ = i; selected = static_cast<int>(i); row = row | ftxui::bold | ftxui::inverted; }
+            auto row = Paragraph(craftingRows_[i].label);
+            if (chosen) { craftingIndex_ = i; selected = static_cast<int>(i); row = row | ftxui::bold | ftxui::inverted | ftxui::reflect(*craftingFocus); }
             rows.push_back(row);
         }
-        if (craftingRows_.empty()) { rows.push_back(ftxui::text("No recipes, reachable jobs, or recyclable items.")); }
+        for (std::size_t i = 0; i < learningLines_.size(); ++i) {
+            auto row = Paragraph("Learning | " + learningLines_[i]);
+            if (!craftingSelection_ && craftingIndex_ == craftingRows_.size() + i) {
+                selected = static_cast<int>(craftingIndex_); row = row | ftxui::bold | ftxui::inverted | ftxui::reflect(*craftingFocus);
+            }
+            rows.push_back(row);
+        }
+        if (rows.empty()) { rows.push_back(ftxui::text("No recipes, reachable jobs, recyclable items, or learning information.")); }
         if (!presentation.message.empty()) { subtitle += "\n"; subtitle += presentation.message; }
     } else if (modal_ == Modal::Players) {
         title = t("game.ui.players"); subtitle = t("game.ui.players_hint");
@@ -783,7 +802,7 @@ ftxui::Element GameplayUi::Render(WorldView view, const ContentCatalog& content,
             rows.push_back(Paragraph(t("input.legacy")) | ftxui::color(ftxui::Color::Yellow));
         }
     }
-    auto contentPane = std::make_shared<ScrollPane>(ftxui::vbox(std::move(rows)), *scroll, selected);
+    auto contentPane = std::make_shared<ScrollPane>(ftxui::vbox(std::move(rows)), *scroll, selected, craftingFocus);
     String directions = BindingLabel(keys, localization, InputContext::Menu, InputAction::North);
     directions += '/'; directions += BindingLabel(keys, localization, InputContext::Menu, InputAction::South);
     const bool selectable = modal_ == Modal::QuickActions || modal_ == Modal::Crafting;
@@ -834,10 +853,13 @@ bool GameplayUi::HandleEvent(const ftxui::Event& event, const WorldView& view, c
         return true;
     }
     if (modal_ == Modal::Crafting) {
-        if (!craftingRows_.empty() && (action == InputAction::North || action == InputAction::South)) {
-            craftingIndex_ = action == InputAction::North ? (craftingIndex_ + craftingRows_.size() - 1) % craftingRows_.size()
-                : (craftingIndex_ + 1) % craftingRows_.size();
-            craftingSelection_ = craftingRows_[craftingIndex_].command; feedback_.clear();
+        const auto count = craftingRows_.size() + learningLines_.size();
+        if (count && (action == InputAction::North || action == InputAction::South)) {
+            craftingIndex_ = action == InputAction::North ? (craftingIndex_ + count - 1) % count
+                : (craftingIndex_ + 1) % count;
+            if (craftingIndex_ < craftingRows_.size()) { craftingSelection_ = craftingRows_[craftingIndex_].command; }
+            else { craftingSelection_.reset(); }
+            feedback_.clear();
         } else if (action == InputAction::Accept && craftingSelection_) {
             if (!submit(*craftingSelection_)) { feedback_ = localization.Text("item.ui.submit_failed"); }
             else { feedback_.clear(); }

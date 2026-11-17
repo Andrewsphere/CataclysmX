@@ -6,6 +6,7 @@
 #include "actors/ai_controller.h"
 #include "objects/object_behavior.h"
 #include "worldgen/worldgen.h"
+#include "crafting/crafting_state.h"
 
 #include <EASTL/algorithm.h>
 #include <EASTL/sort.h>
@@ -347,6 +348,27 @@ SaveResult<void> ValidateEntityState(const ContentCatalog& content, const ChunkA
             return Failure(SaveError::InvalidData, "Unknown monster type or typed player actor", diagnostics);
         }
         const auto combat = ReadCombatState(actor.combat, diagnostics);
+        const auto learning = ReadLearningState(actor.learning, content, diagnostics);
+        if (!learning) {
+            return eastl::unexpected(learning.error() == StateError::UnsupportedVersion
+                ? SaveError::UnsupportedVersion : SaveError::InvalidData);
+        }
+        if (learning->study.active) {
+            if (!combat || combat->action.kind != ActorActionKind::None
+                || actor.remainingTicks != learning->study.remaining) {
+                return Failure(SaveError::InvalidData, "Conflicting study and actor action", diagnostics);
+            }
+            for (const auto& item : chunk.items) {
+                const auto* definition = content.TryGetItem(item.type);
+                if (!definition || !definition->unfinishedCraft) { continue; }
+                const auto* payload = item.state.Find("crafting_job");
+                if (!payload) { return Failure(SaveError::InvalidData, "Missing crafting job", diagnostics); }
+                const auto job = ReadCraftingState(*payload);
+                if (!job || job->worker == actor.id) {
+                    return Failure(SaveError::InvalidData, "Conflicting study and crafting assignment", diagnostics);
+                }
+            }
+        }
         if ((combat && combat->action.kind == ActorActionKind::MeleeWindup && combat->action.weapon != actor.wieldedItem)
             || (actor.wieldedItem && eastl::none_of(chunk.items.begin(), chunk.items.end(), [&actor](const SavedItem& item) {
                 return item.id == actor.wieldedItem && item.location == LocationKind::actor && item.owner == actor.id;
@@ -893,6 +915,8 @@ String EncodeChunk(const ContentCatalog& content, const ChunkArchive& chunk) {
         writer.Counter(value, "carry_capacity_g", actor.carryCapacityGrams);
         EncodeLight(writer, value, actor.light);
         writer.Add(value, "combat", EncodeValue(writer, actor.combat));
+        // Source-constructed neutral actors use the core's empty-state sentinel.
+        writer.Add(value, "learning", EncodeValue(writer, CaptureLearningState(*ReadLearningState(actor.learning, content), content)));
         writer.Counter(value, "wielded_item", actor.wieldedItem);
         if (EmptyController(actor.controller)) {
             writer.Add(value, "controller", EncodeValue(writer, DefaultController(actor.player)));
@@ -1080,7 +1104,11 @@ SaveResult<ChunkArchive> DecodeChunk(const ContentCatalog& content, const char* 
     yyjson_arr_iter actorIterator = yyjson_arr_iter_with(actors);
     while (auto* value = yyjson_arr_iter_next(&actorIterator)) {
         SavedActor actor{};
-        const bool fields = formatVersion >= 11
+        const bool fields = formatVersion >= 13
+            ? Get(value, "monster_type")
+                ? Fields(value, {"id", "position", "player", "parked", "turns", "inventory", "speed", "remaining_ticks", "carry_capacity_g", "light", "controller", "combat", "monster_type", "wielded_item", "learning"})
+                : Fields(value, {"id", "position", "player", "parked", "turns", "inventory", "speed", "remaining_ticks", "carry_capacity_g", "light", "controller", "combat", "wielded_item", "learning"})
+            : formatVersion >= 11
             ? Get(value, "monster_type")
                 ? Fields(value, {"id", "position", "player", "parked", "turns", "inventory", "speed", "remaining_ticks", "carry_capacity_g", "light", "controller", "combat", "monster_type", "wielded_item"})
                 : Fields(value, {"id", "position", "player", "parked", "turns", "inventory", "speed", "remaining_ticks", "carry_capacity_g", "light", "controller", "combat", "wielded_item"})
@@ -1106,6 +1134,13 @@ SaveResult<ChunkArchive> DecodeChunk(const ContentCatalog& content, const char* 
             return Failure(SaveError::InvalidData, "Invalid wielded item", diagnostics);
         }
         actor.parked = yyjson_get_bool(Get(value, "parked"));
+        if (formatVersion >= 13) {
+            auto learning = DecodeValue(Get(value, "learning"));
+            if (!learning || (learning->Type() == DataType::Object && learning->Size() == 0)) {
+                return Failure(SaveError::InvalidData, "Actor requires a learning envelope", diagnostics);
+            }
+            actor.learning = eastl::move(*learning);
+        } else { actor.learning = CaptureLearningState(LearningState{}, content); }
         if (formatVersion >= 10) {
             if (auto* type = Get(value, "monster_type")) {
                 if (!yyjson_is_str(type)) {
@@ -1352,7 +1387,7 @@ SaveResult<int> ReadFormatVersion(sqlite3* db, Diagnostics* diagnostics) {
         return Failure(SaveError::InvalidData, "Invalid save metadata", diagnostics);
     }
     const auto version = sqlite3_column_int64(metadata.value, 1);
-    if (version != 7 && version != 8 && version != 9 && version != 10 && version != 11 && version != save_format_version) {
+    if (version != 7 && version != 8 && version != 9 && version != 10 && version != 11 && version != 12 && version != save_format_version) {
         return Failure(SaveError::UnsupportedVersion, "Unsupported save format version", diagnostics);
     }
     code = sqlite3_step(metadata.value);
@@ -1481,6 +1516,8 @@ SaveResult<void> ValidateDatabase(const ContentCatalog& content, sqlite3* db,
     bool playerFound = snapshot.session.player == 0;
     Vector<PersistentId> rosterFound;
     Vector<PersistentId> memoryOwners;
+    Vector<PersistentId> studyingActors;
+    Vector<PersistentId> craftingWorkers;
     const bool authoritative = snapshot.session.player != 0 || !snapshot.session.players.empty();
     bool havePrevious = false;
     ChunkCoord previous{};
@@ -1516,6 +1553,8 @@ SaveResult<void> ValidateDatabase(const ContentCatalog& content, sqlite3* db,
         }
         for (const auto& actor : chunk->actors) {
             ids.push_back(actor.id);
+            const auto learning = ReadLearningState(actor.learning, content);
+            if (learning->study.active) { studyingActors.push_back(actor.id); }
             if (actor.player) { memoryOwners.push_back(actor.id); }
             if (actor.id == snapshot.session.player && actor.player
                 && !actor.parked && actor.position == snapshot.session.playerPosition) {
@@ -1535,9 +1574,21 @@ SaveResult<void> ValidateDatabase(const ContentCatalog& content, sqlite3* db,
             }
         }
         for (const auto& object : chunk->objects) { ids.push_back(object.id); }
-        for (const auto& item : chunk->items) { ids.push_back(item.id); }
+        for (const auto& item : chunk->items) {
+            ids.push_back(item.id);
+            if (content.GetItem(item.type).unfinishedCraft) {
+                const auto job = ReadCraftingState(*item.state.Find("crafting_job"));
+                if (job->worker) { craftingWorkers.push_back(job->worker); }
+            }
+        }
     }
     if (code != SQLITE_DONE) { return Failure(SqlError(code), sqlite3_errmsg(db), diagnostics); }
+    eastl::sort(studyingActors.begin(), studyingActors.end());
+    for (auto worker : craftingWorkers) {
+        if (eastl::binary_search(studyingActors.begin(), studyingActors.end(), worker)) {
+            return Failure(SaveError::InvalidData, "Study actor also assigned to crafting job", diagnostics);
+        }
+    }
     if (!Unique(ids) || !playerFound || rosterFound.size() != snapshot.session.players.size()
         || !Unique(rosterFound)) {
         return Failure(SaveError::InvalidData, "Duplicate persistent ID or missing session player", diagnostics);
@@ -1619,7 +1670,7 @@ SaveResult<void> SaveDatabase::Create(const char* path, Diagnostics* diagnostics
         "BEGIN IMMEDIATE;"
         "CREATE TABLE metadata(singleton INTEGER PRIMARY KEY CHECK(singleton=1),"
         "format_version INTEGER NOT NULL,game_version TEXT NOT NULL);"
-        "INSERT INTO metadata VALUES(1,12,'0.1.0');"
+        "INSERT INTO metadata VALUES(1,13,'0.1.0');"
         "CREATE TABLE world_state(singleton INTEGER PRIMARY KEY CHECK(singleton=1),payload TEXT NOT NULL);"
         "CREATE TABLE chunks(x INTEGER NOT NULL,z INTEGER NOT NULL,y INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(x,z,y));"
         "CREATE TABLE player_memories(player_id TEXT NOT NULL,x INTEGER NOT NULL,z INTEGER NOT NULL,y INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(player_id,x,z,y));"
@@ -1672,6 +1723,35 @@ SaveResult<SaveSnapshot> SaveDatabase::Open(const char* path, Diagnostics* diagn
     candidate->effectiveVersion = *schema;
     impl_ = eastl::move(candidate);
     return snapshot;
+}
+
+SaveResult<eastl::optional<ChunkCoord>> SaveDatabase::FindActorChunk(PersistentId actor, Diagnostics* diagnostics) {
+    if (!impl_) { return Failure(SaveError::NotOpen, "Database is not open", diagnostics); }
+    auto* db = impl_->connection.value;
+    Statement statement;
+    int code = statement.Prepare(db,
+        "SELECT chunks.x,chunks.z,chunks.y FROM chunks,json_each(chunks.payload,'$.actors') AS actor "
+        "WHERE json_extract(actor.value,'$.id')=?1");
+    char id[32];
+    const auto converted = std::to_chars(id, id + sizeof(id), actor);
+    if (code == SQLITE_OK) {
+        code = sqlite3_bind_text(statement.value, 1, id, static_cast<int>(converted.ptr - id), SQLITE_TRANSIENT);
+    }
+    if (code != SQLITE_OK) { return Failure(SqlError(code), sqlite3_errmsg(db), diagnostics); }
+    eastl::optional<ChunkCoord> result;
+    while ((code = sqlite3_step(statement.value)) == SQLITE_ROW) {
+        if (result) { return Failure(SaveError::InvalidData, "Duplicate saved actor identity", diagnostics); }
+        const auto x = sqlite3_column_int64(statement.value, 0);
+        const auto z = sqlite3_column_int64(statement.value, 1);
+        const auto y = sqlite3_column_int64(statement.value, 2);
+        constexpr int limit = world_coordinate_limit / chunk_size;
+        if (x < -limit || x > limit || z < -limit || z > limit || y < world_min_y || y > world_max_y) {
+            return Failure(SaveError::InvalidData, "Invalid saved actor chunk", diagnostics);
+        }
+        result = ChunkCoord{static_cast<int>(x), static_cast<int>(z), static_cast<int>(y)};
+    }
+    if (code != SQLITE_DONE) { return Failure(SqlError(code), sqlite3_errmsg(db), diagnostics); }
+    return result;
 }
 
 SaveResult<eastl::optional<ChunkArchive>> SaveDatabase::ReadChunk(ChunkCoord position,
@@ -1745,7 +1825,7 @@ SaveResult<void> SaveDatabase::Begin(Diagnostics* diagnostics) {
         if (code != SQLITE_DONE) { return impl_->WriteFailure(code, diagnostics); }
     }
     // ReadChunk still uses the legacy decoder here. Each coordinate is visited
-    // once; WriteChunk only encodes v10 and never reads a newly upgraded row.
+    // once; WriteChunk encodes the current format and never reads an upgraded row.
     for (const auto position : positions) {
         auto chunk = ReadChunk(position, snapshot->nextId, diagnostics);
         if (!chunk || !*chunk) {
@@ -1763,7 +1843,7 @@ SaveResult<void> SaveDatabase::Begin(Diagnostics* diagnostics) {
         if (code == SQLITE_OK) { code = sqlite3_step(statement.value); }
         if (code != SQLITE_DONE) { return impl_->WriteFailure(code, diagnostics); }
     }
-    auto upgraded = Execute(db, "UPDATE metadata SET format_version=12 WHERE singleton=1", diagnostics);
+    auto upgraded = Execute(db, "UPDATE metadata SET format_version=13 WHERE singleton=1", diagnostics);
     if (!upgraded) { impl_->Rollback(); return upgraded; }
     impl_->effectiveVersion = save_format_version;
     return {};

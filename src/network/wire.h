@@ -6,8 +6,8 @@
 
 namespace cataclysmx::network::wire {
 
-// Version 19 adds observed object types to visible and remembered cells.
-inline constexpr std::uint32_t protocol = 0x43584e13;
+// Version 20 appends authoritative learning views and study commands/results.
+inline constexpr std::uint32_t protocol = 0x43584e14;
 inline constexpr int maxViewRadius = maxPresentationRadius;
 inline constexpr int maxViewDimension = 2 * maxViewRadius + 1;
 static_assert(maxViewDimension <= UINT8_MAX && maxViewDimension * maxViewDimension <= UINT16_MAX);
@@ -24,6 +24,7 @@ bool ValidItemDefinitions(const WorldView& view, const ContentCatalog& content);
 bool ValidTerrainDefinitions(const WorldView& view, const ContentCatalog& content);
 bool ValidMonsterDefinitions(const WorldView& view, const ContentCatalog& content);
 bool ValidObjectDefinitions(const WorldView& view, const ContentCatalog& content);
+bool ValidLearningDefinitions(const WorldView& view, const ContentCatalog& content);
 enum class Type : std::uint8_t {
     Hello = 1, Accepted, Ready, Snapshot, Input, Receipt, Rejection,
     Closing, Query, Advertisement, SnapshotAck, Inspect, Inspection, InspectionAck

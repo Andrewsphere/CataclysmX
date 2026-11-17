@@ -3,6 +3,7 @@
 #include "core/containers.h"
 #include "core/static_list.h"
 #include "items/item_types.h"
+#include "content/skill_definition.h"
 
 namespace cataclysmx {
 
@@ -66,6 +67,14 @@ struct CraftingRecipeDefinition {
     ItemOutput result;
     std::uint32_t work = 0;
     bool enabled = true;
+    SmallVector<SkillRequirement, 1> skills;
+    SmallVector<SkillTraining, 1> training;
+    // Missing knowledge configuration preserves legacy/common recipes.
+    bool knownByDefault = true;
+    bool autolearn = false;
+    SmallVector<SkillRequirement, 1> autolearnSkills;
+    std::uint16_t craftsToLearn = 2;
+    std::uint16_t disassembliesToLearn = 3;
 };
 
 struct RecyclingRecipeDefinition {
@@ -76,6 +85,9 @@ struct RecyclingRecipeDefinition {
     StaticList<TraitRequirement, maxRecipeTraits> toolTraits;
     StaticList<ItemOutput, maxRecipeInputs> returns;
     std::uint32_t work = 0;
+    SmallVector<SkillRequirement, 1> skills;
+    SmallVector<SkillTraining, 1> training;
+    SmallVector<CraftingRecipeId, 1> teachesRecipes;
 };
 
 struct ToolTraitDefinition {

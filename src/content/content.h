@@ -6,6 +6,7 @@
 #include "content/ai_definition.h"
 #include "content/item_definition.h"
 #include "content/crafting_definition.h"
+#include "content/book_definition.h"
 #include "content/object_definition.h"
 #include "content/building_population.h"
 #include "content/content_result.h"
@@ -165,6 +166,14 @@ public:
     const ToolTraitDefinition& GetToolTrait(ToolTraitId id) const;
     std::size_t ToolTraitCount() const;
     ItemTypeId UnfinishedCraftItem() const;
+    SkillId FindSkill(eastl::string_view id) const;
+    const SkillDefinition* TryGetSkill(SkillId id) const;
+    const SkillDefinition& GetSkill(SkillId id) const;
+    std::size_t SkillCount() const;
+    BookId FindBook(eastl::string_view id) const;
+    const BookDefinition* TryGetBook(BookId id) const;
+    const BookDefinition& GetBook(BookId id) const;
+    std::size_t BookCount() const;
 
 private:
     Vector<TerrainDefinition> definitions_;
@@ -180,6 +189,8 @@ private:
     Vector<RecyclingRecipeDefinition> recyclingRecipes_;
     Vector<ToolTraitDefinition> toolTraits_;
     ItemTypeId unfinishedCraftItem_{};
+    Vector<SkillDefinition> skills_;
+    Vector<BookDefinition> books_;
     friend ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource>, Diagnostics*);
     friend ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource>, const ItemBehaviorRegistry&, Diagnostics*);
     friend ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource>, const ItemBehaviorRegistry&,

@@ -1,6 +1,7 @@
 #include "content/content.h"
 #include "core/server.h"
 #include "core/simulation.h"
+#include "skills/learning_system.h"
 #include "worldgen/worldgen.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -105,7 +106,7 @@ TEST_CASE("Town slice publishes sixty complete current definitions and retires t
     CHECK_FALSE(flag.domains.Contains(FlagDomain::Terrain));
     CHECK_FALSE(flag.domains.Contains(FlagDomain::Object));
     CHECK_FALSE(flag.description.empty());
-    CHECK(content.ItemCount() == 88); // 60 new + 5 pilots + 22 obsolete + internal wrapper.
+    CHECK(content.ItemCount() == 91); // 60 slice + 3 learning + 5 pilots + 22 obsolete + internal wrapper.
     for (const char* name : sliceIds) {
         CAPTURE(name);
         const auto type = content.FindItem(name);
@@ -330,7 +331,10 @@ TEST_CASE("Current cloth timber and sword recipes consume exact counts and keep 
         auto& world = r.server.GetWorld();
         for (unsigned i = 0; i < route.count + 1; ++i) { r.Add(route.material); }
         const bool sword = eastl::string_view(route.result) == "arming_sword";
-        if (sword) { r.Add("wood_scrap"); r.Add("wood_scrap"); r.Add("copper_wire"); }
+        if (sword) {
+            REQUIRE(world.Learning().SetLevel(r.server.GetPlayer(), r.content.FindSkill("fabrication"), 3));
+            r.Add("wood_scrap"); r.Add("wood_scrap"); r.Add("copper_wire");
+        }
         CHECK(r.Start(route.recipe).outcome == CraftingOutcome::MissingTools);
         CHECK(r.Count(r.content.FindItem(route.material)) == route.count + 1);
         const auto saw = r.Add("hacksaw");
@@ -356,6 +360,7 @@ TEST_CASE("Current cloth timber and sword recipes consume exact counts and keep 
 TEST_CASE("Current coil spear needs both retained tools and consumes only its four materials", "[item-slice][crafting][world]") {
     SliceRig r;
     auto& world = r.server.GetWorld();
+    REQUIRE(world.Learning().SetLevel(r.server.GetPlayer(), r.content.FindSkill("fabrication"), 3));
     Vector<ItemHandle> materials;
     for (const char* name : {"timber_plank", "steel_scrap", "copper_wire", "cloth_repair_tape"}) { materials.push_back(r.Add(name)); }
     const auto knife = r.Add("chef_knife"); // A generic cutting tier alone cannot replace the specified saw.
@@ -377,7 +382,7 @@ TEST_CASE("Current coil spear needs both retained tools and consumes only its fo
 
 TEST_CASE("Current recyclers preserve mass and produce usable current stock with retained tools", "[item-slice][recycling][world]") {
     const auto& content = SliceContent();
-    for (const char* name : {"cut_up_cotton_tshirt", "cut_up_denim_jeans", "cut_steel_sheet", "salvage_appliance_motor", "salvage_water_pump"}) {
+    for (const char* name : {"cut_up_cotton_tshirt", "cut_up_denim_jeans", "cut_steel_sheet", "salvage_appliance_motor", "salvage_water_pump", "disassemble_coil_spear"}) {
         CAPTURE(name);
         const auto recipeId = content.FindRecyclingRecipe(name);
         REQUIRE(recipeId.value);

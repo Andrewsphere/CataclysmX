@@ -1,0 +1,15 @@
+{format_version:1, definitions:[
+  {type:'item',id:'workshop_primer_print',name:'The Neighborhood Workshop',mass_g:450,volume_ml:700,
+   description:'A workshop primer with a penciled name inside the cover. Someone kept it close to the bench for the jobs they could not yet do alone.',
+   flags:['book','combustible','water_absorbent','porous','opaque'],books:['workshop_primer_text'],
+   art:'/art/items/workshop_primer_print/art.txt'},
+  {type:'item',id:'salvage_notes_print',name:'Notes from the Salvage Bench',mass_g:300,volume_ml:500,
+   description:'A slim collection of workshop notes, passed around until the corners softened. Its pages make a pile of scrap feel a little less final.',
+   flags:['book','combustible','water_absorbent','porous','opaque'],books:['salvage_notes_text'],
+   art:'/art/items/salvage_notes_print/art.txt'},
+  {type:'item',id:'workshop_ebook_reader',name:'workshop ebook reader',mass_g:220,volume_ml:300,
+   description:'A scuffed reader still holds a copy of a neighborhood workshop primer. Its last owner left the screen ready for the next lesson.',
+   flags:['electronics','rigid','opaque'],books:['workshop_primer_text'],reading_power:'cell',
+   capabilities:[{type:'energy_store',id:'cell',capacity_energy:1000,initial_energy:1000,rechargeable:false}],
+   art:'/art/items/workshop_ebook_reader/art.txt'},
+]}

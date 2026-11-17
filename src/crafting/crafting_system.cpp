@@ -2,6 +2,8 @@
 #include "core/world.h"
 #include "core/ratio.h"
 #include "objects/storage_access.h"
+#include "skills/learning_system.h"
+#include "skills/skill_state.h"
 #include <EASTL/algorithm.h>
 #include <EASTL/sort.h>
 #include <cstdlib>
@@ -13,6 +15,26 @@ void SetWorkerUnavailable(CraftingJobState& state) {
     state.worker = 0;
     state.status = CraftingStatus::WorkerUnavailable;
     state.pauseRequested = false;
+}
+CraftingStatus RefusalStatus(CraftingOutcome outcome) {
+    switch (outcome) {
+    case CraftingOutcome::MissingSkills: return CraftingStatus::MissingSkills;
+    case CraftingOutcome::MissingRecipeReference: return CraftingStatus::MissingRecipeReference;
+    case CraftingOutcome::MissingTools: return CraftingStatus::MissingTools;
+    case CraftingOutcome::InsufficientEnergy: return CraftingStatus::InsufficientEnergy;
+    default: std::abort();
+    }
+}
+// floor(work * budget / total), without constructing the overflowing product.
+// Work and total are bounded by UINT32_MAX * ratioScale; budget fits 32 bits.
+std::uint64_t ProportionalPoints(std::uint64_t work, std::uint64_t budget, std::uint64_t total) {
+    std::uint64_t quotient = 0, remainder = 0;
+    for (int bit = 31; bit >= 0; --bit) {
+        remainder = remainder * 2 + (((budget >> bit) & 1) ? work : 0);
+        quotient = quotient * 2 + remainder / total;
+        remainder %= total;
+    }
+    return quotient;
 }
 constexpr std::uint64_t workPerTickNumerator = std::uint64_t{ticks_per_turn} * ratioScale;
 bool Has(const Vector<ItemHandle>& items, ItemHandle item) {
@@ -118,6 +140,54 @@ CraftingOutcome CraftingSystem::ActorAvailability(ActorHandle handle) const {
         return CraftingOutcome::ActorBusy;
     }
     return CraftingOutcome::Started;
+}
+CraftingOutcome CraftingSystem::LearningAvailability(ActorHandle handle, const CraftingJobState& state, unsigned radius) const {
+    const auto& content = world_.GetContent();
+    const auto& learning = world_.GetActor(handle)->learning;
+    const auto& requirements = state.kind == CraftingKind::Craft ? content.GetCraftingRecipe(state.craftingRecipe).skills
+        : content.GetRecyclingRecipe(state.recyclingRecipe).skills;
+    if (!MeetsSkillRequirements(learning, {requirements.data(), requirements.size()})) { return CraftingOutcome::MissingSkills; }
+    if (state.kind == CraftingKind::Craft && !KnowsRecipe(learning, content, state.craftingRecipe)
+        && !world_.Learning().HasRecipeReference(handle, state.craftingRecipe, radius)) {
+        return CraftingOutcome::MissingRecipeReference;
+    }
+    return CraftingOutcome::Started;
+}
+void CraftingSystem::CompleteSlice(ActorHandle handle, CraftingJobState& state) {
+    const auto work = state.pendingWork;
+    if (!work) { return; }
+    const auto worker = world_.GetActor(handle)->id;
+    auto entry = eastl::lower_bound(state.contributions.begin(), state.contributions.end(), worker,
+        [](const CraftingContribution& contribution, PersistentId id) { return contribution.worker < id; });
+    if (entry == state.contributions.end() || entry->worker != worker) {
+        entry = state.contributions.insert(entry, CraftingContribution{worker, 0});
+    }
+    entry->work += work;
+    state.work += work; state.pendingWork = 0;
+    const auto& content = world_.GetContent();
+    const auto& training = state.kind == CraftingKind::Craft ? content.GetCraftingRecipe(state.craftingRecipe).training
+        : content.GetRecyclingRecipe(state.recyclingRecipe).training;
+    for (const auto& source : training) {
+        Require(world_.Learning().Train(handle, source,
+            state.kind == CraftingKind::Craft ? SkillActivity::Craft : SkillActivity::Disassembly, work).has_value());
+    }
+    world_.ActorChanged(handle);
+}
+void CraftingSystem::AwardRecipe(const CraftingJobState& state, CraftingRecipeId recipe, std::uint64_t budget) {
+    const auto total = std::uint64_t{state.totalWork} * ratioScale;
+    std::uint64_t attributed = 0, allocated = 0;
+    for (const auto& entry : state.contributions) {
+        attributed += entry.work;
+        allocated += ProportionalPoints(entry.work, budget, total);
+    }
+    // Legacy completed work owns its missing share. Distribute only the recorded
+    // workers' rounding residue, one point each in persistent-ID order.
+    auto remainder = ProportionalPoints(attributed, budget, total) - allocated;
+    for (const auto& entry : state.contributions) {
+        auto points = ProportionalPoints(entry.work, budget, total);
+        if (remainder) { ++points; --remainder; }
+        if (points) { world_.LearnRecipe(entry.worker, recipe, points); }
+    }
 }
 bool CraftingSystem::Busy(ActorHandle handle) const {
     const auto* actor = world_.GetActor(handle);
@@ -271,6 +341,8 @@ WorldResult<CraftingResult> CraftingSystem::Begin(ActorHandle actor, CraftingJob
     const auto available = ActorAvailability(actor);
     if (available != CraftingOutcome::Started) { return CraftingResult{available}; }
     state.settings = settings_;
+    const auto learning = LearningAvailability(actor, state, state.settings.nearbyRadius);
+    if (learning != CraftingOutcome::Started) { return CraftingResult{learning}; }
     if (target.value && !Reachable(actor, target, state.settings.nearbyRadius)) { return CraftingResult{CraftingOutcome::OutOfReach}; }
     Gather(actor, state.settings.nearbyRadius);
     eastl::array<ItemHandle, 4> tools{};
@@ -335,6 +407,15 @@ WorldResult<CraftingResult> CraftingSystem::Resume(ActorHandle actor, ItemHandle
     if (state->kind == CraftingKind::Craft && !world_.GetContent().GetCraftingRecipe(state->craftingRecipe).enabled) {
         return CraftingResult{CraftingOutcome::RecipeDisabled, item};
     }
+    const auto learning = LearningAvailability(actor, *state, settings_.nearbyRadius);
+    if (learning != CraftingOutcome::Started) {
+        // An unassigned paid slice remains WorkerUnavailable until an eligible
+        // worker resumes it; refusal must not rewrite or erase that paid state.
+        if (!state->remaining && !state->pendingWork) {
+            state->status = RefusalStatus(learning); world_.MarkItemDirty(item);
+        }
+        return CraftingResult{learning, item};
+    }
     state->settings = settings_; state->pauseRequested = false;
     if (state->remaining || state->pendingWork) {
         state->worker = world_.GetActor(actor)->id; state->status = CraftingStatus::Working;
@@ -347,7 +428,7 @@ WorldResult<CraftingResult> CraftingSystem::Resume(ActorHandle actor, ItemHandle
     auto outcome = Select(*state, false, {}, tools);
     if (outcome == CraftingOutcome::Started) { outcome = Fund(actor, *state, tools, true); }
     if (outcome == CraftingOutcome::Started) { Attach(item); outcome = CraftingOutcome::Resumed; }
-    else { state->status = outcome == CraftingOutcome::MissingTools ? CraftingStatus::MissingTools : CraftingStatus::InsufficientEnergy; }
+    else { state->status = RefusalStatus(outcome); }
     world_.MarkItemDirty(item);
     return CraftingResult{outcome, item};
 }
@@ -445,7 +526,7 @@ bool CraftingSystem::ProcessEvents() {
             world_.MutableActor(handle)->actionDeadline.Set(world_.GetTick(), state->remaining);
             continue;
         }
-        state->work += state->pendingWork; state->pendingWork = 0; changed = true;
+        CompleteSlice(handle, *state); changed = true;
         world_.MarkItemDirty(item);
         if (state->work == std::uint64_t{state->totalWork} * ratioScale) { Finish(item); continue; }
         if (state->pauseRequested || !Reachable(handle, item, state->settings.nearbyRadius)) {
@@ -454,10 +535,11 @@ bool CraftingSystem::ProcessEvents() {
         }
         Gather(handle, state->settings.nearbyRadius);
         eastl::array<ItemHandle, 4> tools{};
-        auto outcome = Select(*state, false, {}, tools);
+        auto outcome = LearningAvailability(handle, *state, state->settings.nearbyRadius);
+        if (outcome == CraftingOutcome::Started) { outcome = Select(*state, false, {}, tools); }
         if (outcome == CraftingOutcome::Started) { outcome = Fund(handle, *state, tools, true); }
         if (outcome != CraftingOutcome::Started) {
-            state->status = outcome == CraftingOutcome::MissingTools ? CraftingStatus::MissingTools : CraftingStatus::InsufficientEnergy;
+            state->status = RefusalStatus(outcome);
             ReleaseWorker(*state); eastl::erase(assigned_, item);
         }
     }
@@ -465,6 +547,15 @@ bool CraftingSystem::ProcessEvents() {
 }
 void CraftingSystem::Finish(ItemHandle wrapper) {
     const auto state = *State(wrapper);
+    if (state.kind == CraftingKind::Craft) {
+        const auto& recipe = world_.GetContent().GetCraftingRecipe(state.craftingRecipe);
+        AwardRecipe(state, state.craftingRecipe, std::uint64_t{recipe.disassembliesToLearn} * ratioScale);
+    } else {
+        for (auto id : world_.GetContent().GetRecyclingRecipe(state.recyclingRecipe).teachesRecipes) {
+            const auto& recipe = world_.GetContent().GetCraftingRecipe(id);
+            AwardRecipe(state, id, std::uint64_t{recipe.craftsToLearn} * ratioScale);
+        }
+    }
     const auto actor = world_.FindActor(state.worker);
     const auto position = world_.ItemRootPosition(wrapper);
     // Funding survives loss of access, but the physical inputs never teleport.

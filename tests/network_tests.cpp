@@ -18,17 +18,22 @@ constexpr std::size_t combatViewWireSize = 128;
 constexpr std::size_t emptyCraftingJobsWireSize = 2; // Protocol 13 appends a u16 job count.
 constexpr std::size_t grabWireSize = 8; // Protocol 16 appends the grabbed object's persistent ID.
 
-// Protocol 17 appends a variable-sized inventory tail after the grip. Measure
-// that suffix independently so byte-corruption tests still target earlier fields.
-std::size_t InventoryTailWireSize(const WorldView& view, std::size_t encodedSize) {
+// Measure the variable inventory and learning suffix after the grip, keeping
+// corruption offsets independent of the number of entries in either subsystem.
+std::size_t PostGrabWireSize(const WorldView& view, std::size_t encodedSize) {
     auto withoutLists = view;
     withoutLists.nearbyItems.clear();
     withoutLists.itemStorages.clear();
+    withoutLists.learning = {};
     wire::Writer writer;
     REQUIRE(writer.View(withoutLists));
-    constexpr std::size_t emptyTail = 8 + 2 + 2; // Wielded ID and two u16 counts.
+    wire::Writer emptyTail;
+    emptyTail.U64(0); // Wielded ID.
+    emptyTail.U16(0); emptyTail.U16(0); // Nearby items and storages.
+    emptyTail.U32(0); emptyTail.U32(0); emptyTail.U32(0); // Skills, recipes and books.
+    emptyTail.U32(0); emptyTail.U64(0); emptyTail.U8(0); // Active book, deadline and pause flag.
     REQUIRE(encodedSize >= writer.bytes.size());
-    return encodedSize - writer.bytes.size() + emptyTail;
+    return encodedSize - writer.bytes.size() + emptyTail.bytes.size();
 }
 
 TEST_CASE("Network wire rejects truncated values, invalid enums and oversized snapshots", "[network][codec]") {
@@ -81,14 +86,14 @@ TEST_CASE("Network wire rejects truncated values, invalid enums and oversized sn
     wire::Reader badSpeed{{bad.data(), bad.size()}};
     CHECK_FALSE(badSpeed.View(result));
     bad = snapshot.bytes;
-    // State is followed by player fields, light, combat, jobs, grip and inventory.
+    // State is followed by player fields, light, combat, jobs, grip, inventory and learning.
     bad[bad.size() - (20 + combatViewWireSize + emptyCraftingJobsWireSize + grabWireSize
-        + InventoryTailWireSize(view, bad.size()))] = 255;
+        + PostGrabWireSize(view, bad.size()))] = 255;
     wire::Reader badState{{bad.data(), bad.size()}};
     CHECK_FALSE(badState.View(result));
     wire::Writer commandBytes;
     commandBytes.CommandValue({CommandKind::wait});
-    commandBytes.bytes[0] = 255;
+    commandBytes.bytes[0] = static_cast<std::uint8_t>(CommandKind::pause_study) + 1;
     wire::Reader badCommand{{commandBytes.bytes.data(), commandBytes.bytes.size()}};
     Command decodedCommand;
     CHECK_FALSE(badCommand.CommandValue(decodedCommand));
@@ -130,7 +135,7 @@ bool Poll(LanHost& host, LanClient& a, LanClient& b, Predicate predicate) {
 }
 
 TEST_CASE("Current protocol preserves signed six-axis commands and authoritative shapes", "[network][codec][3d]") {
-    CHECK(wire::protocol == 0x43584e13);
+    CHECK(wire::protocol == 0x43584e14);
     for (const auto kind : {CommandKind::move, CommandKind::interact}) {
         for (const TileCoord direction : {TileCoord{1, 0, 0}, {-1, 0, 0}, {0, 1, 0},
             {0, -1, 0}, {0, 0, 1}, {0, 0, -1}, {0, 0, 0}, {1, 0, 1}, {0, 1, -1}, {0, 0, INT_MIN}}) {
@@ -205,7 +210,10 @@ TEST_CASE("Combat snapshot roundtrips and validates all fields", "[network][code
     wire::Reader reader{{writer.bytes.data(), writer.bytes.size()}};
     WorldView decoded; REQUIRE(reader.View(decoded)); CHECK(reader.Done()); CHECK(decoded.combat == combat);
     const auto start = writer.bytes.size() - combatViewWireSize - emptyCraftingJobsWireSize - grabWireSize
-        - InventoryTailWireSize(view, writer.bytes.size());
+        - PostGrabWireSize(view, writer.bytes.size());
+    REQUIRE(writer.bytes[start] == static_cast<std::uint8_t>(combat.bodyKind));
+    REQUIRE(writer.bytes[start + 1] == static_cast<std::uint8_t>(combat.style));
+    REQUIRE(writer.bytes[start + 2] == static_cast<std::uint8_t>(combat.action));
     // Each entry names an invalid byte: enums, limits, flags, and absent simple-body parts.
     for (const auto [offset, value] : {eastl::pair<std::size_t, std::uint8_t>{0, 2}, {1, 3}, {2, 5},
         {6, 101}, {7, 31}, {16, 2}, {89, 11}, {93, 5}, {102, 10},
@@ -385,7 +393,7 @@ TEST_CASE("Snapshot codecs reject invalid elevation, source depths and visible b
     auto invalid = baseline;
     wire::Writer writer; REQUIRE(writer.View(baseline));
     // Protocol-nine header ends at byte 87, followed by the u16 run length
-    // and the run's 40-byte cell payload. This fixture contains one cell.
+    // and the run's 44-byte cell payload. This fixture contains one cell.
     constexpr std::size_t originY = 8, playerY = 22, firstCell = 89;
     constexpr std::size_t terrainDepth = firstCell + 31, overlayDepth = firstCell + 32;
     std::size_t offset = 0;
@@ -495,8 +503,10 @@ TEST_CASE("Snapshot runs reject hidden information and malformed perception stat
 TEST_CASE("Snapshot runs validate the appended player light band", "[network][codec][perception]") {
     auto view = SingleCellView();
     wire::Writer writer; REQUIRE(writer.View(view));
-    writer.bytes[writer.bytes.size() - (1 + combatViewWireSize + emptyCraftingJobsWireSize + grabWireSize
-        + InventoryTailWireSize(view, writer.bytes.size()))] = 4;
+    const auto lightOffset = writer.bytes.size() - (1 + combatViewWireSize + emptyCraftingJobsWireSize + grabWireSize
+        + PostGrabWireSize(view, writer.bytes.size()));
+    REQUIRE(writer.bytes[lightOffset] == static_cast<std::uint8_t>(view.playerLight));
+    writer.bytes[lightOffset] = 4;
     wire::Reader reader{{writer.bytes.data(), writer.bytes.size()}};
     WorldView decoded; CHECK_FALSE(reader.View(decoded));
     view.playerLight = static_cast<LightBand>(4);

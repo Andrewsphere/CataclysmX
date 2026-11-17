@@ -5,6 +5,99 @@
 
 namespace cataclysmx::network::wire {
 namespace {
+bool ValidStudyResult(const CommandResult& r) {
+    if (r.studyOutcome > StudyOutcome::OutsideTeachingRange) return false;
+    switch (r.outcome) {
+    case Outcome::study_started: return r.studyOutcome == StudyOutcome::Started && r.advanced && r.cost;
+    case Outcome::study_paused:
+        return (r.studyOutcome == StudyOutcome::PauseRequested || r.studyOutcome == StudyOutcome::Paused) && !r.advanced && !r.cost;
+    case Outcome::study_refused: return r.studyOutcome >= StudyOutcome::ActorUnavailable && !r.advanced && !r.cost;
+    default: return r.studyOutcome == StudyOutcome::ActorUnavailable;
+    }
+}
+bool ValidLearning(const LearningView& v) {
+    if (v.skills.size() > maxPacket / 61 || v.recipes.size() > maxPacket / 11
+        || v.books.size() > maxPacket / 31 || (!v.activeBook.value && (v.studyRemaining || v.studyPauseRequested))) return false;
+    std::uint32_t last = 0;
+    for (const auto& s : v.skills) {
+        const auto& p = s.progress;
+        if (p.skill.value <= last || p.level > maximumSkillLevel || s.effectiveLevel < 0
+            || p.multiplier < ratioScale || p.multiplier > 40000 || p.workRemainder >= ratioScale
+            || p.boostRemainder >= ratioScale || p.directBookXp > p.xp
+            || (p.multiplier == ratioScale && p.boostRemainder)) return false;
+        if (p.level == maximumSkillLevel) {
+            if (s.requiredXp || p.xp || p.theory || p.practice || p.directBookXp
+                || p.workRemainder || p.boostRemainder || p.multiplier != ratioScale) return false;
+        } else if (!s.requiredXp || s.requiredXp > std::uint64_t{1000000000} * ratioScale
+            || p.xp >= s.requiredXp || p.theory > s.requiredXp - p.xp
+            || p.practice > s.requiredXp - p.xp || (p.theory && p.practice)) return false;
+        last = p.skill.value;
+    }
+    last = 0;
+    for (const auto& r : v.recipes) {
+        if (r.recipe.value <= last || r.learningRatio > ratioScale || (r.known != (r.learningRatio == ratioScale))) return false;
+        last = r.recipe.value;
+    }
+    last = 0;
+    bool activeFound = !v.activeBook.value;
+    for (const auto& b : v.books) {
+        if (b.book.value <= last || (b.used && b.eligible)) return false;
+        if (b.book == v.activeBook) { if (b.used) return false; activeFound = true; }
+        last = b.book.value;
+    }
+    return activeFound;
+}
+void WriteLearning(Writer& w, const LearningView& v) {
+    w.U32(static_cast<std::uint32_t>(v.skills.size()));
+    for (const auto& s : v.skills) {
+        const auto& p = s.progress;
+        w.U32(p.skill.value); w.U8(p.level); w.U64(p.xp); w.U64(p.theory); w.U64(p.practice);
+        w.U64(p.directBookXp); w.U32(p.multiplier); w.U32(p.workRemainder); w.U32(p.boostRemainder);
+        w.I32(s.effectiveLevel); w.U64(s.requiredXp);
+    }
+    w.U32(static_cast<std::uint32_t>(v.recipes.size()));
+    for (const auto& r : v.recipes) {
+        w.U32(r.recipe.value); w.U8(r.known); w.U8(r.referenceAvailable); w.U8(r.requirementsMet); w.U32(r.learningRatio);
+    }
+    w.U32(static_cast<std::uint32_t>(v.books.size()));
+    for (const auto& b : v.books) {
+        w.U32(b.book.value); w.U8(b.accessible); w.U8(b.used); w.U8(b.eligible);
+        w.U64(b.completedWork); w.U64(b.cappedDirectXp); w.U64(b.cappedTheoryXp);
+    }
+    w.U32(v.activeBook.value); w.U64(v.studyRemaining); w.U8(v.studyPauseRequested);
+}
+bool ReadLearning(Reader& r, LearningView& v) {
+    v = {};
+    std::uint32_t count;
+    if (!r.U32(count) || count > maxPacket / 61) return false;
+    for (std::uint32_t i = 0; i < count; ++i) {
+        SkillView s; auto& p = s.progress;
+        if (!r.U32(p.skill.value) || !r.U8(p.level) || !r.U64(p.xp) || !r.U64(p.theory) || !r.U64(p.practice)
+            || !r.U64(p.directBookXp) || !r.U32(p.multiplier) || !r.U32(p.workRemainder)
+            || !r.U32(p.boostRemainder) || !r.I32(s.effectiveLevel) || !r.U64(s.requiredXp)) return false;
+        v.skills.push_back(s);
+    }
+    if (!r.U32(count) || count > maxPacket / 11) return false;
+    for (std::uint32_t i = 0; i < count; ++i) {
+        RecipeKnowledgeView value; std::uint8_t known, reference, met;
+        if (!r.U32(value.recipe.value) || !r.U8(known) || known > 1 || !r.U8(reference) || reference > 1
+            || !r.U8(met) || met > 1 || !r.U32(value.learningRatio)) return false;
+        value.known = known; value.referenceAvailable = reference; value.requirementsMet = met;
+        v.recipes.push_back(value);
+    }
+    if (!r.U32(count) || count > maxPacket / 31) return false;
+    for (std::uint32_t i = 0; i < count; ++i) {
+        BookStudyView b; std::uint8_t accessible, used, eligible;
+        if (!r.U32(b.book.value) || !r.U8(accessible) || accessible > 1 || !r.U8(used) || used > 1
+            || !r.U8(eligible) || eligible > 1 || !r.U64(b.completedWork)
+            || !r.U64(b.cappedDirectXp) || !r.U64(b.cappedTheoryXp)) return false;
+        b.accessible = accessible; b.used = used; b.eligible = eligible; v.books.push_back(b);
+    }
+    std::uint8_t pause;
+    if (!r.U32(v.activeBook.value) || !r.U64(v.studyRemaining) || !r.U8(pause) || pause > 1) return false;
+    v.studyPauseRequested = pause;
+    return ValidLearning(v);
+}
 void WriteStorage(Writer& w, const ItemStorage& storage) {
     w.U8(static_cast<std::uint8_t>(storage.kind));
     w.I32(storage.position.x); w.I32(storage.position.z); w.I32(storage.position.y); w.U64(storage.id);
@@ -240,7 +333,7 @@ bool ValidCraftingJobs(const Vector<CraftingEntry>& jobs) {
     if (jobs.size() > maxItemEntries) return false;
     PersistentId last = 0;
     for (const auto& job : jobs) {
-        if (job.id <= last || job.kind > CraftingKind::Recycle || job.status > CraftingStatus::WorkerUnavailable
+        if (job.id <= last || job.kind > CraftingKind::Recycle || job.status > CraftingStatus::MissingRecipeReference
             || !job.totalWork || job.completedWork >= job.totalWork
             || (job.kind == CraftingKind::Craft
                 ? !job.craftingRecipe.value || job.recyclingRecipe.value
@@ -253,7 +346,7 @@ bool ValidCraftingJobs(const Vector<CraftingEntry>& jobs) {
     return true;
 }
 bool ValidCraftingResult(const CommandResult& result) {
-    if (result.craftingOutcome > CraftingOutcome::CapacityExceeded) return false;
+    if (result.craftingOutcome > CraftingOutcome::MissingRecipeReference) return false;
     switch (result.outcome) {
     case Outcome::grabbed: case Outcome::released: case Outcome::nothing_to_grab:
     case Outcome::grab_lost: case Outcome::grab_blocked:
@@ -370,8 +463,41 @@ bool ValidObjectDefinitions(const WorldView& view, const ContentCatalog& content
     return true;
 }
 
+bool ValidLearningDefinitions(const WorldView& view, const ContentCatalog& content) {
+    const auto& v = view.learning;
+    if (!ValidLearning(v) || v.skills.size() > content.SkillCount()
+        || v.recipes.size() > content.CraftingRecipeCount() || v.books.size() > content.BookCount()) return false;
+    for (const auto& s : v.skills) {
+        const auto& p = s.progress;
+        const auto* definition = content.TryGetSkill(p.skill);
+        if (!definition || s.requiredXp != SkillXpRequired(*definition, p.level)) return false;
+        if (p.level == maximumSkillLevel) continue;
+        const bool combat = definition->category == SkillCategory::Combat;
+        if (!combat && p.level >= 5) {
+            if (p.directBookXp || p.multiplier != ratioScale || p.boostRemainder) return false;
+        } else if (p.theory || p.practice || p.directBookXp > (combat ? 0 : s.requiredXp * 3 / 10)
+            || p.multiplier > (combat ? 12000u : 40000u)) return false;
+    }
+    for (const auto& r : v.recipes) if (!content.TryGetCraftingRecipe(r.recipe)) return false;
+    for (const auto& b : v.books) {
+        const auto* definition = content.TryGetBook(b.book);
+        if (!definition) return false;
+        const auto total = std::uint64_t{definition->studyWork} * ratioScale;
+        if (b.completedWork > total || (!b.used && b.completedWork == total)) return false;
+        std::uint64_t direct = 0, theory = 0;
+        for (const auto& benefit : definition->benefits) {
+            direct += std::uint64_t{benefit.directXp} * ratioScale;
+            theory += std::uint64_t{benefit.theoryXp} * ratioScale;
+        }
+        if (b.cappedDirectXp > direct || b.cappedTheoryXp > theory
+            || (!b.eligible && (b.cappedDirectXp || b.cappedTheoryXp))) return false;
+        if (b.book == v.activeBook && v.studyRemaining > view.remainingTicks) return false;
+    }
+    return true;
+}
+
 bool ValidItemDefinitions(const WorldView& view, const ContentCatalog& content) {
-    if (!ValidLists(view) || !ValidCraftingJobs(view.craftingJobs)) return false;
+    if (!ValidLists(view) || !ValidCraftingJobs(view.craftingJobs) || !ValidLearningDefinitions(view, content)) return false;
     for (const auto& job : view.craftingJobs) {
         if (job.kind == CraftingKind::Craft) {
             const auto* recipe = content.TryGetCraftingRecipe(job.craftingRecipe);
@@ -465,11 +591,12 @@ bool Writer::CommandValue(const Command& v) {
     U8(static_cast<std::uint8_t>(v.interaction.kind)); U8(static_cast<std::uint8_t>(v.interaction.action));
     U32(v.recipe.value);
     WriteStorage(*this, v.source); WriteStorage(*this, v.destination);
+    U32(v.book.value);
     return bytes.size() <= maxPacket;
 }
 bool Writer::Result(const PlayerCommandResult& v) {
     if (!v.player || !v.sequence || !v.opportunity || v.result.outcome < Outcome::waited ||
-        v.result.outcome > Outcome::inventory_refused || !ValidCraftingResult(v.result) || !ValidInventoryResult(v.result) ||
+        v.result.outcome > Outcome::study_refused || !ValidCraftingResult(v.result) || !ValidInventoryResult(v.result) || !ValidStudyResult(v.result) ||
         (v.result.storageError && (*v.result.storageError < SaveError::Io || *v.result.storageError > SaveError::NotOpen)) ||
         !ValidItemUseReason(v.result.itemOutcome, v.result.itemReason)) return false;
     U64(v.player); U64(v.sequence); U64(v.opportunity);
@@ -482,12 +609,13 @@ bool Writer::Result(const PlayerCommandResult& v) {
     U8(static_cast<std::uint8_t>(v.result.craftingOutcome));
     if (!Text(v.result.objectName, 255)) return false;
     U8(static_cast<std::uint8_t>(v.result.inventoryOutcome));
+    U8(static_cast<std::uint8_t>(v.result.studyOutcome));
     return bytes.size() <= maxPacket;
 }
 bool Writer::View(const WorldView& v, bool inspection) {
     if (!ValidViewBounds(v, inspection) ||
         v.cells.size() != static_cast<std::size_t>(v.width * v.height) ||
-        !ValidLists(v) || !ValidCraftingJobs(v.craftingJobs) || v.players.size() > 32 ||
+        !ValidLists(v) || !ValidCraftingJobs(v.craftingJobs) || !ValidLearning(v.learning) || v.players.size() > 32 ||
         v.playerId == 0 || v.opportunity == 0 || v.speed == 0 || v.pacing.ticksPerSecond == 0 ||
         v.playerLight > LightBand::Bright || !ValidCombatView(v.combat)) return false;
     for (std::size_t i = 0; i < v.cells.size(); ++i)
@@ -548,6 +676,7 @@ bool Writer::View(const WorldView& v, bool inspection) {
         if (!Text(storage.name, 255)) return false;
         I32(storage.objectPosition.x); I32(storage.objectPosition.z); I32(storage.objectPosition.y);
     }
+    WriteLearning(*this, v.learning);
     return bytes.size() <= maxPacket;
 }
 bool Reader::U8(std::uint8_t& v) { if (offset >= bytes.size()) return false; v = bytes[offset++]; return true; }
@@ -564,7 +693,7 @@ bool Reader::Text(String& v, std::size_t limit) {
 }
 bool Reader::CommandValue(Command& v) {
     std::uint8_t kind, style, interactionKind, objectAction;
-    if (bytes.size() > maxPacket || !U8(kind) || kind > static_cast<std::uint8_t>(CommandKind::transfer_item) ||
+    if (bytes.size() > maxPacket || !U8(kind) || kind > static_cast<std::uint8_t>(CommandKind::pause_study) ||
         !I32(v.dx) || !I32(v.dz) || !U64(v.item) || !U32(v.waitCost) ||
         !U16(v.capability.value) || v.capability.value > maxItemCapabilities ||
         !Text(v.itemAction, maxItemActionName) || !U64(v.otherItem) || !I32(v.dy) ||
@@ -578,14 +707,14 @@ bool Reader::CommandValue(Command& v) {
     v.interaction.action = static_cast<ObjectAction>(objectAction);
     v.kind = static_cast<CommandKind>(kind);
     v.style = static_cast<CombatStyle>(style);
-    if (!ReadStorage(*this, v.source) || !ReadStorage(*this, v.destination)) return false;
+    if (!ReadStorage(*this, v.source) || !ReadStorage(*this, v.destination) || !U32(v.book.value)) return false;
     return (v.itemAction.empty() || ValidItemActionId(v.itemAction)) && ValidCommandShape(v);
 }
 bool Reader::Result(PlayerCommandResult& v) {
     std::uint8_t outcome, advanced;
     if (bytes.size() > maxPacket || !U64(v.player) || !v.player || !U64(v.sequence) || !v.sequence ||
         !U64(v.opportunity) || !v.opportunity || !U8(outcome) ||
-        outcome > static_cast<std::uint8_t>(Outcome::inventory_refused) || !U8(advanced) || advanced > 1 ||
+        outcome > static_cast<std::uint8_t>(Outcome::study_refused) || !U8(advanced) || advanced > 1 ||
         !U64(v.result.tick) || !U64(v.result.cost)) return false;
     std::uint8_t hasError;
     if (!U8(hasError) || hasError > 1) return false;
@@ -598,7 +727,7 @@ bool Reader::Result(PlayerCommandResult& v) {
     std::uint8_t itemOutcome, craftingOutcome;
     if (!U8(itemOutcome) || itemOutcome > static_cast<std::uint8_t>(ItemUseOutcome::Refused) ||
         !ReadReason(*this, v.result.itemReason) ||
-        !U8(craftingOutcome) || craftingOutcome > static_cast<std::uint8_t>(CraftingOutcome::CapacityExceeded)
+        !U8(craftingOutcome) || craftingOutcome > static_cast<std::uint8_t>(CraftingOutcome::MissingRecipeReference)
         || !Text(v.result.objectName, 255)) return false;
     v.result.itemOutcome = static_cast<ItemUseOutcome>(itemOutcome);
     v.result.craftingOutcome = static_cast<CraftingOutcome>(craftingOutcome);
@@ -607,7 +736,10 @@ bool Reader::Result(PlayerCommandResult& v) {
     std::uint8_t inventoryOutcome;
     if (!U8(inventoryOutcome)) return false;
     v.result.inventoryOutcome = static_cast<InventoryOutcome>(inventoryOutcome);
-    return ValidCraftingResult(v.result) && ValidInventoryResult(v.result);
+    std::uint8_t studyOutcome;
+    if (!U8(studyOutcome)) return false;
+    v.result.studyOutcome = static_cast<StudyOutcome>(studyOutcome);
+    return ValidCraftingResult(v.result) && ValidInventoryResult(v.result) && ValidStudyResult(v.result);
 }
 bool Reader::View(WorldView& v, bool inspection) {
     if (bytes.size() > maxPacket) return false;
@@ -698,7 +830,7 @@ bool Reader::View(WorldView& v, bool inspection) {
         if (!I32(storage.objectPosition.x) || !I32(storage.objectPosition.z) || !I32(storage.objectPosition.y)) return false;
         v.itemStorages.push_back(eastl::move(storage));
     }
-    return ValidCraftingJobs(v.craftingJobs) && ValidLists(v);
+    return ReadLearning(*this, v.learning) && ValidCraftingJobs(v.craftingJobs) && ValidLists(v);
 }
 
 namespace {

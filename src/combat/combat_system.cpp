@@ -1,6 +1,7 @@
 #include "combat/combat_system.h"
 #include "core/world.h"
 #include "core/static_list.h"
+#include "skills/learning_system.h"
 
 #include <EASTL/sort.h>
 #include <EASTL/algorithm.h>
@@ -12,6 +13,14 @@ namespace {
 
 void Require(bool condition) {
     if (!condition) { std::abort(); }
+}
+
+void TrainCombat(World& world, ActorHandle actor, const char* name) {
+    const auto skill = world.GetContent().FindSkill(name);
+    const auto* definition = world.GetContent().TryGetSkill(skill);
+    if (definition && definition->category == SkillCategory::Combat) {
+        Require(world.Learning().Train(actor, {skill, 9, ratioScale}, SkillActivity::Combat, ratioScale).has_value());
+    }
 }
 
 bool Available(const World& world, const Actor* actor) {
@@ -146,7 +155,7 @@ void CombatSystem::Record(ActorHandle handle, const AttackResult& result, bool i
 
 bool CombatSystem::CanAttack(ActorHandle handle) const {
     const auto* actor = world_.GetActor(handle);
-    return Available(world_, actor) && world_.CanUseWieldedItem(handle) && SelectMove(actor->combat) != CombatMove::None;
+    return Available(world_, actor) && !world_.Learning().Busy(handle) && world_.CanUseWieldedItem(handle) && SelectMove(actor->combat) != CombatMove::None;
 }
 
 bool CombatSystem::CanReach(ActorHandle handle, ActorHandle target) const {
@@ -188,7 +197,7 @@ AttackResult CombatSystem::Attack(ActorHandle handle, ActorHandle target, std::u
     if (!Available(world_, actor)) { return {}; }
     AttackResult result;
     if (actor->combat.action.kind != ActorActionKind::None || world_.GetActorRemainingTicks(handle) != 0 ||
-        actor->actionDeadline.suspended) { result.outcome = AttackOutcome::NotReady; return result; }
+        actor->actionDeadline.suspended || world_.Learning().Busy(handle)) { result.outcome = AttackOutcome::NotReady; return result; }
     const auto* other = world_.GetActor(target);
     if (!Available(world_, other) || !Hostile(actor->combat.faction, other->combat.faction)) {
         result.outcome = AttackOutcome::NoTarget; return result;
@@ -238,7 +247,7 @@ WorldResult<void> CombatSystem::StartAiming(ActorHandle handle, ActorHandle targ
     if (!actor) { return eastl::unexpected(WorldError::invalid_handle); }
     const auto* other = world_.GetActor(target);
     if (!Available(world_, actor) || !Available(world_, other) || baseCost == 0 ||
-        actor->actionDeadline.suspended || actor->combat.action.kind != ActorActionKind::None ||
+        actor->actionDeadline.suspended || world_.Learning().Busy(handle) || actor->combat.action.kind != ActorActionKind::None ||
         world_.GetActorRemainingTicks(handle) != 0 || !CanReach(handle, target) ||
         !Hostile(actor->combat.faction, other->combat.faction)) {
         return eastl::unexpected(WorldError::invalid_request);
@@ -323,14 +332,18 @@ AttackResult CombatSystem::Strike(ActorHandle handle, ActorHandle target, Combat
     }
     result.target = other->id;
     if (!CanReach(handle, target)) { result.outcome = AttackOutcome::OutOfReach; return result; }
+    TrainCombat(world_, handle, "melee");
+    if (!world_.GetItem(actor->wieldedItem)) { TrainCombat(world_, handle, "unarmed"); }
     const auto penalty = accuracyPenalty > 30 ? 30U : accuracyPenalty;
     const auto accuracy = actor->combat.accuracy > penalty ? actor->combat.accuracy - penalty : 0;
     if (Draw(rng) % 100 >= accuracy) {
+        TrainCombat(world_, target, "dodge");
         result.outcome = AttackOutcome::Miss;
         Record(target, result, true);
         return result;
     }
     if (CanParry(other->combat)) {
+        TrainCombat(world_, target, "melee");
         auto* defender = world_.MutableActor(target);
         defender->combat.stamina -= 10;
         defender->combat.reactionCooldown = 100;
@@ -340,6 +353,7 @@ AttackResult CombatSystem::Strike(ActorHandle handle, ActorHandle target, Combat
         Record(target, result, true);
         return result;
     }
+    TrainCombat(world_, target, "dodge");
     BodyPart parts[body_part_count];
     std::uint32_t count = 0;
     for (std::size_t i = 0; i < body_part_count; ++i) {

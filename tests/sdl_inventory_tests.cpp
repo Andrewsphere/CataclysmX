@@ -408,6 +408,7 @@ TEST_CASE("SDL item slice renders sixty definitions through the item browser", "
         }
         REQUIRE(assets.State() == AssetState::Ready);
         unsigned rendered = 0;
+        unsigned learningRendered = 0;
         for (std::size_t index = 0; index < browser.Frame().matches.size(); ++index) {
             const auto type = browser.Frame().matches[index];
             const auto& item = content.GetItem(type);
@@ -443,9 +444,14 @@ TEST_CASE("SDL item slice renders sixty definitions through the item browser", "
             frame.examination.scroll = 0; draw();
             CHECK(SurfaceHash(display.surface) == top);
             browser.Handle({"Escape"}, keys, content, localization);
-            ++rendered;
+            // Render the new learning carriers too, while retaining the original
+            // sixty-item slice coverage independently of the catalog additions.
+            if (item.id == "workshop_primer_print" || item.id == "salvage_notes_print"
+                || item.id == "workshop_ebook_reader") { ++learningRendered; }
+            else { ++rendered; }
         }
         CHECK(rendered == 60);
+        CHECK(learningRendered == 3);
     }
 }
 

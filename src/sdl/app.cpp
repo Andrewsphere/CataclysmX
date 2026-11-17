@@ -197,6 +197,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
     bool inspectionNeeded = false;
     Vector<InteractionChoice> actions;
     Vector<CraftingMenuRow> craftingRows;
+    Vector<String> learningLines;
     eastl::optional<Command> craftingSelection;
     eastl::optional<std::uint64_t> craftingRequest;
     String craftingFeedback;
@@ -586,10 +587,12 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             }
             if (modal.Active() == Screen::Help) { if (*action == InputAction::Accept) { close(); } return; }
             if (modal.Active() == Screen::Crafting) {
-                if (!craftingRows.empty() && (*action == InputAction::North || *action == InputAction::South)) {
-                    selectedAction = *action == InputAction::North ? (selectedAction + craftingRows.size() - 1) % craftingRows.size()
-                        : (selectedAction + 1) % craftingRows.size();
-                    craftingSelection = craftingRows[selectedAction].command;
+                const auto count = craftingRows.size() + learningLines.size();
+                if (count && (*action == InputAction::North || *action == InputAction::South)) {
+                    selectedAction = *action == InputAction::North ? (selectedAction + count - 1) % count
+                        : (selectedAction + 1) % count;
+                    if (selectedAction < craftingRows.size()) { craftingSelection = craftingRows[selectedAction].command; }
+                    else { craftingSelection.reset(); }
                 } else if (*action == InputAction::Accept && craftingSelection) {
                     const auto id = nextId;
                     if (submit(RequestKind::ResumeAndCommand, *craftingSelection)) { craftingRequest = id; }
@@ -744,7 +747,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             const auto nextScreen = *action == InputAction::Help ? Screen::Help : *action == InputAction::Examine ? Screen::Examine
                 : *action == InputAction::Interact ? Screen::Targets : *action == InputAction::Settings ? Screen::Options
                 : *action == InputAction::Crafting ? Screen::Crafting : *action == InputAction::Players ? Screen::Players : Screen::Debug;
-            if (nextScreen == Screen::Crafting) { craftingSelection.reset(); craftingFeedback.clear(); }
+            if (nextScreen == Screen::Crafting) { craftingSelection.reset(); selectedAction = 0; craftingFeedback.clear(); }
             if (submit(RequestKind::Pause)) { modal.BeginOpen(nextScreen); SetMessage(snapshot.mode == SessionMode::Local ? "Pausing..." : "Opening menu (world remains live)..."); }
             return;
         }
@@ -769,7 +772,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
         itemUi = {}; itemRequest.reset(); modalRequest.reset(); commandRequest.reset();
         itemBrowser = ItemBrowser{}; browserRequest.reset();
         commandPending = false; choosingGrab = false;
-        craftingRows.clear(); craftingSelection.reset(); craftingRequest.reset(); craftingFeedback.clear();
+        craftingRows.clear(); learningLines.clear(); craftingSelection.reset(); craftingRequest.reset(); craftingFeedback.clear();
         actions.clear(); inspection.clear(); inspectionView = {}; inspectionItems.clear();
         inspectionValid = false; inspectedCursor.reset(); inspectionId.reset(); inspectionNeeded = false;
         candidateSettings.reset(); candidateText.reset(); settingsId.reset(); saveSettings = false; reloadSettings = false; multiplayerSettings = false;
@@ -947,7 +950,8 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                     craftingFeedback = message;
                     const auto outcome = reply.result.outcome;
                     if (outcome == Outcome::craft_started || outcome == Outcome::recycling_started
-                        || outcome == Outcome::craft_resumed || outcome == Outcome::craft_paused || outcome == Outcome::craft_cancelled) {
+                        || outcome == Outcome::craft_resumed || outcome == Outcome::craft_paused || outcome == Outcome::craft_cancelled
+                        || outcome == Outcome::study_started || outcome == Outcome::study_paused) {
                         modal.Closed(); frame.visible = false;
                     } else if (submit(RequestKind::Pause)) { modal.BeginOpen(Screen::Crafting); }
                 }
@@ -1559,16 +1563,21 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 frame.footer = "Escape / Enter: close | F9: LAN";
             }
             if (modal.Active() == Screen::Crafting) {
-                frame.title = "Crafting and recycling | Availability checked by server";
+                frame.title = "Crafting, recycling and learning | Availability checked by server";
                 CollectCraftingMenu(snapshot.view, content, localization, craftingRows);
-                if (!craftingSelection && !craftingRows.empty()) { craftingSelection = craftingRows.front().command; }
+                CollectLearningSummary(snapshot.view, content, learningLines);
+                if (!craftingSelection && selectedAction == 0 && !craftingRows.empty()) { craftingSelection = craftingRows.front().command; }
                 for (std::size_t i = 0; i < craftingRows.size(); ++i) {
                     frame.rows.push_back({craftingRows[i].label});
                     if (craftingSelection && SameCraftingChoice(*craftingSelection, craftingRows[i].command)) {
                         selectedAction = i; frame.selected = static_cast<int>(i);
                     }
                 }
-                if (craftingRows.empty()) { frame.rows.push_back({"No recipes, reachable jobs, or recyclable items."}); }
+                for (std::size_t i = 0; i < learningLines.size(); ++i) {
+                    frame.rows.push_back({"Learning | " + learningLines[i]});
+                    if (!craftingSelection && selectedAction == craftingRows.size() + i) { frame.selected = static_cast<int>(selectedAction); }
+                }
+                if (frame.rows.empty()) { frame.rows.push_back({"No recipes, reachable jobs, recyclable items, or learning information."}); }
                 if (!craftingFeedback.empty()) { frame.details.push_back(craftingFeedback); }
                 frame.footer = BindingHint(keys, InputContext::Menu, InputAction::North) + "/"
                     + BindingHint(keys, InputContext::Menu, InputAction::South) + " choose | "
