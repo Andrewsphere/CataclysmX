@@ -644,6 +644,7 @@ void SessionOwner::Request(SessionRequest request) {
             auto permitted = options_.settings;
             permitted.language = effective.language; permitted.viewRadius = effective.viewRadius;
             permitted.keyboardRepeatRate = effective.keyboardRepeatRate; permitted.messageHistorySize = effective.messageHistorySize;
+            permitted.textSize = effective.textSize;
             auto oldGlobal = options_.globalSettings;
             auto oldWorld = options_.worldSettings;
             auto newGlobal = request.globalSettings;
@@ -651,9 +652,11 @@ void SessionOwner::Request(SessionRequest request) {
             for (auto* overrides : {&oldGlobal, &oldWorld, &newGlobal, &newWorld}) {
                 overrides->language.reset(); overrides->viewRadius.reset();
                 overrides->keyboardRepeatRate.reset(); overrides->messageHistorySize.reset();
+                overrides->textSize.reset();
             }
             const bool unchangedControls = oldGlobal == newGlobal && oldWorld == newWorld;
             if ((unchangedControls || effective == permitted) && ValidateSettings(permitted, &diagnostics)
+                && !request.worldSettings.textSize
                 && ValidateOverrides(request.globalSettings, &diagnostics) && ValidateOverrides(request.worldSettings, &diagnostics)) {
                 options_.settings = permitted; options_.globalSettings = request.globalSettings; options_.worldSettings = request.worldSettings;
                 reply.kind = ReplyKind::SettingsApplied;
@@ -707,6 +710,9 @@ void SessionOwner::Run() {
         || (options_.join && (!options_.savePath.empty() || !options_.loadPath.empty())) || (options_.newCharacter && !options_.join)) {
         okay = false; started.startupError = StartupError::InvalidSettings;
         started.details.push_back("Incompatible session startup flags");
+    } else if (options_.settingsOverridesProvided && options_.worldSettings.textSize) {
+        okay = false; started.startupError = StartupError::InvalidSettings;
+        started.details.push_back("text_size is a global-only preference");
     } else if (!ValidateSettings(options_.settings, &diagnostics)
         || (options_.settingsOverridesProvided && (!ValidateOverrides(options_.globalSettings, &diagnostics)
             || !ValidateOverrides(options_.worldSettings, &diagnostics)))) {

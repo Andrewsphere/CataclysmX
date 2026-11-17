@@ -28,11 +28,11 @@ struct GameplayHud {
 };
 
 MapLayout MakeMapLayout(int outputWidth, int outputHeight, int columns, int rows,
-    int tileWidth = 32, int tileHeight = 32, int zoom = 0, float uiScale = 1.0f);
+    int tileWidth = 32, int tileHeight = 32, int zoom = 0, float uiScale = 1.0f, int textLineHeight = 0);
 eastl::optional<std::uint64_t> VisibleAnimationDelay(const MapPacket& packet,
     const TilesetDefinition& tileset, std::uint64_t elapsedMilliseconds,
     int outputWidth, int outputHeight, int zoom = 0, float uiScale = 1.0f,
-    const SpritePlaybackController* playback = nullptr, SDL_Point focusOffset = {});
+    const SpritePlaybackController* playback = nullptr, SDL_Point focusOffset = {}, int textLineHeight = 0);
 TerminalAppearance MapAppearance(const ViewCell& cell, PersistentId playerId, const ContentCatalog& content);
 // An injected presentation clock samples clips without rebuilding the supplied packet.
 // A null packet prepares the small map synchronously for isolated rendering tests.

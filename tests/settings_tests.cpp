@@ -11,6 +11,53 @@
 namespace {
 using namespace cataclysmx;
 
+TEST_CASE("Text size is a validated global preference with sparse persistence", "[settings][text-size]") {
+    CHECK(Settings{}.textSize == 14);
+    CHECK(ParseSettings("{format_version:1,settings:{}}"));
+    CHECK(ResolveSettings({}, {}).textSize == 14);
+    SettingsDirectory files;
+    SettingsStore store(String(files.root.string().c_str()), String(files.File("world").c_str()));
+    REQUIRE(store.Load());
+    for (int size : {8, 14, 24, 48}) {
+        SettingsOverrides global;
+        REQUIRE(SetOverride(global, SettingsField::TextSize, NumberText(size)));
+        REQUIRE(ValidateOverrides(global));
+        REQUIRE(store.SetOverrides(SettingsScope::Global, global, {}));
+        CHECK(store.Effective().textSize == size);
+        CHECK(store.Source(SettingsField::TextSize) == SettingsSource::Global);
+        REQUIRE(store.Save(SettingsScope::Global));
+        REQUIRE(store.Save(SettingsScope::World));
+        REQUIRE(store.Load());
+        CHECK(store.Effective().textSize == size);
+        CHECK(files.Read("world/settings.json5").find("text_size") == std::string::npos);
+        SettingsStore other(String(files.root.string().c_str()), String(files.File("other-world").c_str()));
+        REQUIRE(other.Load()); CHECK(other.Effective().textSize == size);
+    }
+    const auto before = store.Effective();
+    const bool dirty = store.Dirty(SettingsScope::World);
+    SettingsOverrides world; world.textSize = 32;
+    Diagnostics diagnostics;
+    CHECK(store.SetOverrides(SettingsScope::World, world, {}, &diagnostics) == eastl::unexpected(SettingsError::InvalidData));
+    CHECK_FALSE(diagnostics.Empty());
+    CHECK(store.Effective() == before);
+    CHECK(store.Dirty(SettingsScope::World) == dirty);
+    CHECK(ResolveSettings(store.Overrides(SettingsScope::Global), world).textSize == before.textSize);
+    files.Write("world/settings.json5", "{format_version:2,settings:{text_size:32}}");
+    CHECK_FALSE(store.Load()); CHECK(store.Effective() == before);
+    files.Write("world/settings.json5", "{format_version:2,settings:{}}");
+    auto global = store.Overrides(SettingsScope::Global);
+    ResetOverride(global, SettingsField::TextSize);
+    REQUIRE(store.SetOverrides(SettingsScope::Global, global, {}));
+    CHECK(store.Effective().textSize == 14);
+    CHECK(store.Source(SettingsField::TextSize) == SettingsSource::BuiltIn);
+    REQUIRE(store.Save(SettingsScope::Global));
+    CHECK(files.Read("config/settings.json5").find("text_size") == std::string::npos);
+    for (const char* value : {"7", "49", "-1", "1.5", "null", "true", "'24'", "2147483648"}) {
+        const String json = String("{format_version:2,settings:{text_size:") + value + "}}";
+        CHECK_FALSE(ParseSettings({json.data(), json.size()}));
+    }
+}
+
 TEST_CASE("Message history size defaults to ten and persists sparse overrides", "[settings][messages]") {
     CHECK(Settings{}.messageHistorySize == 10);
     SettingsDirectory files;

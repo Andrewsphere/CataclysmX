@@ -69,7 +69,8 @@ constexpr FieldPresentation fields[] = {
     {SettingsField::PauseWhenIdle, 2, EditorKind::Boolean},
     {SettingsField::AutosaveInterval, 3, EditorKind::Number, 0, UINT64_MAX},
 };
-static_assert(std::size(fields) == static_cast<unsigned>(SettingsField::Count));
+// TextSize is an SDL-only preference and has no terminal editor.
+static_assert(std::size(fields) + 1 == static_cast<unsigned>(SettingsField::Count));
 constexpr eastl::string_view categoryNames[] = {"interface", "world", "timing", "saving"};
 constexpr InputContext bindingContexts[] = {
     InputContext::Gameplay, InputContext::Interaction, InputContext::Menu, InputContext::Debug, InputContext::Items

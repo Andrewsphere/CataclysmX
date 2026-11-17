@@ -11,7 +11,7 @@ namespace {
 
 constexpr eastl::string_view fieldNames[] = {"language", "view_radius", "autosave_interval",
     "active_radius", "resident_radius", "seed", "ticks_per_second", "rate_limited", "pause_when_idle",
-    "residency_mode", "resident_radius_tiles", "keyboard_repeat_rate", "message_history_size"};
+    "residency_mode", "resident_radius_tiles", "keyboard_repeat_rate", "message_history_size", "text_size"};
 
 void Overlay(Settings& settings, const SettingsOverrides& overrides) {
     if (overrides.language) { settings.language = *overrides.language; }
@@ -68,6 +68,7 @@ eastl::optional<SettingsField> ParseSettingName(eastl::string_view name) {
 Settings ResolveSettings(const SettingsOverrides& global, const SettingsOverrides& world) {
     Settings settings;
     Overlay(settings, global); Overlay(settings, world);
+    if (global.textSize) { settings.textSize = *global.textSize; }
     return settings;
 }
 Settings ResolveSettingsForServer(const Server& server, const SettingsOverrides& global,
@@ -80,6 +81,7 @@ Settings ResolveSettingsForServer(const Server& server, const SettingsOverrides&
         settings.residentRadiusTiles = circle->radiusTiles;
     } else { settings.residentRadius = server.GetResidentRadius(); }
     Overlay(settings, global); Overlay(settings, world);
+    if (global.textSize) { settings.textSize = *global.textSize; }
     return settings;
 }
 bool HasResidencyOverride(const SettingsOverrides& overrides) {
@@ -94,7 +96,7 @@ SettingsResult<void> ValidateOverrides(const SettingsOverrides& overrides, Diagn
             || (*overrides.residencyMode == ResidencyMode::Circle && overrides.residentRadius))) {
         return Invalid(diagnostics, "residency_mode conflicts with radius units");
     }
-    auto individual = ResolveSettings({}, overrides);
+    auto individual = ResolveSettings(overrides, {});
     if (overrides.activeRadius && !overrides.residentRadius) { individual.residentRadius = 8; }
     if (overrides.residentRadius && !overrides.activeRadius) { individual.activeRadius = 0; }
     return ValidateSettings(individual, diagnostics);
@@ -106,6 +108,7 @@ SettingsResult<void> ValidateSettings(const Settings& settings, Diagnostics* dia
             return Invalid(diagnostics, "language identifier must contain only letters, digits, '-' or '_'");
         }
     }
+    if (settings.textSize < 8 || settings.textSize > 48) { return Invalid(diagnostics, "text_size must be in [8,48]"); }
     if (settings.messageHistorySize < 1 || settings.messageHistorySize > 100) { return Invalid(diagnostics, "message_history_size must be in [1,100]"); }
     if (settings.keyboardRepeatRate < 1 || settings.keyboardRepeatRate > 60) { return Invalid(diagnostics, "keyboard_repeat_rate must be in [1,60]"); }
     if (settings.viewRadius < 0 || settings.viewRadius > 64) { return Invalid(diagnostics, "view_radius must be in [0,64]"); }
@@ -143,6 +146,7 @@ SettingsResult<void> ApplySettings(Server& server, const SettingsStore& store, D
 }
 SettingsResult<void> ApplySettings(Server& server, const SettingsOverrides& global,
     const SettingsOverrides& world, Diagnostics* diagnostics) {
+    if (world.textSize) { return Invalid(diagnostics, "text_size is a global-only preference"); }
     const auto settings = ResolveSettingsForServer(server, global, world);
     if (HasResidencyOverride(global) || HasResidencyOverride(world)) { return ApplySettings(server, settings, diagnostics); }
     const auto valid = ValidateSettings(settings, diagnostics);
@@ -157,6 +161,7 @@ bool HasOverride(const SettingsOverrides& overrides, SettingsField field) {
     case SettingsField::ViewRadius: return overrides.viewRadius.has_value();
     case SettingsField::KeyboardRepeatRate: return overrides.keyboardRepeatRate.has_value();
     case SettingsField::MessageHistorySize: return overrides.messageHistorySize.has_value();
+    case SettingsField::TextSize: return overrides.textSize.has_value();
     case SettingsField::AutosaveInterval: return overrides.autosaveInterval.has_value();
     case SettingsField::ActiveRadius: return overrides.activeRadius.has_value();
     case SettingsField::ResidentRadius: return overrides.residentRadius.has_value();
@@ -176,6 +181,7 @@ void ResetOverride(SettingsOverrides& overrides, SettingsField field) {
     case SettingsField::ViewRadius: overrides.viewRadius.reset(); return;
     case SettingsField::KeyboardRepeatRate: overrides.keyboardRepeatRate.reset(); return;
     case SettingsField::MessageHistorySize: overrides.messageHistorySize.reset(); return;
+    case SettingsField::TextSize: overrides.textSize.reset(); return;
     case SettingsField::AutosaveInterval: overrides.autosaveInterval.reset(); return;
     case SettingsField::ActiveRadius: overrides.activeRadius.reset(); return;
     case SettingsField::ResidentRadius: overrides.residentRadius.reset(); return;
@@ -195,6 +201,7 @@ String SettingValue(const Settings& settings, SettingsField field) {
     case SettingsField::ViewRadius: return Decimal(settings.viewRadius);
     case SettingsField::KeyboardRepeatRate: return Decimal(settings.keyboardRepeatRate);
     case SettingsField::MessageHistorySize: return Decimal(settings.messageHistorySize);
+    case SettingsField::TextSize: return Decimal(settings.textSize);
     case SettingsField::AutosaveInterval: return Decimal(settings.autosaveInterval);
     case SettingsField::ActiveRadius: return Decimal(settings.activeRadius);
     case SettingsField::ResidentRadius: return Decimal(settings.residentRadius);
@@ -219,9 +226,10 @@ SettingsResult<void> SetOverride(SettingsOverrides& overrides, SettingsField fie
         return {};
     case SettingsField::Language:
         overrides.language = String(value.data(), value.size()); return {};
-    case SettingsField::MessageHistorySize: case SettingsField::ViewRadius: case SettingsField::ActiveRadius: case SettingsField::ResidentRadius: case SettingsField::ResidentRadiusTiles:
+    case SettingsField::TextSize: case SettingsField::MessageHistorySize: case SettingsField::ViewRadius: case SettingsField::ActiveRadius: case SettingsField::ResidentRadius: case SettingsField::ResidentRadiusTiles:
         if (!ParseDecimal(value, signedNumber)) { break; }
-        if (field == SettingsField::MessageHistorySize) { overrides.messageHistorySize = signedNumber; }
+        if (field == SettingsField::TextSize) { overrides.textSize = signedNumber; }
+        else if (field == SettingsField::MessageHistorySize) { overrides.messageHistorySize = signedNumber; }
         else if (field == SettingsField::ViewRadius) { overrides.viewRadius = signedNumber; }
         else if (field == SettingsField::ActiveRadius) { overrides.activeRadius = signedNumber; }
         else if (field == SettingsField::ResidentRadius) { overrides.residentRadius = signedNumber; }
@@ -279,6 +287,9 @@ SettingsResult<void> SettingsStore::Load(Diagnostics* diagnostics) {
 }
 SettingsResult<void> SettingsStore::SetOverrides(SettingsScope scope, SettingsOverrides settings,
     Keymap keys, Diagnostics* diagnostics) {
+    if (scope == SettingsScope::World && settings.textSize) {
+        return Invalid(diagnostics, "text_size is a global-only preference");
+    }
     const auto& global = scope == SettingsScope::Global ? settings : global_;
     const auto& world = scope == SettingsScope::World ? settings : world_;
     if (!ValidateOverrides(global, diagnostics) || !ValidateOverrides(world, diagnostics)) {

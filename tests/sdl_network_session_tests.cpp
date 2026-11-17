@@ -183,6 +183,7 @@ TEST_CASE("SDL LAN menus keep transport and authoritative rounds running", "[sdl
     preferences.globalSettings.language = "en";
     preferences.globalSettings.keyboardRepeatRate = 15;
     preferences.globalSettings.messageHistorySize = 20;
+    preferences.globalSettings.textSize = 24;
     const auto applied = Control(guest, preferences);
     REQUIRE(applied.kind == ReplyKind::SettingsApplied);
     const auto resized = Snapshot(guest);
@@ -193,10 +194,17 @@ TEST_CASE("SDL LAN menus keep transport and authoritative rounds running", "[sdl
     CHECK(applied.runtimeSettings.viewRadius == 3);
     CHECK(applied.runtimeSettings.keyboardRepeatRate == 15);
     CHECK(applied.runtimeSettings.messageHistorySize == 20);
+    CHECK(applied.runtimeSettings.textSize == 24);
     CHECK(applied.runtimeSettings.pacing == hostView.runtimeSettings.pacing);
     preferences.id = 7; preferences.globalSettings.pauseWhenIdle = false;
     REQUIRE(Control(guest, preferences).kind == ReplyKind::SettingsFailed);
     preferences.globalSettings.pauseWhenIdle.reset();
+    preferences.id = 20; preferences.worldSettings.textSize = 32;
+    REQUIRE(Control(guest, preferences).kind == ReplyKind::SettingsFailed);
+    preferences.worldSettings.textSize.reset();
+    preferences.id = 21; preferences.globalSettings.textSize = 49;
+    REQUIRE(Control(guest, preferences).kind == ReplyKind::SettingsFailed);
+    preferences.globalSettings.textSize = 24;
     preferences.worldSettings.seed = hostView.seed + 1;
     preferences.id = 11;
     REQUIRE(Control(guest, preferences).kind == ReplyKind::SettingsFailed);

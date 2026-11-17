@@ -13,13 +13,14 @@ enum class ResidencyMode { Square, Circle };
 enum class SettingsField {
     Language, ViewRadius, AutosaveInterval, ActiveRadius, ResidentRadius, Seed,
     TicksPerSecond, RateLimited, PauseWhenIdle, ResidencyMode, ResidentRadiusTiles, KeyboardRepeatRate,
-    MessageHistorySize, Count
+    MessageHistorySize, TextSize, Count
 };
 struct Settings {
     String language = "en";
     int viewRadius = 64;
     std::uint32_t keyboardRepeatRate = 10;
     int messageHistorySize = 10;
+    int textSize = 14; // SDL font points; global preference only.
     std::uint64_t autosaveInterval = 1000;
     int activeRadius = 1;
     int residentRadius = 5;
@@ -34,6 +35,7 @@ struct SettingsOverrides {
     eastl::optional<int> viewRadius;
     eastl::optional<std::uint32_t> keyboardRepeatRate;
     eastl::optional<int> messageHistorySize;
+    eastl::optional<int> textSize;
     eastl::optional<std::uint64_t> autosaveInterval;
     eastl::optional<int> activeRadius;
     eastl::optional<int> residentRadius;

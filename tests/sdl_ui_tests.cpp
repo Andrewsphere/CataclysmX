@@ -4,6 +4,7 @@
 #include "sdl/renderer.h"
 #include "sdl/screens.h"
 #include "client/text.h"
+#include "settings_fixture.h"
 #include "content_fixture.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -41,6 +42,50 @@ TEST_CASE("SDL compact top bar removes title then low priority shortcuts", "[sdl
     CHECK(MakeTopBarLayout(200, 100, 45, widths).actionCount == 1);
     const int longBindings[]{140, 240, 180};
     CHECK(MakeTopBarLayout(500, 100, 45, longBindings).actionCount == 2);
+}
+
+TEST_CASE("SDL text sizes keep options controls accessible and tile dimensions unchanged", "[sdl][ui][text-size]") {
+    SettingsDirectory files;
+    SettingsStore store(String(files.root.string().c_str()));
+    Localization loc; REQUIRE(loc.Load(CATACLYSMX_LOC_DIRECTORY, "en"));
+    for (const auto size : {SDL_Point{480, 360}, SDL_Point{1120, 780}}) {
+        Display display(size.x, size.y); REQUIRE(display.renderer);
+        for (int points : {8, 14, 24, 48}) {
+            REQUIRE(SDL_SetRenderDrawColor(display.renderer, 0, 0, 0, 255));
+            REQUIRE(SDL_RenderClear(display.renderer));
+            SdlText text(display.renderer, nullptr, static_cast<float>(points)); REQUIRE(text.Ready());
+            const auto geometry = MakeGameplayLayout(size.x, size.y, 17, 17, 32, 32, 0, 1, {}, text.LineHeight());
+            CHECK(geometry.map.cellSize == 32); CHECK(geometry.map.cellHeight == 32);
+            CHECK(geometry.topBar.h >= text.LineHeight() + 8);
+            CHECK(geometry.mapViewport.y >= geometry.topBar.h);
+            OptionsUi options; options.Open(store, store.Effective());
+            for (int i = 0; i < 4; ++i) { options.Key({"Down"}, store, loc, CATACLYSMX_LOC_DIRECTORY); }
+            ScreenFrame frame; options.Present(store, loc, frame);
+            REQUIRE(DrawScreen(display.renderer, text, frame, size.x, size.y, nullptr, 32, 32, 0, 1, &geometry));
+            REQUIRE(SDL_RenderPresent(display.renderer));
+            CHECK(frame.selected >= frame.scroll);
+            CHECK(text.Width(9) > 0);
+            int yellowTop = 0, yellowBody = 0, footerPixels = 0;
+            const int bodyStart = geometry.topBar.h + text.Height(8) + 16;
+            const int footerStart = size.y - text.Height(9) - 16;
+            for (int y = geometry.topBar.h; y < size.y - 8; ++y) {
+                for (int x = 8; x < size.x - 8; ++x) {
+                    Uint8 r, g, b, a;
+                    REQUIRE(SDL_ReadSurfacePixel(display.surface, x, y, &r, &g, &b, &a));
+                    if (r > 200 && g > 180 && b < 120) {
+                        if (y < bodyStart) { ++yellowTop; }
+                        else if (y < footerStart) { ++yellowBody; }
+                    }
+                    if (y >= footerStart && r > 60 && g > 70 && b > 70) { ++footerPixels; }
+                }
+            }
+            CHECK(yellowTop > 0); CHECK(yellowBody > 0); CHECK(footerPixels > 0);
+            if (const char* path = std::getenv("CATACLYSMX_TEXT_SIZE_PREVIEW")) {
+                const auto output = String(path) + "." + NumberText(size.x) + "." + NumberText(points) + ".png";
+                REQUIRE(SDL_SavePNG(display.surface, output.c_str()));
+            }
+        }
+    }
 }
 
 TEST_CASE("SDL popups flip sides and stay inside the map viewport", "[sdl][ui]") {
@@ -248,37 +293,39 @@ TEST_CASE("SDL anchored windows wait for nonempty body text", "[sdl][ui][render]
 TEST_CASE("SDL HUD and anchored window preview", "[sdl][ui][render]") {
     for (const auto size : {SDL_Point{1120, 780}, SDL_Point{480, 360}, SDL_Point{800, 600}, SDL_Point{1600, 1200}}) {
         Display display(size.x, size.y); REQUIRE(display.renderer);
-        SdlText text(display.renderer); REQUIRE(text.Ready());
-        SdlAssets assets;
-        for (int i = 0; i < 1000000 && assets.Poll(display.renderer) == AssetState::Loading; ++i) { std::this_thread::yield(); }
-        REQUIRE(assets.State() == AssetState::Ready);
-        Server server(TestContent()); auto view = server.View();
-        view.combat.parts[static_cast<unsigned>(BodyPart::LeftHand)] = {3500, 10000};
-        view.combat.parts[static_cast<unsigned>(BodyPart::RightLeg)] = {0, 10000, true};
-        auto keys = DefaultKeymap();
-        Localization localization; REQUIRE(localization.Load(CATACLYSMX_LOC_DIRECTORY, "en"));
-        MessageHistory history; history.Add("Local session ready."); history.Add("The door is locked.");
-        ScreenFrame frame; frame.visible = true; frame.presentation = ScreenPresentation::Anchored;
-        frame.cursor = TileCoord{view.player_position.x + 1, view.player_position.z, view.player_position.y};
-        frame.title = "Interact | Door"; frame.footer = "Escape back | Enter use\nUp/Down choose";
-        frame.rows = {{"Open", true}, {"Unlock"}, {"Examine"}}; frame.selected = 0;
-        frame.details = {"Door is locked"};
-        const float scale = size.x == 1600 ? 2.0f : 1;
-        REQUIRE(DrawFrame(display.renderer, text, assets, &view, TestContent(), "Balanced | Stamina 100%", "",
-            0, nullptr, 0, scale, {}, nullptr, nullptr, &frame, {&history, &keys, &localization}));
-        if (const char* path = std::getenv("CATACLYSMX_SDL_UI_PREVIEW")) {
-            const auto output = String(path) + "." + NumberText(size.x) + ".png";
-            REQUIRE(SDL_SavePNG(display.surface, output.c_str()));
+        for (int points : {8, 14, 24, 48}) {
+            SdlText text(display.renderer, nullptr, static_cast<float>(points)); REQUIRE(text.Ready());
+            SdlAssets assets;
+            for (int i = 0; i < 1000000 && assets.Poll(display.renderer) == AssetState::Loading; ++i) { std::this_thread::yield(); }
+            REQUIRE(assets.State() == AssetState::Ready);
+            Server server(TestContent()); auto view = server.View();
+            view.combat.parts[static_cast<unsigned>(BodyPart::LeftHand)] = {3500, 10000};
+            view.combat.parts[static_cast<unsigned>(BodyPart::RightLeg)] = {0, 10000, true};
+            auto keys = DefaultKeymap();
+            Localization localization; REQUIRE(localization.Load(CATACLYSMX_LOC_DIRECTORY, "en"));
+            MessageHistory history; history.Add("Local session ready."); history.Add("The door is locked.");
+            ScreenFrame frame; frame.visible = true; frame.presentation = ScreenPresentation::Anchored;
+            frame.cursor = TileCoord{view.player_position.x + 1, view.player_position.z, view.player_position.y};
+            frame.title = "Interact | Door"; frame.footer = "Escape back | Enter use\nUp/Down choose";
+            frame.rows = {{"Open", true}, {"Unlock"}, {"Examine"}}; frame.selected = 0;
+            frame.details = {"Door is locked"};
+            const float scale = size.x == 1600 ? 2.0f : 1;
+            REQUIRE(DrawFrame(display.renderer, text, assets, &view, TestContent(), "Balanced | Stamina 100%", "",
+                0, nullptr, 0, scale, {}, nullptr, nullptr, &frame, {&history, &keys, &localization}));
+            if (const char* path = std::getenv("CATACLYSMX_SDL_UI_PREVIEW")) {
+                const auto output = String(path) + "." + NumberText(size.x) + ".png";
+                REQUIRE(SDL_SavePNG(display.surface, output.c_str()));
+            }
+            SetBinding(keys, {InputContext::Gameplay, InputAction::Help, {{"H"}}});
+            SetBinding(keys, {InputContext::Gameplay, InputAction::Debug, {}});
+            REQUIRE(DrawFrame(display.renderer, text, assets, &view, TestContent(), "", "",
+                0, nullptr, 0, scale, {}, nullptr, nullptr, &frame, {&history, &keys, &localization}));
+            REQUIRE(text.Draw(63, "H Help", -10000, -10000, {255, 255, 255, 255}));
+            CHECK(text.Width(58) == text.Width(63));
+            const auto multiplayer = String("F9 ") + localization.Text("sdl.ui.multiplayer", "Multiplayer");
+            REQUIRE(text.Draw(63, multiplayer.c_str(), -10000, -10000, {255, 255, 255, 255}));
+            CHECK(text.Width(60) == text.Width(63));
         }
-        SetBinding(keys, {InputContext::Gameplay, InputAction::Help, {{"H"}}});
-        SetBinding(keys, {InputContext::Gameplay, InputAction::Debug, {}});
-        REQUIRE(DrawFrame(display.renderer, text, assets, &view, TestContent(), "", "",
-            0, nullptr, 0, scale, {}, nullptr, nullptr, &frame, {&history, &keys, &localization}));
-        REQUIRE(text.Draw(63, "H Help", -10000, -10000, {255, 255, 255, 255}));
-        CHECK(text.Width(58) == text.Width(63));
-        const auto unbound = BindingHint(keys, InputContext::Gameplay, InputAction::Debug) + " Debug";
-        REQUIRE(text.Draw(63, unbound.c_str(), -10000, -10000, {255, 255, 255, 255}));
-        CHECK(text.Width(60) == text.Width(63));
     }
 }
 

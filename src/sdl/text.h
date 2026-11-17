@@ -28,6 +28,7 @@ public:
         float x, float y, SDL_Color color, int cellWidth);
     int Height(unsigned int slot) const;
     int Width(unsigned int slot) const;
+    int LineHeight() const;
 
 private:
     struct Slot {

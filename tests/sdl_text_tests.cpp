@@ -1,6 +1,7 @@
 #include "sdl/text.h"
 
 #include <catch2/catch_test_macros.hpp>
+#include <EASTL/unique_ptr.h>
 
 namespace {
 struct SoftwareDisplay {
@@ -42,4 +43,29 @@ TEST_CASE("SDL font failure stays a startup failure", "[sdl][text]") {
     cataclysmx::sdl::SdlText text(display.renderer, "/missing/cataclysmx/font.ttf");
     CHECK_FALSE(text.Ready());
     CHECK_FALSE(text.Draw(0, "unavailable", 0, 0, {255, 255, 255, 255}));
+}
+
+TEST_CASE("SDL text replacement refreshes UTF8 metrics and preserves the active font on failure", "[sdl][text][text-size]") {
+    SoftwareDisplay display; REQUIRE(display.renderer);
+    eastl::unique_ptr<cataclysmx::sdl::SdlText> active(new cataclysmx::sdl::SdlText(display.renderer, nullptr, 14));
+    REQUIRE(active->Ready());
+    const SDL_Color white{255,255,255,255};
+    REQUIRE(active->Draw(0, "Настройки / Résumé", 0, 0, white));
+    const int oldWidth = active->Width(0), oldLine = active->LineHeight();
+    {
+        cataclysmx::sdl::SdlText failed(display.renderer, "/missing/font.ttf", 24);
+        CHECK_FALSE(failed.Ready());
+    }
+    REQUIRE(active->Draw(0, "Настройки / Résumé", 0, 0, white));
+    CHECK(active->Width(0) == oldWidth);
+    for (int size : {8, 14, 24, 48}) {
+        eastl::unique_ptr<cataclysmx::sdl::SdlText> prepared(new cataclysmx::sdl::SdlText(display.renderer, nullptr, static_cast<float>(size)));
+        REQUIRE(prepared->Ready());
+        active = eastl::move(prepared);
+        REQUIRE(active->Draw(0, "Настройки / Résumé", 0, 0, white));
+        if (size > 14) { CHECK(active->Width(0) > oldWidth); CHECK(active->LineHeight() > oldLine); }
+        const int unwrapped = active->Height(0);
+        REQUIRE(active->Draw(0, "Настройки / Résumé", 0, 0, white, 60));
+        CHECK(active->Height(0) > unwrapped);
+    }
 }

@@ -44,6 +44,15 @@ Global files are written when explicitly saving Global settings.
 
 ## APIs and application
 
+`text_size` is a global-only SDL Interface preference: integer font points from
+8 to 48, default 14. `Settings` and `SettingsOverrides` expose `textSize`, with
+`SettingsField::TextSize` for editing and Reset. Settings files keep format 2;
+older files without this field use the default. World overrides are rejected
+with `SettingsError::InvalidData`, including when loading configuration, while
+pure resolution reads this field from Global only. The terminal preserves it
+in shared configuration but does not display an editor or resize terminal text.
+LAN guests can change it independently of the host.
+
 `message_history_size` is an Interface preference shared by both frontends.
 It defaults to 10, accepts 1–100, and controls how many recent messages are
 retained. Reducing it discards the oldest entries. See

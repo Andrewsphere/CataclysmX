@@ -29,7 +29,7 @@ TopBarLayout MakeTopBarLayout(int width, int titleWidth, int statusWidth, const 
 
 GameplayLayout MakeGameplayLayout(int width, int height, int columns, int rows,
     int tileWidth = 32, int tileHeight = 32, int zoom = 0, float uiScale = 1.0f,
-    SDL_Point focusOffset = {});
+    SDL_Point focusOffset = {}, int textLineHeight = 0);
 SDL_Rect ScaleRect(SDL_Rect rect, float scale);
 SDL_Rect MapCellRect(const MapLayout& map, int column, int row);
 // All arguments and the result use logical UI pixels. Prefer not to cover avoid.

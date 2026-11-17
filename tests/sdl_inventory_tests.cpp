@@ -53,6 +53,51 @@ TEST_CASE("SDL item pane scrolling retains selected rows and handles empty lists
     CHECK(ItemPaneScroll(999, 30, 100, false, 4) == 26);
 }
 
+TEST_CASE("SDL inventory text sizes retain selected rows in compact and wide windows", "[sdl][inventory][text-size]") {
+    for (const auto size : {SDL_Point{480, 360}, SDL_Point{1120, 780}}) {
+        Display display(size.x, size.y); REQUIRE(display.renderer);
+        const auto footerHash = [&] {
+            std::uint64_t hash = 14695981039346656037ULL;
+            for (int y = size.y - 32; y < size.y - 8; ++y) {
+                for (int x = 8; x < size.x - 8; ++x) {
+                    Uint8 r, g, b, a;
+                    REQUIRE(SDL_ReadSurfacePixel(display.surface, x, y, &r, &g, &b, &a));
+                    for (const auto value : {r, g, b, a}) { hash = (hash ^ value) * 1099511628211ULL; }
+                }
+            }
+            return hash;
+        };
+        SdlAssets assets;
+        for (int i = 0; i < 1000000 && assets.Poll(display.renderer) == AssetState::Loading; ++i) { std::this_thread::yield(); }
+        REQUIRE(assets.State() == AssetState::Ready);
+        for (int points : {8, 14, 24, 48}) {
+            SdlText text(display.renderer, nullptr, static_cast<float>(points)); REQUIRE(text.Ready());
+            ItemUiFrame frame; frame.screen = ItemUiScreen::Inventory;
+            frame.title = "Inventory"; frame.footer = "Escape close";
+            frame.panes[0].title = "Inventory";
+            for (int i = 0; i < 20; ++i) {
+                ItemUiRow row; row.type = TestContent().FindItem("rock"); row.name = "Rock";
+                row.items = {static_cast<PersistentId>(i + 1)};
+                frame.panes[0].rows.push_back(eastl::move(row));
+            }
+            frame.panes[0].selected = 19; frame.panes[0].selectionValid = true;
+            REQUIRE(DrawInventoryScreen(display.renderer, text, assets, TestContent(), frame, size.x, size.y, 1));
+            CHECK(frame.panes[0].scroll > 0); CHECK(frame.panes[0].scroll <= 19);
+            REQUIRE(SDL_RenderPresent(display.renderer));
+            const auto before = footerHash();
+            frame.panes[0].rows.back().volumeMl = 999999;
+            frame.panes[0].rows.back().massGrams = 333333;
+            REQUIRE(DrawInventoryScreen(display.renderer, text, assets, TestContent(), frame, size.x, size.y, 1));
+            REQUIRE(SDL_RenderPresent(display.renderer));
+            CHECK(footerHash() == before);
+            if (const char* path = std::getenv("CATACLYSMX_TEXT_SIZE_PREVIEW")) {
+                const auto output = String(path) + ".inventory." + NumberText(size.x) + "." + NumberText(points) + ".png";
+                REQUIRE(SDL_SavePNG(display.surface, output.c_str()));
+            }
+        }
+    }
+}
+
 TEST_CASE("SDL inventory renders both capacities empty panes and compact selected rows", "[sdl][inventory][render]") {
     for (const auto size : {SDL_Point{480, 360}, SDL_Point{1120, 780}, SDL_Point{1600, 1200}}) {
         Display display(size.x, size.y); REQUIRE(display.renderer);

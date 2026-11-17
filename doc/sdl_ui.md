@@ -43,7 +43,9 @@ Popups render only when their body contains nonempty text. Examine keeps the
 last description visible while a new inspection reply is pending, so moving
 the cursor does not hide the panel. On first opening, only the cursor highlight
 and camera are shown until the first description arrives.
-Popups prefer a 320-pixel width and cap height at 60% of the map viewport. Content
+Popups prefer a 320-pixel width and a height of 60% of the map viewport, with
+space for at least one body line plus a title and footer. Large text can borrow
+the full content area below the top bar when the compact map is too short. Content
 wraps to the actual available width. Title/footer continuation lines yield to a
 visible body row on compact windows. Examine scrolls rendered text lines, so a
 single long description remains readable. Action lists keep the selected row

@@ -72,9 +72,11 @@ bool Icon(SDL_Renderer* renderer, SdlText& text, const SdlAssets& assets,
 }
 
 bool Column(SDL_Renderer* renderer, SdlText& text, unsigned slot, const char* value,
-    SDL_Rect bounds, SDL_Color color) {
+    SDL_Rect bounds, SDL_Color color, const SDL_Rect* parent = nullptr) {
     if (!text.Draw(slot, value, -10000, -10000, color)) { return false; }
-    return SDL_SetRenderClipRect(renderer, &bounds)
+    SDL_Rect clip = bounds;
+    if (parent && !SDL_GetRectIntersection(&bounds, parent, &clip)) { return true; }
+    return SDL_SetRenderClipRect(renderer, &clip)
         && text.Draw(slot, value, float(bounds.x + bounds.w - text.Width(slot) - 3), float(bounds.y), color);
 }
 
@@ -100,28 +102,32 @@ bool ArtRunText(SdlText& text, const ArtRun& run, unsigned index, float x, float
 }
 
 bool Pane(SDL_Renderer* renderer, SdlText& text, const SdlAssets& assets, const ContentCatalog& content,
-    ItemUiPane& pane, SDL_Rect bounds, bool active, int line, unsigned index) {
+    ItemUiPane& pane, SDL_Rect bounds, bool active, int line, int cell, unsigned index) {
     if (!SDL_SetRenderClipRect(renderer, &bounds) || !Box(renderer, bounds, active)) { return false; }
     const int x = bounds.x + 6, width = std::max(1, bounds.w - 12);
     const int rowHeight = std::max(36, line * 2 + 4);
-    if (!text.Draw(68 + index, pane.title.c_str(), float(x), float(bounds.y + 5), active ? accent : normal)
-        || !text.Draw(70 + index, pane.capacity.c_str(), float(x), float(bounds.y + 6 + line), dim)) { return false; }
-    const bool table = width >= 470;
-    const int massWidth = table ? 100 : (width - 44) / 2;
-    const int volumeWidth = massWidth, countWidth = table ? 64 : width - massWidth - volumeWidth;
+    const bool compact = bounds.h < line * 3 + 12 + rowHeight + 5;
+    const int headerLines = compact ? (bounds.h >= line + rowHeight + 12 ? 1 : 0) : 3;
+    if (headerLines && !text.Draw(68 + index, pane.title.c_str(), float(x), float(bounds.y + 5), active ? accent : normal)) { return false; }
+    if (!compact && !text.Draw(70 + index, pane.capacity.c_str(), float(x), float(bounds.y + 6 + line), dim)) { return false; }
+    const int tableCount = std::max(64, cell * 5 + 6), tableMeasure = std::max(100, cell * 10 + 6);
+    const bool table = width >= std::max(470, line * 2 + cell * 6 + tableCount + tableMeasure * 2);
+    const int massWidth = table ? tableMeasure : (width - 44) / 2;
+    const int volumeWidth = massWidth, countWidth = table ? tableCount : width - massWidth - volumeWidth;
     const int columns = table ? countWidth + volumeWidth + massWidth : 0;
     const int valuesX = table ? x + width - columns : x;
     const int headingY = bounds.y + line * 2 + 8;
-    if (!text.Draw(122 + index, table ? "Item" : "Item  # / Vol / Mass", float(x), float(headingY), dim)) { return false; }
-    if (table) {
+    if (!compact && !text.Draw(122 + index, table ? "Item" : "Item  # / Vol / Mass", float(x), float(headingY), dim)) { return false; }
+    if (!compact && table) {
         if (!Column(renderer, text, 120, "Count", {valuesX, headingY, countWidth, line}, dim)
             || !Column(renderer, text, 121, "Volume", {valuesX + countWidth, headingY, volumeWidth, line}, dim)
             || !Column(renderer, text, 124, "Mass", {valuesX + countWidth + volumeWidth, headingY, massWidth, line}, dim)) { return false; }
     }
-    const int top = bounds.y + line * 3 + 12;
-    const SDL_Rect list{x, top, width, std::max(1, bounds.y + bounds.h - top - 5)};
+    const int top = bounds.y + line * headerLines + (headerLines ? 12 : 5);
+    const SDL_Rect list{x, top, width, std::max(0, bounds.y + bounds.h - top - 5)};
     const int visible = std::max(1, list.h / rowHeight);
     pane.scroll = ItemPaneScroll(pane.scroll, pane.rows.size(), pane.selected, pane.selectionValid, visible);
+    if (list.h == 0) { return true; }
     if (!SDL_SetRenderClipRect(renderer, &list)) { return false; }
     if (pane.rows.empty()) { return text.Draw(72 + index, "Empty", float(x), float(top), dim); }
     for (int offset = 0; offset < visible && pane.scroll + offset < static_cast<int>(pane.rows.size()); ++offset) {
@@ -138,7 +144,9 @@ bool Pane(SDL_Renderer* renderer, SdlText& text, const SdlAssets& assets, const 
         if (!Icon(renderer, text, assets, content, row.type, {float(x + 2), float(y + 2), float(iconSize), float(iconSize)})) { return false; }
         const int nameX = x + iconSize + 7;
         const int indent = std::min<int>(row.depth, std::max(0, (width - iconSize - 80) / 10)) * 10;
-        const SDL_Rect nameClip{nameX, y, std::max(1, x + width - columns - nameX), line + 3};
+        const SDL_Rect nameBounds{nameX, y, std::max(1, x + width - columns - nameX), line + 3};
+        SDL_Rect nameClip{};
+        if (!SDL_GetRectIntersection(&nameBounds, &list, &nameClip)) { continue; }
         String label = row.name;
         if (row.wielded && label.find('*') == String::npos) { label = "* " + label; }
         const auto slot = 72 + (index * 24 + offset) % 48;
@@ -147,9 +155,9 @@ bool Pane(SDL_Renderer* renderer, SdlText& text, const SdlAssets& assets, const 
         const String count = UnsignedText(row.items.size());
         const String volume = ItemVolumeText(row.volumeMl), mass = ItemMassText(row.massGrams);
         const int valuesY = y + (table ? 2 : line + 2);
-        if (!Column(renderer, text, 120, count.c_str(), {valuesX, valuesY, countWidth, line}, dim)
-            || !Column(renderer, text, 121, volume.c_str(), {valuesX + countWidth, valuesY, volumeWidth, line}, dim)
-            || !Column(renderer, text, 124, mass.c_str(), {valuesX + countWidth + volumeWidth, valuesY, massWidth, line}, dim)) { return false; }
+        if (!Column(renderer, text, 120, count.c_str(), {valuesX, valuesY, countWidth, line}, dim, &list)
+            || !Column(renderer, text, 121, volume.c_str(), {valuesX + countWidth, valuesY, volumeWidth, line}, dim, &list)
+            || !Column(renderer, text, 124, mass.c_str(), {valuesX + countWidth + volumeWidth, valuesY, massWidth, line}, dim, &list)) { return false; }
         if (!SDL_SetRenderClipRect(renderer, &list)) { return false; }
     }
     return true;
@@ -272,10 +280,10 @@ bool DrawInventoryScreen(SDL_Renderer* renderer, SdlText& text, const SdlAssets&
         const bool advanced = frame.screen == ItemUiScreen::Advanced;
         SDL_Rect left = body;
         if (advanced) { left.w = (body.w - 8) / 2; }
-        if (!Pane(renderer, text, assets, content, frame.panes[0], left, frame.activePane == 0, line, 0)) { return false; }
+        if (!Pane(renderer, text, assets, content, frame.panes[0], left, frame.activePane == 0, line, cell, 0)) { return false; }
         if (advanced) {
             const SDL_Rect right{left.x + left.w + 8, body.y, body.w - left.w - 8, body.h};
-            if (!Pane(renderer, text, assets, content, frame.panes[1], right, frame.activePane == 1, line, 1)) { return false; }
+            if (!Pane(renderer, text, assets, content, frame.panes[1], right, frame.activePane == 1, line, cell, 1)) { return false; }
         }
     } else {
         if (!SDL_SetRenderClipRect(renderer, &body)) { return false; }

@@ -92,7 +92,7 @@ int main(int argc, char** argv) {
                 || number < (font ? 8U : 1U) || number > (font ? 48U : 4U)) {
                 std::fputs("Font size must be 8-48; UI scale must be 1-4.\n", stderr); return 2;
             }
-            if (font) { options.fontSize = static_cast<float>(number); }
+            if (font) { options.fontSize = static_cast<int>(number); }
             else { options.uiScale = static_cast<float>(number); }
         }
         else {

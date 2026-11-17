@@ -18,6 +18,8 @@ struct ScreenFrame {
     bool followCursor = false;
     String title;
     String footer;
+    String compactTitle; // Optional chrome when large text leaves too little body space.
+    String compactFooter;
     Vector<ScreenRow> rows;
     Vector<int> rowHeights; // Reused popup measurement storage.
     Vector<String> details;

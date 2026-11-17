@@ -93,6 +93,12 @@ bool SdlText::DrawCells(unsigned int slot, const char* utf8, std::uint32_t cells
     return true;
 }
 
+int SdlText::LineHeight() const {
+    AssertMainThread();
+    if (!ready_) { std::abort(); }
+    return TTF_GetFontHeight(font_);
+}
+
 int SdlText::Height(unsigned int slot) const {
     AssertMainThread();
     if (!ready_ || slot >= slotCount) { std::abort(); }

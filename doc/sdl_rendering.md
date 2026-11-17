@@ -44,6 +44,33 @@ retain their playback metadata, but have no frontend activation control.
 `--font <file>` selects an independent TrueType font; the default is bundled
 DejaVu Sans Mono with its redistribution license under `assets/fonts`.
 `--font-size 8-48` and `--ui-scale 1-4` change the UI independently of tile size.
+Options → Global → Interface → Text size persists the font point size (default
+14). Save and apply changes it without restarting. `--font-size` supplies an
+in-memory Global override: the menu displays it, Global Save persists it, and
+later edits or Reset replace it. World preferences cannot override text size.
+
+The application owns its active `SdlText` with `eastl::unique_ptr` and prepares
+a second instance before submitting a size change. Only a successful settings
+reply replaces the active text engine. Font preparation or settings failure
+discards the candidate, preserving current text and configuration; a disk-write
+failure retains the applied size and reports it as unsaved. Reload uses the
+same preparation path. This infrequent complete replacement keeps cached text
+and measurements consistent without a mutable font/cache invalidation API.
+
+`SdlText::LineHeight()` supplies font height in logical UI pixels without
+creating a measured text run. Layout and animation visibility helpers accept
+an optional trailing `textLineHeight` argument (zero retains legacy geometry).
+Rendering supplies the current height, growing the top bar while preserving
+panel widths and tile dimensions. Lists wrap and scroll using fresh metrics.
+`ScreenFrame::compactTitle` and `compactFooter` optionally provide concise
+chrome when large text would crowd out the body; Options uses these to retain
+its scope/category and Save control in compact windows.
+Numeric drafts appear directly in the selected row as well as the details pane.
+When large text outgrows a compact map viewport, anchored popups can borrow the
+content area below the top bar, including the HUD, to retain a readable body row.
+Inventory panes reserve a selected item row before optional headings and
+capacity labels, size table columns from font metrics, and clip item names and
+values to the list area so they cannot overlap the controls.
 Press `z` to zoom in and `Z` (Shift+z) to zoom out.
 Zoom multiplies native tileset size by `2^(step/4)`, bounded to 1/4x–8x.
 At step zero tiles retain native pixel size; resizing changes the visible area.
@@ -52,7 +79,7 @@ map extends beyond the viewport. These SDL shortcuts do not submit simulation co
 in help modals. `UiPalette` controls screen colors separately from
 artwork; terrain glyph colors still come from the catalog. PNG RGB receives the
 source cell's light, memory and depth styling; see [sprite shading](sprite_shading.md).
-Font/theme persistence, runtime tileset reload, and font pickers are not implemented.
+Font-path/theme persistence, runtime tileset reload, and font pickers are not implemented.
 SDL_ttf's HarfBuzz/SVG features are disabled: UTF-8 and bundled Latin/Cyrillic text
 are supported, but complex-script shaping is limited.
 

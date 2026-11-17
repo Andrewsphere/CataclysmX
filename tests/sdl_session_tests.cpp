@@ -283,9 +283,11 @@ TEST_CASE("Paused session inspections and settings never advance time and resume
     CHECK(reply.inspectionView.origin.y == 1); CHECK(reply.inspectionView.tick == tick);
     CHECK(reply.inspectionView.player_position == snapshot.view.player_position);
     request.id = 3; request.kind = RequestKind::ApplySettings; request.globalSettings.viewRadius = 4;
+    request.globalSettings.textSize = 24;
     REQUIRE(session.TrySubmit(request) == EnqueueResult::Accepted);
     REQUIRE(WaitForReply(session,wake,reply)); REQUIRE(reply.kind == ReplyKind::SettingsApplied);
     CHECK(reply.runtimeSettings.viewRadius == 4);
+    CHECK(reply.runtimeSettings.textSize == 24);
     REQUIRE(session.TakeSnapshot(snapshot)); CHECK(snapshot.view.tick == tick); CHECK(snapshot.view.width == 9);
     request.id = 4; request.globalSettings.viewRadius = 65;
     REQUIRE(session.TrySubmit(request) == EnqueueResult::Accepted);

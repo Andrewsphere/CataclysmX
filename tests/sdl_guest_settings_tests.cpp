@@ -69,12 +69,12 @@ TEST_CASE("SDL options opens multiplayer settings for local and guest players", 
         const auto key = [&](const char* name) { return ui.Key({String(name)}, store, loc, CATACLYSMX_LOC_DIRECTORY); };
         ScreenFrame frame; ui.Present(store, loc, frame);
         REQUIRE(frame.selected == 0);
-        REQUIRE(frame.rows.size() == 5);
+        REQUIRE(frame.rows.size() == 6);
         CHECK(frame.rows[0].text.find("Language") != String::npos);
-        for (int i = 0; i < 4; ++i) { key("Down"); }
+        for (int i = 0; i < 5; ++i) { key("Down"); }
         ui.Present(store, loc, frame);
-        CHECK(frame.selected == 4);
-        CHECK(frame.rows[4].text == "Multiplayer settings...");
+        CHECK(frame.selected == 5);
+        CHECK(frame.rows[5].text == "Multiplayer settings...");
         REQUIRE_FALSE(frame.details.empty());
         CHECK(frame.details[0].find("F9") != String::npos);
         CHECK(frame.details[0].find("host") != String::npos);
@@ -90,5 +90,37 @@ TEST_CASE("SDL options opens multiplayer settings for local and guest players", 
         CHECK(candidate.Effective().viewRadius == 12);
         key("Up"); key("Up"); key("BackTab"); key("Right");
         ui.Present(store, loc, frame); CHECK(frame.selected == 0);
+    }
+}
+
+TEST_CASE("SDL text size edits are global and staged for both local and guest players", "[sdl][settings][text-size]") {
+    SettingsDirectory files;
+    SettingsStore store(String(files.File("user").c_str()));
+    Localization loc; REQUIRE(loc.Load(CATACLYSMX_LOC_DIRECTORY, "en"));
+    for (bool remote : {false, true}) {
+        OptionsUi ui; ui.Open(store, store.Effective(), remote);
+        const auto key = [&](const char* name) { return ui.Key({String(name)}, store, loc, CATACLYSMX_LOC_DIRECTORY); };
+        for (int i = 0; i < 4; ++i) { key("Down"); }
+        ScreenFrame frame; ui.Present(store, loc, frame);
+        CHECK(frame.rows[frame.selected].text.find("Text size") != String::npos);
+        CHECK_FALSE(frame.rows[frame.selected].unavailable);
+        key("Enter"); REQUIRE(ui.EditingText()); ui.Text("48"); key("Escape");
+        SettingsStore candidate = store;
+        REQUIRE(ui.Prepare(store, candidate, nullptr)); CHECK(candidate.Effective().textSize == 14);
+        key("Enter"); ui.Text("49"); key("Enter");
+        CHECK(ui.EditingText()); key("Escape");
+        key("Enter"); ui.Text("24"); key("Enter");
+        CHECK(store.Effective().textSize == 14);
+        REQUIRE(ui.Prepare(store, candidate, nullptr)); CHECK(candidate.Effective().textSize == 24);
+        key("Enter"); ui.Text("32"); ui.Present(store, loc, frame);
+        CHECK(frame.rows[frame.selected].text.find("32 _") != String::npos);
+        key("Escape");
+        key("Backspace");
+        REQUIRE(ui.Prepare(store, candidate, nullptr)); CHECK(candidate.Effective().textSize == 14);
+        key("BackTab"); key("BackTab"); key("BackTab"); key("Right");
+        ui.Present(store, loc, frame);
+        CHECK(ui.Scope() == SettingsScope::World);
+        REQUIRE(frame.rows.size() == 5);
+        for (const auto& row : frame.rows) { CHECK(row.text.find("Text size") == String::npos); }
     }
 }

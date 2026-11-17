@@ -10,16 +10,17 @@ namespace {
 constexpr InputContext contexts[] = {InputContext::Gameplay, InputContext::Interaction, InputContext::Menu,
     InputContext::Debug, InputContext::Items};
 constexpr SettingsField fields[] = {SettingsField::Language, SettingsField::ViewRadius,
-    SettingsField::KeyboardRepeatRate, SettingsField::MessageHistorySize, SettingsField::Seed, SettingsField::ActiveRadius, SettingsField::ResidentRadius,
+    SettingsField::KeyboardRepeatRate, SettingsField::MessageHistorySize, SettingsField::TextSize, SettingsField::Seed, SettingsField::ActiveRadius, SettingsField::ResidentRadius,
     SettingsField::ResidencyMode, SettingsField::ResidentRadiusTiles, SettingsField::TicksPerSecond,
     SettingsField::RateLimited, SettingsField::PauseWhenIdle, SettingsField::AutosaveInterval};
-constexpr unsigned categories[] = {0,0,0,0,1,1,1,1,1,2,2,2,3};
+constexpr unsigned categories[] = {0,0,0,0,0,1,1,1,1,1,2,2,2,3};
 static_assert(std::size(fields) == static_cast<std::size_t>(SettingsField::Count));
 static_assert(std::size(categories) == std::size(fields));
 constexpr const char* categoryNames[] = {"interface", "world", "timing", "saving"};
 bool HostField(SettingsField field) {
     return field != SettingsField::Language && field != SettingsField::ViewRadius
-        && field != SettingsField::KeyboardRepeatRate && field != SettingsField::MessageHistorySize;
+        && field != SettingsField::KeyboardRepeatRate && field != SettingsField::MessageHistorySize
+        && field != SettingsField::TextSize;
 }
 String Local(const Localization& loc, eastl::string_view prefix, eastl::string_view suffix) {
     String key(prefix.data(), prefix.size()); key.append(suffix.data(), suffix.size());
@@ -32,13 +33,20 @@ String Tab(const char* name, bool selected, bool focused) {
 }
 
 bool DrawAnchored(SDL_Renderer* renderer, SdlText& text, ScreenFrame& frame,
-    const GameplayLayout& gameplay, const WorldView* view, float uiScale) {
+    const GameplayLayout& gameplay, const WorldView* view, float uiScale, int width, int height) {
     bool hasText = false;
     for (const auto& row : frame.rows) { hasText |= !row.text.empty(); }
     for (const auto& detail : frame.details) { hasText |= !detail.empty(); }
     if (!hasText) { return SDL_SetRenderClipRect(renderer, nullptr) && SDL_SetRenderScale(renderer, 1, 1); }
     const SDL_Color normal{210, 220, 218, 255}, dim{145, 160, 163, 255}, selected{255, 230, 90, 255};
     auto viewport = ScaleRect(gameplay.mapViewport, 1.0f / uiScale);
+    const int lineHeight = std::max(1, text.LineHeight());
+    const int minimumHeight = lineHeight * 3 + 20;
+    // Large text can outgrow the compact map above the bottom HUD. Borrow the
+    // rest of the content area so the popup still has a readable body row.
+    if (viewport.h < minimumHeight + 8) {
+        viewport = {0, gameplay.topBar.h, width, std::max(0, height - gameplay.topBar.h)};
+    }
     if (viewport.w < 24 || viewport.h < 24) { return true; }
     viewport.x += 4; viewport.y += 4; viewport.w -= 8; viewport.h -= 8;
     SDL_Rect target{viewport.x + viewport.w / 2, viewport.y + viewport.h / 2, 1, 1}, player{};
@@ -48,11 +56,10 @@ bool DrawAnchored(SDL_Renderer* renderer, SdlText& text, ScreenFrame& frame,
         player = ScaleRect(MapCellRect(gameplay.map, view->player_position.x - view->origin.x,
             view->player_position.z - view->origin.z), 1.0f / uiScale);
     }
-    const int heightLimit = std::max(1, viewport.h * 60 / 100);
+    const int heightLimit = std::min(viewport.h, std::max(minimumHeight, viewport.h * 60 / 100));
     const auto provisional = PlacePopup(viewport, target, std::min(320, viewport.w), heightLimit, player);
     const int wrap = std::max(1, provisional.w - 16);
     if (!text.Draw(7, "M", -10000, -10000, normal)) { return false; }
-    const int lineHeight = std::max(1, text.Height(7));
     if (!text.Draw(8, frame.title.c_str(), -10000, -10000, selected, wrap)
         || !text.Draw(9, frame.footer.c_str(), -10000, -10000, dim, wrap)) { return false; }
     const int titleHeight = std::min(text.Height(8), lineHeight * 2);
@@ -162,7 +169,7 @@ bool DrawScreen(SDL_Renderer* renderer, SdlText& text, ScreenFrame& frame,
     const auto focus = frame.followCursor && frame.cursor && view
         ? SDL_Point{frame.cursor->x - view->player_position.x, frame.cursor->z - view->player_position.z} : SDL_Point{};
     const auto calculated = gameplay ? GameplayLayout{} : MakeGameplayLayout(width, height,
-        view ? view->width : 1, view ? view->height : 1, tileWidth, tileHeight, zoom, uiScale, focus);
+        view ? view->width : 1, view ? view->height : 1, tileWidth, tileHeight, zoom, uiScale, focus, text.LineHeight());
     const auto& geometry = gameplay ? *gameplay : calculated;
     if (view && (frame.cursor || !frame.highlights.empty())) {
         const auto& layout = geometry.map;
@@ -179,18 +186,30 @@ bool DrawScreen(SDL_Renderer* renderer, SdlText& text, ScreenFrame& frame,
         if (frame.cursor && !mark(*frame.cursor, true)) { return false; }
     }
     if (!SDL_SetRenderClipRect(renderer, nullptr) || !SDL_SetRenderScale(renderer, uiScale, uiScale)) { return false; }
-    if (frame.presentation == ScreenPresentation::Anchored) { return DrawAnchored(renderer, text, frame, geometry, view, uiScale); }
     const int w = static_cast<int>(width / uiScale), h = static_cast<int>(height / uiScale);
+    if (frame.presentation == ScreenPresentation::Anchored) { return DrawAnchored(renderer, text, frame, geometry, view, uiScale, w, h); }
     const int left = 8;
     const int top = geometry.topBar.h;
     SDL_FRect panel{static_cast<float>(left), static_cast<float>(top), static_cast<float>(w - left - 8), static_cast<float>(h - top - 8)};
     if (!SDL_SetRenderDrawColor(renderer, 16, 24, 29, 255) || !SDL_RenderFillRect(renderer, &panel)) { return false; }
     const SDL_Color normal{210,220,218,255}, dim{115,125,130,255}, selected{255,230,90,255};
     const SDL_Rect clip{left + 6, top + 4, std::max(1, w - left - 20), std::max(1, h - top - 16)};
-    if (!SDL_SetRenderClipRect(renderer, &clip) || !text.Draw(8, frame.title.c_str(), left + 8, top + 6, selected, clip.w)) { return false; }
-    int y = top + text.Height(8) + 16;
+    const int lineHeight = std::max(1, text.LineHeight());
+    if (!text.Draw(8, frame.title.c_str(), -10000, -10000, selected, clip.w)) { return false; }
+    const bool compact = !frame.compactTitle.empty() && text.Height(8) > clip.h / 3;
+    const char* title = compact ? frame.compactTitle.c_str() : frame.title.c_str();
+    if (!text.Draw(8, title, -10000, -10000, selected, clip.w)) { return false; }
+    const int titleHeight = std::min(text.Height(8), std::max(lineHeight, clip.h / 3));
+    const SDL_Rect titleClip{clip.x, top + 6, clip.w, titleHeight};
+    if (!SDL_SetRenderClipRect(renderer, &titleClip) || !text.Draw(8, title, left + 8, top + 6, selected, clip.w)) { return false; }
+    int y = top + titleHeight + 16;
     if (!text.Draw(9,frame.footer.c_str(),-10000,-10000,dim,clip.w)) { return false; }
-    const int footerHeight = std::min(text.Height(9),std::max(48,h/3));
+    const char* footer = frame.footer.c_str();
+    if (!frame.compactFooter.empty() && text.Height(9) > clip.h / 3) {
+        footer = frame.compactFooter.c_str();
+        if (!text.Draw(9,footer,-10000,-10000,dim,clip.w)) { return false; }
+    }
+    const int footerHeight = std::min(text.Height(9), std::max(lineHeight, clip.h / 3));
     const int footerY = std::max(y,h-footerHeight-16);
     const int bodyHeight = std::max(1, footerY - y - 8);
     int listWidth = clip.w;
@@ -233,7 +252,7 @@ bool DrawScreen(SDL_Renderer* renderer, SdlText& text, ScreenFrame& frame,
         if (!text.Draw(7,"M",-100,-100,normal)) { return false; }
         const int rowHeight = std::max(24,text.Height(7) * 2 + 6);
         int listHeight = bodyHeight;
-        if (!columns && !frame.details.empty()) { listHeight = std::max(rowHeight, bodyHeight / 2); }
+        if (!columns && !frame.details.empty()) { listHeight = std::min(bodyHeight, std::max(rowHeight, bodyHeight / 2)); }
         const int count = std::max(1, listHeight / rowHeight);
         if (frame.selected >= 0) {
             if (frame.selected < frame.scroll) { frame.scroll = frame.selected; }
@@ -259,7 +278,8 @@ bool DrawScreen(SDL_Renderer* renderer, SdlText& text, ScreenFrame& frame,
         const SDL_Rect detailClip{x,y,std::max(1,clip.w - (columns ? listWidth : 0)),std::max(1,footerY-y)};
         if (!SDL_SetRenderClipRect(renderer,&detailClip) || !text.Draw(6,details.c_str(),x,y,normal,detailClip.w)) { return false; }
     }
-    if (!SDL_SetRenderClipRect(renderer,&clip) || !text.Draw(9,frame.footer.c_str(),left+8,footerY,dim,clip.w)) { return false; }
+    const SDL_Rect footerClip{clip.x, footerY, clip.w, footerHeight};
+    if (!SDL_SetRenderClipRect(renderer,&footerClip) || !text.Draw(9,footer,left+8,footerY,dim,clip.w)) { return false; }
     return SDL_SetRenderClipRect(renderer,nullptr) && SDL_SetRenderScale(renderer,1,1);
 }
 
@@ -310,7 +330,10 @@ Keymap OptionsUi::PreviewKeys(const SettingsStore& store) const {
 }
 void OptionsUi::Fields(VisibleFieldList& output) const {
     output = {};
-    for (std::size_t i = 0; i < std::size(fields); ++i) { if (categories[i] == category_ && !output.PushBack(fields[i])) { std::abort(); } }
+    for (std::size_t i = 0; i < std::size(fields); ++i) {
+        if (fields[i] == SettingsField::TextSize && scope_ == SettingsScope::World) { continue; }
+        if (categories[i] == category_ && !output.PushBack(fields[i])) { std::abort(); }
+    }
 }
 void OptionsUi::Bindings(const SettingsStore& store, Keymap& output) const {
     output.clear();
@@ -448,6 +471,10 @@ void OptionsUi::Present(const SettingsStore& store, const Localization& loc, Scr
         const auto name = bindings_ ? Local(loc,"context.",ContextName(contexts[i])) : Local(loc,"settings.ui.category.",categoryNames[i]);
         frame.title += Tab(name.c_str(),i == category_,focus_ == 2);
     }
+    frame.compactTitle = scope_ == SettingsScope::Global ? "Global / " : "World / ";
+    frame.compactTitle += bindings_ ? Local(loc,"context.",ContextName(contexts[category_]))
+        : Local(loc,"settings.ui.category.",categoryNames[category_]);
+    frame.compactFooter = BindingHint(store.Keys(),InputContext::Menu,InputAction::SaveSettings) + " Save";
     const bool pending = drafts_[Index()] != store.Overrides(scope_) || keys_[Index()] != store.KeyOverrides(scope_);
     frame.title += pending ? "\nUnapplied edits" : store.Dirty(scope_) ? "\nApplied, unsaved" : "";
     frame.rows.clear(); frame.details.clear(); frame.selected = static_cast<int>(selected_); frame.detailScroll = detailScroll_;
@@ -463,14 +490,15 @@ void OptionsUi::Present(const SettingsStore& store, const Localization& loc, Scr
     } else {
         VisibleFieldList visible; Fields(visible);
         for (auto field : visible) {
+            const bool editing = mode_ == Mode::Number && selected_ < visible.Size() && field == visible[selected_];
             String row = field == SettingsField::Seed && scope_ == SettingsScope::World
                 ? loc.Text("settings.ui.world_seed","World seed") : Local(loc,"settings.ui.label.",SettingName(field));
             row += "   ";
             const bool hostPacing = field == SettingsField::TicksPerSecond || field == SettingsField::RateLimited
                 || field == SettingsField::PauseWhenIdle;
-            row += remote_ && HostField(field) ? (hostPacing ? SettingValue(runtime_,field) : String("Host-owned"))
+            row += editing ? edit_ : remote_ && HostField(field) ? (hostPacing ? SettingValue(runtime_,field) : String("Host-owned"))
                 : field == SettingsField::Seed && scope_ == SettingsScope::World ? UnsignedText(runtime_.seed) : SettingValue(preview,field);
-            row += HasOverride(drafts_[Index()],field) ? " [override]" : " [inherited]";
+            row += editing ? " _" : HasOverride(drafts_[Index()],field) ? " [override]" : " [inherited]";
             const auto residency = remote_ ? runtime_.residencyMode : preview.residencyMode;
             if ((field == SettingsField::ResidentRadius && residency == ResidencyMode::Circle)
                 || (field == SettingsField::ResidentRadiusTiles && residency == ResidencyMode::Square)) { row += " [inactive]"; }

@@ -117,16 +117,16 @@ bool DrawLayer(SDL_Renderer* renderer, const SdlAssets& assets, const TilesetMap
 }
 
 MapLayout MakeMapLayout(int outputWidth, int outputHeight, int columns, int rows,
-    int tileWidth, int tileHeight, int zoom, float uiScale) {
+    int tileWidth, int tileHeight, int zoom, float uiScale, int textLineHeight) {
     return MakeGameplayLayout(outputWidth, outputHeight, columns, rows,
-        tileWidth, tileHeight, zoom, uiScale).map;
+        tileWidth, tileHeight, zoom, uiScale, {}, textLineHeight).map;
 }
 
 eastl::optional<std::uint64_t> VisibleAnimationDelay(const MapPacket& packet,
     const TilesetDefinition& tileset, std::uint64_t elapsedMilliseconds,
-    int outputWidth, int outputHeight, int zoom, float uiScale, const SpritePlaybackController* playback, SDL_Point focusOffset) {
+    int outputWidth, int outputHeight, int zoom, float uiScale, const SpritePlaybackController* playback, SDL_Point focusOffset, int textLineHeight) {
     const auto gameplay = MakeGameplayLayout(outputWidth, outputHeight, packet.width, packet.height,
-        tileset.cellWidth, tileset.cellHeight, zoom, uiScale, focusOffset);
+        tileset.cellWidth, tileset.cellHeight, zoom, uiScale, focusOffset, textLineHeight);
     const auto& layout = gameplay.map;
     const auto clip = ViewClip(layout, gameplay.mapViewport);
     eastl::optional<std::uint64_t> delay;
@@ -176,7 +176,7 @@ bool DrawFrame(SDL_Renderer* renderer, SdlText& text, const SdlAssets& assets, c
     const auto focus = screen && screen->visible && screen->followCursor && screen->cursor && view
         ? SDL_Point{screen->cursor->x - view->player_position.x, screen->cursor->z - view->player_position.z} : SDL_Point{};
     const auto gameplay = MakeGameplayLayout(width, height, view ? view->width : 1, view ? view->height : 1,
-        assets.Definition().cellWidth, assets.Definition().cellHeight, zoom, uiScale, focus);
+        assets.Definition().cellWidth, assets.Definition().cellHeight, zoom, uiScale, focus, text.LineHeight());
     int panelX = gameplay.hud.x, panelY = gameplay.hud.y;
     int panelWidth = gameplay.hud.w;
     String infoText;

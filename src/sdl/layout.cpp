@@ -23,17 +23,18 @@ SDL_Rect ScaleRect(SDL_Rect rect, float scale) {
 }
 
 GameplayLayout MakeGameplayLayout(int width, int height, int columns, int rows,
-    int tileWidth, int tileHeight, int zoom, float uiScale, SDL_Point focusOffset) {
+    int tileWidth, int tileHeight, int zoom, float uiScale, SDL_Point focusOffset, int textLineHeight) {
     if (width <= 0 || height <= 0 || columns <= 0 || rows <= 0
         || tileWidth <= 0 || tileHeight <= 0 || !std::isfinite(uiScale) || uiScale <= 0) { return {}; }
     const int w = std::max(1, static_cast<int>(width / uiScale));
     const int h = std::max(1, static_cast<int>(height / uiScale));
     GameplayLayout result;
     result.sideHud = w >= 700;
-    result.topBar = {0, 0, w, std::min(28, h)};
+    const int barHeight = std::min(std::max(28, textLineHeight + 8), h);
+    result.topBar = {0, 0, w, barHeight};
     const int hudWidth = w >= 900 ? 390 : 230;
-    result.hud = result.sideHud ? SDL_Rect{w - hudWidth, 36, hudWidth - 8, std::max(0, h - 44)}
-        : SDL_Rect{8, std::max(28, h - 172), std::max(0, w - 16), std::min(164, std::max(0, h - 36))};
+    result.hud = result.sideHud ? SDL_Rect{w - hudWidth, barHeight + 8, hudWidth - 8, std::max(0, h - barHeight - 16)}
+        : SDL_Rect{8, std::max(barHeight, h - 172), std::max(0, w - 16), std::min(164, std::max(0, h - barHeight - 8))};
     const SDL_Rect viewport{0, result.topBar.h,
         result.sideHud ? std::max(1, result.hud.x - 10) : w,
         std::max(1, (result.sideHud ? h - 8 : result.hud.y - 8) - result.topBar.h)};

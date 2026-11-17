@@ -123,6 +123,15 @@ eastl::optional<Command> GameplayCommand(InputAction action, bool interacting) {
 
 int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& localization,
     const char* localizationDirectory, AppOptions options) {
+    if (options.fontSize) {
+        auto overrides = store.Overrides(SettingsScope::Global);
+        overrides.textSize = *options.fontSize;
+        Diagnostics diagnostics;
+        if (!store.SetOverrides(SettingsScope::Global, eastl::move(overrides), store.KeyOverrides(SettingsScope::Global), &diagnostics)) {
+            std::fprintf(stderr, "Configuration: %s\n", FormatDiagnostics(diagnostics).c_str());
+            return 1;
+        }
+    }
     const auto& settings = store.Effective();
     const auto& keys = store.Keys();
     if (!SDL_IsMainThread()) { std::abort(); }
@@ -140,8 +149,10 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
     const auto eventType = SDL_RegisterEvents(1);
     if (!eventType) { return SdlFailure(); }
     Wakeup wakeup{eventType};
-    SdlText text(platform.renderer, options.fontPath.empty() ? nullptr : options.fontPath.c_str(), options.fontSize);
-    if (!text.Ready()) { return SdlFailure(); }
+    eastl::unique_ptr<SdlText> text(new SdlText(platform.renderer,
+        options.fontPath.empty() ? nullptr : options.fontPath.c_str(), static_cast<float>(settings.textSize)));
+    if (!text->Ready()) { return SdlFailure(); }
+    int appliedTextSize = settings.textSize;
     SdlAssets assets(&content, options.tilesetDirectory, Wake, &wakeup);
     eastl::unique_ptr<MapPreparation> mapWorker;
     MapPacket mapPacket;
@@ -191,6 +202,17 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
     String craftingFeedback;
     auto& selectedAction = modal.ActionSelection();
     eastl::optional<SettingsStore> candidateSettings;
+    eastl::unique_ptr<SdlText> candidateText;
+    const auto prepareText = [&](Diagnostics* diagnostics) {
+        candidateText.reset();
+        if (candidateSettings->Effective().textSize == appliedTextSize) { return true; }
+        candidateText.reset(new SdlText(platform.renderer, options.fontPath.empty() ? nullptr : options.fontPath.c_str(),
+            static_cast<float>(candidateSettings->Effective().textSize)));
+        if (candidateText->Ready()) { return true; }
+        if (diagnostics) { diagnostics->Add(SDL_GetError()); }
+        candidateText.reset();
+        return false;
+    };
     Localization candidateLocalization;
     eastl::optional<std::uint64_t> settingsId;
     bool saveSettings = false, reloadSettings = false, multiplayerSettings = false;
@@ -527,7 +549,8 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 candidateSettings = store;
                 Diagnostics diagnostics;
                 if (!optionsUi.Prepare(store,*candidateSettings,&diagnostics)
-                    || !candidateLocalization.Load(localizationDirectory,candidateSettings->Effective().language,&diagnostics)) {
+                    || !candidateLocalization.Load(localizationDirectory,candidateSettings->Effective().language,&diagnostics)
+                    || !prepareText(&diagnostics)) {
                     optionsUi.Feedback(FormatDiagnostics(diagnostics)); candidateSettings.reset(); return;
                 }
                 SessionRequest request; request.kind = RequestKind::ApplySettings;
@@ -535,7 +558,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 request.worldSettings = candidateSettings->Overrides(SettingsScope::World);
                 const auto id = nextId;
                 if (enqueue(eastl::move(request))) { settingsId = id; saveSettings = result == OptionsEvent::Save; reloadSettings = false; multiplayerSettings = false; }
-                else { candidateSettings.reset(); optionsUi.Feedback(message); }
+                else { candidateSettings.reset(); candidateText.reset(); optionsUi.Feedback(message); }
             }
             return;
         }
@@ -749,7 +772,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
         craftingRows.clear(); craftingSelection.reset(); craftingRequest.reset(); craftingFeedback.clear();
         actions.clear(); inspection.clear(); inspectionView = {}; inspectionItems.clear();
         inspectionValid = false; inspectedCursor.reset(); inspectionId.reset(); inspectionNeeded = false;
-        candidateSettings.reset(); settingsId.reset(); saveSettings = false; reloadSettings = false; multiplayerSettings = false;
+        candidateSettings.reset(); candidateText.reset(); settingsId.reset(); saveSettings = false; reloadSettings = false; multiplayerSettings = false;
         saveRequest.reset(); reconcileMenu = true;
         ++aiRevision; aiRequestId.reset(); aiNeeded = false; aiValid = false; aiView = {};
         debugAi = false; debugPlan = {}; debugImage = {}; debugDetails.clear();
@@ -981,6 +1004,11 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             case ReplyKind::SettingsApplied:
                 if (settingsId && *settingsId == reply.id && candidateSettings) {
                     store = eastl::move(*candidateSettings);
+                    if (candidateText) {
+                        text = eastl::move(candidateText);
+                        appliedTextSize = store.Effective().textSize;
+                        frame.scroll = 0; frame.detailScroll = 0;
+                    }
                     if (!multiplayerSettings) { localization = eastl::move(candidateLocalization); }
                     candidateSettings.reset(); settingsId.reset(); hints = Hints(store.Keys());
                     if (multiplayerSettings) { multiplayerUi.Applied(reply.runtimeSettings.pacing); }
@@ -1003,7 +1031,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             case ReplyKind::SettingsFailed:
                 if (settingsId && *settingsId == reply.id) {
                     smokeFailed |= multiplayerSettings && options.smoke;
-                    settingsId.reset(); candidateSettings.reset(); smokeFailed |= localSmoke;
+                    settingsId.reset(); candidateSettings.reset(); candidateText.reset(); smokeFailed |= localSmoke;
                     const auto feedback = reply.details.empty() ? String("Settings could not be applied") : reply.details.front();
                     if (multiplayerSettings) { multiplayerUi.Feedback(feedback); }
                     else { optionsUi.Feedback(feedback); }
@@ -1047,14 +1075,15 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                     if (loaded && store.WorldDirectory().empty()) {
                         loaded = candidateSettings->SetOverrides(SettingsScope::World,store.Overrides(SettingsScope::World),store.KeyOverrides(SettingsScope::World),&diagnostics);
                     }
-                    if (loaded && candidateLocalization.Load(localizationDirectory,candidateSettings->Effective().language,&diagnostics)) {
+                    if (loaded && candidateLocalization.Load(localizationDirectory,candidateSettings->Effective().language,&diagnostics)
+                        && prepareText(&diagnostics)) {
                         SessionRequest request; request.kind = RequestKind::ApplySettings;
                         request.globalSettings = candidateSettings->Overrides(SettingsScope::Global);
                         request.worldSettings = candidateSettings->Overrides(SettingsScope::World);
                         const auto id = nextId;
                         if (enqueue(eastl::move(request))) { settingsId = id; saveSettings = false; reloadSettings = true; multiplayerSettings = false; }
-                        else { candidateSettings.reset(); optionsUi.Feedback(message); }
-                    } else { candidateSettings.reset(); optionsUi.Feedback(FormatDiagnostics(diagnostics)); }
+                        else { candidateSettings.reset(); candidateText.reset(); optionsUi.Feedback(message); }
+                    } else { candidateSettings.reset(); candidateText.reset(); optionsUi.Feedback(FormatDiagnostics(diagnostics)); }
                 }
             }
             if (modal.Active() == Screen::Examine) { inspectionNeeded = true; }
@@ -1298,11 +1327,14 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             else if (smokeStep == 10) {
                 press(SDLK_DOWN); press(SDLK_RETURN);
                 SDL_Event entry{}; entry.type = SDL_EVENT_TEXT_INPUT; entry.text.text = "12"; handleEvent(entry);
-                press(SDLK_RETURN); press(SDLK_S); smokeWaiting = settingsId.has_value();
+                press(SDLK_RETURN);
+                press(SDLK_DOWN); press(SDLK_DOWN); press(SDLK_DOWN); press(SDLK_RETURN);
+                entry.text.text = "24"; handleEvent(entry); press(SDLK_RETURN);
+                press(SDLK_S); smokeWaiting = settingsId.has_value();
                 if (!smokeWaiting) { smokeFailed = true; }
             }
             else if (smokeStep == 11) {
-                if (store.Effective().viewRadius != 12) { smokeFailed = true; }
+                if (store.Effective().viewRadius != 12 || store.Effective().textSize != 24 || appliedTextSize != 24) { smokeFailed = true; }
                 press(SDLK_ESCAPE); smokeWaiting = modal.Pending();
             }
             else if (smokeStep == 12) { press(SDLK_E); smokeWaiting = modal.Pending(); }
@@ -1504,6 +1536,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 if (!feedback.empty()) { if (!display.empty()) { display += '\n'; } display += feedback; }
             }
             frame.visible = modal.Active() != Screen::None && modal.Active() != Screen::ItemInventory;
+            frame.compactTitle.clear(); frame.compactFooter.clear();
             frame.presentation = modal.Active() == Screen::Examine || modal.Active() == Screen::Targets || modal.Active() == Screen::Actions
                 ? ScreenPresentation::Anchored : ScreenPresentation::Large;
             frame.followCursor = modal.Active() == Screen::Examine;
@@ -1643,7 +1676,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             }
             const String sessionLabel = snapshot.mode == SessionMode::Host ? "Host :" + UnsignedText(snapshot.hostPort)
                 : snapshot.mode == SessionMode::Guest ? String(ConnectionText(snapshot.connectionState)) : String("Local");
-            if (!DrawFrame(platform.renderer, text, assets, mapValid ? &displayView() : nullptr,
+            if (!DrawFrame(platform.renderer, *text, assets, mapValid ? &displayView() : nullptr,
                 content, display.c_str(), hints.c_str(), elapsedMilliseconds, mapValid ? &mapPacket : nullptr,
                 zoom, options.uiScale, {}, &playback, &shader, &frame,
                 {&messageHistory, &store.Keys(), &localization, sessionLabel},
@@ -1667,7 +1700,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 }
             }
             if (options.smoke) {
-                smokeHealthDrawn |= mapValid && text.Width(62) > 0;
+                smokeHealthDrawn |= mapValid && text->Width(62) > 0;
                 smokeExamineDrawn |= modal.Active() == Screen::Examine && frame.presentation == ScreenPresentation::Anchored && frame.cursor.has_value();
                 smokeActionsDrawn |= modal.Active() == Screen::Actions && frame.presentation == ScreenPresentation::Anchored && frame.selected >= 0;
                 smokeInventoryDrawn |= modal.Active() == Screen::ItemInventory && itemUi.Frame().screen == ItemUiScreen::Inventory;
@@ -1686,7 +1719,8 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 if (!SDL_GetCurrentRenderOutputSize(platform.renderer, &outputWidth, &outputHeight)) { return SdlFailure(); }
                 const auto delay = VisibleAnimationDelay(mapPacket, assets.Definition(), elapsedMilliseconds,
                     outputWidth, outputHeight, zoom, options.uiScale, &playback,
-                    modal.Active() == Screen::Examine ? SDL_Point{cursor.x - displayView().player_position.x, cursor.z - displayView().player_position.z} : SDL_Point{});
+                    modal.Active() == Screen::Examine ? SDL_Point{cursor.x - displayView().player_position.x, cursor.z - displayView().player_position.z} : SDL_Point{},
+                    text->LineHeight());
                 if (delay) { animationDeadline = elapsedMilliseconds + *delay; }
             }
         }

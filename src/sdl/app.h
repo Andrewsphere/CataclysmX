@@ -9,7 +9,7 @@ struct AppOptions {
     bool smoke = false;
     String tilesetDirectory;
     String fontPath;
-    float fontSize = 14.0f;
+    eastl::optional<int> fontSize; // Startup global override, superseded by menu edits.
     float uiScale = 1.0f;
     NewGameScenario scenario = NewGameScenario::Town;
     eastl::optional<std::uint32_t> seedOverride;
