@@ -21,6 +21,7 @@ MapPacket PrepareMapPacket(const WorldView& view, const ContentCatalog& content,
     packet.identity = identity;
     packet.width = view.width;
     packet.height = view.height;
+    packet.enemyHealth = view.enemyHealth;
     if (view.width < 0 || view.height < 0 || static_cast<std::size_t>(view.width) * static_cast<std::size_t>(view.height) != view.cells.size()) { std::abort(); }
     if (!items.empty() && items.size() != view.cells.size()) { std::abort(); }
     packet.cells.reserve(view.cells.size());

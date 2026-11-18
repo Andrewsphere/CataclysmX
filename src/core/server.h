@@ -189,6 +189,12 @@ struct CraftingEntry {
     bool pauseRequested = false;
     bool operator==(const CraftingEntry&) const = default;
 };
+struct EnemyHealthView {
+    std::uint16_t cellIndex = 0; // Row-major index in the owning WorldView.
+    BodyKind bodyKind = BodyKind::Simple;
+    eastl::array<std::uint16_t, body_part_count> partRatios{}; // In ratioScale units, indexed by BodyPart.
+    bool operator==(const EnemyHealthView&) const = default;
+};
 struct WorldView {
     TileCoord origin{};
     int width = 0;
@@ -224,6 +230,7 @@ struct WorldView {
     PersistentId characterId = 0;
     CombatInfoView combatInfo;
     Vector<CombatEvent> combatEvents; // Bounded presentation history, never simulation input.
+    Vector<EnemyHealthView> enemyHealth; // Injured visible hostiles, in cell order.
 };
 
 // Authoritative deterministic endpoint. No transport or clock access.

@@ -190,6 +190,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
     eastl::optional<std::uint64_t> saveRequest;
     auto& cursor = modal.Cursor();
     Vector<String> inspection;
+    eastl::optional<ExaminedEnemy> examinedEnemy;
     WorldView inspectionView;
     Vector<MapItemVisual> inspectionItems;
     bool inspectionValid = false;
@@ -822,6 +823,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
         craftingRows.clear(); learningLines.clear(); craftingSelection.reset(); craftingRequest.reset(); craftingFeedback.clear();
         combatUi = {}; combatHotkey.reset();
         actions.clear(); inspection.clear(); inspectionView = {}; inspectionItems.clear();
+        examinedEnemy.reset();
         inspectionValid = false; inspectedCursor.reset(); inspectionId.reset(); inspectionNeeded = false;
         candidateSettings.reset(); candidateText.reset(); settingsId.reset(); saveSettings = false; reloadSettings = false; multiplayerSettings = false;
         saveRequest.reset(); reconcileMenu = true;
@@ -857,6 +859,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             modalRequest.reset(); modal.Closed(); frame = {}; initializeScreen = false;
             inspectionId.reset(); inspectionNeeded = false; inspectionValid = false;
             inspection.clear(); inspectionView = {}; inspectionItems.clear(); inspectedCursor.reset(); actions.clear();
+            examinedEnemy.reset();
             SDL_StopTextInput(platform.window);
             heldKey.Reset(); reconcileMenu = true;
         }
@@ -935,6 +938,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 if (inspectionId && reply.id == *inspectionId) {
                     if (modal.Active() == Screen::Examine && cursor == requestedCursor) {
                         inspection = reply.details;
+                        examinedEnemy.reset();
                         if (reply.networkError) { inspection.push_back(network::NetworkErrorMessage(*reply.networkError)); }
                         if (inspection.empty()) { inspection.push_back("Inspection unavailable"); }
                         inspectedCursor = cursor; inspectionValid = false; mapValid = false; ++mapIdentity.viewRevision;
@@ -1045,8 +1049,10 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 if (inspectionId && *inspectionId == reply.id) {
                     if (modal.Active() == Screen::Examine && cursor == requestedCursor) {
                         inspection = eastl::move(reply.details);
+                        examinedEnemy.reset();
                         inspectedCursor = cursor;
                         if (!reply.networkError && reply.inspectionView.playerId && reply.inspectionView.origin.y == cursor.y) {
+                            examinedEnemy = eastl::move(reply.examinedEnemy);
                             if (!displayLayerReady() || displayView().origin.y != cursor.y) { mapValid = false; }
                             inspectionView = eastl::move(reply.inspectionView);
                             inspectionItems = eastl::move(reply.inspectionItems);
@@ -1130,6 +1136,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             initializeScreen = false; cursor = snapshot.view.player_position;
             if (localSmoke) { smokeModalTick = snapshot.view.tick; }
             frame.scroll = 0; frame.detailScroll = 0; inspection.clear(); inspectedCursor.reset();
+            examinedEnemy.reset();
             if (modal.Active() == Screen::Combat) {
                 combatUi.Refresh(content, snapshot.view);
                 if (combatHotkey) {
@@ -1680,6 +1687,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 frame.title = localization.Text("sdl.ui.examine", "Examine") + " | " + NumberText(cursor.x) + "," + NumberText(cursor.z) + " Y " + NumberText(cursor.y);
                 frame.cursor = cursor;
                 if (inspectedCursor && *inspectedCursor == cursor) {
+                    if (examinedEnemy) { AppendEnemyExamine(*examinedEnemy, localization, frame); }
                     for (const auto& line : inspection) { frame.rows.push_back({line}); }
                 } else { frame.rows.push_back({"Loading inspection..."}); }
                 frame.footer = BindingHint(keys, InputContext::Menu, InputAction::Cancel) + " " + localization.Text("sdl.ui.close", "close")

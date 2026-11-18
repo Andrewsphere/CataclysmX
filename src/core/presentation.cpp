@@ -93,6 +93,7 @@ bool CapturePlayerInspection(const Server& server, PersistentId player, std::uin
         output.status = InspectionStatus::Unavailable; return false;
     }
     output.view = server.ViewForPlayerAtLayer(player, radius, cursor.y);
+    output.view.enemyHealth.clear();
     const auto x = static_cast<std::int64_t>(cursor.x) - output.view.origin.x;
     const auto z = static_cast<std::int64_t>(cursor.z) - output.view.origin.z;
     if (x < 0 || z < 0 || x >= output.view.width || z >= output.view.height) {

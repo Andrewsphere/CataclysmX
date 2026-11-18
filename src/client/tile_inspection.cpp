@@ -35,7 +35,8 @@ void DescribeTile(const World& world, const WorldView& view, TileCoord cursor, V
     DescribeTile(world.GetContent(), view, cursor, details, output);
 }
 void DescribeTile(const ContentCatalog& content, const WorldView& view, TileCoord cursor,
-    const TileInspection& details, Vector<String>& output) {
+    const TileInspection& details, Vector<String>& output, eastl::optional<ExaminedEnemy>* enemy) {
+    if (enemy) { enemy->reset(); }
     const auto x = static_cast<std::int64_t>(cursor.x) - view.origin.x;
     const auto z = static_cast<std::int64_t>(cursor.z) - view.origin.z;
     if (cursor.y != view.origin.y || x < 0 || z < 0 || x >= view.width || z >= view.height) {
@@ -66,11 +67,20 @@ void DescribeTile(const ContentCatalog& content, const WorldView& view, TileCoor
     if (details.actor && details.actor == cell.actor) {
         const auto typeName = VisibleActorName(content, cell);
         String name(typeName.data(), typeName.size());
-        name += " #";
-        name += UnsignedText(details.actor); name += " | Speed "; name += UnsignedText(details.speed);
-        output.push_back({});
-        output.push_back(eastl::move(name));
-        output.push_back(CombatStatusText(details.combat));
+        String status = "#" + UnsignedText(details.actor) + " | Speed " + UnsignedText(details.speed);
+        const auto* monster = enemy && !cell.player ? content.TryGetMonster(cell.monsterType) : nullptr;
+        // The demo's legacy enemy has no catalog identity in the filtered view.
+        if (enemy && !cell.player && (!cell.monsterType.value || (monster && Hostile(CombatFaction::Survivors, monster->faction)))) {
+            const auto combatStatus = CombatStatusText(details.combat, false);
+            if (!combatStatus.empty()) { status += '\n'; status += combatStatus; }
+            enemy->emplace(ExaminedEnemy{eastl::move(name), eastl::move(status), details.combat});
+        } else {
+            name += ' ';
+            name += status;
+            output.push_back({});
+            output.push_back(eastl::move(name));
+            output.push_back(CombatStatusText(details.combat));
+        }
     }
     if (details.object && cell.object == details.object) {
         output.push_back({});

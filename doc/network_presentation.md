@@ -1,4 +1,4 @@
-# Owned player presentation (protocol 21)
+# Owned player presentation (protocol 22)
 
 `core/presentation.h` contains frontend-neutral owned values. They contain persistent
 identities and catalog IDs, never handles, transport objects, or SDL objects.
@@ -28,6 +28,20 @@ actor identity and can change after death. Player rows include both identities
 and life state. A dead session remains connected and can submit `new_character`
 through the same authoritative sequence/opportunity path; receipts do not
 predict the new actor or mutate the displayed view.
+
+`WorldView::enemyHealth` contains a sparse `EnemyHealthView` for each injured
+living hostile in a visible map cell. The server computes current HP divided by
+effective maximum HP for every present group in `ratioScale` units. Zero is a
+disabled group, and `ratioScale` is full. Records share the map snapshot so each
+row-major `cellIndex` identifies the same actor as the corresponding `ViewCell`.
+Health is collected even when the server reuses the map cells after a damage or
+healing update.
+
+Ordinary views append a u16 record count after combat history. Each record has
+a u16 cell index, u8 body kind, and one u16 ratio per present part in `BodyPart`
+order. Indices must strictly increase and reference visible non-player actors.
+Ratios must be in range, with at least one injured part and positive vital parts.
+Empty views cost only the count. Inspection views omit this gameplay field.
 
 `CapturePlayerPresentation(world, view, output)` captures a cell-aligned
 `Vector<MapItemVisual>` and authoritative nearby `InteractionChoice`s. Empty map

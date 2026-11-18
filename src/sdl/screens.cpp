@@ -1,4 +1,5 @@
 #include "sdl/screens.h"
+#include "sdl/health.h"
 #include "sdl/renderer.h"
 
 #include <algorithm>
@@ -196,18 +197,32 @@ String Tab(const char* name, bool selected, bool focused) {
     return result;
 }
 
+bool DrawHealthBar(SDL_Renderer* renderer, SDL_FRect track, const CombatPartView& state) {
+    if (!SDL_SetRenderDrawColor(renderer, 70, 78, 82, 255) || !SDL_RenderFillRect(renderer, &track)) { return false; }
+    if (!state.hp) { return true; }
+    const int width = static_cast<int>(track.w);
+    const int filled = state.hp >= state.maximum || width <= 1 ? width
+        : std::clamp(static_cast<int>(std::uint64_t{state.hp} * width / state.maximum), 1, width - 1);
+    track.w = static_cast<float>(filled);
+    const auto color = HealthColor(state);
+    return SDL_SetRenderDrawColor(renderer, color.red, color.green, color.blue, 255) && SDL_RenderFillRect(renderer, &track);
+}
+
 bool DrawAnchored(SDL_Renderer* renderer, SdlText& text, ScreenFrame& frame,
     const GameplayLayout& gameplay, const WorldView* view, float uiScale, int width, int height) {
-    bool hasText = false;
-    for (const auto& row : frame.rows) { hasText |= !row.text.empty(); }
+    bool hasText = false, hasHealth = false;
+    for (const auto& row : frame.rows) {
+        hasText |= !row.text.empty();
+        hasHealth |= row.health.has_value();
+    }
     for (const auto& detail : frame.details) { hasText |= !detail.empty(); }
     if (!hasText) { return SDL_SetRenderClipRect(renderer, nullptr) && SDL_SetRenderScale(renderer, 1, 1); }
     const SDL_Color normal{210, 220, 218, 255}, dim{145, 160, 163, 255}, selected{255, 230, 90, 255};
     auto viewport = ScaleRect(gameplay.mapViewport, 1.0f / uiScale);
     const int lineHeight = std::max(1, text.LineHeight());
-    const int minimumHeight = lineHeight * 3 + 20;
-    // Large text can outgrow the compact map above the bottom HUD. Borrow the
-    // rest of the content area so the popup still has a readable body row.
+    // Make room for the enemy name and three stacked groups after the chrome.
+    const int minimumHeight = lineHeight * (hasHealth ? 9 : 3) + 20;
+    // Borrow space below the map when the preferred minimum cannot fit.
     if (viewport.h < minimumHeight + 8) {
         viewport = {0, gameplay.topBar.h, width, std::max(0, height - gameplay.topBar.h)};
     }
@@ -228,13 +243,35 @@ bool DrawAnchored(SDL_Renderer* renderer, SdlText& text, ScreenFrame& frame,
         || !text.Draw(9, frame.footer.c_str(), -10000, -10000, dim, wrap)) { return false; }
     const int titleHeight = std::min(text.Height(8), lineHeight * 2);
     const int footerHeight = std::min(text.Height(9), lineHeight * 2);
+    constexpr int healthGap = 8;
+    constexpr unsigned healthValueSlot = 71;
+    int healthLabelWidth = 0, healthValueWidth = 0;
+    for (const auto& row : frame.rows) {
+        if (!row.health) { continue; }
+        if (!text.Draw(7, row.text.c_str(), -10000, -10000, normal)
+            || !text.Draw(healthValueSlot, row.health->value.c_str(), -10000, -10000, normal)) { return false; }
+        healthLabelWidth = std::max(healthLabelWidth, text.Width(7));
+        healthValueWidth = std::max(healthValueWidth, text.Width(healthValueSlot));
+    }
+    const int inlineBarWidth = std::min(96, wrap - healthLabelWidth - healthValueWidth - 2 * healthGap);
+    const bool stackHealth = inlineBarWidth < 48;
+    const int barWidth = stackHealth ? std::min(wrap, 160) : inlineBarWidth;
+    const int barHeight = std::clamp(lineHeight / 3, 5, 10);
     int contentHeight = 0;
     frame.rowHeights.resize(frame.rows.size());
     for (std::size_t i = 0; i < frame.rows.size(); ++i) {
-        if (frame.selected < 0 && frame.rows[i].text.empty()) {
+        const auto& row = frame.rows[i];
+        if (row.health) {
+            frame.rowHeights[i] = lineHeight;
+            if (stackHealth) {
+                const String label = row.text + "  " + row.health->value;
+                if (!text.Draw(7, label.c_str(), -10000, -10000, normal, wrap)) { return false; }
+                frame.rowHeights[i] = std::max(lineHeight, text.Height(7)) + lineHeight;
+            }
+        } else if (frame.selected < 0 && row.text.empty()) {
             frame.rowHeights[i] = 8;
         } else {
-            if (!text.Draw(7, frame.rows[i].text.c_str(), -10000, -10000, normal,
+            if (!text.Draw(7, row.text.c_str(), -10000, -10000, normal,
                 frame.selected < 0 ? wrap : std::max(1, wrap - 14))) { return false; }
             frame.rowHeights[i] = std::max(lineHeight, text.Height(7)) + (frame.selected < 0 ? 0 : 4);
         }
@@ -275,12 +312,31 @@ bool DrawAnchored(SDL_Renderer* renderer, SdlText& text, ScreenFrame& frame,
         if (!SDL_SetRenderClipRect(renderer, &bodyClip)) { return false; }
         int y = bodyY - frame.scroll * lineHeight;
         for (int i = 0; i < size; ++i) {
+            const auto& row = frame.rows[i];
             if (y < bodyClip.y + bodyClip.h && y + frame.rowHeights[i] > bodyClip.y) {
-                if (frame.rows[i].text.empty()) {
+                if (row.health) {
+                    const auto slot = 10 + i % 48;
+                    int barX = bodyClip.x;
+                    int barY = y + (lineHeight - barHeight) / 2;
+                    if (stackHealth) {
+                        const String label = row.text + "  " + row.health->value;
+                        if (!text.Draw(slot, label.c_str(), float(bodyClip.x), float(y), normal, wrap)) { return false; }
+                        barY += frame.rowHeights[i] - lineHeight;
+                    } else {
+                        barX += healthLabelWidth + healthGap;
+                        const int valueRight = barX + barWidth + healthGap + healthValueWidth;
+                        if (!text.Draw(slot, row.text.c_str(), float(bodyClip.x), float(y), normal)
+                            || !text.Draw(healthValueSlot, row.health->value.c_str(), -10000, -10000, normal)
+                            || !text.Draw(healthValueSlot, row.health->value.c_str(),
+                                float(valueRight - text.Width(healthValueSlot)), float(y), normal)) { return false; }
+                    }
+                    if (!DrawHealthBar(renderer, {float(barX), float(barY), float(barWidth), float(barHeight)},
+                        row.health->state)) { return false; }
+                } else if (row.text.empty()) {
                     if (!SDL_SetRenderDrawColor(renderer, 48, 62, 68, 255)
                         || !SDL_RenderLine(renderer, float(bodyClip.x), float(y + 4),
                             float(bodyClip.x + bodyClip.w - 1), float(y + 4))) { return false; }
-                } else if (!text.Draw(10 + i % 48, frame.rows[i].text.c_str(),
+                } else if (!text.Draw(10 + i % 48, row.text.c_str(),
                     float(bodyClip.x), float(y), normal, wrap)) { return false; }
             }
             y += frame.rowHeights[i];

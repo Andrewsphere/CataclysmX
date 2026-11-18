@@ -8,9 +8,14 @@
 #include "sdl/layout.h"
 
 namespace cataclysmx::sdl {
+struct ScreenHealthRow {
+    CombatPartView state;
+    String value;
+};
 struct ScreenRow {
     String text;
     bool unavailable = false;
+    eastl::optional<ScreenHealthRow> health = {};
 };
 enum class ScreenPresentation { Large, Anchored };
 struct ScreenFrame {

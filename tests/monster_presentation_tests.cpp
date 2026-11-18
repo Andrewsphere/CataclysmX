@@ -91,6 +91,18 @@ TEST_CASE("Local monster inspection keeps live speed combat and position gates",
     CHECK(Contains(lines, expected));
     CHECK(Contains(lines, CombatStatusText(world.Combat().Describe(*created))));
 
+    TileInspection details;
+    REQUIRE(CaptureTileInspection(world, view, position, details));
+    eastl::optional<ExaminedEnemy> enemy;
+    lines.clear();
+    DescribeTile(content, view, position, details, lines, &enemy);
+    REQUIRE(enemy);
+    CHECK(enemy->name == content.GetMonster(cell.monsterType).name);
+    CHECK(enemy->combat == details.combat);
+    CHECK(enemy->status.find("Speed 137") != String::npos);
+    CHECK(enemy->status.find("core") == String::npos);
+    CHECK_FALSE(Contains(lines, expected));
+
     auto hidden = view;
     auto& hiddenCell = hidden.cells[static_cast<std::size_t>((position.z - view.origin.z) * view.width
         + position.x - view.origin.x)];
@@ -99,6 +111,8 @@ TEST_CASE("Local monster inspection keeps live speed combat and position gates",
         lines.clear();
         DescribeTile(world, hidden, position, lines);
         CHECK_FALSE(Contains(lines, expected));
+        DescribeTile(content, hidden, position, details, lines, &enemy);
+        CHECK_FALSE(enemy);
     }
 
     // The old projection must not expose live metadata after the actor moves.

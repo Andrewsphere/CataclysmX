@@ -1,7 +1,7 @@
 # SDL LAN multiplayer
 
 SDL, terminal and live headless clients can share an authoritative LAN game.
-Use the same updated build (protocol 19, `0x43584e13`) and matching content on
+Use the same updated build (protocol 22, `0x43584e16`) and matching content on
 all peers. Select the same scenario or content pack on each end; incompatible
 content is rejected at admission. The host owns the world and simulation.
 

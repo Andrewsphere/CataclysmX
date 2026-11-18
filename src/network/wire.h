@@ -6,8 +6,8 @@
 
 namespace cataclysmx::network::wire {
 
-// Version 21 carries expanded combat commands, character lifecycle and presentation.
-inline constexpr std::uint32_t protocol = 0x43584e15;
+// Version 22 adds sparse enemy health to gameplay snapshots.
+inline constexpr std::uint32_t protocol = 0x43584e16;
 inline constexpr int maxViewRadius = maxPresentationRadius;
 inline constexpr int maxViewDimension = 2 * maxViewRadius + 1;
 static_assert(maxViewDimension <= UINT8_MAX && maxViewDimension * maxViewDimension <= UINT16_MAX);

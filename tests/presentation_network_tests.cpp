@@ -1,4 +1,6 @@
 #include "core/presentation.h"
+#include "core/ratio.h"
+#include "combat/combat_system.h"
 #include "network/network.h"
 #include "network/wire.h"
 #include "content_fixture.h"
@@ -120,6 +122,70 @@ bool PollPresentation(LanHost& host, LanClient& client, Predicate predicate) {
     }
     return false;
 }
+TEST_CASE("LAN gameplay snapshots carry current enemy tile health after teammate damage", "[network][loopback][enemy-health]") {
+    auto runtime = NetworkRuntime::Create(); REQUIRE(runtime);
+    Server server(TestContent()); LanHost host(**runtime, server, TestContent());
+    HostSettings settings; settings.port = 0; settings.discoveryPort = 0; REQUIRE(host.Open(settings));
+    LanClient client(**runtime, TestContent());
+    ConnectionSettings connection; connection.port = host.GetPort(); REQUIRE(client.Connect(connection));
+    REQUIRE(PollPresentation(host, client, [&] { return client.HasView(); }));
+
+    auto& world = server.GetWorld();
+    const auto player = client.View().player_position;
+    auto position = player;
+    constexpr TileCoord neighbors[] = {{1,0}, {0,1}, {-1,0}, {0,-1}};
+    for (const auto offset : neighbors) {
+        const TileCoord candidate{player.x + offset.x, player.z + offset.z, player.y};
+        if (!world.ActorAt(candidate).value) { position = candidate; break; }
+    }
+    REQUIRE(position != player);
+    REQUIRE(world.SetTile(position, {TestTerrain("floor"), 0}));
+    const auto enemy = world.CreateActor(position); REQUIRE(enemy);
+    auto healthy = world.GetActor(*enemy)->combat;
+    healthy.body = MakeBody(BodyKind::Detailed);
+    healthy.faction = CombatFaction::Undead;
+    REQUIRE(world.Combat().Configure(*enemy, healthy));
+    const auto enemyId = world.GetActor(*enemy)->id;
+    REQUIRE(PollPresentation(host, client, [&] {
+        const auto& view = client.View();
+        const auto index = (position.z - view.origin.z) * view.width + position.x - view.origin.x;
+        return view.cells[index].actor == enemyId;
+    }));
+    CHECK(client.View().enemyHealth.empty());
+
+    REQUIRE(world.Combat().Damage(*enemy, server.GetPlayer(), BodyPart::LeftHand,
+        {DamageType::Blunt, 10000}).outcome == AttackOutcome::Hit);
+    REQUIRE(PollPresentation(host, client, [&] { return !client.View().enemyHealth.empty(); }));
+    const auto injured = client.View();
+    REQUIRE(injured.enemyHealth.size() == 1);
+    CHECK(injured.enemyHealth == server.ViewForPlayer(injured.playerId, wire::maxViewRadius).enemyHealth);
+    const auto& health = injured.enemyHealth.front();
+    CHECK(injured.cells[health.cellIndex].actor == enemyId);
+    CHECK(health.partRatios[static_cast<unsigned>(BodyPart::LeftHand)] == 0);
+    CHECK(health.partRatios[static_cast<unsigned>(BodyPart::RightHand)] == ratioScale);
+    CHECK(health.partRatios[static_cast<unsigned>(BodyPart::Head)] == ratioScale);
+    CHECK(health.partRatios[static_cast<unsigned>(BodyPart::Torso)] == ratioScale);
+    CHECK(health.partRatios[static_cast<unsigned>(BodyPart::LeftLeg)] == ratioScale);
+    CHECK(health.partRatios[static_cast<unsigned>(BodyPart::RightLeg)] == ratioScale);
+
+    wire::Writer writer; REQUIRE(writer.View(injured));
+    writer.bytes.back() = 0xff; // Makes the last ratio exceed ratioScale.
+    wire::Reader invalidRatio{{writer.bytes.data(), writer.bytes.size()}};
+    WorldView decoded;
+    CHECK_FALSE(invalidRatio.View(decoded));
+    auto hidden = injured;
+    hidden.cells[health.cellIndex] = {};
+    CHECK_FALSE(wire::Writer{}.View(hidden));
+    auto duplicate = injured;
+    duplicate.enemyHealth.push_back(health);
+    CHECK_FALSE(wire::Writer{}.View(duplicate));
+
+    REQUIRE(world.Combat().Configure(*enemy, healthy));
+    REQUIRE(PollPresentation(host, client, [&] {
+        return client.View().revision > injured.revision && client.View().enemyHealth.empty();
+    }));
+}
+
 TEST_CASE("Loopback inspection is terminal isolated and single flight", "[network][loopback][presentation]") {
     auto runtime = NetworkRuntime::Create(); REQUIRE(runtime);
     Server server(TestContent()); LanHost host(**runtime, server, TestContent());

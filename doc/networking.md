@@ -1,12 +1,13 @@
 # LAN networking API
 
-## Current protocol 21
+## Current protocol 22
 
-The current protocol constant is `0x43584e15`. Peers need matching updated builds
-and content; protocol 21 is incompatible with protocol 20. Protocol 20 introduced
-learning views and book study. Protocol 21 adds expanded combat and character
-lifecycle. Protocol 19 added observed object types; protocol 18 introduced owned
-player presentation, typed inspection and authoritative input context.
+The current protocol constant is `0x43584e16`. Peers need matching builds and
+content. Protocol 22 adds sparse injured enemy health to ordinary gameplay views.
+Protocol 21 introduced expanded combat and character lifecycle, protocol 20
+introduced learning views and book study, protocol 19 added observed object types,
+and protocol 18 introduced owned player presentation, typed inspection and
+authoritative input context.
 See [network presentation](network_presentation.md) for the current contracts.
 
 ### Expanded combat wire contract

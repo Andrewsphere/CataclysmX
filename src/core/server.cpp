@@ -7,6 +7,7 @@
 #include "core/simulation.h"
 #include "core/static_list.h"
 #include "core/perception.h"
+#include "core/ratio.h"
 #include "core/lighting.h"
 #include "combat/combat_system.h"
 #include "skills/learning_system.h"
@@ -30,6 +31,31 @@ constexpr std::size_t maxOnlinePlayers = 4;
 void Require(bool condition) {
     if (!condition) {
         std::abort();
+    }
+}
+
+void CollectEnemyHealth(const World& world, CombatFaction observer, WorldView& view) {
+    static_assert((2 * playerSightRange + 1) * (2 * playerSightRange + 1) <= UINT16_MAX);
+    static_assert(ratioScale <= UINT16_MAX);
+    for (std::size_t i = 0; i < view.cells.size(); ++i) {
+        const auto& cell = view.cells[i];
+        if (!cell.actor || cell.player || cell.overlayVisibility != Visibility::Visible) { continue; }
+        const auto* enemy = world.GetActor(world.FindActor(cell.actor));
+        if (!enemy || enemy->combat.life != ActorLifeState::Alive || !Hostile(observer, enemy->combat.faction)
+            || !BodyAlive(enemy->combat.body)) { continue; }
+
+        const auto& body = enemy->combat.body;
+        EnemyHealthView health{static_cast<std::uint16_t>(i), body.kind};
+        bool injured = false;
+        for (std::size_t p = 0; p < body_part_count; ++p) {
+            const auto part = static_cast<BodyPart>(p);
+            if (!HasPart(body.kind, part)) { continue; }
+            const auto maximum = EffectiveMax(body, part);
+            const auto hp = body.parts[p].broken ? 0 : body.parts[p].hp;
+            health.partRatios[p] = static_cast<std::uint16_t>(std::uint64_t{hp} * ratioScale / maximum);
+            injured |= hp < maximum;
+        }
+        if (injured) { view.enemyHealth.push_back(health); }
     }
 }
 
@@ -1765,6 +1791,8 @@ WorldView Server::ViewForPlayerAtLayer(PersistentId id, int radius, int layerY) 
             }
         }
     }
+    // Damage and healing can change while the map projection is reused.
+    if (observing && layerY == actor->position.y) { CollectEnemyHealth(world_, actor->combat.faction, result); }
     result.inventory = DescribeItems(world_, player, actor->inventory);
     result.wieldedItem = actor->wieldedItem.value ? world_.GetItem(actor->wieldedItem)->id : 0;
     ItemStorageView carried;
