@@ -101,6 +101,7 @@ struct CombatStyleDefinition {
     CombatArtId art{};
     Vector<WeightedCombatMove> moves;
     std::uint32_t switchCost = 20;
+    SmallVector<SkillId, 1> excludedAttackHandlingSkills; // Held-item strike sources only.
     bool operator==(const CombatStyleDefinition&) const = default;
 };
 struct ArtAbilityGrant {

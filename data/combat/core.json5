@@ -1,13 +1,13 @@
 {format_version:1, definitions:[
   {type:'combat_move',id:'basic_weapon',name:'Weapon strike',requirements:{primary:{kind:'held_item'}},strikes:[{}]},
-  {type:'combat_move',id:'basic_fist',name:'Punch',requirements:{primary:{kind:'empty_hand'}},cost:{recovery:90,stamina:4},strikes:[{}]},
-  {type:'combat_move',id:'basic_kick',name:'Kick',requirements:{primary:{kind:'kick',functional_legs:'both'}},cost:{recovery:120,stamina:7},strikes:[{damage_ratio:12000}]},
+  {type:'combat_move',id:'basic_fist',name:'Punch',requirements:{primary:{kind:'empty_hand'}},cost:{recovery:90,stamina:4},strikes:[{damage_ratio:4000}]},
+  {type:'combat_move',id:'basic_kick',name:'Kick',requirements:{primary:{kind:'kick',functional_legs:'both'}},cost:{recovery:120,stamina:7},strikes:[{damage_ratio:5000}]},
   {type:'combat_move',id:'basic_heavy',name:'Heavy strike',requirements:{primary:{kind:'held_item'}},cost:{windup:50,recovery:160,stamina:12},cooldown:200,
    preparation:{expose_opening:60},strikes:[{damage_ratio:15000,rating_bonus100:-50}],follow_through:{condition:'damaging_contact',stagger:30}},
   {type:'combat_move',id:'basic_paired',name:'Paired strikes',requirements:{primary:{kind:'held_item',grip:'one_handed'},secondary:{kind:'held_item',grip:'one_handed'},paired:true},cost:{recovery:140,stamina:10},strikes:[{},{source:'secondary'}]},
   {type:'combat_move',id:'basic_exhausted_weapon',name:'Weary weapon strike',requirements:{primary:{kind:'held_item'},exhausted_only:true},cost:{recovery:180,stamina:0},strikes:[{damage_ratio:5000,rating_bonus100:-100}]},
-  {type:'combat_move',id:'basic_exhausted_fist',name:'Weary punch',requirements:{primary:{kind:'empty_hand'},exhausted_only:true},cost:{recovery:180,stamina:0},strikes:[{damage_ratio:5000,rating_bonus100:-100}]},
-  {type:'combat_move',id:'basic_exhausted_kick',name:'Weary kick',requirements:{primary:{kind:'kick',functional_legs:'both'},exhausted_only:true},cost:{recovery:200,stamina:0},strikes:[{damage_ratio:5000,rating_bonus100:-100}]},
+  {type:'combat_move',id:'basic_exhausted_fist',name:'Weary punch',requirements:{primary:{kind:'empty_hand'},exhausted_only:true},cost:{recovery:180,stamina:0},strikes:[{damage_ratio:2000,rating_bonus100:-100}]},
+  {type:'combat_move',id:'basic_exhausted_kick',name:'Weary kick',requirements:{primary:{kind:'kick',functional_legs:'both'},exhausted_only:true},cost:{recovery:200,stamina:0},strikes:[{damage_ratio:2500,rating_bonus100:-100}]},
   {type:'combat_move',id:'basic_natural',name:'Natural strike',requirements:{primary:{kind:'natural'}},strikes:[{reach:{distance:2}}]},
   // Ordinary weighted alternative: usable alongside the native strike and when its apparatus is disabled.
   {type:'combat_move',id:'basic_bite',name:'Bite',requirements:{primary:{kind:'natural',requires_natural_apparatus:false}},cost:{recovery:130,stamina:8},strikes:[{reach:{distance:2},damage:[{type:'piercing',amount:700}]}]},
@@ -21,27 +21,28 @@
   {type:'combat_move',id:'basic_block',name:'Block',trigger:'incoming_strike',execution:'block',requirements:{primary:{kind:'held_item'}},cost:{recovery:30,stamina:3},cooldown:30,
    defense:{permits_armed_attack:true},follow_through:{condition:'defense_succeeded',counter_opening:100}},
 
-  {type:'combat_style',id:'basic_balanced',name:'Balanced',moves:[
-   {move:'basic_weapon',weight:40},{move:'basic_fist',weight:35},{move:'basic_kick',weight:15},{move:'basic_heavy',weight:8},{move:'basic_paired',weight:12},
+  {type:'combat_style',id:'basic_balanced',name:'Balanced',exclude_attack_handling_skills:['shields'],moves:[
+   {move:'basic_weapon',weight:40},{move:'basic_fist',weight:6},{move:'basic_kick',weight:3},{move:'basic_heavy',weight:8},{move:'basic_paired',weight:12},
    {move:'basic_natural',weight:40},{move:'basic_bite',weight:10},{move:'basic_dodge',weight:20},{move:'basic_parry',weight:20},{move:'basic_block',weight:20},{move:'basic_counter',weight:20},
-   {move:'basic_exhausted_weapon',weight:10},{move:'basic_exhausted_fist',weight:10},{move:'basic_exhausted_kick',weight:10},{move:'basic_exhausted_natural',weight:10}]},
-  {type:'combat_style',id:'basic_aggressive',name:'Aggressive',moves:[
-   {move:'basic_weapon',weight:35},{move:'basic_fist',weight:25},{move:'basic_kick',weight:25},{move:'basic_heavy',weight:25},{move:'basic_paired',weight:25},
+   {move:'basic_exhausted_weapon',weight:10},{move:'basic_exhausted_fist',weight:2},{move:'basic_exhausted_kick',weight:1},{move:'basic_exhausted_natural',weight:10}]},
+  // Commit to heavier/paired weapon attacks; spare limbs and shields must not dilute the weapon's output.
+  {type:'combat_style',id:'basic_aggressive',name:'Aggressive',exclude_attack_handling_skills:['shields'],moves:[
+   {move:'basic_weapon',weight:45},{move:'basic_fist',weight:4},{move:'basic_kick',weight:4},{move:'basic_heavy',weight:16},{move:'basic_paired',weight:25},
    {move:'basic_natural',weight:30},{move:'basic_bite',weight:25},{move:'basic_dodge',weight:10},{move:'basic_parry',weight:10},{move:'basic_block',weight:10},{move:'basic_counter',weight:25},
-   {move:'basic_exhausted_weapon',weight:10},{move:'basic_exhausted_fist',weight:10},{move:'basic_exhausted_kick',weight:10},{move:'basic_exhausted_natural',weight:10}]},
-  {type:'combat_style',id:'basic_defensive',name:'Defensive',moves:[
-   {move:'basic_weapon',weight:45},{move:'basic_fist',weight:40},{move:'basic_kick',weight:5},{move:'basic_heavy',weight:2},{move:'basic_paired',weight:5},
+   {move:'basic_exhausted_weapon',weight:10},{move:'basic_exhausted_fist',weight:1},{move:'basic_exhausted_kick',weight:1},{move:'basic_exhausted_natural',weight:10}]},
+  {type:'combat_style',id:'basic_defensive',name:'Defensive',exclude_attack_handling_skills:['shields'],moves:[
+   {move:'basic_weapon',weight:45},{move:'basic_fist',weight:6},{move:'basic_kick',weight:2},{move:'basic_heavy',weight:2},{move:'basic_paired',weight:5},
    {move:'basic_natural',weight:45},{move:'basic_bite',weight:5},{move:'basic_dodge',weight:30},{move:'basic_parry',weight:35},{move:'basic_block',weight:40},{move:'basic_counter',weight:30},
-   {move:'basic_exhausted_weapon',weight:10},{move:'basic_exhausted_fist',weight:10},{move:'basic_exhausted_kick',weight:10},{move:'basic_exhausted_natural',weight:10}]},
+   {move:'basic_exhausted_weapon',weight:10},{move:'basic_exhausted_fist',weight:2},{move:'basic_exhausted_kick',weight:1},{move:'basic_exhausted_natural',weight:10}]},
 
-  {type:'combat_move',id:'boxing_jab',name:'Measured jab',requirements:{primary:{kind:'empty_hand'}},cost:{recovery:80,stamina:4},strikes:[{rating_bonus100:50,damage_ratio:9000}]},
-  {type:'combat_move',id:'boxing_cross',name:'Cross',requirements:{primary:{kind:'empty_hand'}},unlock:{skills:[{skill:'unarmed',level:2}],art_xp:50000},cost:{windup:20,recovery:110,stamina:8},strikes:[{damage_ratio:16000}],follow_through:{stagger:30}},
+  {type:'combat_move',id:'boxing_jab',name:'Measured jab',requirements:{primary:{kind:'empty_hand'}},cost:{recovery:80,stamina:3},strikes:[{rating_bonus100:50,damage_ratio:10000}]},
+  {type:'combat_move',id:'boxing_cross',name:'Cross',requirements:{primary:{kind:'empty_hand'}},unlock:{skills:[{skill:'unarmed',level:2}],art_xp:50000},cost:{windup:20,recovery:110,stamina:7},strikes:[{damage_ratio:16000}],follow_through:{stagger:30}},
   {type:'combat_style',id:'boxing_guard',name:'Boxing guard',art:'boxing',moves:[{move:'boxing_jab',weight:50},{move:'boxing_cross',weight:25},{move:'basic_kick',weight:5},{move:'basic_dodge',weight:40},{move:'basic_exhausted_fist',weight:10},{move:'basic_exhausted_kick',weight:5}]},
   {type:'combat_art',id:'boxing',name:'Practical boxing',styles:['boxing_guard'],abilities:[{ability:'focus'},{ability:'leap',unlock:{skills:[{skill:'unarmed',level:2}],art_xp:50000}}]},
   {type:'combat_move',id:'weapon_cut',name:'Controlled cut',requirements:{primary:{kind:'held_item'},handling_skills:['swords','axes','knives','polearms']},strikes:[{rating_bonus100:25}]},
   {type:'combat_move',id:'weapon_drive',name:'Driving cut',requirements:{primary:{kind:'held_item'},handling_skills:['swords','axes','knives','polearms']},unlock:{skills:[{skill:'melee',level:2}],art_xp:50000},cost:{windup:30,recovery:120,stamina:8},strikes:[{damage_ratio:14000}],follow_through:{stagger:40,knockback_tiles:1}},
   {type:'combat_move',id:'weapon_sweep_strike',name:'Sweep strike',requirements:{primary:{kind:'held_item'}},strikes:[{damage_ratio:8500}]},
-  {type:'combat_style',id:'weapon_guard',name:'Weapon guard',art:'weapon_forms',moves:[{move:'weapon_cut',weight:50},{move:'weapon_drive',weight:25},{move:'basic_parry',weight:35},{move:'basic_block',weight:20},{move:'basic_dodge',weight:15},{move:'basic_exhausted_weapon',weight:10},{move:'basic_exhausted_kick',weight:5}]},
+  {type:'combat_style',id:'weapon_guard',name:'Weapon guard',art:'weapon_forms',exclude_attack_handling_skills:['shields'],moves:[{move:'weapon_cut',weight:50},{move:'weapon_drive',weight:25},{move:'basic_parry',weight:35},{move:'basic_block',weight:20},{move:'basic_dodge',weight:15},{move:'basic_exhausted_weapon',weight:10},{move:'basic_exhausted_kick',weight:5}]},
   {type:'combat_art',id:'weapon_forms',name:'Practical weapon forms',styles:['weapon_guard'],abilities:[{ability:'focus'},{ability:'sweep',unlock:{skills:[{skill:'melee',level:2}],art_xp:50000}}]},
   {type:'ability',id:'focus',name:'Focus',execution:'focus',targeting:'self',cost:{recovery:60,stamina:8},cooldown:500,focus_duration:300,focus_rating_bonus100:100},
   {type:'ability',id:'leap',name:'Leap',execution:'leap',targeting:'tile',cost:{windup:20,recovery:80,stamina:12},cooldown:250,leap_distance:2},

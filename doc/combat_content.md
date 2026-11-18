@@ -17,11 +17,13 @@ Consumers resolve `basic_balanced`, `basic_aggressive`, or `basic_defensive`.
 When **no** `combat_move`, `combat_style`, `combat_art`, or `ability` definition
 is supplied, the loader installs a typed 15-move/3-style fixture repertoire.
 It never inserts skills: available canonical skill names bind normally and
-missing bindings remain zero. The runtime treats zero neutrally. Any authored
+missing bindings remain zero. All three basic styles exclude the Shields family
+in the fallback when that skill is available. The runtime treats zero neutrally. Any authored
 combat category disables this fallback; missing basic roles are errors.
-An authored catalog must provide every baseline role in every basic style,
-without learned unlocks or handling-family restrictions. It must preserve each
-role's source, trigger, execution, paired/exhausted/opening purpose. Costs and
+An authored catalog must provide every baseline role in every basic style.
+The baseline moves cannot impose learned unlocks or handling-family restrictions
+of their own. An authored catalog must preserve each role's source, trigger,
+execution, and paired/exhausted/opening purpose. Costs and
 positive weights remain tunable. Missing save references are still errors.
 
 `CorpseItem()` identifies the reserved generated `combat_corpse` ordinary
@@ -51,9 +53,9 @@ styles, art ownership, grants, abilities, item melee/grips/armor, book manuals,
 monster style/ranks/ratings/reach/inexhaustibility, skill bindings and corpse ID.
 References are names; vectors retain their defined order and styles' weighted
 moves are normalized to lexical move order. Numeric aggregate lists are private
-to fingerprint schema version 2, not a save format or JSON authoring schema.
-Version 2 appends `requiresNaturalApparatus` to each serialized primary/secondary
-source list, so changing that flag changes the network content fingerprint.
+to fingerprint schema version 3, not a save format or JSON authoring schema.
+The fingerprint includes `requiresNaturalApparatus` on each primary/secondary
+source and each style's sorted `exclude_attack_handling_skills` list.
 
 ## Definition format
 
@@ -126,6 +128,17 @@ shared blocking/protection unambiguous.
 `combat_style` requires `id`, `name`, nonempty unique weighted
 `moves:[{move,weight}]`, optional owning `art`, and optional positive
 `switch_cost` (default 20). Weights default to 1 and range 1..UINT32_MAX.
+Weights are relative within the eligible moves for the current trigger. Scaling
+every reaction weight equally does not reduce the chance of attempting a defense;
+the same is true of a counter trigger with only one eligible move. Style tradeoffs
+must come from the selected move mix and its actual costs/effects.
+Optional `exclude_attack_handling_skills:['shields']` prevents either held-item
+source of a strike from using the listed combat handling families. It composes
+with the move's `handling_skills` allowlist and applies to ordinary, paired,
+counter, and exhausted moves, as well as Sweep in the active style. Block and
+parry still use the item's normal response rules. Leave a family out of this
+list to let otherwise eligible moves attack with it; for example, a shield
+specialist can use moves with `handling_skills:['shields']`.
 
 `combat_art` requires `id`, `name`, nonempty unique `styles`, and optional
 `abilities:[{ability,unlock}]`. Style/art ownership must agree in both
@@ -199,6 +212,15 @@ main/first-house also load combat items and manual books.
   `basic_block`, `basic_counter`, `basic_exhausted_weapon`,
   `basic_exhausted_fist`, `basic_exhausted_kick`, `basic_exhausted_natural`.
 * Basic styles: `basic_balanced`, `basic_aggressive`, `basic_defensive`.
+  All three keep Shields-family items out of strikes, counters, paired attacks,
+  exhausted attacks and Sweep; normal shield blocking remains available.
+  Aggressive favors held weapons over spare-hand punches/kicks, including during
+  exhaustion. It retains a larger share of heavy and paired attacks than Balanced,
+  trading more committed attacks for higher stamina demands and recovery costs.
+  Dual weapons retain both paired source orientations. Natural attackers use their
+  own eligible move mix, so player equipment tuning must also be checked against
+  monsters sharing the style. The typed fallback is a small fixture repertoire;
+  production balance weights live in the authored core.
 * `basic_natural` requires a functional natural attack apparatus.
   `basic_bite` explicitly sets `requires_natural_apparatus:false`, remains an
   ordinary positive-stamina weighted attack, and may be chosen alongside a

@@ -1,4 +1,6 @@
+#include "combat/combat_types.h"
 #include "content/content.h"
+#include "network/network.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <cstdio>
@@ -116,6 +118,61 @@ TEST_CASE("Natural sources distinguish apparatus attacks from ordinary and exhau
     CHECK_FALSE(WriteCombatContent(*implicit) == WriteCombatContent(*explicitFalse));
 }
 
+TEST_CASE("Attack handling exclusions are validated and fingerprinted as a set", "[content][combat-content][shield-unarmed]") {
+    constexpr auto field = "exclude_attack_handling_skills:['shields']";
+    const auto baseline = LoadCombat(""); REQUIRE(baseline);
+    const auto cleared = LoadCombat("", field, "exclude_attack_handling_skills:[]"); REQUIRE(cleared);
+    CHECK(network::ContentFingerprint(*baseline) != network::ContentFingerprint(*cleared));
+    const auto a = LoadCombat("", field, "exclude_attack_handling_skills:['shields','axes']"); REQUIRE(a);
+    const auto b = LoadCombat("", field, "exclude_attack_handling_skills:['axes','shields']"); REQUIRE(b);
+    CHECK(network::ContentFingerprint(*a) == network::ContentFingerprint(*b));
+    for (const auto* invalid : {"null", "'shields'", "[0]", "['missing']", "['fabrication']", "['shields','shields']"}) {
+        INFO(invalid);
+        String replacement = "exclude_attack_handling_skills:"; replacement += invalid;
+        CHECK_FALSE(LoadCombat("", field, View(replacement)));
+    }
+    const auto skills = ReadCombatFixture("skills/core.json5");
+    const ContentSource source{"skills.json5", View(skills)};
+    const auto fallback = LoadContent({&source, 1}); REQUIRE(fallback);
+    for (const auto* catalog : {&*baseline, &*fallback}) {
+        for (const auto* name : {"basic_balanced", "basic_aggressive", "basic_defensive"}) {
+            const auto& style = catalog->GetCombatStyle(catalog->FindCombatStyle(name));
+            REQUIRE(style.excludedAttackHandlingSkills.size() == 1);
+            CHECK(style.excludedAttackHandlingSkills[0] == catalog->GetCombatSkills().shields);
+        }
+    }
+}
+
+TEST_CASE("Shipped unarmed basics trail household weapons while boxing retains its strikes", "[content][combat-content][shield-unarmed]") {
+    const auto shipped = LoadContentPack(CATACLYSMX_CONTENT_PACK); REQUIRE(shipped);
+    const auto fallback = LoadFixture(""); REQUIRE(fallback);
+    const auto move = [&](const char* name) -> const CombatMoveDefinition& {
+        return shipped->GetCombatMove(shipped->FindCombatMove(name));
+    };
+    const auto& knife = *shipped->GetItem(shipped->FindItem("chef_knife")).melee;
+    const auto& hammer = *shipped->GetItem(shipped->FindItem("claw_hammer")).melee;
+    const auto unarmedDamage = [](const CombatMoveDefinition& attack) {
+        return MakeCombatState(true).attackDamage * body_hp_scale * attack.strikes[0].damageRatio / ratioScale;
+    };
+    for (const auto* name : {"basic_fist", "basic_kick", "basic_exhausted_fist", "basic_exhausted_kick"}) {
+        INFO(name);
+        const auto& attack = move(name);
+        CHECK(attack.strikes[0].damageRatio == fallback->GetCombatMove(fallback->FindCombatMove(name)).strikes[0].damageRatio);
+        const auto& weapon = move(attack.requirements.exhaustedOnly ? "basic_exhausted_weapon" : "basic_weapon");
+        for (const auto* tool : {&knife, &hammer}) {
+            const auto weaponDamage = tool->damage[0].amount * weapon.strikes[0].damageRatio / ratioScale;
+            // Compare neutral-grip damage per recovery tick at equal training.
+            CHECK(std::uint64_t{unarmedDamage(attack)} * weapon.cost.recoveryCost * tool->attackCost * 4
+                <= std::uint64_t{weaponDamage} * attack.cost.recoveryCost * 100 * 3);
+        }
+    }
+    CHECK(unarmedDamage(move("boxing_jab")) > unarmedDamage(move("basic_kick")));
+    CHECK(unarmedDamage(move("boxing_cross")) > unarmedDamage(move("boxing_jab")));
+    CHECK(move("boxing_jab").unlock == MoveUnlock{});
+    CHECK(move("boxing_cross").unlock.artXp > 0);
+    CHECK(move("basic_natural").strikes[0].damageRatio == ratioScale);
+}
+
 TEST_CASE("Combat catalogs resolve moves styles arts abilities manuals and handling families", "[content][combat-content]") {
     const auto result = LoadCombat(R"(
         {type:'book',id:'manual',name:'Manual',study_work:1,
@@ -175,8 +232,8 @@ TEST_CASE("Combat strict schemas reject malformed references weights effects and
             Mutation{"primary:{kind:'empty_hand'}", "primary:{kind:'empty_hand',requires_natural_apparatus:false}"},
             Mutation{"kind:'kick',functional_legs:'both'", "kind:'kick',functional_legs:'both',requires_natural_apparatus:false"},
             Mutation{"source:'secondary'", "source:'third'"},
-            Mutation{"damage_ratio:12000", "damage_ratio:0"},
-            Mutation{"damage_ratio:12000", "damage_ratio:12000,reach:{height:'lower',regions:['eyes']}"},
+            Mutation{"damage_ratio:4000", "damage_ratio:0"},
+            Mutation{"damage_ratio:4000", "damage_ratio:4000,reach:{height:'lower',regions:['eyes']}"},
             Mutation{"rating_bonus100:-50", "rating_bonus100:18446744073709551615"},
             Mutation{"amount:700", "amount:700,penetration:-1"},
             Mutation{"damage:[{type:'piercing',amount:700}]", "damage:[{type:'piercing',amount:700},{type:'piercing',amount:100}]"},

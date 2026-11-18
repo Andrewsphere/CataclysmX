@@ -85,6 +85,11 @@ bool HandlingAllowed(const CombatMoveDefinition& move, SkillId skill) {
     return move.requirements.handlingSkills.empty() || eastl::find(move.requirements.handlingSkills.begin(),
         move.requirements.handlingSkills.end(), skill) != move.requirements.handlingSkills.end();
 }
+bool AttackHandlingExcluded(const CombatStyleDefinition* style, AttackSourceKind kind, SkillId skill) {
+    if (!style || kind != AttackSourceKind::HeldItem) { return false; }
+    const auto& excluded = style->excludedAttackHandlingSkills;
+    return eastl::find(excluded.begin(), excluded.end(), skill) != excluded.end();
+}
 std::uint32_t Scale(std::uint32_t value, std::uint32_t ratio) {
     const auto result = (std::uint64_t{value} * ratio + ratioScale - 1) / ratioScale;
     Require(result <= UINT32_MAX); return static_cast<std::uint32_t>(result);
@@ -109,6 +114,14 @@ std::uint32_t EncumberedCost(std::uint32_t base, std::uint64_t encumbrance) {
     Require(value <= UINT32_MAX);
     return static_cast<std::uint32_t>(value);
 }
+std::uint32_t EncumberedStaminaCost(std::uint32_t base, std::uint64_t encumbrance) {
+    // Round the surcharge to nearest, with half units rounded up. Movement keeps
+    // its separate ceiling rule; an authored zero stamina cost remains free.
+    Require(base == 0 || encumbrance <= (UINT64_MAX - 50) / base);
+    const auto surcharge = (std::uint64_t{base} * encumbrance + 50) / 100;
+    Require(surcharge <= UINT32_MAX - base);
+    return base + static_cast<std::uint32_t>(surcharge);
+}
 ActionCost ModifiedCost(ActionCost cost, int skill, std::uint32_t torso, std::uint32_t handling) {
     const unsigned improvement = skill <= 0 ? 0 : skill >= 10 ? 10 : static_cast<unsigned>(skill);
     const auto time = [&](std::uint32_t base) {
@@ -118,7 +131,7 @@ ActionCost ModifiedCost(ActionCost cost, int skill, std::uint32_t torso, std::ui
     };
     cost.windupCost = time(cost.windupCost);
     cost.recoveryCost = time(cost.recoveryCost);
-    cost.staminaCost = EncumberedCost(DiscountStaminaCost(cost.staminaCost, skill),
+    cost.staminaCost = EncumberedStaminaCost(DiscountStaminaCost(cost.staminaCost, skill),
         std::uint64_t{handling} + torso);
     return cost;
 }
@@ -209,6 +222,8 @@ bool SourcesValid(const World& world, const Actor& actor, const SourceCommitment
 }
 void Bind(const World& world, const Actor& actor, const CombatMoveDefinition& move, Vector<SourceCommitment>& output) {
     output.clear();
+    const bool strikes = move.execution == MoveExecution::Strikes;
+    const auto* attackStyle = strikes ? world.GetContent().TryGetCombatStyle(Style(world, actor)) : nullptr;
     for (unsigned hand = 0; hand < 2; ++hand) {
         const auto wanted = move.requirements.primary.hand;
         if ((wanted == SourceHand::Left && hand != 0) || (wanted == SourceHand::Right && hand != 1) ||
@@ -222,16 +237,18 @@ void Bind(const World& world, const Actor& actor, const CombatMoveDefinition& mo
         binding.primaryKind = move.requirements.primary.kind;
         binding.secondaryKind = move.requirements.secondary.kind;
         binding.paired = move.requirements.paired;
-        if (!BindSource(world, actor, move.requirements.primary, hand, binding, move.execution == MoveExecution::Strikes)) { continue; }
-        if (!HandlingAllowed(move, Handling(world, actor, binding))) { continue; }
+        if (!BindSource(world, actor, move.requirements.primary, hand, binding, strikes)) { continue; }
+        const auto primarySkill = Handling(world, actor, binding);
+        if (!HandlingAllowed(move, primarySkill) || AttackHandlingExcluded(attackStyle, binding.primaryKind, primarySkill)) { continue; }
         if (binding.paired) {
             const auto& secondary = move.requirements.secondary;
             if ((secondary.hand == SourceHand::Left && hand == 0) ||
                 (secondary.hand == SourceHand::Right && hand == 1) || secondary.hand == SourceHand::Both) { continue; }
             const auto primaryItem = binding.hands[hand].item;
-            if (!BindSource(world, actor, secondary, 1U - hand, binding, move.execution == MoveExecution::Strikes)) { continue; }
+            if (!BindSource(world, actor, secondary, 1U - hand, binding, strikes)) { continue; }
             if (primaryItem && primaryItem == binding.hands[1U - hand].item) { continue; }
-            if (!HandlingAllowed(move, Handling(world, actor, binding, StrikeSource::Secondary))) { continue; }
+            const auto secondarySkill = Handling(world, actor, binding, StrikeSource::Secondary);
+            if (!HandlingAllowed(move, secondarySkill) || AttackHandlingExcluded(attackStyle, binding.secondaryKind, secondarySkill)) { continue; }
         }
         if (eastl::find(output.begin(), output.end(), binding) == output.end()) { output.push_back(binding); }
     }

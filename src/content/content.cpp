@@ -3206,7 +3206,7 @@ ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sourc
             return eastl::unexpected(ContentError::InvalidData);
         }
     }
-    if (combat.empty()) { InstallBasicCombat(catalog.combatMoves_, catalog.combatStyles_); }
+    if (combat.empty()) { InstallBasicCombat(catalog.combatMoves_, catalog.combatStyles_, catalog.combatSkills_); }
     else {
         eastl::sort(combat.begin(), combat.end(), [](const auto& a, const auto& b) { return a.id < b.id; });
         for (const auto& entry : combat) {

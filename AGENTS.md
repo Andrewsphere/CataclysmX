@@ -49,6 +49,8 @@ World generation must be reproducible for the same seed, coordinates, generation
 ## Workflow
 
 - Do not add, maintain, or run tests for tooling.
+- Keep generated balance reports and spreadsheet exports local under `/out`; do not check in CSV/Excel files.
+- Update durable documentation when usage or design changes; do not create Markdown logs for each investigation step or balance run.
 - Read the relevant module and existing tests before editing. Make small, focused changes; add focused tests for changed behavior and edge cases.
 - Run the narrowest applicable CMake/CTest preset when available; report precisely what ran, passed, failed, or could not run. Never claim unrun tests passed.
 - A coordinating agent owns integration. Subagents may work on separate tasks, but must not edit the same files concurrently.

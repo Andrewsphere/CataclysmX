@@ -12,7 +12,7 @@ inline void ConfigureCombatRuntimeTestContent(ContentCatalog& content) {
         return const_cast<CombatMoveDefinition&>(content.GetCombatMove(content.FindCombatMove(name)));
     };
     auto& fist = edit("basic_fist");
-    fist.cost = {0, 100, 0}; fist.strikes[0].intrinsicMiss = 0;
+    fist.cost = {0, 100, 0}; fist.strikes[0].intrinsicMiss = 0; fist.strikes[0].damageRatio = ratioScale;
     auto& natural = edit("basic_natural");
     natural.cost = {0, 100, 0}; natural.strikes[0].intrinsicMiss = 0;
     auto& heavy = edit("basic_heavy");

@@ -112,7 +112,8 @@ at 10%**: floor the product, clamping positive phases to at least 1. Zero windup
 stays zero. This never changes Actor::speed or unrelated actions.
 
 Stamina first uses the existing skill-efficiency discount with ceiling rounding,
-then multiplies by `1 + (torso + localHandling)/100`, again rounding up. Paired
+then adds `round(discountedCost * (torso + localHandling) / 100)`, rounding
+half units up. A zero discounted cost remains zero even under heavy encumbrance. Paired
 actions use a ceiling average of their two source handling values and apply this
 modifier once. Dodge uses leg/foot handling. `AbilityCost` applies the same local
 rules once to the ability's own authored cost: Sweep uses its committed sources,

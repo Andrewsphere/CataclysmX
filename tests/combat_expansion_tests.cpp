@@ -167,7 +167,7 @@ TEST_CASE("Local combat encumbrance separates punching dodging movement and sens
     CHECK(combat_runtime::Rating(arena.world, *actor, skill, sources, StrikeSource::Primary, DefenseKind::Block) == 364);
     CHECK(combat_runtime::Rating(arena.world, *actor, skill, sources, StrikeSource::Primary, DefenseKind::Dodge) == 46);
     const auto cost = combat_runtime::Cost(arena.world, *actor, arena.content.GetCombatMove(arena.content.FindCombatMove("basic_fist")), sources);
-    CHECK(cost.windupCost == 95); CHECK(cost.recoveryCost == 190); CHECK(cost.staminaCost == 11);
+    CHECK(cost.windupCost == 95); CHECK(cost.recoveryCost == 190); CHECK(cost.staminaCost == 10); // 9 base + round(9 * 12%)
     CHECK(combat_runtime::MovementEncumbranceCost(arena.world, *actor, 100) == 102);
     CHECK(combat_runtime::MovementEncumbranceCost(arena.world, *actor, 141) == 144);
     CHECK(combat_runtime::MovementEncumbranceCost(arena.world, *actor, 150) == 153);
@@ -231,7 +231,45 @@ TEST_CASE("Simple combat encumbrance uses apparatus locomotion and core zones", 
     CHECK(combat_runtime::Rating(arena.world, *actor, {}, sources, StrikeSource::Primary, DefenseKind::Dodge) == 160);
     CHECK(combat_runtime::MovementEncumbranceCost(arena.world, *actor, 100) == 107);
     auto move = arena.content.GetCombatMove(arena.content.FindCombatMove("basic_natural")); move.cost.staminaCost = 10;
-    CHECK(combat_runtime::Cost(arena.world, *actor, move, sources).staminaCost == 13);
+    CHECK(combat_runtime::Cost(arena.world, *actor, move, sources).staminaCost == 12);
+}
+
+TEST_CASE("Stamina encumbrance rounds the surcharge without changing movement", "[combat][expansion][encumbrance][stamina]") {
+    auto content = ArenaContent(); auto& armor = *ItemType(content, "cloth_face_wrap").armor;
+    armor.regions = {{ContactRegion::Torso, ratioScale, 1, false},
+        {ContactRegion::LeftLeg, ratioScale, 1, false}};
+    Arena arena(eastl::move(content));
+    const auto item = arena.Carry(arena.attacker, "cloth_face_wrap");
+    REQUIRE(arena.world.WearItem(arena.attacker, item).outcome == InventoryOutcome::Succeeded);
+    const auto* actor = arena.world.GetActor(arena.attacker);
+    SourceCommitment sources; sources.hands[0].required = true;
+    auto move = arena.content.GetCombatMove(arena.content.FindCombatMove("basic_fist"));
+    move.cost.staminaCost = 0;
+    CHECK(combat_runtime::Cost(arena.world, *actor, move, sources).staminaCost == 0);
+    move.cost.staminaCost = 1;
+    CHECK(combat_runtime::Cost(arena.world, *actor, move, sources).staminaCost == 1);
+    move.cost.staminaCost = 49;
+    CHECK(combat_runtime::Cost(arena.world, *actor, move, sources).staminaCost == 49);
+    move.cost.staminaCost = 50;
+    CHECK(combat_runtime::Cost(arena.world, *actor, move, sources).staminaCost == 51);
+    CHECK(combat_runtime::MovementEncumbranceCost(arena.world, *actor, 1) == 2);
+}
+
+TEST_CASE("Heavy and stacked encumbrance still increases stamina costs", "[combat][expansion][encumbrance][stamina]") {
+    auto content = ArenaContent(); auto& armor = *ItemType(content, "cloth_face_wrap").armor;
+    armor.regions = {{ContactRegion::Torso, ratioScale, 25, false}};
+    Arena arena(eastl::move(content));
+    const auto first = arena.Carry(arena.attacker, "cloth_face_wrap");
+    const auto second = arena.Carry(arena.attacker, "cloth_face_wrap");
+    REQUIRE(arena.world.WearItem(arena.attacker, first).outcome == InventoryOutcome::Succeeded);
+    auto move = arena.content.GetCombatMove(arena.content.FindCombatMove("basic_fist"));
+    SourceCommitment sources; sources.hands[0].required = true;
+    move.cost.staminaCost = 10;
+    CHECK(combat_runtime::Cost(arena.world, *arena.world.GetActor(arena.attacker), move, sources).staminaCost == 13);
+    REQUIRE(arena.world.WearItem(arena.attacker, second).outcome == InventoryOutcome::Succeeded);
+    CHECK(combat_runtime::Cost(arena.world, *arena.world.GetActor(arena.attacker), move, sources).staminaCost == 16);
+    move.cost.staminaCost = 0;
+    CHECK(combat_runtime::Cost(arena.world, *arena.world.GetActor(arena.attacker), move, sources).staminaCost == 0);
 }
 
 TEST_CASE("Sweep applies ability-local modifiers once rather than borrowing move costs", "[combat][expansion][encumbrance][abilities]") {

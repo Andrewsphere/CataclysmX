@@ -92,7 +92,7 @@ DataObject WriteGrip(const GripDefinition& value) {
 
 DataObject WriteCombatContent(const ContentCatalog& catalog) {
     DataObject out;
-    out.SetUnsigned("version", 2);
+    out.SetUnsigned("version", 3);
     DataObject skills = DataObject::List();
     const auto bindings = catalog.GetCombatSkills();
     for (auto skill : {bindings.melee, bindings.unarmed, bindings.knives, bindings.swords, bindings.clubsHammers,
@@ -142,6 +142,9 @@ DataObject WriteCombatContent(const ContentCatalog& catalog) {
         entry.SetString("id", style.id); entry.SetString("name", style.name);
         entry.SetString("art", style.art.value ? eastl::string_view(catalog.GetCombatArt(style.art).id) : eastl::string_view{});
         entry.SetUnsigned("switch_cost", style.switchCost);
+        DataObject excluded = DataObject::List();
+        for (auto skill : style.excludedAttackHandlingSkills) { excluded.Append(DataObject::Text(catalog.GetSkill(skill).id)); }
+        entry.Set("exclude_attack_handling_skills", eastl::move(excluded));
         DataObject weighted = DataObject::List();
         for (const auto& move : style.moves) {
             DataObject m; m.SetString("move", catalog.GetCombatMove(move.move).id); m.SetUnsigned("weight", move.weight); weighted.Append(eastl::move(m));

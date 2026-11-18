@@ -1,8 +1,10 @@
+#include "combat/combat_runtime.h"
 #include "combat/combat_system.h"
 #include "core/server.h"
 #include "core/simulation.h"
 #include "content_fixture.h"
 #include "combat_runtime_fixture.h"
+#include "skills/learning_system.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <EASTL/utility.h>
@@ -116,6 +118,118 @@ void SameActor(const World& a, const World& b, PersistentId id) {
     CHECK(a.GetActor(left)->position == b.GetActor(right)->position);
     CHECK(a.GetActor(left)->turns == b.GetActor(right)->turns);
     CHECK(a.GetActorRemainingTicks(left) == b.GetActorRemainingTicks(right));
+}
+
+TEST_CASE("Shipped styles keep shields out of strike bindings without dropping defenses", "[combat][integration][shield-unarmed]") {
+    const auto loaded = LoadContentPack(CATACLYSMX_CONTENT_PACK); REQUIRE(loaded);
+    const auto& content = *loaded;
+    World world(content);
+    Load(world);
+    REQUIRE(world.SetTile({3, 3}, {content.FindTerrain("floor"), 0}));
+    REQUIRE(world.SetTile({4, 3}, {content.FindTerrain("floor"), 0}));
+    const auto player = Take(world.CreateActor({3, 3}, true));
+    const auto opponent = Take(world.CreateActor({4, 3}));
+    const auto art = content.FindCombatArt("weapon_forms");
+    REQUIRE(world.Combat().GrantArt(player, art, ArtGrantReason::Teaching));
+    REQUIRE(world.GetActor(player)->characterCombat->arts.size() == 1);
+    const auto shield = Take(world.CreateItem(content.FindItem("wooden_shield"), ItemLocation::Carried(player)));
+    const auto knife = Take(world.CreateItem(content.FindItem("chef_knife"), ItemLocation::Carried(player)));
+    const auto secondKnife = Take(world.CreateItem(content.FindItem("chef_knife"), ItemLocation::Carried(player)));
+    const auto shieldId = world.GetItem(shield)->id;
+    const auto knifeId = world.GetItem(knife)->id;
+    const auto secondKnifeId = world.GetItem(secondKnife)->id;
+    const auto sweep = content.FindAbility("sweep");
+    const AbilityRequest request{sweep, {AbilityGrantSourceKind::Art, art},
+        {AbilityTargetKind::CardinalDirection, 0, {}, CardinalDirection::East}};
+    REQUIRE(world.Learning().SetLevel(player, content.GetCombatSkills().melee, 2));
+    const_cast<Actor*>(world.GetActor(player))->characterCombat->arts.front().xp = 50000;
+    const auto configure = [&](const char* style, unsigned stamina) {
+        auto state = MakeCombatState(true);
+        state.styleId = content.FindCombatStyle(style);
+        state.stamina = stamina;
+        combat_runtime::Opening(state, world.GetActor(opponent)->id, 100);
+        REQUIRE(world.Combat().Configure(player, state));
+    };
+    Vector<combat_runtime::Candidate> candidates;
+    const auto checkCandidates = [&](CombatTrigger trigger, const char* expected) {
+        combat_runtime::Candidates(world, *world.GetActor(player), trigger, world.GetActor(opponent), candidates);
+        bool found = false;
+        for (const auto& candidate : candidates) {
+            for (const auto& hand : candidate.sources.hands) { CHECK(hand.item != shieldId); }
+            if (candidate.move == content.FindCombatMove(expected)) {
+                found = true;
+                CHECK(candidate.sources.hands[static_cast<unsigned>(candidate.sources.primaryHand)].item == knifeId);
+            }
+        }
+        CHECK(found);
+    };
+    for (const auto shieldHand : {Hand::Left, Hand::Right}) {
+        const auto knifeHand = shieldHand == Hand::Left ? Hand::Right : Hand::Left;
+        REQUIRE(world.HoldItem(player, shield, shieldHand, GripKind::OneHanded).outcome == InventoryOutcome::Succeeded);
+        for (const auto* style : {"basic_balanced", "basic_aggressive", "basic_defensive", "weapon_guard"}) {
+            INFO(style);
+            configure(style, 100);
+            CHECK(world.Combat().QueryAbility(player, request).reason == CombatRefusal::MissingSource);
+            Vector<SourceCommitment> bindings;
+            for (const auto* defense : {"basic_block", "basic_parry"}) {
+                const auto& move = content.GetCombatMove(content.FindCombatMove(defense));
+                // The style does not filter response bindings; the item still decides which responses it allows.
+                combat_runtime::Bind(world, *world.GetActor(player), move, bindings);
+                REQUIRE(bindings.size() == 1);
+                CHECK(bindings.front().primaryHand == shieldHand);
+            }
+        }
+        configure("basic_balanced", 100);
+        combat_runtime::Candidates(world, *world.GetActor(player), CombatTrigger::Attack, world.GetActor(opponent), candidates);
+        bool freeHandPunch = false;
+        for (const auto& candidate : candidates) {
+            if (candidate.move == content.FindCombatMove("basic_fist")) {
+                freeHandPunch = true;
+                CHECK(candidate.sources.primaryHand == knifeHand); // Still empty.
+            }
+        }
+        CHECK(freeHandPunch);
+        REQUIRE(world.HoldItem(player, knife, knifeHand, GripKind::OneHanded).outcome == InventoryOutcome::Succeeded);
+        for (const auto* style : {"basic_balanced", "basic_aggressive", "basic_defensive"}) {
+            INFO(style);
+            configure(style, 100);
+            checkCandidates(CombatTrigger::Attack, "basic_weapon");
+            checkCandidates(CombatTrigger::CounterOpening, "basic_counter");
+            configure(style, 0);
+            checkCandidates(CombatTrigger::Attack, "basic_exhausted_weapon");
+        }
+        configure("weapon_guard", 0);
+        checkCandidates(CombatTrigger::Attack, "basic_exhausted_weapon");
+        REQUIRE(world.ReleaseHand(player, knifeHand).outcome == InventoryOutcome::Succeeded);
+        configure("basic_aggressive", 100);
+        CHECK(world.Combat().QueryAbility(player, request).reason == CombatRefusal::MissingSource);
+        REQUIRE(world.ReleaseHand(player, shieldHand).outcome == InventoryOutcome::Succeeded);
+
+        // Excluding shield strikes must leave both orientations of real paired weapons usable.
+        REQUIRE(world.HoldItem(player, knife, knifeHand, GripKind::OneHanded).outcome == InventoryOutcome::Succeeded);
+        REQUIRE(world.HoldItem(player, secondKnife, shieldHand, GripKind::OneHanded).outcome == InventoryOutcome::Succeeded);
+        combat_runtime::Candidates(world, *world.GetActor(player), CombatTrigger::Attack, world.GetActor(opponent), candidates);
+        unsigned paired = 0;
+        for (const auto& candidate : candidates) {
+            if (candidate.move != content.FindCombatMove("basic_paired")) { continue; }
+            ++paired;
+            CHECK(candidate.sources.paired);
+            CHECK(candidate.sources.hands[static_cast<unsigned>(knifeHand)].item == knifeId);
+            CHECK(candidate.sources.hands[static_cast<unsigned>(shieldHand)].item == secondKnifeId);
+        }
+        CHECK(paired == 2);
+        CHECK(world.Combat().QueryAbility(player, request).Available());
+        REQUIRE(world.ReleaseHand(player, knifeHand).outcome == InventoryOutcome::Succeeded);
+        REQUIRE(world.ReleaseHand(player, shieldHand).outcome == InventoryOutcome::Succeeded);
+    }
+    configure("weapon_guard", 100);
+    REQUIRE(world.HoldItem(player, shield, Hand::Left, GripKind::OneHanded).outcome == InventoryOutcome::Succeeded);
+    REQUIRE(world.HoldItem(player, knife, Hand::Right, GripKind::OneHanded).outcome == InventoryOutcome::Succeeded);
+    std::uint32_t rng = 7;
+    REQUIRE(world.Combat().UseAbility(player, request, rng).pending);
+    const auto& sources = world.GetActor(player)->combat.action.sources;
+    CHECK(sources.primaryHand == Hand::Right);
+    CHECK(sources.hands[1].item == knifeId);
 }
 
 TEST_CASE("Combat integration hostile bump attacks without displacing either actor",

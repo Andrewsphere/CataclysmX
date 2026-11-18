@@ -387,7 +387,7 @@ bool ParseCombatMove(yyjson_val* object, CombatMoveDefinition& out, const Conten
 }
 
 bool ParseCombatStyle(yyjson_val* object, CombatStyleDefinition& out, const ContentCatalog& catalog, const Context& context) {
-    if (!CheckObject(object, {"type", "id", "name", "art", "moves", "switch_cost"}, context)
+    if (!CheckObject(object, {"type", "id", "name", "art", "moves", "switch_cost", "exclude_attack_handling_skills"}, context)
         || !ReadString(yyjson_obj_get(object, "name"), out.name, context.Child("name"))
         || !CombatUInt(object, "switch_cost", out.switchCost, context, 1000000, 1)) { return false; }
     if (auto* art = yyjson_obj_get(object, "art")) {
@@ -395,6 +395,23 @@ bool ParseCombatStyle(yyjson_val* object, CombatStyleDefinition& out, const Cont
         if (!ReadId(art, name, context.Child("art"))) { return false; }
         out.art = catalog.FindCombatArt(View(name));
         if (!out.art.value) { return context.Child("art").Fail("unknown combat art"); }
+    }
+    if (auto* skills = yyjson_obj_get(object, "exclude_attack_handling_skills")) {
+        const auto child = context.Child("exclude_attack_handling_skills");
+        if (!yyjson_is_arr(skills)) { return child.Fail("expected combat skills"); }
+        std::size_t i, n; yyjson_val* value;
+        yyjson_arr_foreach(skills, i, n, value) {
+            SkillId skill;
+            const auto element = ArrayElement(child, i);
+            if (!ResolveCombatSkill(value, skill, catalog, element)) { return false; }
+            for (auto previous : out.excludedAttackHandlingSkills) {
+                if (previous == skill) { return element.Fail("duplicate excluded attack handling skill"); }
+            }
+            out.excludedAttackHandlingSkills.push_back(skill);
+        }
+        // Skill indices are assigned in lexical order; set order has no gameplay meaning.
+        eastl::sort(out.excludedAttackHandlingSkills.begin(), out.excludedAttackHandlingSkills.end(),
+            [](SkillId a, SkillId b) { return a.value < b.value; });
     }
     auto* moves = yyjson_obj_get(object, "moves");
     if (!yyjson_is_arr(moves) || !yyjson_arr_size(moves)) { return context.Child("moves").Fail("expected weighted moves"); }
@@ -481,7 +498,7 @@ bool ParseAbility(yyjson_val* object, AbilityDefinition& out, const ContentCatal
     return true;
 }
 
-void InstallBasicCombat(Vector<CombatMoveDefinition>& moves, Vector<CombatStyleDefinition>& styles) {
+void InstallBasicCombat(Vector<CombatMoveDefinition>& moves, Vector<CombatStyleDefinition>& styles, CombatSkillIds skills) {
     struct Basic { const char* id; AttackSourceKind source; std::uint32_t stamina; std::uint32_t recovery; };
     for (const auto& basic : {Basic{"basic_weapon", AttackSourceKind::HeldItem, 5, 100},
             Basic{"basic_fist", AttackSourceKind::EmptyHand, 4, 90}, Basic{"basic_kick", AttackSourceKind::Kick, 7, 120},
@@ -501,6 +518,8 @@ void InstallBasicCombat(Vector<CombatMoveDefinition>& moves, Vector<CombatStyleD
         StrikeDefinition strike;
         if (basic.source == AttackSourceKind::Natural) { strike.reach.distance = 2; }
         if (basic.stamina == 0) { strike.damageRatio = 5000; strike.ratingBonus100 = -100; }
+        if (basic.source == AttackSourceKind::EmptyHand) { strike.damageRatio = basic.stamina ? 4000 : 2000; }
+        if (basic.source == AttackSourceKind::Kick) { strike.damageRatio = basic.stamina ? 5000 : 2500; }
         if (move.id == "basic_heavy") { move.cost.windupCost = 50; strike.damageRatio = 15000; move.preparation.exposeOpening = 60; move.cooldown = 200; }
         if (move.id == "basic_bite" || move.id == "basic_exhausted_natural") {
             move.requirements.primary.requiresNaturalApparatus = false;
@@ -531,6 +550,7 @@ void InstallBasicCombat(Vector<CombatMoveDefinition>& moves, Vector<CombatStyleD
     eastl::sort(moves.begin(), moves.end(), [](const auto& a, const auto& b) { return a.id < b.id; });
     for (const char* id : {"basic_aggressive", "basic_balanced", "basic_defensive"}) {
         CombatStyleDefinition style; style.id = id; style.name = id;
+        if (skills.shields.value) { style.excludedAttackHandlingSkills.push_back(skills.shields); }
         for (std::size_t i = 0; i < moves.size(); ++i) {
             const auto& move = moves[i];
             std::uint32_t weight = 10;

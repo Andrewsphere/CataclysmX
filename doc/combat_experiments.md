@@ -3,7 +3,7 @@
 `tools/combat_experiment.cpp` compares actual production combat under the real
 event scheduler. It loads `CATACLYSMX_CONTENT_PACK`, creates a fresh `World` for
 each seed/loadout/skill combination, and calls `AdvanceUntilInput`. Zombie turns
-are executed by `World::ProcessNpcActions` through the production melee controller.
+are executed by `World::ProcessNpcActions` through the selected production controller.
 Move selection, perception, reactions, injury, equipment, stamina, action deadlines,
 death, and corpse creation all remain engine behavior.
 
@@ -18,65 +18,132 @@ training before combat. The setting defaults to enabled for normal worlds.
 The headless executable additionally uses `client/combat_menu.cpp` in the client
 library.
 
-From a configured Visual Studio developer shell:
+From a configured Visual Studio developer shell, build and run a focused comparison:
 
 ```powershell
 cmake --build --preset win-msvc-sdl --target cataclysmx_combat_experiment cataclysmx_headless
-./out/build/win-msvc-sdl/cataclysmx_combat_experiment.exe --seeds 100 --seed 1 --scenario duel --csv out/duel.csv
-./out/build/win-msvc-sdl/cataclysmx_combat_experiment.exe --seeds 200 --seed 1 --scenario crowd --loadout swordshield --skill 3 --csv out/crowd.csv
-./out/build/win-msvc-sdl/cataclysmx_combat_experiment.exe --seeds 100 --scenario passive --style basic_defensive
-./out/build/win-msvc-sdl/cataclysmx_combat_experiment.exe --seeds 100 --scenario attrition --max-ticks 60000
+./out/build/win-msvc-sdl/cataclysmx_combat_experiment.exe --enemy zombie_shopper --loadout hammer --skill 0 --csv out/shopper.csv
 ```
 
-CSV parent directories must already exist. The runner writes the per-run file at
-the supplied path and the aggregate file at `<path>.summary.csv`. Standard output
-is also aggregate CSV; standard error lists move commitment/invalidation counts
-by stable move ID for each loadout/skill group. Failures return 1; malformed
-arguments return 2. `--help` lists the complete option set.
+`--enemy ID` selects a catalog monster; `--loadout` accepts `all`, `unarmed`,
+`swordshield`, `twohand`, `dual`, `hammer`, `knife`, `sword`, or `axe`.
+`--outfit` accepts `none`, `standard` (the default), or `work`. `--style ID`
+selects a catalog style and `--art-xp N` sets raw catalog XP for its owning art.
+Use `--policy attack` (default) to attack whenever possible, or `--policy cautious`
+to recover at 25 stamina or below until 45 and flee when head or torso HP reaches
+40% or less. Cautious runs use the arena's four open edge exits; escape is counted
+after reaching an opening and surviving until ready again. Both policies use the
+same perimeter. `--csv-format plain` writes comma-delimited CSV; `excel` (the
+default for files) writes UTF-8 BOM, `sep=;`, and semicolon-delimited CSV. Standard
+output remains comma-delimited.
+
+CSV parent directories must already exist. The runner writes per-run data at the
+supplied path and aggregate data at `<path>.summary.csv`. Standard output is also
+aggregate CSV; standard error lists move commitment/invalidation counts by stable
+move ID. Failures return 1; malformed arguments return 2. `--help` lists options.
+
+## Repeatable power rankings
+
+Build the runner from current sources before measuring. A Release build is useful
+for larger sweeps; the runner itself does not require SDL:
+
+```powershell
+cmake --build --preset win-msvc-release --target cataclysmx_combat_experiment
+python tools/balance_rankings.py out/build/win-msvc-release/cataclysmx_combat_experiment.exe --output out/balance --seeds 96 --jobs 4
+```
+
+Open `out/balance/index.html` for ranked tables. The Python driver needs only the
+standard library (Python 3.9+). Choose an empty output directory under `/out` for
+each run. Generated HTML, CSV, JSON and optional spreadsheets stay local; keep
+methodology in this document rather than checking in snapshots or run diaries.
+Legacy files under `doc/balance` are ignored local snapshots.
+
+The driver discovers enemies, authored melee weapon/grip variants, garments and
+styles through `--list-catalog`, using the loaded production catalog rather than
+parsing JSON5 independently. It produces these separate reference panels:
+
+- **Enemy threat:** player death percentage, equally weighted against novice
+  hammer, skill-3 hammer and skill-3 two-handed sword.
+- **Weapons:** skill 3, Balanced, gloves and boots; each supported authored grip
+  plus unarmed, sword/shield and dual-sword comparisons.
+- **Armor:** individual garments and the named outfits, both in sword duels and
+  passive 1000-tick exposure. Passive rankings use mean actual HP lost (lower is
+  better); duel rankings include the net effects of encumbrance and protection.
+- **Styles:** matched unarmed and sword/shield panels, with fresh and 50000-XP
+  versions of the compatible learned arts. New arts need an explicit compatible
+  panel in `cases`; the current two are boxing and weapon forms.
+- **Progression/policy:** skills 0/3/6/10 and separate attack/cautious comparisons
+  for duels, crowds and attrition.
+
+Equipment, style and progression panels weight shopper, cellar zombie and police
+equally. This is a reference mix, not their world spawn distribution. Every cell
+uses the same seed interval. `--seed` changes its start; `--groups weapons
+styles_swordshield` selects a focused sweep. `--jobs` changes subprocess
+parallelism, not simulation ordering. Identical cells shared by panels run once.
+The ranking driver defaults to `--enemy-ai recipe`, retaining normal pursuit AI.
+Use `--enemy-ai melee` only for the older in-reach/wander comparison. Obsolete
+catalog items remain visible but are labeled; their rank does not imply loot access.
+
+Rankings report outcomes, injury, armor absorption and **win-only** elapsed ticks.
+Escapes/timeouts are not wins. Descriptive 95% bootstrap intervals resample seeds
+as clusters across reference matchups, avoiding the assumption that repeated uses
+of a seed are independent. Close scores need follow-up, and zero observed successes
+or failures do not prove a zero probability. Passive exposure is useful only while
+subjects survive the observation window; deaths are explicitly reported. Compare
+paired per-seed differences before tuning small armor effects.
+
+`matrix.csv` retains every panel matchup and its raw-file name. Raw fights,
+move-frequency text, `rankings.json` and `manifest.json` retain options, exact
+commands, seeds and SHA-256 fingerprints of the executable, driver and current
+source/data tree. Rebuild before running: source hashes alone cannot prove the
+executable was built from those sources. The driver rejects source/data changes
+during a sweep. These are diagnostic rankings, not an automatic balancing rule:
+adjacent starts, fixed policies, no abilities and uniform skills omit reach tactics,
+loot/crafting access, carry costs, utility, healing and exploration.
+
+For an individual catalog item, use `--weapon ITEM --grip one_handed|two_handed`
+instead of `--loadout`; add `--offhand ITEM` only with a one-handed primary.
+Repeat `--wear ITEM` to add garments after the selected outfit. Use `--outfit none`
+for isolated armor. Custom weapon/grip/offhand/garment IDs are included in CSV.
+`--list-catalog` lists only authored melee profiles; unlisted items may still be
+held using the production improvised fallback. Firearms here are melee weapons.
+
+The smaller design-reference sweep remains available as
+`python tools/balance_baseline.py <runner>` (default `out/balance-baseline.csv`).
+Its optional `--workbook out/balance-baseline.xlsx` requires XlsxWriter and exports
+only the newly measured baseline, with no dependency on historical snapshots.
+It also defaults to recipe AI; use `--enemy-ai melee` to compare with old snapshots.
 
 ## Controlled setup and policy
 
 The arena is one active, full-height chunk column. Generated actors and furniture
-are removed at setup, the surface is leveled to floor with a wall perimeter, and
-daylight is fixed. Generated loose items are irrelevant to the combat policy and
-are never picked up. The survivor starts at `(8,8,0)` and the first zombie at
-`(9,8,0)`. Zombies use the production `cellar_zombie` recipe, including its
-authored body, ratings, training ranks, and stamina policy. The controller is
-explicitly set to `Melee` to isolate close-range combat from sighted search AI.
+are removed at setup, the surface is leveled to floor with a perimeter containing
+four open edge exits, and daylight is fixed. Generated loose items are irrelevant
+to the combat policy and are never picked up. The survivor starts at `(8,8,0)` and the first enemy at
+`(9,8,0)`. Enemies use the selected production monster recipe (default `cellar_zombie`), including its
+authored body, ratings, training ranks, and stamina policy. The standalone runner
+defaults to `--enemy-ai melee` for compatibility with earlier experiments. This
+controller attacks in reach and otherwise **wanders**; it does not pursue the
+survivor. `--enemy-ai recipe` retains the monster's authored controller, including
+normal sighted pursuit, and is the ranking driver's default. Keep AI choice fixed
+within a comparison. Knockback and retreat results are especially sensitive to it.
 
 Default comparisons use **all combat skills at levels 0, 3, 6, and 10**.
 `--skill N` selects any single level from 0 through 10. Skills are initialized
 once and both skill/art training are disabled throughout combat, including
 reactions and timed strikes. No repeated XP resets or modified catalog formulas
-are used. No extra combat arts are granted; the selected baseline style uses its
-production repertoire.
+are used. Selecting a learned style grants its owning art at the requested XP before the fight.
 
-Loadouts (`--loadout`, default `all`):
+`--loadout all` runs the original four loadouts; named loadouts can be run
+individually. The default outfit equips gloves and boots; `work` adds a T-shirt,
+jeans, and rain jacket, while `none` omits clothing. The default style is
+`basic_balanced`; styles and owned-art XP come from the loaded content catalog.
 
-| Name | Held equipment |
-| --- | --- |
-| `unarmed` | Empty hands |
-| `swordshield` | Left one-handed `arming_sword`, right `wooden_shield` |
-| `twohand` | The same `arming_sword`, two-handed grip |
-| `dual` | Two one-handed `arming_sword` instances |
+Scenarios remain selectable with `--scenario duel|crowd|passive|attrition`;
+`--max-ticks` sets the run limit. `--policy` selects attack or cautious behavior
+(passive always waits).
 
-Every loadout wears `leather_work_gloves` and `work_boots`, so production armor
-coverage and encumbrance are exercised without changing clothing between groups.
-The default stance is `basic_balanced`; `--style basic_aggressive` and
-`--style basic_defensive` select the other baseline stances. Setup equipment and
-style changes do not contribute combat costs.
-
-Scenarios:
-
-* `duel`: one zombie; survivor attacks whenever ready.
-* `crowd`: three simultaneous zombies, initially east, south, and west.
-* `passive`: one zombie; survivor only waits, retaining automatic reactions and
-  any engine-triggered counterattacks.
-* `attrition`: five zombies sequentially, spawning each successor on the first
-  free adjacent horizontal tile in production step order. Survivor HP, stamina,
-  injuries, recovery, and cooldowns carry over without healing/reset or a rest gap.
-
-At a ready input barrier, the survivor uses production `FindTarget` and `Attack`.
+Under the default attack policy, the survivor uses production `FindTarget` and `Attack`.
 If no attack commits, it waits one normal turn. It never deliberately moves,
 changes stance, uses abilities, heals, or optimizes a move selection. NPCs move and
 attack according to their controller. This is a fixed-policy experiment rather
@@ -84,7 +151,7 @@ than an optimal-play claim.
 
 Scheduler-selected event boundaries are also observation boundaries, so terminal
 deaths can be noticed after the survivor stops supplying input. Runs end when the
-survivor dies, all scenario opponents die, or the tick limit is reached (default
+survivor dies, escapes, all scenario opponents die, or the tick limit is reached (default
 30000). Death is checked through `World::IsActorAlive`, including destroyed NPC
 handles; it is not inferred from total body HP. Production death finalization and
 world invariants are checked before reporting.
@@ -112,8 +179,8 @@ measures blocks against survivor strikes.
 
 Per-run CSV includes:
 
-* Setup identities/options, outcome (`win`, `loss`, `timeout`), elapsed ticks,
-  opponents killed, final survivor stamina, and policy waits.
+* Setup identities/options, outcome (`win`, `loss`, `escape`, `timeout`), elapsed
+  ticks, opponents killed, final survivor stamina, and policy movement/rest counts.
 * Strike counts split into invalidated, intrinsic misses, dodges, parries, and
   contacts, plus successful blocks, armor stops, and counter strikes.
 * Actual HP loss, maximum-HP loss, block absorption, and armor absorption in
@@ -129,15 +196,14 @@ subtracting final stamina from initial stamina (which would hide regeneration).
 Final stamina is available on the retained player actor even after death.
 
 Summary rows group by loadout and skill within the chosen scenario. They include
-win/loss/timeout counts and rates; nearest-rank median/p90 ticks, actual survivor
+separate win/loss/escape/timeout counts and rates; nearest-rank median/p90 ticks, actual survivor
 HP lost, HP dealt, stamina spent, and incoming block/armor absorption; pooled
 outgoing strike outcome rates and incoming defense rates; and invalidation,
 wasted-windup, and exhausted-action frequencies. Pooled rates divide total event
 counts, rather than averaging noisy per-run ratios. Empty denominators report
 zero. Medians/p90 include **all outcomes**, including timeouts; elapsed ticks are
-not a conditional time-to-kill statistic. A passive survivor still alive at the
-limit is a timeout, not an inferred combat victory. Preserve the per-run CSV when
-computing survival curves or outcome-conditional statistics.
+not a conditional time-to-kill statistic. Separate `win_hp_lost` and
+`win_max_hp_lost` metrics summarize injury among wins; blank values mean no wins.
 
 ## Headless combat commands
 

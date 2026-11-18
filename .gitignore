@@ -7,3 +7,14 @@
 /cataclysmx-lan-profile.txt
 /cataclysmx-lan-profile.txt.tmp*
 __pycache__
+
+# Generated balance exports are local artifacts, not source content.
+*.csv
+*.tsv
+*.xls
+*.xlsx
+*.xlsm
+*.xlsb
+*.hlsx
+*.ods
+/doc/balance/
