@@ -1,0 +1,10 @@
+@text-art 1
+@color shaft #83949C
+@color edge #E0E5DD
+@color steel #9CAEB2
+@color wire #707E83
+@default shaft
+---
+                         <edge>╭────╲
+ <shaft>══════════════════════<wire>╪═╪<steel>─────<edge>>
+                         <steel>╰────╱

@@ -1,0 +1,19 @@
+@text-art 1
+@color body #91A6B0
+@color light #CBD8D9
+@color shade #607C88
+@color deep #3F5661
+@color wire #B7BABC
+@color worn #A89A7C
+@default body
+---
+        <wire>.------------.
+      <wire>.'              '.
+     <wire>/                  \
+    <worn>o <light>.----------------. <worn>o
+    <wire>|<light>/  <deep>______________  <shade>\<wire>|
+    <wire>|<body>\<shade>__________________/<wire>|
+     <light>|  |             <worn>: <shade>|
+     <body>|  <light>|             <worn>: <shade>|
+      <body>\                <shade>/
+       <shade>\______________/

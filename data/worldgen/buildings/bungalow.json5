@@ -4,7 +4,7 @@
   rows:[
     '###w#######u###',
     '#CRsk...I.L..b#',
-    '#.....c.I.....#',
+    '#..A..c.I.....#',
     '#..le.T.+..l..u',
     '#.......In....#',
     '#.......III+II#',
@@ -17,6 +17,7 @@
   palette:{'#':'wall_wood', I:'wall_plaster', '.':'floor_wood', '+':'closed_door',
     w:'window',u:'window_curtained',
     s:{terrain:'floor_tile',object:'kitchen_stove',facing:'south'},
+    A:{terrain:'floor_wood',loot:[{pool:'loot_kitchen_appliance_ground',chance:2500,destination:'ground'}]},
     k:{terrain:'floor_tile',object:'kitchen_sink',facing:'south'},
     a:{terrain:'floor_wood',object:'house_sofa',facing:'east'},
     t:{terrain:'floor_tile',object:'house_toilet',facing:'west'},

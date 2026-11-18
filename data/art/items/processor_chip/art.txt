@@ -1,0 +1,17 @@
+@text-art 1
+@color package #5F6867
+@color shine #9CA6A0
+@color shade #3C494C
+@color print #BDC2B0
+@color pin #BEA06D
+@color pinshine #E1CAA0
+@default package
+---
+    <pinshine>│ │ │ │ │ │ │ │ │ │
+  <shine>╔═<pin>╧═╧═╧═╧═╧═╧═╧═╧═╧═╧<shine>══╗
+<pin>──<package>╢  <shine>╭────────────────╮  <shade>╟<pin>──
+<pin>──<package>╢  │   <print>PROCESSOR    <shade>│  ╟<pin>──
+<pin>──<package>╢  │     <print>CPU        <shade>│  ╟<pin>──
+<pin>──<package>╢  <shade>╰────────────────╯  ╟<pin>──
+  <shade>╚═<pin>╤═╤═╤═╤═╤═╤═╤═╤═╤═╤<shade>══╝
+    <pin>│ │ │ │ │ │ │ │ │ │

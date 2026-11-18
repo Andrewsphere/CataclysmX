@@ -80,6 +80,10 @@
 - [Item presentation content](item_presentation.md): descriptions, colored UTF-8
   external and inline art, single-cell character policy, melee profiles and defaults.
 - [Item authoring](item_authoring.md): item, flags, art and progression workflows.
+- [Second item expansion](item_expansion.md): 80 new items, acquisition routes,
+  crafting/salvage, artwork and verified starting balance.
+- [Item balance anchors](item_balance.md): reference items, progression tradeoffs,
+  acquisition checks and combat comparison criteria for new designs.
 - [Definition flags](definition_flags.md): shared vocabulary, domains and set API.
 - [Item content pilot](item_pilot.md): five-item roster, crafting and balance rationale.
 - [Runtime crafting and recycling](crafting.md): jobs, reservations, work,

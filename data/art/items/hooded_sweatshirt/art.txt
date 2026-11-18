@@ -1,0 +1,22 @@
+@text-art 1
+@color cloth #73868A
+@color seam #4D6369
+@color hood #9CA7A1
+@color lining #424F55
+@color cord #C0BDA8
+@color cuff #667B80
+@default cloth
+---
+           <hood>╭──────╮
+          / <lining>╭────╮ <hood>\
+         /  <lining>│    │  <hood>\
+     <cloth>___/___<lining>╰────╯<cloth>___\___
+    /       <cord>\    /       <cloth>\
+   /   /     <cord>|  |     <cloth>\   \
+  /   /<seam>│     <cord>|  |     <seam>│<cloth>\   \
+ <cuff>/___/ <seam>│     <cord>o  o     <seam>│ <cuff>\___\
+       <cloth>│             │
+       │   <seam>╭─────╮   <cloth>│
+       │   <seam>│     │   <cloth>│
+       │   <seam>╰─────╯   <cloth>│
+       <cuff>└─────────────┘

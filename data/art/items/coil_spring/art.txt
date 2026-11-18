@@ -1,0 +1,14 @@
+@text-art 1
+@color body #A1A8A5
+@color edge #5A6765
+@color shine #D8DFDA
+@color shade #7D8A85
+@color dark #414D4B
+@default body
+---
+    <shade>╭──╮ ╭──╮ ╭──╮ ╭──╮ ╭──╮
+   <body>╱    <shine>╳    ╳    ╳    ╳    <body>╲
+  <edge>│    <shine>╱<dark>│   <shine>╱<dark>│   <shine>╱<dark>│   <shine>╱<dark>│    <edge>│
+ <edge>─╯   <shine>╱ <dark>│  <shine>╱ <dark>│  <shine>╱ <dark>│  <shine>╱ <dark>│   <body>╱
+  <shade>╲  <shine>╱  <shade>╲ <shine>╱  <shade>╲ <shine>╱  <shade>╲ <shine>╱  <shade>╲  <body>╱──
+   <body>╰╯    ╰╯   ╰╯   ╰╯   ╰╯

@@ -1,0 +1,14 @@
+@text-art 1
+@color jacket #687477
+@color shine #A4B0AE
+@color shade #414E55
+@color plug #89948C
+@color plugshade #57665F
+@color contact #C2BA98
+@default jacket
+---
+  <shine>╔══╗                   <plug>╔══╗
+  <plug>║<contact>::<plugshade>╠<shine>══╮           ╭════<plug>╣<contact>::<plugshade>║
+  <plugshade>╚══╝  <jacket>╰──╮     ╭──╯    <plugshade>╚══╝
+           <jacket>│ <shine>╭───╯
+           <shade>╰─╯

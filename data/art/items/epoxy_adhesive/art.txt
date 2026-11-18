@@ -1,0 +1,17 @@
+@text-art 1
+@color body #AAB3AF
+@color light #DCE1D3
+@color shade #737F7A
+@color resin #C49B5D
+@color hardener #7397A0
+@color ink #CCD5C7
+@default body
+---
+    <resin>____              <hardener>____
+   <resin>| <light>A  <shade>|            <hardener>| <light>B  <shade>|
+   <resin>|____<shade>|            <hardener>|____<shade>|
+   <light>/    <shade>\            <light>/    <shade>\
+  <body>| <resin>EPOXY<shade>|          <body>| <hardener>EPOXY<shade>|
+  <body>| <ink>RESIN<shade>|          <body>|<ink>HARDEN<shade>|
+  <light>|      <shade>|          <light>|      <shade>|
+   <shade>\____/            \____/

@@ -1,0 +1,15 @@
+@text-art 1
+@color wood #A77C4E
+@color light #C79D66
+@color grain #705238
+@color grip #7B6347
+@color end #92704A
+@color shade #584C38
+@default wood
+---
+                   <light>__,────╮
+          <light>__,────~~   <grain>────  <wood>╲
+  <end>╭───,──<wood>~     <grain>──────  ──   <wood>)
+  <end>( <grip>|||  <grain>─────     ───(─)   <wood>)
+  <end>╰───~──.<shade>__     <grain>──────    <wood>╱
+            <shade>~───._______.─╯

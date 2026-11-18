@@ -1,0 +1,18 @@
+@text-art 1
+@color body #B16A58
+@color light #D19A7F
+@color shade #794B43
+@color steel #B4BDC0
+@color dark #455157
+@color rust #99704D
+@default body
+---
+        <steel>______________
+       <steel>/  <dark>__________  <steel>\
+      <steel>|  <dark>|          |  <steel>|
+   <light>___<steel>|__|<light>__________<steel>|__|<light>___
+  <light>/________________________<shade>\
+  <body>|  <steel>[]                []  <shade>|
+  <shade>|<dark>========================<shade>|
+  <body>|                        <shade>|
+  <rust>|<shade>________________________|

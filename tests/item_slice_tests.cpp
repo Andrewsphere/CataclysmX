@@ -106,7 +106,7 @@ TEST_CASE("Town slice publishes sixty complete current definitions and retires t
     CHECK_FALSE(flag.domains.Contains(FlagDomain::Terrain));
     CHECK_FALSE(flag.domains.Contains(FlagDomain::Object));
     CHECK_FALSE(flag.description.empty());
-    CHECK(content.ItemCount() == 98); // 60 slice + 3 learning + 5 pilots + 22 obsolete + 6 combat + 2 internal containers.
+    CHECK(content.ItemCount() == 178); // Previous 98 plus 80 expansion items.
     for (const char* name : sliceIds) {
         CAPTURE(name);
         const auto type = content.FindItem(name);

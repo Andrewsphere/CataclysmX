@@ -1,0 +1,21 @@
+@text-art 1
+@color case #A18C70
+@color shine #CDBA95
+@color shade #6F6859
+@color dial #B9C6B6
+@color scale #738F8C
+@color grille #59696A
+@color grillesheen #86948B
+@color knob #C1B28F
+@color antenna #B4C0BF
+@default case
+---
+                   <antenna>╱
+                  <antenna>╱
+   <shine>╔═════════════<antenna>╱<shine>════════╗
+   <case>║  <dial>┌──────────────┐    <shade>║
+   <case>║  <dial>│ <scale>88  100  108 <dial>│  <knob>o <shade>║
+   <case>║  <scale>└──────────────┘    <shade>║
+   <case>║  <grillesheen>▒▒▒▒▒▒▒<grille>▒▒▒▒▒▒▒   <knob>o  <shade>║
+   <case>║  <grille>▒▒▒▒▒▒▒▒▒▒▒▒▒▒      <shade>║
+   <shade>╚══════════════════════╝

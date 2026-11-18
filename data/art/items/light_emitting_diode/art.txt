@@ -1,0 +1,21 @@
+@text-art 1
+@color resin #BD625B
+@color shine #EAC3AD
+@color rim #D88E79
+@color shade #743F40
+@color cup #A99588
+@color lead #B7C2C4
+@default resin
+---
+        <shine>╭──────────<rim>╮
+     <shine>╭──╯          <rim>╰──╮
+    <rim>╱   <shine>│              <resin>╲
+   <rim>│    <shine>│   <cup>╭────╮      <shade>│
+   <resin>│        <cup>│    │      <shade>│
+   <resin>│        <cup>╰─┬──╯      <shade>│
+  <rim>╭┴──────────<lead>┼<rim>─────────┴╮
+  <shade>╰──────<lead>┬<shade>────<lead>┴<shade>───<lead>┬<shade>──────╯
+         <lead>│        │
+         <lead>│        │
+         <lead>│        │
+                  <lead>│

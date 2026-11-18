@@ -1,0 +1,19 @@
+@text-art 1
+@color case #5D7667
+@color hinge #89927A
+@color recess #394C45
+@color steel #B0BBC0
+@color dark #6B7B84
+@color light #E0E4DC
+@default case
+---
+  ╭──────────────────────────╮
+  │ <steel>┌──┐ ┌──┐ ┌──┐ ┌──┐ ┌─┐ <case>│
+  │ <steel>│<recess>oo<steel>│ │<recess>oo<steel>│ │<recess>oo<steel>│ │<recess>oo<steel>│ │<recess>o<steel>│ <case>│
+  │ <dark>└──┘ └──┘ └──┘ └──┘ └─┘ <case>│
+  <hinge>├────────────┬─────────────┤
+  <case>│  <light>╭──╮      <recess>│ <steel>▄ ▄ ▄ ▄ ▄  <case>│
+  │  <steel>│<dark>o <steel>╰══════<dark>╪<steel>════════╗   <case>│
+  │  <dark>╰──╯      <recess>│        <steel>║   <case>│
+  │            <recess>│        <dark>║   <case>│
+  ╰────────────┴─────────────╯

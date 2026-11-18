@@ -1,0 +1,13 @@
+@text-art 1
+@color ceramic #C7AB7D
+@color shine #E6D4AE
+@color shade #907451
+@color lead #BAC4C5
+@color brown #755140
+@color red #AE5650
+@color gold #C5A25C
+@default ceramic
+---
+       <shine>╭──────────╮
+<lead>───────<ceramic>┤ <brown>││ <red>│ <gold>││  <ceramic>├<lead>───────
+       <shade>╰──────────╯

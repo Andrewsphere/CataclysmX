@@ -1,0 +1,25 @@
+@text-art 1
+@color shell #6C7866
+@color lining #AA9F84
+@color fold #45594F
+@color zip #B7B5A0
+@color pocket #88917A
+@color hem #566757
+@default shell
+---
+           ╭──────╮
+          / <lining>░░░░░░ <shell>\
+     ____/___<lining>╲╱<shell>_____\____
+    /        <zip>║          <shell>\
+   /   /     <zip>║     <shell>\     \
+  /   /<fold>│     <zip>║     <fold>│<shell>\     \
+ /   / <fold>│     <zip>║     <fold>│ <shell>\     \
+<hem>|___/  <shell>│     <zip>║     <shell>│  <hem>\____|
+       <shell>│     <zip>║     <shell>│
+       │ <pocket>┌─┐ <zip>║ <pocket>┌─┐ <shell>│
+       │ <pocket>│ │ <zip>║ <pocket>│ │ <shell>│
+       │ <pocket>└─┘ <zip>║ <pocket>└─┘ <shell>│
+       │     <zip>║     <shell>│
+       │     <zip>║     <shell>│
+       │     <zip>║     <shell>│
+       <hem>└─────<zip>╨<hem>─────┘

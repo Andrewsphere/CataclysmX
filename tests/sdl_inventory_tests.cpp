@@ -12,6 +12,8 @@
 using namespace cataclysmx;
 using namespace cataclysmx::sdl;
 
+extern const char* const expansionItemIds[80];
+
 namespace {
 struct Display {
     SDL_Surface* surface = nullptr;
@@ -388,7 +390,7 @@ TEST_CASE("SDL item pilot renders five authored assets at compact and wide sizes
     }
 }
 
-TEST_CASE("SDL item slice renders sixty definitions through the item browser", "[item-slice][sdl][inventory][render]") {
+TEST_CASE("SDL item slice and expansion render through the item browser", "[item-slice][item-expansion][sdl][inventory][render]") {
     Diagnostics diagnostics;
     auto loaded = LoadContentPack(CATACLYSMX_CONTENT_PACK, &diagnostics);
     INFO(FormatDiagnostics(diagnostics).c_str()); REQUIRE(loaded);
@@ -397,7 +399,7 @@ TEST_CASE("SDL item slice renders sixty definitions through the item browser", "
     Localization localization; REQUIRE(localization.Load(CATACLYSMX_LOC_DIRECTORY, "en"));
     const auto keys = DefaultKeymap();
     ItemBrowser browser; browser.Open(content, localization);
-    CHECK(browser.Frame().matches.size() == 96); // Authored definitions only; both generated containers are hidden.
+    CHECK(browser.Frame().matches.size() == 176); // Authored definitions only; both generated containers are hidden.
     for (const auto type : browser.Frame().matches) {
         CHECK(type != content.CorpseItem());
         CHECK_FALSE(content.GetItem(type).unfinishedCraft);
@@ -415,6 +417,7 @@ TEST_CASE("SDL item slice renders sixty definitions through the item browser", "
         unsigned rendered = 0;
         unsigned learningRendered = 0;
         unsigned combatListed = 0;
+        unsigned expansionRendered = 0;
         for (std::size_t index = 0; index < browser.Frame().matches.size(); ++index) {
             const auto type = browser.Frame().matches[index];
             const auto& item = content.GetItem(type);
@@ -435,6 +438,8 @@ TEST_CASE("SDL item slice renders sixty definitions through the item browser", "
                 ++combatListed;
                 continue;
             }
+            bool expansion = false;
+            for (const char* id : expansionItemIds) { expansion |= item.id == id; }
             CAPTURE(item.id.c_str());
             browser.Frame().selected = index;
             browser.Handle({"e"}, keys, content, localization);
@@ -448,7 +453,7 @@ TEST_CASE("SDL item slice renders sixty definitions through the item browser", "
             };
             draw();
             const auto top = SurfaceHash(display.surface);
-            if (const char* prefix = std::getenv("CATACLYSMX_ITEM_SLICE_PREVIEW")) {
+            if (const char* prefix = std::getenv(expansion ? "CATACLYSMX_ITEM_EXPANSION_PREVIEW" : "CATACLYSMX_ITEM_SLICE_PREVIEW")) {
                 const auto output = String(prefix) + "_" + item.id + "_" + NumberText(size.x) + ".png";
                 REQUIRE(SDL_SavePNG(display.surface, output.c_str()));
             }
@@ -457,17 +462,19 @@ TEST_CASE("SDL item slice renders sixty definitions through the item browser", "
             frame.examination.art = &item.art;
             frame.examination.scroll = 9999; draw();
             CHECK(frame.examination.scroll >= 0); CHECK(frame.examination.scroll < 9999);
-            if (size.x == 480) { CHECK(frame.examination.scroll > 0); }
+            if (size.x == 480 && !expansion) { CHECK(frame.examination.scroll > 0); }
             frame.examination.scroll = 0; draw();
             CHECK(SurfaceHash(display.surface) == top);
             browser.Handle({"Escape"}, keys, content, localization);
             // Render the new learning carriers too, while retaining the original
             // sixty-item slice coverage independently of the catalog additions.
-            if (item.id == "workshop_primer_print" || item.id == "salvage_notes_print"
+            if (expansion) { ++expansionRendered; }
+            else if (item.id == "workshop_primer_print" || item.id == "salvage_notes_print"
                 || item.id == "workshop_ebook_reader") { ++learningRendered; }
             else { ++rendered; }
         }
         CHECK(rendered == 60);
+        CHECK(expansionRendered == 80);
         CHECK(learningRendered == 3);
         CHECK(combatListed == 6);
     }

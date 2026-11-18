@@ -1,0 +1,14 @@
+@text-art 1
+@color body #B77B57
+@color edge #714D3E
+@color shine #E5B58C
+@color shade #92634E
+@color dark #594036
+@color patina #718579
+@default body
+---
+      <shine>╱──────────────<edge>╲
+  <edge>╱──╱  <shine>────────      <shade>╲──╲
+ <body>╱       <patina>╱──────╲         <edge>╲
+ <dark>╲──────╱        <shade>╲────────╱
+   <dark>╲────────────────────╱

@@ -1,0 +1,16 @@
+@text-art 1
+@color mesh #8C999C
+@color lining #485B64
+@color lace #D9D2B7
+@color sole #B5B9AA
+@color seam #607B8C
+@color edge #D7D8C8
+@default mesh
+---
+    <edge>╭──────╮       ╭──────╮
+    <mesh>│ <lining>╭──╮ <mesh>│       │ <lining>╭──╮ <mesh>│
+    │ <lining>╰──╯ <mesh>╰╮      │ <lining>╰──╯ <mesh>╰╮
+    │   <lace>╳╳╳ <mesh>╰──╮   │   <lace>╳╳╳ <mesh>╰──╮
+    │    <lace>╳╳╳   <mesh>╰╮  │    <lace>╳╳╳   <mesh>╰╮
+    <seam>╰───────────│  ╰───────────│
+    <sole>╰═══════════╯  ╰═══════════╯

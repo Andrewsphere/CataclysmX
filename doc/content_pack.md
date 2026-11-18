@@ -32,12 +32,22 @@ not paths. See [content format](content_format.md) and
 | Manifest | Purpose and sources |
 | --- | --- |
 | `data/demo.json5` | Shared legacy definitions from `terrain/`, `items/`, `crafting/`, `monsters/`, `objects/`, and `worldgen/buildings/`. |
-| `data/first_house.json5` | Curated FirstHouse pack: demo sources plus household items, crafting, furniture, loot, cellar monsters, furnished house, and the three slice item sources with low-tech pilot items and current slice recipes. |
-| `data/content.json5` | Expanded Town pack: shared sources plus urban resources, the complete 60-item slice, specialists, 32 populated building layouts, a park and a square, and three legacy patterns (37 total). |
+| `data/first_house.json5` | Curated FirstHouse pack: shared skill, learning and combat sources; demo and household content; the three slice item sources, low-tech items and slice recipes; all four expansion item/crafting pairs and shared expansion loot; furniture, cellar monsters and the furnished house. |
+| `data/content.json5` | Expanded Town pack: shared FirstHouse sources plus urban resources, low-tech recipes, specialists and urban building layouts; includes all four expansion item/crafting pairs and shared expansion loot. |
 
 The manifests reference shared definition files; they do not duplicate those
 definitions within a loaded pack. See [urban content](urban_content.md) for the
 complete roster and scenario guide.
+
+The [80-item expansion](item_expansion.md) adds new definitions to the earlier
+catalog; it does not upgrade existing IDs. Town's 178-item total is the previous
+98 loaded definitions plus these 80, not a count of newly authored or necessarily
+current items: loaded legacy definitions can include obsolete entries.
+`worldgen/loot/expansion.json5` supplies shared themed pools for both packs.
+Compact pools respect existing furniture limits, while dedicated ground-only pools
+place bulky workshop stock, camping gear, outerwear, the toaster and bucket without
+nesting them in general furniture loot. Expansion recipes include four craft-only
+weapons; the remaining expansion items have loot routes.
 
 The house has two equally weighted cellar layouts. The workshop variant has a
 30% chance of a zombie away from the stairs. Movable lamps light both surface

@@ -1,0 +1,10 @@
+@text-art 1
+@color copper #BC8050
+@color varnish #DBAD74
+@color shade #80563E
+@color lead #B3BDB9
+@default copper
+---
+   <lead>───<varnish>╭─╮╭─╮╭─╮<copper>╭─╮╭─╮╭─╮<lead>───
+      <copper>│ <shade>│<copper>│ <shade>│<copper>│ <shade>│<copper>│ <shade>│<copper>│ <shade>│<copper>│ <shade>│
+      <shade>╰─╯╰─╯╰─╯╰─╯╰─╯╰─╯

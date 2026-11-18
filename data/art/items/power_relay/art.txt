@@ -1,0 +1,20 @@
+@text-art 1
+@color case #65737A
+@color shine #9CAEB2
+@color shade #48565F
+@color shadow #323F47
+@color print #C1C7BC
+@color contact #B5A47D
+@color pinshade #827657
+@default case
+---
+     <shine>╭──────────────────╮
+    <shine>╱  <print>RELAY  ──┐      <case>╱ <shade>│
+   <case>╱            <print>└─    <case>╱  <shade>│
+  <shine>╔═══════════════════╗  <shade>│
+  <case>║                   <shade>║  │
+  <case>║    <print>12V  DC        <shade>║  │
+  <case>║                   <shade>║  ╱
+  <shadow>╚═══════════════════╝ ╱
+    <contact>││    ││    ││   ││
+    <pinshade>││    ││    ││   ││

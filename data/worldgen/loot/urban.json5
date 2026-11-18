@@ -10,6 +10,7 @@
   {type:'loot_pool', id:'loot_cleaning', entries:[
     {item:'bar_soap',weight:5},{item:'cloth_patch',weight:3,count:{min:1,max:3}},
     {item:'plastic_storage_box',weight:1},
+    {item:'toilet_paper',weight:3},{item:'toothpaste',weight:3},
   ]},
   {type:'loot_pool', id:'loot_medical', entries:[
     {item:'cloth_bandage',weight:5,count:{min:1,max:3}},
@@ -19,6 +20,7 @@
     {pool:'house_tools',weight:4},{item:'adjustable_wrench',weight:3},
     {item:'pry_bar',weight:2},{item:'metal_file',weight:2},{item:'claw_hammer',weight:3},
     {item:'safety_goggles',weight:2},
+    {pool:'loot_hand_tools',weight:8},
   ]},
   // Low-weight compatibility sources for unchanged urban and pilot recipes only.
   {type:'loot_pool', id:'loot_legacy_recipe', entries:[
@@ -29,6 +31,7 @@
     {item:'aluminum_scrap',weight:3},{item:'rigid_plastic_scrap',weight:3},
     {item:'rubber_hose',weight:3},{item:'timber_plank',weight:3},{item:'glass_shard',weight:2},
     {pool:'loot_legacy_recipe',weight:1},
+    {pool:'loot_metal_stock',weight:12},{pool:'loot_fasteners',weight:8},
   ]},
   {type:'loot_pool', id:'loot_electronics', entries:[
     {item:'transistor',weight:4,count:{min:1,max:4}},{item:'diode',weight:4,count:{min:1,max:4}},
@@ -37,11 +40,14 @@
     {item:'aa_alkaline_battery',weight:3,count:{min:1,max:4}},
     {item:'aa_rechargeable_battery',weight:2},{item:'battery_charger',weight:2},
     {item:'workshop_ebook_reader',weight:1},
+    {pool:'loot_computer_parts',weight:18},{pool:'loot_electrical_parts',weight:18},
+    {item:'desk_radio',weight:3},
   ]},
   {type:'loot_pool', id:'loot_clothing', entries:[
     {item:'work_shirt',weight:4},{item:'cotton_tshirt',weight:4},{item:'denim_jeans',weight:4},
     {item:'rain_jacket',weight:3},{item:'leather_work_gloves',weight:3},{item:'sewing_supplies',weight:2},
     {item:'work_trousers',weight:1}, // Original recycler still has an obtainable target.
+    {pool:'loot_everyday_clothing',weight:8},{pool:'loot_work_protection',weight:3},
   ]},
   {type:'loot_pool', id:'loot_reading_room_supplies', entries:[
     {item:'bottled_water',weight:4},{item:'chocolate_bar',weight:2},
@@ -50,7 +56,8 @@
     {item:'boxing_manual',weight:2},{item:'weapon_forms_manual',weight:2},
   ]},
   {type:'loot_pool', id:'loot_office', entries:[
-    {pool:'loot_reading_room_supplies',weight:4},{pool:'loot_electronics',weight:1},
+    {pool:'loot_reading_room_supplies',weight:4},{pool:'loot_electronics',weight:2},
+    {pool:'loot_computer_parts',weight:4},{item:'desk_radio',weight:2},
     {item:'corrugated_cardboard',weight:2},
   ]},
   {type:'loot_pool', id:'loot_fire_station', entries:[
@@ -72,6 +79,8 @@
     {item:'steel_water_bottle',weight:4},{item:'nylon_rope',weight:3},{item:'camping_backpack',weight:2},
     {item:'camping_tarp',weight:3},{item:'rain_jacket',weight:2},{pool:'loot_food',weight:2},
     {item:'brass_knuckles',weight:1},
+    {item:'compass',weight:3},{item:'matchbox',weight:3},{item:'trail_mix',weight:3},
+    {item:'canvas_duffel',weight:2},{pool:'loot_textile_repair',weight:3},
   ]},
   {type:'loot_pool', id:'loot_warehouse', entries:[
     {pool:'loot_hardware',weight:4},{item:'plastic_storage_box',weight:3},
@@ -85,6 +94,7 @@
   {type:'loot_pool', id:'loot_laundry', entries:[
     {pool:'loot_cleaning',weight:4},{pool:'loot_clothing',weight:4},
     {item:'cloth_patch',weight:3},{item:'sewing_supplies',weight:2},
+    {pool:'loot_textile_repair',weight:3},
   ]},
   {type:'loot_pool', id:'loot_pantry', entries:[{pool:'house_pantry',weight:5},{pool:'loot_food',weight:2}]},
   {type:'loot_pool', id:'loot_utility', entries:[
@@ -100,5 +110,6 @@
     {item:'servo',weight:2},{pool:'loot_electronics',weight:2},{pool:'loot_hardware',weight:2},
     {item:'workshop_primer_print',weight:2},{item:'salvage_notes_print',weight:2},
     {item:'boxing_manual',weight:1},{item:'weapon_forms_manual',weight:1},
+    {pool:'loot_textile_repair',weight:6},{item:'toy_robot',weight:3},
   ]},
 ]}

@@ -1,0 +1,21 @@
+@text-art 1
+@color frame #626E70
+@color shine #A3AFAB
+@color shade #3A4C54
+@color blade #899693
+@color bladeedge #BBC4B8
+@color hub #B2A788
+@color hole #465856
+@default frame
+---
+  <shine>╔════════════════════════╗
+  <frame>║ <hole>o  <bladeedge>╭────────────╮   <hole>o  <shade>║
+  <frame>║   <bladeedge>╱    <blade>╲  ╱      <shade>╲     ║
+  <frame>║  <bladeedge>│      <blade>╲╱        <shade>│    ║
+  <frame>║  <bladeedge>│  <blade>───<hub>╭──╮<blade>─────  <shade>│    ║
+  <frame>║  <bladeedge>│     <hub>│<hole>oo<hub>│       <shade>│    ║
+  <frame>║  <blade>│  ───<hub>╰──╯<blade>─────  <shade>│    ║
+  <frame>║  <blade>│      <shade>╱╲        │    ║
+  <frame>║   <blade>╲    <shade>╱  ╲      ╱     ║
+  <frame>║ <hole>o  <shade>╰────────────╯   <hole>o  <shade>║
+  <shade>╚════════════════════════╝

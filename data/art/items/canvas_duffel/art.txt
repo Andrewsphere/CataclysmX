@@ -1,0 +1,20 @@
+@text-art 1
+@color canvas #838B69
+@color strap #58664F
+@color light #B3B494
+@color seam #505E49
+@color label #B7AD8E
+@color zip #B5BDB0
+@default canvas
+---
+         <strap>╭──────────╮
+        /            \
+       /              \
+      /   <light>╭──────╮     <strap>\
+  <canvas>╭──┴────┴──────┴──────┴──╮
+ /    <strap>║    <zip>─────────  <strap>║     <canvas>\
+│     <strap>║               ║      <canvas>│
+│     <strap>║    <label>┌──────┐    <strap>║      <canvas>│
+│     <strap>║    <label>│      │    <strap>║      <canvas>│
+│     <strap>║    <label>└──────┘    <strap>║      <canvas>│
+ <seam>\____<strap>║<seam>_______________<strap>║<seam>_____/

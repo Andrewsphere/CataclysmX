@@ -1,9 +1,10 @@
 # Item authoring
 
 This guide is an editorial workflow. The current loadable schema is authoritative in
-[content format](content_format.md), [item presentation](item_presentation.md), and
-[crafting content](crafting_content.md); [content packs](content_pack.md) describes
-manifest integration. Check the actual authored data and implementation when those
+[content format](content_format.md), [item presentation](item_presentation.md),
+[crafting content](crafting_content.md), and [combat content](combat_content.md);
+[content packs](content_pack.md) describes manifest integration. Check the actual
+authored data and implementation when those
 sources disagree. Unknown fields are errors.
 
 ## Identity, physical scale, and setting
@@ -96,23 +97,29 @@ automatic mechanics; include the vocabulary source in each pack that needs it.
 
 Only author implemented mechanics: the documented `container`, `energy_store`,
 `charger`, and `door_controller` capabilities; existing `tool_traits` and their
-tiers; `crafting_power` where its documented store exists; and documented melee
-profiles. Check exact composition and bounds in the authoritative documents.
-Do not invent material, armor, ranged, food effects, or other unsupported fields.
+tiers; `crafting_power` where its documented store exists; documented melee/grip
+and armor profiles; and supported book/manual definitions. See
+[combat content](combat_content.md) and [skill content](skills_content.md) for
+equipment and learning fields. Check exact composition and bounds in the
+authoritative documents. Material names, firearm/food/medicine flags and prose
+do not create material simulation, firing, consumption or healing mechanics.
 Record intended but unsupported properties and behaviors as metadata-only in the
 delivery report; prose and classifications do not implement them.
 
 ## Balance and progression
 
-Use shipped values as canonical anchors, not an invented universal stat table:
-`claw_hammer` is 600 g/500 ml, `glass_bottle` 200 g/600 ml with 500 ml capacity,
-and `work_shirt` 300 g/1200 ml. The existing `scrap_knife` and its crafting chain
-provide an early improvised progression anchor; compare new items to their peers,
-their role, acquisition cost, and the current combat data. Existing items without
-`melee` use the default 4 HP blunt, 100 ticks, one hand. Explicit melee damage is
-in hundredths of HP, not whole HP; verify damage types, penetration, hands and
-attack cost against [item presentation](item_presentation.md). Avoid silently
-rebalancing existing definitions. Give reasons for chosen values and tradeoffs.
+Use [item balance anchors](item_balance.md) as the shared design reference. It
+defines current comparison items, intended progression relationships, acquisition
+checks, clothing controls and battle conditions. Start with the item's role,
+nearest current peers, expected advantage and meaningful tradeoff. Shipped values
+are comparison points; measured win rates are not approved universal targets.
+
+`claw_hammer`, `chef_knife` and `arming_sword` provide utility and dedicated-weapon
+references. `scrap_knife` is obsolete and should not anchor new progression.
+Compare all reachable acquisition routes, supported utility, equipment costs and
+combat results. Verify units and fields against [combat content](combat_content.md)
+and [item presentation](item_presentation.md). Explain chosen values and any
+deliberate retuning of existing definitions. Keep generated reports under `/out`.
 
 ## Art direction and external format
 
@@ -181,7 +188,8 @@ rationale; consult the actual manifests for current pack inclusion.
 The [first broad slice](item_slice.md) adds 60 current definitions and explicitly
 retires the older non-pilot catalog. Remaining dependency definitions carry the
 descriptive `obsolete` category; new recipes should use current alternatives.
-Books and similar reading material are deferred until the skill system exists.
+Books and manuals use the implemented [skill content](skills_content.md) and
+[combat content](combat_content.md) schemas; a book flag alone grants no learning.
 
 ## Larger batch briefs
 

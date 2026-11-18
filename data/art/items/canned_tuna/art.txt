@@ -1,0 +1,16 @@
+@text-art 1
+@color body #9AADB2
+@color light #D5DCD5
+@color shade #6C8188
+@color label #7797AA
+@color ink #D9CBA8
+@color fish #B3C7BE
+@default body
+---
+     <light>______________________
+  <light>.-'                      <body>'-.
+ <light>/        <ink>T U N A             <body>\
+<body>|       <fish>><<(((('>               <shade>|
+ <body>\<light>____________________________<shade>/
+ <label>|                            <shade>|
+  <shade>'--------------------------'

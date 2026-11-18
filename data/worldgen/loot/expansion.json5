@@ -1,0 +1,63 @@
+{format_version:1, definitions:[
+  // Shared by the household and urban packs. Bounds include entry counts.
+  // 1800 ml oats stay out of the broad 1500 ml food pool and its ancestors.
+  {type:'loot_pool',id:'loot_dry_staples',entries:[
+    {pool:'house_pantry',weight:6},{item:'rolled_oats',weight:4},
+  ]},
+  // Compact stock stays below the existing 3000 ml hardware maximum.
+  {type:'loot_pool',id:'loot_metal_stock',entries:[
+    {item:'steel_pipe',weight:3},{item:'steel_rod',weight:3},{item:'steel_wire',weight:4},
+    {item:'steel_chain',weight:2},{item:'wire_mesh',weight:2},
+    {item:'aluminum_sheet',weight:3},{item:'aluminum_tube',weight:3},{item:'copper_sheet',weight:2},
+    {item:'wooden_dowel',weight:3},{item:'rubber_sheet',weight:3},
+  ]},
+  {type:'loot_pool',id:'loot_fasteners',entries:[
+    {item:'framing_nails',weight:4},{item:'wood_screws',weight:4},
+    {item:'nuts_and_bolts',weight:4},{item:'door_hinge',weight:2},{item:'coil_spring',weight:2},
+    {item:'epoxy_adhesive',weight:3},
+  ]},
+  {type:'loot_pool',id:'loot_textile_repair',entries:[
+    {item:'foam_padding',weight:2},{item:'canvas_patch',weight:4},
+    {item:'leather_patch',weight:3},{item:'nylon_webbing',weight:3},{item:'sewing_thread',weight:4},
+  ]},
+  // 1200 ml maximum: safe inside the existing 1400 ml house_tools pool.
+  {type:'loot_pool',id:'loot_hand_tools',entries:[
+    {item:'retractable_utility_knife',weight:4},{item:'tin_snips',weight:3},
+    {item:'wood_chisel',weight:3},{item:'hand_drill',weight:2},{item:'multimeter',weight:2},
+  ]},
+  // Ordinary computer salvage, not a rare reward; maximum remains 2500 ml.
+  {type:'loot_pool',id:'loot_computer_parts',entries:[
+    {item:'processor_chip',weight:4},{item:'memory_module',weight:5},
+    {item:'solid_state_drive',weight:4},{item:'computer_power_supply',weight:4},
+    {item:'cooling_fan',weight:4},{item:'display_module',weight:4},{item:'distance_sensor',weight:3},
+  ]},
+  {type:'loot_pool',id:'loot_electrical_parts',entries:[
+    {item:'resistor',weight:4,count:{min:1,max:4}},{item:'capacitor',weight:4,count:{min:1,max:3}},
+    {item:'light_emitting_diode',weight:3,count:{min:1,max:3}},{item:'toggle_switch',weight:3},
+    {item:'power_relay',weight:3},{item:'cartridge_fuse',weight:3,count:{min:1,max:3}},
+    {item:'electrical_connector',weight:4},{item:'insulated_power_cable',weight:4},
+    {item:'transformer',weight:3},{item:'induction_coil',weight:3},
+    {item:'heating_element',weight:3},{item:'solder_wire',weight:4},{item:'multimeter',weight:3},
+  ]},
+  // No entry exceeds the old 1800 ml clothing maximum.
+  {type:'loot_pool',id:'loot_everyday_clothing',entries:[
+    {item:'cotton_socks',weight:5},{item:'sneakers',weight:4},{item:'canvas_duffel',weight:2},
+  ]},
+  {type:'loot_pool',id:'loot_work_protection',entries:[
+    {item:'hard_hat',weight:3},{item:'welding_gloves',weight:3},{item:'tool_belt',weight:3},
+  ]},
+  // Ground-only pools: never nest in general furniture loot, regardless of chance.
+  {type:'loot_pool',id:'loot_workshop_bulk_ground',entries:[
+    {item:'plywood_panel',weight:4},{item:'metal_toolbox',weight:3},{item:'socket_wrench_set',weight:4},
+  ]},
+  {type:'loot_pool',id:'loot_camping_bulk_ground',entries:[
+    {item:'water_jerrycan',weight:3},{item:'sleeping_bag',weight:4},{item:'wool_blanket',weight:4},
+    {item:'foam_sleeping_mat',weight:4},{item:'camping_tent',weight:3},
+  ]},
+  {type:'loot_pool',id:'loot_outerwear_ground',entries:[
+    {item:'hooded_sweatshirt',weight:5},{item:'winter_coat',weight:4},
+    {item:'work_coveralls',weight:3},{item:'padded_jacket',weight:1},
+  ]},
+  {type:'loot_pool',id:'loot_kitchen_appliance_ground',entries:[{item:'toaster',weight:1}]},
+  {type:'loot_pool',id:'loot_cleaning_bulk_ground',entries:[{item:'utility_bucket',weight:1}]},
+]}

@@ -1,0 +1,19 @@
+@text-art 1
+@color steel #ABB7BA
+@color shine #E0E4DD
+@color shade #68777B
+@color body #777060
+@color shadow #4E4C45
+@color label #C3BEA6
+@color contact #B19A68
+@default steel
+---
+                 <shine>╭──╮
+                <steel>╱  <shade>╱
+               <steel>╱  <shade>╱
+       <shine>╭──────<steel>╱──<shade>╱<shine>───────╮
+    <body>╔══╧════════════════╧══╗
+    <body>║       <label>SWITCH         <shadow>║
+    <shadow>╚════<contact>╤<shadow>══════<contact>╤<shadow>══════<contact>╤<shadow>═══╝
+         <contact>│      │      │
+         <contact>o      o      o

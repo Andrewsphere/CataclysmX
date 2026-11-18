@@ -1,0 +1,16 @@
+@text-art 1
+@color case #9CA9AA
+@color shine #D8DFD8
+@color shade #65757C
+@color label #C7C8AE
+@color ink #71817B
+@color barcode #4F5F62
+@color contact #C1A16A
+@default case
+---
+   <shine>╔══════════════════════╗
+   <case>║  <label>SOLID STATE DRIVE   <shade>║
+   <case>║  <ink>────────────────    <shade>║
+   <case>║  <barcode>▓▓▓▓▓▓▓▓▓▓▓▓▓       <shade>║
+   <case>║                      <shade>║
+   <shade>╚══════════════<contact>╤╤╤╤<shade>════╝

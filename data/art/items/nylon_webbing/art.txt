@@ -1,0 +1,14 @@
+@text-art 1
+@color body #777E64
+@color edge #4C5543
+@color shine #ACB396
+@color shade #626A53
+@color dark #343E33
+@color thread #929A7A
+@default body
+---
+   <shine>╭───────────────────────╮
+ <edge>╭─┤ <thread>═╪═╪═╪═╪═╪═╪═╪═╪═╪═ <edge>├─╮
+ <dark>│ <edge>│ <body>─┼─┼─┼─┼─┼─┼─┼─┼─┼─ <edge>│ <dark>│
+ <edge>╰─┤ <shade>═╪═╪═╪═╪═╪═╪═╪═╪═╪═ <edge>├─╯
+   <dark>╰───────────────────────╯

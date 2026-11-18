@@ -1,0 +1,22 @@
+@text-art 1
+@color cloth #A7946D
+@color quilt #6D6550
+@color edge #C4B58A
+@color binding #777452
+@color fold #514F42
+@color lining #929079
+@default cloth
+---
+           <lining>╭──╮╭──╮
+      <edge>╭────╯  <lining>╲╱  <edge>╰────╮
+     <cloth>/  <quilt>/\  /\ <binding>║ <quilt>/\  /\ <cloth>\
+    <cloth>/ <quilt>\/  \/  \<binding>║<quilt>/  \/  \ <cloth>\
+   <cloth>/ <quilt>/\<fold>│ <quilt>/\  /\<binding>║ <quilt>/\  /\<fold>│<quilt>\ <cloth>\
+  <cloth>/ <quilt>/  <cloth>│<quilt>/  \/  <binding>║<quilt>/  \/  <cloth>│ <quilt>\ <cloth>\
+ <cloth>/ <quilt>/\ /<cloth>│<quilt>\  /\  <binding>║<quilt>\  /\  <cloth>│<quilt>\ \ <cloth>\
+<edge>╰────╯ <cloth>│ <quilt>\/  \/<binding>║ <quilt>\/  \/<cloth>│ <edge>╰────╯
+       <cloth>│ <quilt>/\  /\<binding>║ <quilt>/\  /\<cloth>│
+       <cloth>│<quilt>/<edge>──<quilt>\/  <binding>║<quilt>/  \/<edge>──<cloth>│
+       <cloth>│<edge>\__/<quilt>\  <binding>║  <quilt>/<edge>\__/<cloth>│
+       <cloth>│ <quilt>/\  \/<binding>║ <quilt>\/  /\<cloth>│
+       <edge>╰═══════<binding>╩<edge>═══════╯

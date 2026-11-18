@@ -1,0 +1,18 @@
+@text-art 1
+@color body #A8986E
+@color light #C9BD94
+@color shade #776E50
+@color seam #928360
+@color strap #536D62
+@color buckle #BCC3B4
+@default body
+---
+          <strap>____    ____
+         <strap>/    \__/    \
+    <light>____/______________\____
+  <light>.'   <strap>|  |          |  |   <body>'.
+ <light>/     <strap>|<buckle>==<strap>|  <seam>/\      <strap>|<buckle>==<strap>|     <shade>\
+<body>|  <seam>/   <strap>|  | <seam>/__\     <strap>|  |   <seam>\  <shade>|
+<body>| <seam>|    <strap>|  | <light>TENT     <strap>|  |    <seam>| <shade>|
+ <body>\     <strap>|<buckle>==<strap>|<shade>__________<strap>|<buckle>==<strap>|     <shade>/
+  <shade>'.___<strap>|__|<shade>__________<strap>|__|<shade>___.'

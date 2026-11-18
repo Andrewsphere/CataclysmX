@@ -1,0 +1,20 @@
+@text-art 1
+@color body #DDD9C8
+@color light #F0EBDD
+@color shade #B4B19F
+@color core #B99E77
+@color bore #7F7563
+@color edge #CBC6B1
+@default body
+---
+        <light>______________
+     <light>.-'              <body>'-.
+   <light>.'    <edge>____________    <body>'.
+  <light>/    <edge>.'            '.    <body>\
+ <body>|    <edge>/     <core>______     <edge>\    <shade>|
+ <body>|    <edge>|    <core>(<bore>______<core>)    <edge>|    <shade>|
+  <body>\    <edge>'._          _.'    <shade>/
+   <body>'.     <edge>'--------'     <shade>.'
+     <shade>'-.______________.-'<light>____
+                         <light>\   <body>\
+                          <body>\<shade>___<body>\

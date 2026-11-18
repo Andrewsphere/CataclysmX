@@ -1,0 +1,17 @@
+@text-art 1
+@color body #B6A07A
+@color light #D1BF94
+@color shade #877454
+@color ink #D9D9B4
+@color nut #D0A36B
+@color fruit #A07274
+@default body
+---
+   <light>/\/\/\/\/\/\/\/\/\/\/\/\
+  <light>|                        <shade>|
+  <body>|       <ink>TRAIL MIX        <shade>|
+  <body>|     <nut>(o)  <fruit>.  <nut>( )  <fruit>o     <shade>|
+  <body>|      <fruit>.  <nut>(o)  <fruit>o  .      <shade>|
+  <body>|     <nut>( )  <fruit>.   <nut>(o)       <shade>|
+  <body>|                        <shade>|
+   <shade>\/\/\/\/\/\/\/\/\/\/\/\/

@@ -1,0 +1,13 @@
+@text-art 1
+@color glass #83A7AB
+@color reflection #C4DFDC
+@color glassshade #526F78
+@color cap #AFBDBB
+@color shine #DFE4DA
+@color capshade #75878B
+@color filament #BEAA8C
+@default cap
+---
+   <shine>╔══╦<reflection>════════════════<shine>╦══╗
+<cap>───╢  ║ <filament>────────────── <cap>║  ╟───
+   <capshade>╚══╩<glassshade>════════<glass>════════<capshade>╩══╝

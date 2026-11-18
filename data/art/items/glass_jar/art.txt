@@ -1,0 +1,19 @@
+@text-art 1
+@color body #A2C4BF
+@color light #DCEBE2
+@color shade #587F7D
+@color lid #A9A896
+@color metal #D1CEB3
+@color groove #737B72
+@default body
+---
+       <metal>______________
+      <lid>|<groove>==============<lid>|
+      <lid>|______________<groove>|
+      <light>/              <body>\
+     <light>/                <body>\
+    <body>|  <light>|               <shade>|
+    <body>|  <light>|               <shade>|
+    <body>|  <light>|               <shade>|
+    <body>|                  <shade>|
+     <body>\<shade>________________/

@@ -1,0 +1,18 @@
+@text-art 1
+@color board #568875
+@color edge #A2B99F
+@color shade #36594F
+@color metal #AEBDBA
+@color shine #D9DFCF
+@color mesh #627D81
+@color aperture #3D5963
+@color contact #C2A771
+@color trace #859E7A
+@default board
+---
+   <edge>╔══════════════════════╗
+   <board>║  <shine>╭────╮    ╭────╮    <shade>║
+   <board>║  <metal>│ <aperture>o  <mesh>│    <metal>│ <aperture>o  <mesh>│    <shade>║
+   <board>║  <mesh>╰────╯    ╰────╯    <shade>║
+   <board>║  <contact>. . .   <trace>─────       <shade>║
+   <shade>╚════<contact>╤╤╤╤<shade>══════════════╝

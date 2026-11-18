@@ -1,0 +1,17 @@
+@text-art 1
+@color shell #C8A04C
+@color light #E5C979
+@color rib #E0B65C
+@color shade #A57B3E
+@color brim #BC9144
+@color edge #786847
+@default shell
+---
+          <light>╭────────╮
+       <light>╭──╯  <rib>┌──┐  <shell>╰──╮
+     <light>╭─╯     <rib>│  │     <shell>╰─╮
+    <light>/        <rib>│  │        <shell>\
+   <shell>│         <rib>│  │         <shade>│
+   <shell>│         <rib>│  │         <shade>│
+  <brim>╭┴─────────┴──┴─────────┴╮
+  <edge>╰═══════════════════════╯

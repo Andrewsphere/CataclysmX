@@ -1,0 +1,17 @@
+@text-art 1
+@color steel #9DA8AC
+@color edge #DFE4DF
+@color jaw #707E86
+@color rivet #D0B879
+@color paint #9D4939
+@color wear #C5795A
+@default steel
+---
+                  <edge>__________
+             ____<steel>/_________/
+         ___/<rivet>  o <jaw>_________/
+    <wear>____/   <steel>/───\
+  <paint>/    /___/     \____
+ /  __/             \  \
+|  /                 |  |
+ \_\                 /__/

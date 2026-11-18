@@ -1,0 +1,16 @@
+@text-art 1
+@color body #6C8278
+@color light #9EB1A0
+@color shade #435E57
+@color seam #80988B
+@color strap #C3AC7B
+@color buckle #C3C9C3
+@default body
+---
+     <light>______________________
+   <light>/  <seam>/ / / / / / / / /   <body>/\
+  <body>|  <seam>/ / / / / / / / /   <shade>|  |
+  <body>|  <strap>|<buckle>====<strap>|       |<buckle>====<strap>|  <shade>|  |
+  <body>|  <strap>|    |       |    |  <shade>|  |
+   <shade>\_<strap>|____|<shade>_______<strap>|____|<shade>_/  /
+     <shade>\____________________\/

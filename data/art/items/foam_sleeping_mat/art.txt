@@ -1,0 +1,17 @@
+@text-art 1
+@color body #758E86
+@color light #ADC0A9
+@color shade #4C6B64
+@color core #334D4A
+@color strap #A79573
+@color buckle #C0C4B1
+@default body
+---
+     <light>_____________________
+  <light>.-'  <body>__________________  <light>'-.
+ <light>/   <body>.'  <shade>_____________   <body>'.   \
+<body>|   /  <light>.'             <shade>'.   |   |
+<body>|  <shade>|  <body>|      <core>_____      <shade>|  |   |
+<body>|   <shade>\  '.___<core>(_____)<shade>__.'  /   /
+ <shade>'.__'._______________.'__.-'
+     <strap>|<buckle>===<strap>|         |<buckle>===<strap>|

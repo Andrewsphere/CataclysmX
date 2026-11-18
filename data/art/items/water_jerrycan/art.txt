@@ -1,0 +1,19 @@
+@text-art 1
+@color body #728666
+@color light #A8B294
+@color shade #4D6250
+@color deep #34483E
+@color cap #BBA785
+@color wear #C7BE9E
+@default body
+---
+        <cap>_____     <light>_______
+       <cap>|_____|<light>___/  ___  \
+      <light>/          __/   <shade>\  |
+     <body>/          <deep>|       <shade>| |
+    <light>|   ______   <shade>\_____/  |
+    <body>|  <light>|  \\  / <shade>|         |
+    <body>|  <light>|   \\/  <shade>|         |
+    <body>|  <wear>|   /\   <shade>|         |
+    <body>|  <shade>|__/  \__|         |
+    <shade>|_____________________|

@@ -1,0 +1,21 @@
+@text-art 1
+@color leather #B69A6E
+@color light #D2B888
+@color seam #79674E
+@color palm #AA885D
+@color cuff #998060
+@color scorch #645F50
+@default leather
+---
+   <light>╭─╮╭─╮╭─╮       ╭─╮╭─╮╭─╮
+ <leather>╭─┤ ││ ││ │     ╭─┤ ││ ││ │
+ │ │ ││ ││ │     │ │ ││ ││ │
+ │ │ <seam>╰╯ ╰╯ <leather>│     │ │ <seam>╰╯ ╰╯ <leather>│
+ │         │<light>╭─╮  <leather>│         │<light>╭─╮
+ <palm>│         <leather>╰╯ │  <palm>│         <leather>╰╯ │
+ <palm>╰╮          /   ╰╮          /
+  │         /     │         /
+  <seam>│────────│      │────────│
+  <cuff>│ <scorch>░░░░░░ <cuff>│      │ <scorch>░░░░░░ <cuff>│
+  │ <scorch>░░░░░░ <cuff>│      │ <scorch>░░░░░░ <cuff>│
+  <seam>└────────┘      └────────┘

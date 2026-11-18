@@ -1,0 +1,18 @@
+@text-art 1
+@color body #D0B987
+@color light #E7D8B4
+@color shade #9C835E
+@color lid #C4BCA4
+@color ink #7D8F78
+@color grain #B69A58
+@default body
+---
+       <light>________________
+     <lid>/==================<shade>\
+    <light>|                    <shade>|
+    <body>|    <ink>ROLLED OATS     <shade>|
+    <body>|      <grain>\\ | //       <shade>|
+    <body>|       <grain>\\|//        <shade>|
+    <body>|        <grain>/|\         <shade>|
+    <body>|                    <shade>|
+     <shade>\__________________/

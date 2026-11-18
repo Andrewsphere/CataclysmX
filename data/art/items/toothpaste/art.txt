@@ -1,0 +1,14 @@
+@text-art 1
+@color body #91B5B4
+@color light #D6E2DB
+@color shade #628A90
+@color ink #BCD9D5
+@color crimp #A7ADA4
+@color cap #D9D4C0
+@default body
+---
+    <light>__________________
+   <crimp>|: <ink>TOOTHPASTE      <body>\
+   <crimp>|:   <light>~~~~~~~~~      <body>|<shade>===<cap>┬───┐
+   <crimp>|:<shade>_________________<body>/<shade>===<cap>│<crimp>|||<cap>│
+                          <cap>└───┘

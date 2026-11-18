@@ -1,0 +1,16 @@
+@text-art 1
+@color body #A58A78
+@color light #CAB5A0
+@color shade #705E56
+@color stripe #6F8582
+@color thread #D7C9AB
+@color fold #8D7567
+@default body
+---
+    <light>________________________
+   <light>/  <fold>/ / / / / / / / /  <body>/<shade>|
+  <light>/______________________<body>/ <shade>|
+  <body>|  <stripe>##################  <shade>| |
+  <body>|  <thread>------------------  <shade>| |
+  <body>|  <stripe>##################  <shade>| /
+  <fold>|<shade>______________________|/

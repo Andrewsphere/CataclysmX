@@ -1,0 +1,17 @@
+@text-art 1
+@color body #A9B0B4
+@color light #D7DCD9
+@color shade #727F87
+@color reel #7B8F99
+@color rim #ACB9BC
+@color bore #485D66
+@default body
+---
+        <rim>________________
+     <rim>.-'  <light>____________  <reel>'-.
+    <rim>/   <reel>.'<light>============<reel>'.   \
+   <rim>|   <reel>/<light>========<body>========<reel>\   |
+   <reel>|  |<body>======<bore>(____)<body>======<reel>|  |
+   <reel>|   \<body>========<shade>========<reel>/   |
+    <reel>\   '.<shade>__========__<reel>.'   /
+     <reel>'-.________________.-'<light>---

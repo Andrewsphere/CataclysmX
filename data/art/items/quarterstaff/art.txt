@@ -1,0 +1,12 @@
+@text-art 1
+@color wood #B08B59
+@color light #D4B177
+@color grain #846940
+@color grip #6C5D42
+@color edge #8C774F
+@color end #A58A60
+@default wood
+---
+ <light>╭────────────────────────────╮
+ <end>│<grain>─── ───── ────<grip>||||||<wood>─────────<end>│
+ <edge>╰────────────────────────────╯

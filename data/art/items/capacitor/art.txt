@@ -1,0 +1,21 @@
+@text-art 1
+@color sleeve #517487
+@color shine #A6C8D2
+@color shade #354B5B
+@color aluminum #C3CBC7
+@color vent #7E8E91
+@color stripe #CCD2BD
+@color lead #B0BCBE
+@default sleeve
+---
+   <shine>╭──────────────────────╮
+   <sleeve>│ <aluminum>╭──────────────────╮ <shade>│
+   <sleeve>│ <aluminum>│        <vent>+         <aluminum>│ <shade>│
+   <sleeve>│ <vent>╰──────────────────╯ <shade>│
+   <sleeve>│  <shine>─ ─ ─ ─ ─ ─    <stripe>┃┃   <shade>│
+   <sleeve>│  <aluminum>─ ─ ─ ─ ─ ─    <stripe>┃┃   <shade>│
+   <shade>╰─────<lead>┬────────┬<shade>───────╯
+         <lead>│        │
+         <lead>│        │
+         <lead>│        │
+         <lead>│        │

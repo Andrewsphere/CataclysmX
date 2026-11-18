@@ -1,0 +1,13 @@
+@text-art 1
+@color body #909A9E
+@color edge #505A60
+@color shine #D1D8D8
+@color shade #697479
+@color dark #3D484E
+@default body
+---
+                         <shine>╭─╮
+    <shine>╭───────────────────<body>╱<shade>▓▓<edge>│
+   <body>( <shine>──────────────────<body>(<shade>▓▓▓<edge>│
+    <dark>╰───────────────────<body>╲<shade>▓▓<edge>│
+                         <edge>╰─╯

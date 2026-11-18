@@ -7,6 +7,11 @@
   'items/household.json5', 'crafting/household.json5', 'objects/furniture.json5',
   'items/slice_materials.json5', 'items/slice_equipment.json5', 'items/slice_supplies.json5',
   'items/low_tech.json5', 'crafting/slice.json5',
+  'items/expansion_stock.json5', 'crafting/expansion_stock.json5',
+  'items/expansion_electronics.json5', 'crafting/expansion_electronics.json5',
+  'items/expansion_equipment.json5', 'crafting/expansion_equipment.json5',
+  'items/expansion_supplies.json5', 'crafting/expansion_supplies.json5',
+  'worldgen/loot/expansion.json5',
   'worldgen/loot/household.json5', 'monsters/cellar.json5',
   'worldgen/buildings/furnished_house.json5',
 ]}

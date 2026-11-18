@@ -1,0 +1,24 @@
+@text-art 1
+@color wood #AD8055
+@color grain #654B36
+@color frame #8C483C
+@color gear #B4A47A
+@color steel #94A4AC
+@color edge #D7E0DE
+@default steel
+---
+       <wood>__________
+      / <grain>░░░░░░░░ <wood>\
+      \__________/
+           <steel>║
+       <frame>┌───╨───┐
+       │  <gear>/|   <frame>│<steel>──────┐
+       <frame>│ <gear>/o|   <frame>│     <steel>│
+       <frame>│<gear>/ /|   <frame>│   <wood>┌─┴──┐
+       <frame>│ <gear>/ |   <frame>│   <wood>│<grain>░░░░<wood>│
+       <frame>└───┬───┘   <wood>└────┘
+           <steel>║
+           ║
+          <edge>/|\
+          <steel>\|/
+           <edge>V

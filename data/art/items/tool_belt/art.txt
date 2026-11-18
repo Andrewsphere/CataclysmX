@@ -1,0 +1,17 @@
+@text-art 1
+@color leather #96744F
+@color edge #C09B68
+@color seam #654F3B
+@color buckle #AFB8AC
+@color shadow #4A463A
+@color pouch #AB8557
+@default leather
+---
+   <edge>╭══════════════════════╮
+  <leather>╭╯          <buckle>┌────┐     <leather>╰╮
+  ╰═══════════<buckle>│ <shadow>[] <buckle>│<leather>══════╯
+    <pouch>│ <edge>┌────┐  <buckle>└────┘ <edge>┌──┐
+    <pouch>│ <seam>│    │  <pouch>│  │   <seam>│  │
+    <pouch>│ <seam>│    │  <pouch>│  │   <seam>│  │
+    <pouch>│ <edge>╰────╯  <pouch>│  │   <edge>╰──╯
+    <seam>╰─────────╯  ╰──────╯

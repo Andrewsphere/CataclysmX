@@ -1,0 +1,18 @@
+@text-art 1
+@color body #DED1AA
+@color light #F1E7C9
+@color shade #B2A17F
+@color pool #C8B68D
+@color wick #87735D
+@color base #92836C
+@default body
+---
+              <wick>|
+        <light>.-----<wick>|<light>------.
+       <light>/   <pool>___<wick>|<pool>___    <body>\
+       <body>\_____________<shade>/
+       <light>|  |        <pool>: <shade>|
+       <body>|  <light>|        <pool>: <shade>|
+       <body>|  <light>|        <pool>: <shade>|
+       <body>|             <shade>|
+        <base>\___________/

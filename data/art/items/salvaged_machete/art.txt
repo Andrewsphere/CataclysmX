@@ -1,0 +1,15 @@
+@text-art 1
+@color steel #9BA8AA
+@color light #CFD8D3
+@color edge #E1E6DE
+@color shade #667B84
+@color wood #9A7850
+@color wire #B7A47D
+@default steel
+---
+               <light>_______________
+          ____/              <steel>/|
+     ____/__________________<shade>/ /
+ <wood>___|____|<edge>__________________|<shade>/
+<wood>| <wire>o   o  <wood>|<shade>/
+<wood>|________|

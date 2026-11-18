@@ -1,0 +1,14 @@
+@text-art 1
+@color plastic #8A9185
+@color shine #C0C7B6
+@color shade #59665D
+@color socket #394B46
+@color brass #B5935D
+@color contact #DBC28D
+@default plastic
+---
+      <shine>╔════════════════╗
+  <brass>════<plastic>╣  <contact>o  o  o  o   <shade>╠<brass>════
+  <brass>════<plastic>╣  <socket>o  o  o  o   <shade>╠<brass>════
+      <shade>╚══════<plastic>╤╤<shade>════════╝
+             <shine>└┘

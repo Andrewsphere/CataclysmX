@@ -1,0 +1,14 @@
+@text-art 1
+@color body #A8AAA1
+@color edge #76684F
+@color shine #E0DFCE
+@color shade #7C817B
+@color dark #4E554F
+@color pack #B5A17B
+@default body
+---
+  <pack>╭──────────────────────╮
+  │ <shine>╞╪╪╪╪╪╪╪╪<body>╪╪╪╪╪╪╪╪<shade>╲   <pack>│
+  │   <shade>╞╪╪╪╪╪╪╪╪╪╪╪╪╪╪<dark>╲   <pack>│
+  │ <body>╞╪╪╪╪╪╪╪╪╪╪╪╪╪╪╪╪<shade>╲   <pack>│
+  <edge>╰──────────────────────╯

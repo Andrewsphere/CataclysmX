@@ -1,0 +1,18 @@
+@text-art 1
+@color body #BFB692
+@color light #DFD9BB
+@color shade #837F68
+@color glass #96B6B0
+@color north #C97765
+@color south #A7BCC5
+@default body
+---
+        <light>______________
+     <light>.-'      <north>N       <body>'-.
+   <light>.'    <glass>____________    <body>'.
+  <light>/     <glass>/     <north>/\     <glass>\     <body>\
+ <body>|  <light>W  <glass>|     <north>/  \     <glass>|  <light>E  <shade>|
+ <body>|     <glass>|     <south>\  /     <glass>|     <shade>|
+  <body>\     <glass>\_____<south>\/<glass>_____/     <shade>/
+   <body>'.         <light>S          <shade>.'
+     <shade>'-.______________.-'

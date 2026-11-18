@@ -1,0 +1,17 @@
+@text-art 1
+@color body #C3ACA1
+@color light #E1CFC0
+@color shade #967C74
+@color core #C2A270
+@color rim #DDC394
+@color groove #8C7355
+@default body
+---
+       <rim>________________
+      <rim>/<core>________________<groove>\
+       <core>|<shade>==============<groove>|
+       <core>|<light>/////<body>/////<shade>////<groove>|
+       <core>|<light>/////<body>/////<shade>////<groove>|
+       <core>|<body>/////<shade>/////////<groove>|
+       <core>|<shade>==============<groove>|
+      <rim>/<core>________________<groove>\

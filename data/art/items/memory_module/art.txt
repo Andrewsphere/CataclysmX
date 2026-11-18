@@ -1,0 +1,14 @@
+@text-art 1
+@color board #52876D
+@color edge #9BB69B
+@color shade #36584D
+@color chip #3E4C4E
+@color chipshine #7D8B89
+@color contact #C7AC70
+@color notch #65746A
+@default board
+---
+  <edge>╔══════════════════════════╗
+  <board>║ <chipshine>███  ███  ███  ███       <shade>║
+  <board>║ <chip>███  ███  ███  ███       <shade>║
+  <shade>╚<contact>╤╤╤╤╤╤╤╤╤╤<notch>══<contact>╤╤╤╤╤╤╤╤╤╤<shade>════╝

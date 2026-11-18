@@ -1,0 +1,15 @@
+@text-art 1
+@color wood #A77A4C
+@color grain #674A31
+@color light #C39B65
+@color steel #9CAAB0
+@color edge #DFE6E2
+@color ferrule #65737B
+@default wood
+---
+                     <edge>_______
+       <steel>_____________/______/
+  ____/____________/_____/
+ <light>/ <grain>░░░░░░░░ <wood>/<ferrule>===<steel>|______/
+<wood>|  <grain>░░░░░░░░<wood>|<ferrule>===|
+ <wood>\__________<ferrule>\___|

@@ -44,6 +44,9 @@ move ID. Failures return 1; malformed arguments return 2. `--help` lists options
 
 ## Repeatable power rankings
 
+Use [item balance anchors](item_balance.md) to choose design peers, progression
+tradeoffs and relevant comparisons for new items.
+
 Build the runner from current sources before measuring. A Release build is useful
 for larger sweeps; the runner itself does not require SDL:
 

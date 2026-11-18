@@ -1,0 +1,17 @@
+@text-art 1
+@color body #AA9E7D
+@color edge #6F674F
+@color shine #D6CBA7
+@color shade #8F8467
+@color thread #BEB08B
+@default body
+---
+      <thread>,<shine>__   __<thread>,<shine>___
+   <thread>_,<body>/   ~~~      ~──.__<thread>,
+  <body>/  <thread>·  ·  ·  ·  ·     <body>~\<thread>,
+ <thread>,<body>│ <thread>·  ·  ·  ·  ·  ·    <body>/
+  <body>/  <shade>·  ·  ·  ·  ·  ·  <body>│<thread>,
+  <shade>\ <thread>·  ·  ·  ·  ·  ·   <shade>/
+  <thread>,<shade>\    ·  ·  ·  ·   <edge>_/~
+    <edge>~─.__    __<thread>,<edge>───~~
+         <edge>~~~~  <thread>'

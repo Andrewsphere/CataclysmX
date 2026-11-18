@@ -1,0 +1,24 @@
+@text-art 1
+@color cloth #647B88
+@color seam #405D6C
+@color zip #B0AEA0
+@color patch #8C938C
+@color wear #9DA89D
+@color grime #5A625C
+@default cloth
+---
+       ____<seam>╲  ╱<cloth>____
+    __/     <seam>╲╱     <cloth>\__
+   /    /<patch>┌─┐<zip>║<patch>┌─┐<cloth>\    \
+  /    /│<patch>└─┘<zip>║<patch>└─┘<cloth>│\    \
+ <wear>/____/ <cloth>│   <zip>║   <cloth>│ <wear>\____\
+        <cloth>│<seam>===<zip>╬<seam>===<cloth>│
+        │   <zip>║   <cloth>│
+        │  <seam>/ \  <cloth>│
+        │ <seam>│   │ <cloth>│
+        │ <seam>│   │ <cloth>│
+        │ <seam>│   │ <cloth>│
+        │<grime>░<seam>│   │<grime>░<cloth>│
+        │ <seam>│   │ <cloth>│
+        │ <seam>│   │ <cloth>│
+        <wear>└─┘   └─┘

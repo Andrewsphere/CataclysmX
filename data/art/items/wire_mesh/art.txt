@@ -1,0 +1,14 @@
+@text-art 1
+@color body #A4ACAD
+@color edge #59666B
+@color shine #D1D8D7
+@color shade #778286
+@color dark #414D51
+@color rust #95775F
+@default body
+---
+  <edge>╭────────────────────────╮
+  │<shine>╳─╳─╳─╳─╳─╳─<body>╳─╳─╳─╳─╳─╳─<edge>│
+  │<body>╳─╳─╳─╳─╳─╳─╳─╳─<shade>╳─╳─╳─╳─<edge>│
+  │<shade>╳─╳─╳─╳─<rust>╳─╳─<shade>╳─╳─╳─╳─╳─╳─<dark>│
+  <shade>╰────────────────────────╯

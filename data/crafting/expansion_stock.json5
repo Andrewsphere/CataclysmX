@@ -1,0 +1,11 @@
+{format_version:1, definitions:[
+  {type:'recipe',id:'shape_timber_dowels',name:'Shape wooden dowels',inputs:[{item:'timber_plank',count:1},{item:'hacksaw',count:1,retained:true},{item:'wood_chisel',count:1,retained:true}],result:{item:'wooden_dowel',count:4},work:900,training:[{skill:'fabrication',level:0}]},
+  {type:'recycling_recipe',id:'cut_stock_steel_pipe',name:'Cut steel pipe into scrap',target:'steel_pipe',inputs:[{item:'hacksaw',count:1,retained:true}],returns:[{item:'steel_scrap',count:10}],work:450},
+  {type:'recycling_recipe',id:'cut_stock_steel_rod',name:'Cut steel rod into scrap',target:'steel_rod',inputs:[{item:'hacksaw',count:1,retained:true}],returns:[{item:'steel_scrap',count:7}],work:350},
+  {type:'recycling_recipe',id:'cut_stock_steel_wire',name:'Cut steel wire into scrap',target:'steel_wire',inputs:[{item:'combination_pliers',count:1,retained:true}],returns:[{item:'steel_scrap',count:1}],work:120},
+  {type:'recycling_recipe',id:'cut_stock_steel_chain',name:'Cut steel chain into scrap',target:'steel_chain',inputs:[{item:'hacksaw',count:1,retained:true}],returns:[{item:'steel_scrap',count:12}],work:600},
+  {type:'recycling_recipe',id:'cut_stock_wire_mesh',name:'Cut wire mesh into scrap',target:'wire_mesh',inputs:[{item:'tin_snips',count:1,retained:true}],returns:[{item:'steel_scrap',count:4}],work:300},
+  {type:'recycling_recipe',id:'cut_stock_aluminum_sheet',name:'Cut aluminum sheet into scrap',target:'aluminum_sheet',inputs:[{item:'tin_snips',count:1,retained:true}],returns:[{item:'aluminum_scrap',count:5}],work:250},
+  {type:'recycling_recipe',id:'cut_stock_aluminum_tube',name:'Cut aluminum tube into scrap',target:'aluminum_tube',inputs:[{item:'hacksaw',count:1,retained:true}],returns:[{item:'aluminum_scrap',count:2}],work:200},
+  {type:'recycling_recipe',id:'cut_stock_plywood_panel',name:'Cut plywood into wood scraps',target:'plywood_panel',inputs:[{item:'hacksaw',count:1,retained:true}],returns:[{item:'wood_scrap',count:7}],work:300},
+]}

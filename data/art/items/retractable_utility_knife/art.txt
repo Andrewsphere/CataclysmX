@@ -1,0 +1,14 @@
+@text-art 1
+@color shell #B19B51
+@color edge #D8E0DE
+@color steel #8F9DA5
+@color shadow #50575C
+@color grip #494A42
+@color slide #BAA96E
+@default shell
+---
+                       <edge>______
+  ____________________<steel>/_____/|
+ /  <slide>┌──────┐  <grip>░░░░░░ <steel>/______/ |
+|   <slide>│ <shadow>▄▄▄▄ <slide>│  <grip>░░░░░░<steel>|______|/
+ \__<slide>└──────┘<shell>_________/

@@ -1,0 +1,14 @@
+@text-art 1
+@color frame #A6AAA1
+@color shine #CED1C2
+@color shade #687574
+@color ceramic #C1B99D
+@color wire #8D8174
+@color oxide #65594F
+@default frame
+---
+ <shine>╔════════════════════════╗
+ <frame>║  <wire>╱╲╱╲╱╲╱╲╱╲<oxide>╱╲╱╲╱╲╱╲╱╲  <shade>║
+ <frame>║  <oxide>╲╱╲╱╲╱╲╱╲╱<wire>╲╱╲╱╲╱╲╱╲╱  <shade>║
+ <shade>╚════════════════════════╝
+    <ceramic>││                ││

@@ -296,7 +296,7 @@ if(CATACLYSMX_BUILD_TESTS)
         tests/item_presentation_content_tests.cpp tests/inventory_engine_tests.cpp tests/inventory_ui_tests.cpp
         tests/text_art_file_tests.cpp tests/definition_flags_tests.cpp
         tests/item_asset_content_tests.cpp tests/item_flags_content_tests.cpp
-        tests/item_pilot_tests.cpp tests/item_slice_tests.cpp
+        tests/item_pilot_tests.cpp tests/item_slice_tests.cpp tests/item_expansion_tests.cpp
         tests/item_browser_tests.cpp tests/debug_items_tests.cpp
         tests/item_save_tests.cpp tests/item_network_tests.cpp tests/item_server_tests.cpp
         tests/item_behavior_tests.cpp

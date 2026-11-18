@@ -1,0 +1,18 @@
+@text-art 1
+@color cotton #C7C4B1
+@color cuff #999F96
+@color heel #8A8F85
+@color seam #737D78
+@color light #E0DDC9
+@color shadow #A3A99A
+@default cotton
+---
+   <light>┌──────┐    ┌──────┐
+   <cuff>│||||||│    │||||||│
+   <cotton>│      │    │      │
+   │      │    │      │
+   <shadow>│      │    <cotton>│      │
+   <shadow>│      <cotton>╰─╮  │      ╰─╮
+   <shadow>│        <cotton>╰╮ │        ╰╮
+   <seam>╰───<heel>░░░░░░<seam>│ ╰───<heel>░░░░░░<seam>│
+       ╰─────╯     ╰─────╯

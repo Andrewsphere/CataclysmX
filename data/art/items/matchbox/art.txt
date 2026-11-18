@@ -1,0 +1,16 @@
+@text-art 1
+@color body #C18B65
+@color paper #DFCAA1
+@color shade #805B49
+@color ink #A65340
+@color striker #AA997F
+@color wood #E3C58C
+@default body
+---
+     <paper>______________________
+    <paper>/_____________________<body>/<shade>|
+   <body>|  <striker>. . . . . . . . .  <shade>| |
+   <body>|    <paper>MATCHES           <shade>| |
+   <body>|       <wood>/ / /          <shade>| |
+   <body>|      <ink>* * *           <shade>| /
+   <body>|<shade>______________________|/

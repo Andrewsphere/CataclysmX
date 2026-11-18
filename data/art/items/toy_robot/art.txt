@@ -1,0 +1,23 @@
+@text-art 1
+@color body #94A6B0
+@color light #C8D5D5
+@color shade #5D7483
+@color red #C78269
+@color lens #B7DDBD
+@color grille #697C79
+@default body
+---
+            <light>__<red>|<light>__
+           <body>(  <lens>o  <shade>)
+       <light>____<body>|_____<shade>|<light>____
+      <light>|   <lens>o       o   <shade>|
+      <body>|       <red>^       <shade>|
+      <body>|   <grille>'-------'   <shade>|
+    <light>__<body>|_______________<shade>|<light>__
+   <light>/  <body>|  <grille>[||||||||]   <shade>|  \
+  <body>| <red>o <shade>|   <light>_________   <shade>| <red>o <shade>|
+  <body>|___<shade>|  <body>|  <red>o   o  <shade>|  |___|
+      <body>|__<shade>|_________|__|
+        <body>|  <shade>|     <body>|  <shade>|
+       <body>_|  |<shade>_   <body>_|  |<shade>_
+      <body>|______<shade>| <body>|______<shade>|

@@ -1,0 +1,21 @@
+@text-art 1
+@color case #B4B3A4
+@color shine #E0DDC5
+@color side #85938F
+@color shade #576B70
+@color slot #3C5058
+@color handle #797769
+@color label #8C8F7E
+@color foot #4B5B5B
+@default case
+---
+        <shine>╭──────────────╮
+     <shine>╭──┴──────────────┴──╮
+    <case>╱  <slot>─────    ─────     <side>╱│
+   <shine>╔═════════════════════╗ <side>│
+   <case>║                     <shade>║ <side>├<handle>─┐
+   <case>║      <label>TOAST          <shade>║ <side>│ <handle>│
+   <case>║                     <shade>║ <side>│ <handle>┘
+   <case>║    <handle>o                <shade>║ <side>╱
+   <shade>╚═════════════════════╝╱
+     <foot>▀▀               ▀▀

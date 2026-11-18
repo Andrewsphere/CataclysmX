@@ -27,7 +27,7 @@
     b:{terrain:'floor_tile',object:'store_shelf',facing:'east',loot:[{pool:'loot_cleaning',rolls:2,destination:'furniture'}]},
     c:{terrain:'floor_tile',object:'store_shelf',facing:'west',loot:[{pool:'loot_food',rolls:3,destination:'furniture'}]},
     d:{terrain:'floor_tile',object:'store_shelf',facing:'east',loot:[{pool:'loot_kitchen',chance:9000,rolls:2,destination:'furniture'}]},
-    e:{terrain:'floor_tile',object:'store_shelf',facing:'west',loot:[{pool:'loot_pantry',chance:9000,rolls:3,destination:'furniture'}]},
+    e:{terrain:'floor_tile',object:'store_shelf',facing:'west',loot:[{pool:'loot_dry_staples',chance:9000,rolls:3,destination:'furniture'}]},
     f:{terrain:'floor_tile',object:'store_shelf',facing:'east',loot:[{pool:'loot_cleaning',chance:8500,rolls:2,destination:'furniture'}]},
     g:{terrain:'floor_tile',object:'store_shelf',facing:'west',loot:[{pool:'loot_food',chance:9000,rolls:2,destination:'furniture'}]},
     h:{terrain:'floor_tile',object:'store_shelf',facing:'east',loot:[{pool:'loot_pantry',rolls:3,destination:'furniture'}]},

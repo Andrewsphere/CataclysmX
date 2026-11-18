@@ -1,0 +1,26 @@
+@text-art 1
+@color case #C6A550
+@color recess #454C4D
+@color screen #A8B9A0
+@color ink #354C45
+@color knob #7B8584
+@color red #BA5B4A
+@color lead #829195
+@default case
+---
+     ╭────────────────╮
+     │ <recess>┌────────────┐ <case>│
+     │ <recess>│<screen>  <ink>0.00<screen>      <recess>│ <case>│
+     │ <recess>└────────────┘ <case>│
+     │   <recess>·  ·  ·  ·   <case>│
+     │      <knob>╭──╮      <case>│
+     │   <recess>·  <knob>│ /│  <recess>·   <case>│
+     │      <knob>╰──╯      <case>│
+     │    <red>o      <lead>o    <case>│
+     ╰────<red>│<case>──────<lead>│<case>────╯
+     <red>╭────╯      <lead>╰──────╮
+     <red>│                 <lead>│
+     <red>╰──────╮     <lead>╭─────╯
+            <red>│     <lead>│
+           <red>/|     <lead>|\
+           <lead>||     ||

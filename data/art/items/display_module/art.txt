@@ -1,0 +1,18 @@
+@text-art 1
+@color board #608A72
+@color edge #9DB19A
+@color shade #3C5D53
+@color glass #657F86
+@color reflection #A5BABC
+@color bezel #B3BBB0
+@color glassshade #405A68
+@color contact #C6AA71
+@default board
+---
+  <edge>╔════════════════════════╗
+  <board>║ <bezel>┌────────────────────┐ <shade>║
+  <board>║ <reflection>│                    <glassshade>│ <shade>║
+  <board>║ <glass>│       <reflection>░░░░░        <glassshade>│ <shade>║
+  <board>║ <glass>│                    <glassshade>│ <shade>║
+  <board>║ <glassshade>└────────────────────┘ <shade>║
+  <shade>╚════<contact>╤╤╤╤╤╤╤╤<shade>════════════╝

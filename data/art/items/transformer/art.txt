@@ -1,0 +1,18 @@
+@text-art 1
+@color steel #8C9999
+@color shine #C6D0CB
+@color shade #57686F
+@color dark #394A52
+@color copper #BB8052
+@color varnish #DFB07B
+@color winding #83553B
+@color lug #B4B9AC
+@default steel
+---
+      <shine>╔════════════════╗
+   <steel>╔══╣ <varnish>(((((  <copper>)))))   <shade>╠══╗
+   <steel>║  ║ <copper>(((((  <winding>)))))   <shade>║  ║
+   <steel>║  ║ <copper>(((((  <winding>)))))   <shade>║  ║
+   <shade>╚══╣ <winding>(((((  )))))   <dark>╠══╝
+      <dark>╚══<lug>╤<dark>════════<lug>╤<dark>════╝
+         <lug>││      ││

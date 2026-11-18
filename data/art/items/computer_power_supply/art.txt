@@ -1,0 +1,19 @@
+@text-art 1
+@color steel #A5AFAD
+@color shine #D2DAD3
+@color side #79898D
+@color shade #52646E
+@color grille #819294
+@color fan #3B4C54
+@color label #C2BDA5
+@color hub #A79B7D
+@default steel
+---
+    <shine>╔══════════════════════╗
+   <steel>╱<side>║  <grille>╭──────╮<steel>  <shade>─ ─ ─    <side>╱║
+  <shine>╔═<side>╬═<grille>│ <fan>╲│╱  <grille>│<shine>══════════╗ <side>║
+  <steel>║ <side>║ <grille>│ <fan>─<hub>o<fan>─  <grille>│<steel>  <label>POWER   <shade>║ <side>║
+  <steel>║ <side>║ <grille>│ <fan>╱│╲  <grille>│<steel>  <label>SUPPLY  <shade>║ <side>║
+  <steel>║ <side>║  <grille>╰──────╯<steel>         <shade>║ <side>║
+  <steel>║ <side>╚═══════════════════╬═╝
+  <shade>╚═════════════════════╝

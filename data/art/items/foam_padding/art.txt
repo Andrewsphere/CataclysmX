@@ -1,0 +1,15 @@
+@text-art 1
+@color body #C5B998
+@color edge #857B64
+@color shine #E5DCC1
+@color shade #A59A7E
+@color dark #685F4F
+@color pore #92886D
+@default body
+---
+   <shine>╭──────────────────────╮
+  <edge>╱ <pore>· · · · · · · · · ·  <edge>╱│
+ <edge>╱ <body>· · · · · <shade>· · · · ·  <edge>╱ │
+<edge>╰──────────────────────╯  <dark>│
+<shade>│░░░░░░░░░░░░░░░░░░░░░░<edge>│ ╱
+<dark>╰──────────────────────╯╱

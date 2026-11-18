@@ -5,15 +5,20 @@
   {type:'loot_pool', id:'house_pantry', entries:[
     {item:'canned_beans',weight:3,count:{min:1,max:2}}, {item:'instant_noodles',weight:2},
     {item:'long_grain_rice',weight:2}, {item:'peanut_butter',weight:2}, {item:'dill_pickles',weight:1},
+    {item:'canned_tuna',weight:2},{item:'trail_mix',weight:2},
   ]},
   {type:'loot_pool', id:'house_bathroom', entries:[
     {item:'bar_soap',weight:5}, {item:'cloth_bandage',weight:3,count:{min:1,max:3}},
     {item:'antiseptic',weight:2}, {item:'sterile_gauze',weight:2},
+    {item:'toothpaste',weight:3},
   ]},
   {type:'loot_pool', id:'house_household_supplies', entries:[
     {item:'glass_bottle',weight:4}, {item:'cloth_patch',weight:4,count:{min:1,max:3}},
     {item:'sewing_supplies',weight:2}, {item:'aa_alkaline_battery',weight:1,count:{min:1,max:2}},
     {item:'plastic_storage_box',weight:1},
+    {item:'candle',weight:2},{item:'matchbox',weight:2},{item:'glass_jar',weight:2},{item:'compass',weight:1},
+    {item:'toilet_paper',weight:2},{item:'toy_robot',weight:1},{item:'desk_radio',weight:1},
+    {pool:'loot_textile_repair',weight:3},
   ]},
   {type:'loot_pool', id:'house_storage', entries:[
     {pool:'house_household_supplies',weight:6},
@@ -22,11 +27,14 @@
     {item:'camping_backpack',weight:1},
     {item:'boxing_manual',weight:1},{item:'weapon_forms_manual',weight:1},
     {item:'brass_knuckles',weight:1},{item:'wooden_shield',weight:1},
+    {pool:'loot_metal_stock',weight:2},{pool:'loot_fasteners',weight:2},
+    {pool:'loot_everyday_clothing',weight:2},{pool:'loot_work_protection',weight:1},
   ]},
   {type:'loot_pool', id:'house_tools', entries:[
     {item:'flathead_screwdriver',weight:5}, {item:'hacksaw',weight:4},
     {item:'chef_knife',weight:3}, {item:'combination_pliers',weight:3},
     {item:'battery_charger',weight:1},
+    {pool:'loot_hand_tools',weight:6},{item:'adjustable_wrench',weight:2},{item:'metal_file',weight:2},
   ]},
   {type:'loot_pool', id:'house_hammer', entries:[{item:'claw_hammer',weight:1}]},
   {type:'loot_pool', id:'house_workshop', entries:[
