@@ -1,5 +1,8 @@
 # API documentation
 
+- [Sledgehammer Editor](sledgehammer_editor.md) for visual content authoring, seeded previews,
+  and saving edits into a checkout.
+
 - [Sequence containers](containers.md): bounded lists, overflow-enabled small
   vectors, bulk vectors, and inline-storage/move-cost tradeoffs.
 

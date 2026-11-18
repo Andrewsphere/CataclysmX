@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Catax · Sledgehammer Editor</title>
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="brand-name">CATAX</span><span>Sledgehammer Editor</span></div>
+    <label class="pack-control"><span>Content pack</span><select id="pack" aria-label="Content pack" disabled></select></label>
+    <div class="top-actions">
+      <span id="save-state" class="save-state" role="status">Opening content…</span>
+      <button id="undo" type="button" title="Undo (Ctrl+Z)" aria-label="Undo" disabled>↶</button>
+      <button id="redo" type="button" title="Redo (Ctrl+Shift+Z)" aria-label="Redo" disabled>↷</button>
+      <button id="save" type="button" class="primary" disabled>Save</button>
+    </div>
+  </header>
+  <nav class="tabs" aria-label="Workspace">
+    <button data-tab="layout" class="active" type="button">Layout</button>
+    <button data-tab="catalog" type="button">Catalog</button>
+    <button data-tab="region" type="button">Region preview</button>
+  </nav>
+  <section class="problems" id="problems" aria-live="polite" hidden></section>
+  <main id="workspace" class="workspace"><div class="empty">Opening the content pack…</div></main>
+  <dialog id="dialog"><form id="dialog-form" method="dialog"></form></dialog>
+</body>
+</html>
