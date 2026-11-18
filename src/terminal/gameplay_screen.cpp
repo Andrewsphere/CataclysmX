@@ -496,7 +496,7 @@ bool GameplayUi::Open(InputAction action) {
     switch (action) {
     case InputAction::CombatMenu: modal_ = Modal::Combat; combatSelection_.reset(); combatIndex_ = 0; break;
     case InputAction::CombatInfo: modal_ = Modal::CombatInfo; break;
-    case InputAction::Crafting: modal_ = Modal::Crafting; craftingSelection_.reset(); craftingIndex_ = 0; break;
+    case InputAction::Crafting: modal_ = Modal::Crafting; powerOpen_ = false; craftingSelection_.reset(); craftingIndex_ = 0; break;
     case InputAction::Use:
     case InputAction::Inventory:
     case InputAction::AdvancedInventory:
@@ -859,11 +859,15 @@ ftxui::Element GameplayUi::Render(WorldView view, const ContentCatalog& content,
             }
             if (rows.empty()) { rows.push_back(ftxui::text("No combat choices available.")); }
         }
+    } else if (modal_ == Modal::Crafting && powerOpen_) {
+        title = "Power workshop"; subtitle = presentation.message; scroll = &craftingScroll_;
+        powerWorkshop_.Describe(view, content, powerLines_);
+        for (const auto& line : powerLines_) { rows.push_back(ftxui::text(std::string(line.data(), line.size()))); }
     } else if (modal_ == Modal::Crafting) {
         if (selectionPlayer_ != view.playerId) {
             selectionPlayer_ = view.playerId; craftingSelection_.reset(); craftingIndex_ = 0; craftingScroll_ = 0;
         }
-        title = "Crafting, recycling and learning"; subtitle = "Availability is checked by the server. Work continues while this menu is open. Browse past actions for skills and book references.";
+        title = "Crafting, recycling and learning | p: Power workshop"; subtitle = "Availability is checked by the server. Work continues while this menu is open. Browse past actions for skills and book references.";
         scroll = &craftingScroll_;
         CollectCraftingMenu(view, content, localization, craftingRows_);
         CollectLearningSummary(view, content, learningLines_);
@@ -1010,6 +1014,21 @@ bool GameplayUi::HandleEvent(const ftxui::Event& event, const WorldView& view, c
     }
     const auto chord = DecodeTerminalInput({event.input().data(), event.input().size()});
     auto action = chord ? ResolveAction(keys, InputContext::Menu, *chord) : eastl::optional<InputAction>{};
+    if (modal_ == Modal::Crafting && chord) {
+        if (powerOpen_) {
+            if (chord->key == "Escape") { powerOpen_ = false; craftingScroll_ = 0; return true; }
+            if (chord->key == "PageDown") { craftingScroll_ += 5; return true; }
+            if (chord->key == "PageUp") { craftingScroll_ = std::max(0, craftingScroll_ - 5); return true; }
+            const auto* catalog = content ? content : itemContent_;
+            if (catalog) {
+                if (const auto command = powerWorkshop_.Handle(*chord, view, *catalog)) {
+                    if (!submit(*command)) feedback_ = "Power command could not be submitted.";
+                }
+            }
+            return true;
+        }
+        if (chord->key == "p") { powerWorkshop_.Open(view); powerOpen_ = true; craftingScroll_ = 0; return true; }
+    }
     if (event == ftxui::Event::Escape || action == InputAction::Cancel) {
         Close();
         return true;

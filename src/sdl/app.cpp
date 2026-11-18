@@ -1,4 +1,5 @@
 #include "sdl/app.h"
+#include "client/power_view.h"
 #include "client/combat_text.h"
 #include "client/message_history.h"
 #include "client/crafting_menu.h"
@@ -200,6 +201,9 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
     bool inspectionNeeded = false;
     Vector<InteractionChoice> actions;
     Vector<CraftingMenuRow> craftingRows;
+    PowerWorkshop powerWorkshop;
+    bool powerOpen = false;
+    Vector<String> powerLines;
     CombatUi combatUi;
     CombatEventCursor combatEventCursor;
     Vector<String> combatMessages;
@@ -230,6 +234,9 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
     WorldgenDebugLayer debugLayer = WorldgenDebugLayer::Roads;
     int debugScale = 8;
     bool debugAi = false, aiNeeded = false, aiValid = false;
+    bool debugPower = false;
+    Vector<String> powerDebugLines;
+    eastl::optional<std::uint64_t> powerDebugRequest;
     AiDebugView aiView;
     eastl::optional<std::uint64_t> aiRequestId;
     std::uint64_t aiRevision = 0, requestedAiRevision = 0, requestedAiGeneration = 0;
@@ -594,6 +601,20 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             auto& scroll = modal.Active() == Screen::Actions || modal.Active() == Screen::Combat ? frame.detailScroll : frame.scroll;
             scroll = std::max(0,scroll + (down ? 1 : -1)); return;
         }
+        if (modal.Active() == Screen::Crafting && chord) {
+            if (powerOpen) {
+                if (chord->key == "Escape") { powerOpen = false; frame.scroll = 0; return; }
+                if (chord->key == "PageDown") { frame.scroll += 5; return; }
+                if (chord->key == "PageUp") { frame.scroll = std::max(0, frame.scroll - 5); return; }
+                if (const auto command = powerWorkshop.Handle(*chord, snapshot.view, content)) {
+                    const auto id = nextId;
+                    if (submit(RequestKind::ResumeAndCommand, *command)) craftingRequest = id;
+                }
+                return;
+            }
+            if (chord->key == "p") { powerWorkshop.Open(snapshot.view); powerOpen = true; frame.scroll = 0; return; }
+        }
+        if (!action && modal.Active() == Screen::Debug && chord->key == "p") action = InputAction::Inspect;
         if (!action) { return; }
         if (modal.Active() != Screen::None) {
             if (*action == InputAction::Cancel || (modal.Active() == Screen::Debug && *action == InputAction::Debug)) {
@@ -637,6 +658,21 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 return;
             }
             if (modal.Active() == Screen::Debug) {
+                if (chord->key == "p") {
+                    debugPower = true; debugAi = false; aiNeeded = false; aiValid = false;
+                    frame.scroll = 0; frame.detailScroll = 0;
+                    if (!powerDebugRequest) {
+                        const auto id = nextId;
+                        if (submit(RequestKind::InspectPower)) powerDebugRequest = id;
+                    }
+                    return;
+                }
+                if (debugPower) {
+                    if (*action == InputAction::Inspect) { debugPower = false; rebuildDebug(); }
+                    else if (*action == InputAction::South || *action == InputAction::DetailsDown) ++frame.scroll;
+                    else if (*action == InputAction::North || *action == InputAction::DetailsUp) frame.scroll = std::max(0, frame.scroll - 1);
+                    return;
+                }
                 if (*action == InputAction::Inventory) {
                     itemBrowser.Open(content, localization);
                     debugAi = false; ++aiRevision; aiNeeded = false; aiValid = false;
@@ -795,7 +831,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             const auto nextScreen = *action == InputAction::Help ? Screen::Help : *action == InputAction::Examine ? Screen::Examine
                 : *action == InputAction::Interact ? Screen::Targets : *action == InputAction::Settings ? Screen::Options
                 : *action == InputAction::Crafting ? Screen::Crafting : *action == InputAction::Players ? Screen::Players : Screen::Debug;
-            if (nextScreen == Screen::Crafting) { craftingSelection.reset(); selectedAction = 0; craftingFeedback.clear(); }
+            if (nextScreen == Screen::Crafting) { powerOpen = false; craftingSelection.reset(); selectedAction = 0; craftingFeedback.clear(); }
             if (submit(RequestKind::Pause)) { modal.BeginOpen(nextScreen); SetMessage(snapshot.mode == SessionMode::Local ? "Pausing..." : "Opening menu (world remains live)..."); }
             return;
         }
@@ -828,6 +864,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
         candidateSettings.reset(); candidateText.reset(); settingsId.reset(); saveSettings = false; reloadSettings = false; multiplayerSettings = false;
         saveRequest.reset(); reconcileMenu = true;
         ++aiRevision; aiRequestId.reset(); aiNeeded = false; aiValid = false; aiView = {};
+        debugPower = false; powerDebugRequest.reset(); powerDebugLines.clear();
         debugAi = false; debugPlan = {}; debugImage = {}; debugDetails.clear();
         mapIdentity.session = generation; ++mapIdentity.viewRevision;
         mapPacket = {}; mapValid = false; playback = {}; animationDeadline.reset();
@@ -928,6 +965,12 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             if (reply.generation < snapshot.generation) { continue; }
             if (reply.generation > snapshot.generation) { resetGeneration(reply.generation); }
             consumeInput(reply.generation, reply.input);
+            if (powerDebugRequest && reply.id == *powerDebugRequest) {
+                if (reply.kind == ReplyKind::PowerInspected && modal.Active() == Screen::Debug && debugPower) {
+                    DescribePowerDebug(reply.powerDebug, snapshot.view.player_position, powerDebugLines);
+                }
+                powerDebugRequest.reset(); dirty = true; continue;
+            }
             if (browserRequest && reply.id == *browserRequest) {
                 if (reply.kind == ReplyKind::ItemsGiven) { itemBrowser.GiveFinished(reply.debugGive); }
                 else { itemBrowser.GiveRejected(reply.kind == ReplyKind::Stale ? "Request expired." : "Request cancelled."); }
@@ -1071,6 +1114,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 }
                 break;
             case ReplyKind::AiInspected: // Obsolete capture from a previous selection.
+            case ReplyKind::PowerInspected:
             case ReplyKind::ItemsGiven: break;
             case ReplyKind::SettingsApplied:
                 if (settingsId && *settingsId == reply.id && candidateSettings) {
@@ -1169,6 +1213,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             if (modal.Active() == Screen::Examine) { inspectionNeeded = true; }
             if (modal.Active() == Screen::Debug) {
                 itemBrowser.Close();
+                debugPower = false; powerDebugLines.clear();
                 debugAi = false; ++aiRevision; aiNeeded = false; aiValid = false; rebuildDebug();
             }
             if (modal.Active() == Screen::Targets && !snapshot.interactions.empty()) {
@@ -1651,8 +1696,14 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 }
                 frame.footer = "Escape / Enter: close | F9: LAN";
             }
-            if (modal.Active() == Screen::Crafting) {
-                frame.title = "Crafting, recycling and learning | Availability checked by server";
+            if (modal.Active() == Screen::Crafting && powerOpen) {
+                frame.title = "Power workshop | Availability checked by server";
+                powerWorkshop.Describe(snapshot.view, content, powerLines);
+                for (const auto& line : powerLines) frame.rows.push_back({line});
+                if (!craftingFeedback.empty()) frame.details.push_back(craftingFeedback);
+                frame.footer = "Enter: install | p: wire/place | Tab: kit | g: equipment | w/W,d/D: size | Arrows: position | Escape: back";
+            } else if (modal.Active() == Screen::Crafting) {
+                frame.title = "Crafting, recycling and learning | p: Power workshop";
                 CollectCraftingMenu(snapshot.view, content, localization, craftingRows);
                 CollectLearningSummary(snapshot.view, content, learningLines);
                 if (!craftingSelection && selectedAction == 0 && !craftingRows.empty()) { craftingSelection = craftingRows.front().command; }
@@ -1748,6 +1799,11 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                         frame.footer = "Type text | Enter: accept | Escape: list | F11: close debug";
                     }
                     if (browser.screen == ItemBrowserScreen::Examine) { frame.visible = false; }
+                } else if (debugPower) {
+                    frame.title = "DEBUG power / chunk residency (read-only owner-thread snapshot)";
+                    for (const auto& line : powerDebugLines) frame.rows.push_back({line});
+                    if (powerDebugLines.empty()) frame.rows.push_back({"Loading diagnostic snapshot..."});
+                    frame.footer = "p: refresh | a: worldgen | Arrows/PgUp/PgDn: scroll | Escape/F11: close";
                 } else if (debugAi) {
                     frame.title = String(snapshot.paused ? "AI inspector | Local session paused\nX " : "AI inspector | Host world live\nX ") + NumberText(cursor.x)
                         + " Z " + NumberText(cursor.z) + " Y " + NumberText(cursor.y);
@@ -1755,7 +1811,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                     frame.title += "\nLast-decision snapshots, not fresh scans";
                     if (aiValid) { frame.debugImage = &aiView.image; frame.cursor = cursor; frame.details = aiView.details; }
                     else { frame.rows.push_back({"Loading live resident AI capture..."}); }
-                    frame.footer = "i: item browser | a: worldgen | Escape/F11: close\nGreen: candidates | Red: blocked | Yellow: chosen";
+                    frame.footer = "p: power/chunks | i: item browser | a: worldgen | Escape/F11: close\nGreen: candidates | Red: blocked | Yellow: chosen";
                     frame.footer += "\nBlue: origin | Purple: goal | Orange: backtracking";
                     frame.footer += "\nArrows: tile | Alt+Up/Down, >/<: Y\nHome/c: player | PgUp/PgDn: details";
                 } else {
@@ -1768,7 +1824,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                         frame.title += "\nSurface baseline: excludes saved edits and entities";
                         frame.debugImage = &debugImage; frame.cursor = cursor; frame.details = debugDetails;
                     }
-                    frame.footer = "i: item browser | a: AI inspector | Escape/F11: close\n";
+                    frame.footer = "p: power/chunks | i: item browser | a: AI inspector | Escape/F11: close\n";
                     frame.footer += WorldgenDebugLegend(debugLayer);
                     frame.footer += "\nArrows: move | Shift+arrows: region | Home: recenter | 1-5/Tab: layers | +/-: zoom | PgUp/PgDn: details";
                 }

@@ -631,6 +631,10 @@ void SessionOwner::Request(SessionRequest request) {
         reply.kind = mode_ != SessionMode::Guest && (paused_ || mode_ == SessionMode::Host) ? ReplyKind::AiInspected : ReplyKind::Cancelled;
         if (reply.kind == ReplyKind::AiInspected) { CaptureAiDebugView(server_->GetWorld(), request.cursor, reply.aiDebug); }
         break;
+    case RequestKind::InspectPower:
+        reply.kind = mode_ != SessionMode::Guest && (paused_ || mode_ == SessionMode::Host) ? ReplyKind::PowerInspected : ReplyKind::Cancelled;
+        if (reply.kind == ReplyKind::PowerInspected) { CapturePowerDebug(server_->GetWorld(), reply.powerDebug); }
+        break;
     case RequestKind::Inspect:
         if (mode_ == SessionMode::Guest) {
             if (inspection_) { reply.networkError = network::NetworkError::Busy; reply.kind = ReplyKind::Inspected; break; }

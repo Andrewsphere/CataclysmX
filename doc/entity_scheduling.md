@@ -63,6 +63,19 @@ Typed objects leave their unused legacy timer suspended; its saved value remains
 compatible. `GetObjectRemainingTicks` reports this legacy timer, not behavior work;
 use `DescribeObjectState`/`NextObjectEventIn` for typed behavior progress.
 
+Grid-powered machines use prepaid slices bounded by the next 100-tick electrical
+interval. `PowerSystem::ProcessEvents` runs after object/item effects and before
+crafting funding; its deadline participates in event selection. `ElapseTicks`
+also splits direct large advances at those boundaries. Fuel is paid for delivered
+charges rather than generated again during elapsed work.
+
+Enabled, unbroken equipment with run intent retains its own column and connected
+source columns. Generated equipment starts idle. Waiting jobs retain their holds;
+manual Stop/completion releases them. Server updates reconcile demand before and
+after advancement, including idle updates. Actual unloaded equipment still freezes;
+remote workshops work because their required columns stay active. See
+[power design](power_design.md) for restored holds and DEBUG demand counters.
+
 ## Persistence and arithmetic
 
 The archive and wire formats keep relative delays. Capture derives durations at

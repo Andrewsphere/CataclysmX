@@ -8,6 +8,16 @@ be unmodified outputs of `GenerateRegionPlan`; materialize them with the same
 seed and catalog. Returned query pointers borrow the plan and expire when it is
 changed or destroyed.
 
+Current generation version **7** retains version 6's layout, terrain, and
+population seed domain and adds building electrical infrastructure at the World
+boundary. `GenerateBuildingPower(content, plan, chunk, output)` emits complete
+inclusive `PowerBounds` and stable surface origins for buildings intersecting a
+column. Authored floors and the selected basement share a grid; parks/squares do
+not receive building mains. `DescribeBuildingPower` supplies the equivalent pure
+descriptor for an individual pattern/rotated footprint. World registers descriptors
+idempotently before device population; generated touching grids do not auto-merge.
+See [power design](power_design.md) for registration, persistence and player extension.
+
 ## Space and region plans
 
 Tiles use X/Z horizontal coordinates and Y elevation (`-10..10`); coordinate

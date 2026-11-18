@@ -289,6 +289,33 @@ TEST_CASE("Gen1 maps every supplied furniture sprite in supported content packs"
     }
 }
 
+TEST_CASE("Power items use the SDL ground-item fallback until the artwork handoff", "[power][sdl][tileset]") {
+    auto content = LoadContentPack(CATACLYSMX_CONTENT_PACK);
+    REQUIRE(content);
+    const auto path = fs::path(CATACLYSMX_CONTENT_PACK).parent_path().parent_path()
+        / "assets/tiles/gen1_32x32/tileset.json5";
+    auto tileset = LoadTilesetFile(path.string().c_str(), *content);
+    REQUIRE(tileset);
+    const auto fallback = tileset->generic[static_cast<unsigned>(GenericSprite::GroundItems)];
+    REQUIRE(fallback.kind == TilesetMappingKind::Sprite);
+    WorldView view;
+    view.width = view.height = 1;
+    view.cells.resize(1);
+    view.cells[0].terrainVisibility = view.cells[0].overlayVisibility = Visibility::Visible;
+    view.cells[0].tile.terrain = content->FindTerrain("floor");
+    view.cells[0].ground_items = 1;
+    Vector<MapItemVisual> items(1);
+    for (const char* id : {"wiring_kit", "portable_fuel_generator", "generator_fuel_packet"}) {
+        CAPTURE(id);
+        const auto type = content->FindItem(id);
+        REQUIRE(type.value != 0);
+        CHECK(tileset->items[type.value].kind == TilesetMappingKind::Missing);
+        items[0] = {42, type};
+        const auto packet = PrepareMapPacket(view, *content, *tileset, {}, items);
+        CHECK(packet.cells[0].overlaySprite == fallback);
+    }
+}
+
 TEST_CASE("Gen1 item sprites load across scenarios and preserve unmapped fallbacks", "[sdl][tileset][source][item-sprites]") {
     const auto path = fs::path(CATACLYSMX_CONTENT_PACK).parent_path().parent_path()
         / "assets/tiles/gen1_32x32/tileset.json5";
@@ -319,7 +346,9 @@ TEST_CASE("Gen1 item sprites load across scenarios and preserve unmapped fallbac
             const bool lacksArtwork = definition.id == "combat_corpse" || definition.id == "unfinished_craft"
                 || definition.id == "boxing_manual" || definition.id == "brass_knuckles"
                 || definition.id == "cloth_face_wrap" || definition.id == "weapon_forms_manual"
-                || definition.id == "wooden_shield" || definition.id == "work_boots";
+                || definition.id == "wooden_shield" || definition.id == "work_boots"
+                || definition.id == "wiring_kit" || definition.id == "portable_fuel_generator"
+                || definition.id == "generator_fuel_packet";
             CAPTURE(pack, definition.id.c_str());
             if (lacksArtwork) {
                 CHECK(mapping.kind == TilesetMappingKind::Missing);

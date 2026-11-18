@@ -223,6 +223,13 @@ std::uint64_t ContentFingerprint(const ContentCatalog& content) {
         HashNumber(hash, item.massGrams); HashNumber(hash, item.volumeMl);
         HashTraits(hash, item.toolTraits);
         HashNumber(hash, item.craftingPower.value); HashNumber(hash, item.craftingEnergyPerWork);
+        HashNumber(hash, item.craftingGridPower);
+        HashNumber(hash, item.wiringMaterial.value != 0);
+        if (item.wiringMaterial.value) { HashString(hash, content.GetItem(item.wiringMaterial).id); }
+        HashNumber(hash, item.wiringTilesPerMaterial);
+        HashNumber(hash, item.placedObject.value != 0);
+        if (item.placedObject.value) { HashString(hash, content.GetObject(item.placedObject).id); }
+        HashNumber(hash, item.gridMeter);
         HashNumber(hash, item.recoveryAllowed); HashNumber(hash, item.unfinishedCraft);
         HashNumber(hash, item.books.size());
         for (const auto book : item.books) HashNumber(hash, book.value);
@@ -272,6 +279,17 @@ std::uint64_t ContentFingerprint(const ContentCatalog& content) {
                 HashNumber(hash, object.machine.duration);
                 HashNumber(hash, object.machine.energyCapacity);
                 HashNumber(hash, object.machine.energyPerTick);
+                HashNumber(hash, object.machine.gridPowered);
+                break;
+            case ObjectBehaviorKind::Generator:
+                HashNumber(hash, 1); // Generator implementation/state version.
+                HashString(hash, content.GetItem(object.generator.fuelItem).id);
+                HashNumber(hash, object.generator.fuelCapacity);
+                HashNumber(hash, object.generator.energyPerFuel);
+                HashNumber(hash, object.generator.outputPerTick);
+                break;
+            case ObjectBehaviorKind::GridBattery:
+                HashNumber(hash, 1); // Grid battery registration/state version.
                 break;
             }
         }

@@ -81,7 +81,7 @@ struct RawDatabase {
         REQUIRE(sqlite3_prepare_v2(db, "UPDATE chunks SET payload=json_remove(json_set(payload,'$.actors[0].combat',json(?1)),'$.actors[0].equipment','$.actors[0].character_combat')", -1, &statement, nullptr) == SQLITE_OK);
         REQUIRE(sqlite3_bind_text(statement, 1, json.c_str(), static_cast<int>(json.size()), SQLITE_TRANSIENT) == SQLITE_OK);
         REQUIRE(sqlite3_step(statement) == SQLITE_DONE); REQUIRE(sqlite3_finalize(statement) == SQLITE_OK);
-        Exec("UPDATE world_state SET payload=json_remove(payload,'$.session.players[0].session')");
+        Exec("UPDATE world_state SET payload=json_remove(payload,'$.power','$.session.players[0].session')");
         Exec("UPDATE metadata SET format_version=13");
     }
 };

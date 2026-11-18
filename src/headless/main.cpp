@@ -6,6 +6,7 @@
 #include "client/settings.h"
 #include "client/crafting_menu.h"
 #include "client/combat_menu.h"
+#include "client/power_view.h"
 
 #include <EASTL/array.h>
 #include <EASTL/unique_ptr.h>
@@ -116,6 +117,18 @@ bool Execute(eastl::unique_ptr<Server>& ownedServer, eastl::string_view line, bo
         return true;
     }
     if (name == "inspect" && count == 1) { Inspect(server); return true; }
+    if (name == "power" && count == 1) {
+        PowerWorkshop workshop; const auto view = server.View(8); workshop.Open(view);
+        Vector<String> lines; workshop.Describe(view, server.GetWorld().GetContent(), lines);
+        for (const auto& text : lines) std::puts(text.c_str());
+        return true;
+    }
+    if (name == "power-debug" && count == 1) {
+        PowerDebugSnapshot snapshot; CapturePowerDebug(server.GetWorld(), snapshot);
+        Vector<String> lines; DescribePowerDebug(snapshot, server.View(0).player_position, lines);
+        for (const auto& text : lines) std::puts(text.c_str());
+        return true;
+    }
     if ((name == "combat" || name == "styles" || name == "abilities") && count == 1) {
         const auto view = server.View(0);
         const auto& content = server.GetWorld().GetContent();
@@ -282,7 +295,17 @@ bool Execute(eastl::unique_ptr<Server>& ownedServer, eastl::string_view line, bo
         return true;
     }
     Command command;
-    if (name == "new-character" && count == 1) {
+    if (name == "wire-grid" && count == 7) {
+        command.kind = CommandKind::wire_grid;
+        if (!Number(words[1], command.item) || !Number(words[2], command.powerBounds.min.x)
+            || !Number(words[3], command.powerBounds.min.z) || !Number(words[4], command.powerBounds.max.x)
+            || !Number(words[5], command.powerBounds.max.z) || !Number(words[6], command.powerBounds.min.y)) return false;
+        command.powerBounds.max.y = command.powerBounds.min.y;
+    } else if (name == "place-power" && count == 6) {
+        command.kind = CommandKind::place_power_object;
+        if (!Number(words[1], command.item) || !Number(words[2], command.otherItem)
+            || !Number(words[3], command.position.x) || !Number(words[4], command.position.z) || !Number(words[5], command.position.y)) return false;
+    } else if (name == "new-character" && count == 1) {
         command.kind = CommandKind::new_character;
     } else if (name == "study-art" && count == 3) {
         command.kind = CommandKind::study_art;

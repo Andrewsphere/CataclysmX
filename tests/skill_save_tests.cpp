@@ -159,6 +159,7 @@ TEST_CASE("Version twelve saves migrate to explicit neutral learning envelopes",
         "'$.learning','$.equipment','$.character_combat')) FROM json_each(chunks.payload,'$.actors'))));"
         "UPDATE world_state SET payload=json_set(payload,'$.session.players',json((SELECT json_group_array("
         "json_remove(value,'$.session')) FROM json_each(world_state.payload,'$.session.players'))));"
+        "UPDATE world_state SET payload=json_remove(payload,'$.power');"
         "UPDATE metadata SET format_version=12");
     {
         World world(content); const auto session = Take(world.LoadSave(file.path.c_str())); Load(world);

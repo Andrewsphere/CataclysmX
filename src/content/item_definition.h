@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/data_object.h"
+#include "core/object_appearance.h"
 #include "content/crafting_definition.h"
 #include "content/text_art.h"
 #include "content/definition_flags.h"
@@ -68,6 +69,11 @@ struct ItemDefinition {
     // Optional electronic-reader store. Nonzero requires charge to read/reference.
     ItemCapabilityId readingPower{};
     eastl::optional<ArmorDefinition> armor;
+    bool craftingGridPower = false;
+    ItemTypeId wiringMaterial{};
+    std::uint16_t wiringTilesPerMaterial = 16;
+    ObjectTypeId placedObject{};
+    bool gridMeter = false;
     bool operator==(const ItemDefinition& other) const;
 };
 

@@ -108,6 +108,7 @@ void Replace(std::string& text, const char* before, const char* after) {
 }
 
 void StripV14Fields(RawDatabase& raw) {
+    raw.Exec("UPDATE world_state SET payload=json_remove(payload,'$.power')");
     // Restore an actual v2 combat envelope, rather than relabeling v3 as legacy.
     raw.Exec("UPDATE chunks SET payload=json_set(payload,'$.actors',json((SELECT json_group_array("
         "json_remove(CASE WHEN json_extract(value,'$.combat.version')=3 THEN "
@@ -547,7 +548,7 @@ TEST_CASE("Save database rejects unknown versions and incomplete or extended sch
     Populate(file.path.c_str());
     {
         RawDatabase raw(file.path.c_str());
-        SECTION("future version") { raw.Exec("UPDATE metadata SET format_version=15"); }
+        SECTION("future version") { raw.Exec("UPDATE metadata SET format_version=16"); }
         SECTION("previous v6 format") { raw.Exec("UPDATE metadata SET format_version=6"); }
         SECTION("previous v5 format") { raw.Exec("UPDATE metadata SET format_version=5"); }
         SECTION("previous v4 format") { raw.Exec("UPDATE metadata SET format_version=4"); }
@@ -661,7 +662,7 @@ TEST_CASE("Save database validates session, counters and generator version", "[s
         RawDatabase raw(file.path.c_str());
         auto payload = raw.Text("SELECT payload FROM world_state");
         SECTION("unknown generator") {
-            Replace(payload, "\"generation_version\":3", "\"generation_version\":7");
+            Replace(payload, "\"generation_version\":3", "\"generation_version\":8");
             expected = SaveError::UnsupportedVersion;
         }
         SECTION("numeric counter") { Replace(payload, "\"tick\":\"18446744073709551615\"", "\"tick\":1"); }

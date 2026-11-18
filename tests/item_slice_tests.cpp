@@ -106,7 +106,18 @@ TEST_CASE("Town slice publishes sixty complete current definitions and retires t
     CHECK_FALSE(flag.domains.Contains(FlagDomain::Terrain));
     CHECK_FALSE(flag.domains.Contains(FlagDomain::Object));
     CHECK_FALSE(flag.description.empty());
-    CHECK(content.ItemCount() == 178); // Previous 98 plus 80 expansion items.
+    CHECK(content.ItemCount() == 181); // Previous 98, 80 expansion items, and 3 power items.
+    for (const char* name : {"wiring_kit", "portable_fuel_generator", "generator_fuel_packet"}) {
+        CAPTURE(name);
+        REQUIRE(content.FindItem(name).value);
+        CHECK(Current(content, content.FindItem(name)));
+    }
+    const auto& iron = content.GetItem(content.FindItem("soldering_iron"));
+    CHECK(iron.craftingGridPower);
+    CHECK(iron.craftingEnergyPerWork == 10000);
+    const auto station = content.FindObject("grid_battery_station");
+    REQUIRE(station.value);
+    CHECK(content.GetItem(content.FindItem("aa_rechargeable_battery")).placedObject == station);
     for (const char* name : sliceIds) {
         CAPTURE(name);
         const auto type = content.FindItem(name);

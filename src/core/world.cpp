@@ -18,6 +18,7 @@
 #include "skills/learning_system.h"
 #include "worldgen/worldgen.h"
 #include "objects/storage_access.h"
+#include "power/power_system.h"
 
 #include <EASTL/algorithm.h>
 #include <EASTL/numeric_limits.h>
@@ -106,7 +107,33 @@ struct Request {
     ChunkRegion region;
     LoadMode mode;
     eastl::optional<TileCircleRegion> circle;
+    LoadReason reason = LoadReason::Other;
 };
+
+bool RequestContains(const Request& request, ColumnCoord column) {
+    if (!request.circle) {
+        return std::abs(column.x - request.region.center.x) <= request.region.radius
+            && std::abs(column.z - request.region.center.z) <= request.region.radius;
+    }
+    const auto circle = *request.circle;
+    const auto nearestX = eastl::clamp(circle.center.x, column.x * chunk_size, (column.x + 1) * chunk_size - 1);
+    const auto nearestZ = eastl::clamp(circle.center.z, column.z * chunk_size, (column.z + 1) * chunk_size - 1);
+    const auto dx = std::int64_t{nearestX} - circle.center.x;
+    const auto dz = std::int64_t{nearestZ} - circle.center.z;
+    return dx * dx + dz * dz <= std::int64_t{circle.radiusTiles} * circle.radiusTiles;
+}
+
+bool CarriedPowerItem(const World& world, ActorHandle actor, ItemHandle handle) {
+    const auto* item = world.GetItem(handle);
+    if (!item || world.IsReservedItem(handle)) { return false; }
+    while (item->location.kind == LocationKind::item) {
+        if (item->location.installation.value) { return false; }
+        handle = item->location.item;
+        item = world.GetItem(handle);
+        if (!item || world.IsReservedItem(handle)) { return false; }
+    }
+    return item->location.kind == LocationKind::actor && item->location.actor == actor;
+}
 
 using Archive = ChunkArchive;
 
@@ -120,6 +147,53 @@ SaveResult<void> SaveFailure(SaveError error, const char* message, Diagnostics* 
         diagnostics->Add(message);
     }
     return eastl::unexpected(error);
+}
+
+eastl::optional<PowerDeviceKind> PowerRole(const ObjectDefinition* definition) {
+    if (!definition) { return eastl::nullopt; }
+    switch (definition->behavior) {
+    case ObjectBehaviorKind::Generator: return PowerDeviceKind::Generator;
+    case ObjectBehaviorKind::GridBattery: return PowerDeviceKind::Battery;
+    case ObjectBehaviorKind::CraftingMachine:
+        if (definition->machine.gridPowered) { return PowerDeviceKind::Machine; }
+        break;
+    case ObjectBehaviorKind::None: break;
+    }
+    return eastl::nullopt;
+}
+
+bool MatchesPowerObject(const PowerSystem& power, const ContentCatalog& content, PersistentId id,
+    TileCoord position, ObjectTypeId type, bool enabled, bool broken, const ObjectStateView& view, Tick now) {
+    const auto kind = PowerRole(content.TryGetObject(type));
+    const auto device = power.FindDevice(id);
+    if (kind.has_value() != device.has_value()) { return false; }
+    if (!kind) { return true; }
+    const bool hold = enabled && !broken && view.runRequested && *kind != PowerDeviceKind::Battery
+        && (*kind == PowerDeviceKind::Generator || view.hasJob);
+    if (device->position != position || device->kind != *kind || device->workshopHold != hold) { return false; }
+    if (*kind == PowerDeviceKind::Generator
+        && (view.generatorIntervalStart > now || (device->chargeProcessed
+            && (!view.generatorIntervalInitialized || device->chargeInterval > view.generatorIntervalStart)))) { return false; }
+    return true;
+}
+
+// Behavior state was already validated by ReadChunk/ValidateArchive. Read only
+// index facts; no behavior construction or DataObject allocation is needed here.
+bool ValidPowerArchive(const PowerSystem& power, const ContentCatalog& content, const Archive& saved, Tick now) {
+    std::size_t found = 0;
+    for (const auto& object : saved.objects) {
+        ObjectStateView view;
+        view.runRequested = object.state.GetBoolean("run_requested").value_or(false);
+        view.hasJob = object.state.GetBoolean("has_job").value_or(false);
+        view.generatorIntervalStart = object.state.GetUnsigned("generator_interval_start").value_or(0);
+        view.generatorIntervalInitialized = object.state.GetBoolean("generator_interval_initialized").value_or(false);
+        if (!MatchesPowerObject(power, content, object.id, object.position, object.type,
+                object.enabled, object.broken, view, now)) { return false; }
+        if (power.FindDevice(object.id)) { ++found; }
+    }
+    std::size_t expected = 0;
+    for (const auto& device : power.Devices()) { if (ChunkOf(device.position) == saved.position) { ++expected; } }
+    return found == expected;
 }
 
 // Relative archive timers are untrusted, including resident-only snapshots.
@@ -462,6 +536,8 @@ public:
     // A bounded, disposable planning cache; never part of authoritative state.
     eastl::optional<RegionPlan> generationPlan;
     ChunkPlacements generationPlacements;
+    Vector<GeneratedBuildingPower> generationPower;
+    Vector<BuildingPowerRegistration> pendingPowerBuildings;
     Vector<ChunkCoord> incomingChunks;
     Vector<ChunkCoord> newChunks;
     PersistentId next_id = 1;
@@ -529,6 +605,46 @@ public:
     ItemSystem itemSystem;
     CraftingSystem craftingSystem;
     LearningSystem learningSystem;
+    PowerSystem powerSystem;
+    Vector<ColumnCoord> workshopDemand;
+    Vector<ColumnCoord> playerPowerDemand;
+    Vector<ColumnCoord> powerDemandScratch;
+    Vector<TileCoord> powerPlayerScratch;
+    void RefreshPowerDemand() {
+        powerSystem.CollectWorkshopDemand(powerDemandScratch);
+        if (workshopDemand != powerDemandScratch) {
+            workshopDemand.swap(powerDemandScratch);
+            demandDirty = true;
+        }
+        powerPlayerScratch.clear();
+        for (const auto& actor : actors) {
+            if (actor.player && !actor.parked && actor.combat.life == ActorLifeState::Alive) {
+                powerPlayerScratch.push_back(actor.position);
+            }
+        }
+        powerSystem.CollectPlayerDemand(powerPlayerScratch, powerDemandScratch);
+        if (playerPowerDemand != powerDemandScratch) {
+            playerPowerDemand.swap(powerDemandScratch);
+            demandDirty = true;
+        }
+    }
+    Vector<ItemHandle> wiringMaterials;
+    bool GatherWiringMaterials(ActorHandle actor, ItemTypeId type, std::uint32_t count) {
+        wiringMaterials.clear();
+        for (const auto& entry : items.items()) {
+            const ItemHandle handle{entry.first.raw};
+            const auto& item = entry.second.get();
+            if (item.type == type && item.contents.empty() && CarriedPowerItem(owner, actor, handle)) {
+                wiringMaterials.push_back(handle);
+            }
+        }
+        if (wiringMaterials.size() < count) { return false; }
+        eastl::sort(wiringMaterials.begin(), wiringMaterials.end(), [this](auto a, auto b) {
+            return owner.GetItem(a)->id < owner.GetItem(b)->id;
+        });
+        wiringMaterials.resize(count);
+        return true;
+    }
     struct RecipeCredit { PersistentId actor; CraftingRecipeId recipe; std::uint64_t points; };
     // A failed disk lookup must not lose a completed job's award. Retried before
     // loading/saving; those fallible boundaries expose the original storage error.
@@ -774,6 +890,7 @@ public:
         }
         object->position = destination;
         RefreshSchedule(*object);
+        powerSystem.SyncObject(handle);
         MarkDirty(previous, true, true);
         MarkDirty(next, true, true);
         MarkGeometryDirty(previous);
@@ -821,7 +938,7 @@ public:
 
     explicit Impl(World& world, const ContentCatalog& catalog, std::uint32_t value)
         : owner(world), content(catalog), floor(catalog.FindTerrain("floor")),
-          wall(catalog.FindTerrain("wall")), seed(value), itemSystem(world), craftingSystem(world), learningSystem(world), combatSystem(world) {
+          wall(catalog.FindTerrain("wall")), seed(value), itemSystem(world), craftingSystem(world), learningSystem(world), powerSystem(world, value), combatSystem(world) {
         Require(floor.value != 0 && wall.value != 0);
     }
 
@@ -1461,6 +1578,7 @@ public:
             RefreshSchedule(restored);
             const auto key = objects.emplace(eastl::move(restored));
             value.objects.push_back({key.raw});
+            powerSystem.SyncObject({key.raw});
         }
         // Parents precede descendants, so every persistent owner is already live.
         for (const SavedItem& item : saved.items) {
@@ -1721,6 +1839,7 @@ public:
         }
         SaveSnapshot saveSnapshot{seed, generationVersion, next_id, session, skyLight, CaptureMemories()};
         saveSnapshot.session.tick = tick;
+        saveSnapshot.power = powerSystem.Capture();
         if (auto result = target.WriteSnapshot(saveSnapshot, diagnostics); !result) {
             target.Rollback();
             return result;
@@ -1743,16 +1862,16 @@ World::World(const ContentCatalog& content, std::uint32_t seed)
     : impl_(eastl::make_unique<Impl>(*this, content, seed)) {}
 World::~World() = default;
 
-WorldResult<LoadRequest> World::RequestChunks(ChunkRegion region, LoadMode mode) {
+WorldResult<LoadRequest> World::RequestChunks(ChunkRegion region, LoadMode mode, LoadReason reason) {
     if (!ValidRegion(region)) {
         return eastl::unexpected(WorldError::invalid_region);
     }
-    if (!ValidMode(mode)) {
+    if (!ValidMode(mode) || (reason != LoadReason::Other && reason != LoadReason::Player)) {
         return eastl::unexpected(WorldError::invalid_request);
     }
     region.center.y = 0;
     impl_->demandDirty = true;
-    return LoadRequest{impl_->requests.emplace(Request{region, mode, eastl::nullopt}).raw};
+    return LoadRequest{impl_->requests.emplace(Request{region, mode, eastl::nullopt, reason}).raw};
 }
 
 WorldResult<void> World::UpdateRequest(LoadRequest handle, ChunkRegion region, LoadMode mode) {
@@ -1770,16 +1889,16 @@ WorldResult<void> World::UpdateRequest(LoadRequest handle, ChunkRegion region, L
     if (!request->circle && request->region.center == region.center && request->region.radius == region.radius
         && request->mode == mode) { return {}; }
     impl_->demandDirty = true;
-    *request = {region, mode, eastl::nullopt};
+    *request = {region, mode, eastl::nullopt, request->reason};
     return {};
 }
 
-WorldResult<LoadRequest> World::RequestCircle(TileCircleRegion region, LoadMode mode) {
+WorldResult<LoadRequest> World::RequestCircle(TileCircleRegion region, LoadMode mode, LoadReason reason) {
     if (!ValidCircle(region)) { return eastl::unexpected(WorldError::invalid_region); }
-    if (!ValidMode(mode)) { return eastl::unexpected(WorldError::invalid_request); }
+    if (!ValidMode(mode) || (reason != LoadReason::Other && reason != LoadReason::Player)) { return eastl::unexpected(WorldError::invalid_request); }
     region.center.y = 0;
     impl_->demandDirty = true;
-    return LoadRequest{impl_->requests.emplace(Request{{}, mode, region}).raw};
+    return LoadRequest{impl_->requests.emplace(Request{{}, mode, region, reason}).raw};
 }
 
 WorldResult<void> World::UpdateCircleRequest(LoadRequest handle, TileCircleRegion region, LoadMode mode) {
@@ -1790,7 +1909,7 @@ WorldResult<void> World::UpdateCircleRequest(LoadRequest handle, TileCircleRegio
     region.center.y = 0;
     if (request->circle && request->circle->center == region.center
         && request->circle->radiusTiles == region.radiusTiles && request->mode == mode) { return {}; }
-    *request = {{}, mode, region};
+    *request = {{}, mode, region, request->reason};
     impl_->demandDirty = true;
     return {};
 }
@@ -1805,7 +1924,18 @@ WorldResult<void> World::ReleaseRequest(LoadRequest handle) {
 }
 
 SaveResult<void> World::ReconcileChunks(Diagnostics* diagnostics) {
+    for (;;) {
+        if (auto result = ReconcileChunksPass(diagnostics); !result) { return result; }
+        // Materialization, population or gravity may have exposed another source
+        // or changed a player's grid. Finish this closure before returning to input.
+        impl_->RefreshPowerDemand();
+        if (!impl_->demandDirty) { return {}; }
+    }
+}
+
+SaveResult<void> World::ReconcileChunksPass(Diagnostics* diagnostics) {
     if (auto result = impl_->FlushRecipeCredits(*this, diagnostics); !result) { return result; }
+    impl_->RefreshPowerDemand();
     if (!impl_->demandDirty) { return {}; }
     Impl::DemandMap demand;
     for (const Request& request : impl_->requests) {
@@ -1835,6 +1965,8 @@ SaveResult<void> World::ReconcileChunks(Diagnostics* diagnostics) {
             }
         }
     }
+    for (const auto column : impl_->workshopDemand) { demand[column] = true; }
+    for (const auto column : impl_->playerPowerDemand) { demand[column] = true; }
     bool sameColumns = demand.size() == impl_->columns_.size();
     bool sameActivity = sameColumns;
     for (const auto& entry : demand) {
@@ -1873,30 +2005,6 @@ SaveResult<void> World::ReconcileChunks(Diagnostics* diagnostics) {
         return {};
     }
     Impl::ArchiveMap staged;
-    if (impl_->database) {
-        for (const auto& entry : demand) {
-            for (int y = world_min_y; y <= world_max_y; ++y) {
-                const ChunkCoord position{entry.first.x, entry.first.z, y};
-                if (impl_->GetChunk(position)
-                    || impl_->archives.contains(position) || impl_->warmArchives.contains(position)) {
-                    continue;
-                }
-                auto saved = impl_->database->ReadChunk(position, impl_->next_id, diagnostics);
-                if (!saved) {
-                    if (diagnostics) { diagnostics->Add("Reconciling world chunks"); }
-                    return eastl::unexpected(saved.error());
-                }
-                if (*saved) {
-                    // ReadChunk fully validates external terrain, ownership,
-                    // state, local IDs and bounds before returning a value.
-                    if ((**saved).position != position) {
-                        return SaveFailure(SaveError::InvalidData, "Invalid disk chunk archive", diagnostics);
-                    }
-                    Require(staged.try_emplace(position, eastl::move(**saved)).second);
-                }
-            }
-        }
-    }
     const auto incomingArchive = [&](ChunkCoord position) -> const Archive* {
         const auto pending = impl_->archives.find(position);
         if (pending != impl_->archives.end()) { return &pending->second; }
@@ -1906,11 +2014,115 @@ SaveResult<void> World::ReconcileChunks(Diagnostics* diagnostics) {
         if (disk != staged.end()) { return &disk->second; }
         return nullptr;
     };
+    auto& incoming = impl_->incomingChunks;
+    auto& buildings = impl_->pendingPowerBuildings;
+    const auto stageBuildings = [&]() -> SaveResult<void> {
+        incoming.clear(); buildings.clear();
+        for (const auto& entry : demand) {
+            if (impl_->columns_.contains(entry.first)) { continue; }
+            for (int y = world_min_y; y <= world_max_y; ++y) { incoming.push_back({entry.first.x, entry.first.z, y}); }
+        }
+        eastl::sort(incoming.begin(), incoming.end(), ChunkLess);
+        if (impl_->generationVersion < 7) { return {}; }
+        for (const auto position : incoming) {
+            if (position.y != 0) { continue; }
+            const auto region = RegionOf({position.x * chunk_size, position.z * chunk_size});
+            if (!impl_->generationPlan || impl_->generationPlan->region != region) {
+                impl_->generationPlan = GenerateRegionPlan(impl_->content, impl_->seed, region, impl_->generationVersion);
+            }
+            GenerateBuildingPower(impl_->content, *impl_->generationPlan, position, impl_->generationPower);
+            for (const auto& building : impl_->generationPower) { buildings.push_back({building.origin, building.bounds}); }
+        }
+        if (!impl_->powerSystem.ValidateBuildings({buildings.data(), buildings.size()})) {
+            return SaveFailure(SaveError::InvalidData, "Invalid generated electrical coverage or grid ID exhaustion", diagnostics);
+        }
+        return {};
+    };
+    // Include source dependencies of players about to be restored before the
+    // mutation boundary, so bad source archives cannot fail a later live pass.
+    Vector<TileCoord> stagedConsumers;
+    Vector<ColumnCoord> stagedSources;
+    for (;;) {
+        if (impl_->database) {
+            for (const auto& entry : demand) {
+                for (int y = world_min_y; y <= world_max_y; ++y) {
+                    const ChunkCoord position{entry.first.x, entry.first.z, y};
+                    if (impl_->GetChunk(position) || incomingArchive(position)) { continue; }
+                    auto saved = impl_->database->ReadChunk(position, impl_->next_id, diagnostics);
+                    if (!saved) {
+                        if (diagnostics) { diagnostics->Add("Reconciling world chunks"); }
+                        return eastl::unexpected(saved.error());
+                    }
+                    if (*saved) {
+                        if ((**saved).position != position) {
+                            return SaveFailure(SaveError::InvalidData, "Invalid disk chunk archive", diagnostics);
+                        }
+                        Require(staged.try_emplace(position, eastl::move(**saved)).second);
+                    }
+                }
+            }
+        }
+        if (auto result = stageBuildings(); !result) { return result; }
+        stagedConsumers.assign(impl_->powerPlayerScratch.begin(), impl_->powerPlayerScratch.end());
+        for (const auto& device : impl_->powerSystem.Devices()) {
+            if (device.workshopHold) { stagedConsumers.push_back(device.position); }
+        }
+        for (const auto& entry : demand) {
+            if (impl_->columns_.contains(entry.first)) { continue; }
+            for (int y = world_min_y; y <= world_max_y; ++y) {
+                const auto* saved = incomingArchive({entry.first.x, entry.first.z, y});
+                if (!saved) { continue; }
+                for (const auto& actor : saved->actors) {
+                    if (!actor.player || actor.parked) { continue; }
+                    const auto combat = ReadCombatState(actor.combat, impl_->content, diagnostics);
+                    if (!combat) { return eastl::unexpected(SaveError::InvalidData); }
+                    if (combat->life == ActorLifeState::Alive) { stagedConsumers.push_back(actor.position); }
+                }
+            }
+        }
+        impl_->powerSystem.CollectPlayerDemand(stagedConsumers, stagedSources);
+        // Planned generated coverage can connect an incoming player to indexed
+        // sources even before that building's first global registration commits.
+        for (const auto& building : buildings) {
+            if (eastl::none_of(stagedConsumers.begin(), stagedConsumers.end(), [&](TileCoord position) {
+                    return PowerContains(building.bounds, position);
+                })) { continue; }
+            for (const auto& device : impl_->powerSystem.Devices()) {
+                if (device.kind == PowerDeviceKind::Machine || !PowerContains(building.bounds, device.position)) { continue; }
+                const auto chunk = ChunkOf(device.position);
+                stagedSources.push_back({chunk.x, chunk.z});
+            }
+        }
+        bool expanded = false;
+        for (const auto column : stagedSources) {
+            const auto entry = demand.try_emplace(column, true);
+            expanded |= entry.second || !entry.first->second;
+            entry.first->second = true;
+        }
+        if (!expanded) { break; }
+    }
+    // The closure may activate a previously resident source column.
+    for (const auto& entry : demand) {
+        const auto current = impl_->columns_.find(entry.first);
+        if (!entry.second || current == impl_->columns_.end() || current->second.layers.front().active) { continue; }
+        for (const auto& chunk : current->second.layers) {
+            if (auto valid = impl_->ValidateActivation(chunk, diagnostics); !valid) { return valid; }
+        }
+    }
     for (const auto& entry : demand) {
         if (impl_->columns_.contains(entry.first)) { continue; }
         for (int y = world_min_y; y <= world_max_y; ++y) {
             if (const Archive* saved = incomingArchive({entry.first.x, entry.first.z, y})) {
                 if (auto valid = ValidateArchiveDeadlines(*saved, impl_->content, impl_->tick, diagnostics); !valid) { return valid; }
+                if (!ValidPowerArchive(impl_->powerSystem, impl_->content, *saved, impl_->tick)) {
+                    return SaveFailure(SaveError::InvalidData, "Incoming archive differs from the global power equipment index", diagnostics);
+                }
+            } else {
+                for (const auto& device : impl_->powerSystem.Devices()) {
+                    if (ChunkOf(device.position) == ChunkCoord{entry.first.x, entry.first.z, y}) {
+                        return SaveFailure(SaveError::InvalidData, "Missing archive for indexed power equipment", diagnostics);
+                    }
+                }
             }
         }
     }
@@ -1930,6 +2142,10 @@ SaveResult<void> World::ReconcileChunks(Diagnostics* diagnostics) {
         }
     }
     // No live state, activity flags, archives, or keys change before this point.
+    // All subsequent registrations are guaranteed by the whole-batch preflight.
+    for (const auto& building : buildings) {
+        Require(impl_->powerSystem.RegisterBuilding(building.origin, building.bounds).has_value());
+    }
     ++impl_->perceptionStats.demandReconciliations;
     Impl::GravityBatch batch(*this);
     for (auto current = impl_->columns_.begin(); current != impl_->columns_.end();) {
@@ -1954,16 +2170,13 @@ SaveResult<void> World::ReconcileChunks(Diagnostics* diagnostics) {
             ++impl_->perceptionStats.columnsUnloaded;
         } else { ++current; }
     }
-    auto& incoming = impl_->incomingChunks;
     auto& newChunks = impl_->newChunks;
-    incoming.clear();
     newChunks.clear();
     for (const auto& entry : demand) {
         if (impl_->columns_.contains(entry.first)) { continue; }
         impl_->InstallColumn(entry.first, entry.second);
         for (int y = world_min_y; y <= world_max_y; ++y) {
             const ChunkCoord position{entry.first.x, entry.first.z, y};
-            incoming.push_back(position);
             impl_->MarkLightingDirty(position);
             impl_->MarkGeometryDirty(position);
             ++impl_->mapRevision;
@@ -2078,7 +2291,8 @@ SaveResult<SessionState> World::LoadSave(const char* path, Diagnostics* diagnost
     if (impl_->database || !impl_->requests.empty() || !impl_->actors.empty()
         || !impl_->items.empty() || !impl_->objects.empty() || impl_->ChunkCount() != 0
         || !impl_->archives.empty() || !impl_->warmArchives.empty() || !impl_->dirtyChunks.empty()
-        || !impl_->playerPositions.empty() || impl_->next_id != 1 || impl_->tick != 0) {
+        || !impl_->playerPositions.empty() || impl_->next_id != 1 || impl_->tick != 0
+        || !impl_->powerSystem.IsPristine()) {
         SaveFailure(SaveError::InvalidState, "Loading requires a pristine world", diagnostics);
         return eastl::unexpected(SaveError::InvalidState);
     }
@@ -2112,6 +2326,7 @@ SaveResult<SessionState> World::LoadSave(const char* path, Diagnostics* diagnost
     impl_->generationPlan.reset();
     impl_->next_id = snapshot->nextId;
     impl_->skyLight = snapshot->skyLight;
+    Require(impl_->powerSystem.Restore(snapshot->power, snapshot->session.tick).has_value());
     for (PlayerMemory& player : snapshot->memories) {
         auto& chunks = impl_->memories.try_emplace(player.player).first->second;
         for (MemoryChunk& chunk : player.chunks) {
@@ -2145,6 +2360,170 @@ SaveResult<void> World::Save(const SessionState& session, Diagnostics* diagnosti
 }
 
 bool World::HasSave() const { return impl_->database != nullptr; }
+PowerSystem& World::Power() { return impl_->powerSystem; }
+const PowerSystem& World::Power() const { return impl_->powerSystem; }
+void World::PowerChanged() {
+    ++impl_->revision;
+    ++impl_->mapRevision;
+    impl_->demandDirty = true;
+}
+
+const char* PowerActionMessage(PowerActionOutcome outcome) {
+    switch (outcome) {
+    case PowerActionOutcome::Succeeded: return "Electrical installation complete";
+    case PowerActionOutcome::InvalidArea: return "Choose one layer and a rectangle within the wiring size limit";
+    case PowerActionOutcome::OutOfReach: return "Electrical installation is out of reach";
+    case PowerActionOutcome::MissingMaterials: return "Missing wiring materials";
+    case PowerActionOutcome::InvalidEquipment: return "Carry a suitable wiring kit or placeable electrical device";
+    case PowerActionOutcome::Occupied: return "The installation tile is occupied";
+    case PowerActionOutcome::Unavailable: return "Electrical installation is unavailable";
+    case PowerActionOutcome::NoNewCoverage: return "This area is already wired";
+    }
+    std::abort();
+}
+
+PowerActionResult World::WireGrid(ActorHandle actorHandle, ItemHandle kit, PowerBounds bounds) {
+    const auto* actor = GetActor(actorHandle);
+    if (!actor || !IsActorAlive(actorHandle) || actor->parked || !IsActive(actor->position)
+        || actor->actionDeadline.Remaining(impl_->tick) || actor->combat.action.kind != ActorActionKind::None
+        || impl_->craftingSystem.Busy(actorHandle) || impl_->learningSystem.Busy(actorHandle)) { return {}; }
+    const auto* item = GetItem(kit);
+    if (!item || !CarriedPowerItem(*this, actorHandle, kit)) { return {PowerActionOutcome::InvalidEquipment}; }
+    const auto& definition = impl_->content.GetItem(item->type);
+    if (!definition.wiringMaterial.value) { return {PowerActionOutcome::InvalidEquipment}; }
+    const auto quote = impl_->powerSystem.Quote(bounds);
+    if (!quote || bounds.min.y != actor->position.y) { return {PowerActionOutcome::InvalidArea}; }
+    const auto settings = impl_->powerSystem.Settings();
+    for (const auto corner : {bounds.min, bounds.max}) {
+        if (std::abs(corner.x - actor->position.x) > settings.maxWiringWidth
+            || std::abs(corner.z - actor->position.z) > settings.maxWiringDepth) { return {PowerActionOutcome::OutOfReach}; }
+    }
+    for (int x = bounds.min.x; x <= bounds.max.x; ++x) {
+        for (int z = bounds.min.z; z <= bounds.max.z; ++z) {
+            if (!GetTile({x, z, bounds.min.y})) { return {PowerActionOutcome::Unavailable}; }
+        }
+    }
+    if (!quote->newTiles && quote->mergedGrids < 2) { return {PowerActionOutcome::NoNewCoverage}; }
+    const auto materialCount = (quote->wiringUnits + definition.wiringTilesPerMaterial - 1) / definition.wiringTilesPerMaterial;
+    if (!impl_->GatherWiringMaterials(actorHandle, definition.wiringMaterial, materialCount)) {
+        return {PowerActionOutcome::MissingMaterials};
+    }
+    const auto cost = eastl::max<std::uint32_t>(1, quote->newTiles) * ticks_per_turn;
+    if (ActionTicks(cost, actor->speed) > UINT64_MAX - impl_->tick) { return {}; }
+    Impl::GravityBatch batch(*this);
+    BeginCraftingMutation();
+    const auto extended = impl_->powerSystem.ExtendBounds(bounds);
+    Require(extended.has_value());
+    for (const auto material : impl_->wiringMaterials) { Require(DestroyItem(material).has_value()); }
+    EndCraftingMutation();
+    return {PowerActionOutcome::Succeeded, cost};
+}
+
+PowerActionResult World::PlacePowerObject(ActorHandle actorHandle, ItemHandle equipment,
+    ItemHandle wiringKit, TileCoord position) {
+    const auto* actor = GetActor(actorHandle);
+    if (!actor || !IsActorAlive(actorHandle) || actor->parked || !IsActive(actor->position)
+        || actor->actionDeadline.Remaining(impl_->tick) || actor->combat.action.kind != ActorActionKind::None
+        || impl_->craftingSystem.Busy(actorHandle) || impl_->learningSystem.Busy(actorHandle)) { return {}; }
+    const auto* item = GetItem(equipment);
+    if (!item || !CarriedPowerItem(*this, actorHandle, equipment) || !item->contents.empty()) {
+        return {PowerActionOutcome::InvalidEquipment};
+    }
+    const auto& definition = impl_->content.GetItem(item->type);
+    const auto* placed = impl_->content.TryGetObject(definition.placedObject);
+    if (!placed || (placed->behavior != ObjectBehaviorKind::GridBattery
+        && placed->behavior != ObjectBehaviorKind::Generator
+        && !(placed->behavior == ObjectBehaviorKind::CraftingMachine && placed->machine.gridPowered))) {
+        return {PowerActionOutcome::InvalidEquipment};
+    }
+    if (!ValidPosition(position) || !CanAccessGroundStorage(actorHandle, position)) { return {PowerActionOutcome::OutOfReach}; }
+    if (ObjectAt(position).value || (placed->blocksMovement && ActorAt(position).value)) { return {PowerActionOutcome::Occupied}; }
+    const bool battery = placed->behavior == ObjectBehaviorKind::GridBattery;
+    impl_->wiringMaterials.clear();
+    if (battery) {
+        const auto* kit = GetItem(wiringKit);
+        if (!kit || !CarriedPowerItem(*this, actorHandle, wiringKit) || equipment == wiringKit) {
+            return {PowerActionOutcome::InvalidEquipment};
+        }
+        const auto& kitDefinition = impl_->content.GetItem(kit->type);
+        if (!kitDefinition.wiringMaterial.value || kitDefinition.wiringMaterial == item->type) {
+            return {PowerActionOutcome::InvalidEquipment};
+        }
+        const auto count = (4U + kitDefinition.wiringTilesPerMaterial - 1) / kitDefinition.wiringTilesPerMaterial;
+        if (!impl_->GatherWiringMaterials(actorHandle, kitDefinition.wiringMaterial, count)) {
+            return {PowerActionOutcome::MissingMaterials};
+        }
+    }
+    constexpr auto cost = ticks_per_turn * 4;
+    if (ActionTicks(cost, actor->speed) > UINT64_MAX - impl_->tick) { return {}; }
+    Impl::GravityBatch batch(*this);
+    BeginCraftingMutation();
+    const auto object = CreateObject(definition.placedObject, position);
+    Require(object.has_value());
+    if (battery) { Require(TransferItem(equipment, ItemLocation::Stored(*object)).has_value()); }
+    else { Require(DestroyItem(equipment).has_value()); }
+    for (const auto material : impl_->wiringMaterials) { Require(DestroyItem(material).has_value()); }
+    impl_->powerSystem.SyncObject(*object);
+    EndCraftingMutation();
+    return {PowerActionOutcome::Succeeded, cost};
+}
+
+bool World::CanInspectPower(ActorHandle actorHandle) const {
+    const auto* actor = GetActor(actorHandle);
+    if (!actor || !IsActorAlive(actorHandle) || actor->parked || !IsActive(actor->position)) { return false; }
+    const auto hasMeter = [&](auto&& self, ItemHandle handle) -> bool {
+        const auto* item = GetItem(handle);
+        if (!item || item->location.installation.value || IsReservedItem(handle)) { return false; }
+        if (impl_->content.GetItem(item->type).gridMeter) { return true; }
+        for (const auto child : item->contents) { if (self(self, child)) { return true; } }
+        return false;
+    };
+    for (const auto handle : actor->inventory) { if (hasMeter(hasMeter, handle)) { return true; } }
+    return false;
+}
+
+void World::CollectChunkResidencyDebug(Vector<ChunkResidencyDebug>& output,
+    ChunkResidencyCounters& counters) const {
+    output.clear(); counters = {};
+    Vector<PowerColumnDebug> machines;
+    impl_->powerSystem.CollectWorkshopDebug(machines);
+    for (const auto& column : impl_->columns_) {
+        ChunkResidencyDebug entry;
+        entry.column = column.first;
+        entry.active = column.second.layers.front().active;
+        for (const auto& request : impl_->requests) {
+            if (!RequestContains(request, column.first)) { continue; }
+            if (request.reason == LoadReason::Player) {
+                if (request.mode == LoadMode::active) { ++entry.playerActiveRequests; }
+                else { ++entry.playerResidentRequests; }
+            } else if (request.mode == LoadMode::active) { ++entry.otherActiveRequests; }
+            else { ++entry.otherResidentRequests; }
+        }
+        if (eastl::find(impl_->playerPowerDemand.begin(), impl_->playerPowerDemand.end(), column.first)
+            != impl_->playerPowerDemand.end()) { ++entry.playerActiveRequests; }
+        for (const auto& machine : machines) {
+            if (machine.column == column.first) {
+                entry.machineOwners = machine.ownerHolds;
+                entry.machineDependencies = machine.sourceDependencies;
+                break;
+            }
+        }
+        const bool player = entry.playerActiveRequests || entry.playerResidentRequests;
+        const bool machine = entry.machineOwners || entry.machineDependencies;
+        ++counters.loadedColumns;
+        counters.activeColumns += entry.active;
+        counters.playerColumns += player;
+        counters.machineColumns += machine;
+        counters.machineOnlyColumns += machine && !player;
+        counters.sharedColumns += machine && player;
+        output.push_back(entry);
+    }
+    eastl::sort(output.begin(), output.end(), [](const auto& a, const auto& b) {
+        return a.column.x != b.column.x ? a.column.x < b.column.x : a.column.z < b.column.z;
+    });
+    counters.loadedChunks = std::uint64_t{counters.loadedColumns} * world_layer_count;
+    counters.archivedChunks = ArchivedChunkCount();
+}
 const ContentCatalog& World::GetContent() const { return impl_->content; }
 std::uint32_t World::GetSeed() const { return impl_->seed; }
 std::uint32_t World::GetGenerationVersion() const { return impl_->generationVersion; }
@@ -2982,7 +3361,16 @@ ItemUseResult World::UseItem(ActorHandle actor, ItemHandle handle, const ItemUse
 
 WorldResult<void> World::SetItemEnergy(ItemHandle handle, ItemCapabilityId capability, std::uint32_t energy) {
     Impl::GravityBatch batch(*this);
-    return impl_->itemSystem.SetEnergy({handle, capability}, energy);
+    const auto result = impl_->itemSystem.SetEnergy({handle, capability}, energy);
+    if (result) {
+        const auto* item = GetItem(handle);
+        if (item && item->location.kind == LocationKind::object) {
+            const auto* object = GetObject(item->location.object);
+            const auto* definition = object ? impl_->content.TryGetObject(object->type) : nullptr;
+            if (definition && definition->behavior == ObjectBehaviorKind::GridBattery) { impl_->powerSystem.Invalidate(); }
+        }
+    }
+    return result;
 }
 
 eastl::optional<Tick> World::NextItemEventIn() const {
@@ -3127,6 +3515,7 @@ WorldResult<ObjectHandle> World::CreateObject(ObjectTypeId type, TileCoord posit
     impl_->MarkDirty(ChunkOf(position), true, true);
     impl_->MarkGeometryDirty(ChunkOf(position));
     impl_->MarkLightingDirty(ChunkOf(position));
+    impl_->powerSystem.SyncObject(handle);
     return handle;
 }
 
@@ -3271,7 +3660,10 @@ WorldResult<ObjectMoveResult> World::TryObjectStep(ActorHandle actor, ObjectHand
 eastl::optional<ObjectStateView> World::DescribeObjectState(ObjectHandle handle) const {
     const auto* object = GetObject(handle);
     if (!object || !object->type.value) { return eastl::nullopt; }
-    return object->behavior_ ? object->behavior_->Describe() : ObjectStateView{};
+    if (object->behavior_) { return object->behavior_->Describe(); }
+    ObjectStateView view;
+    view.behavior = impl_->content.GetObject(object->type).behavior;
+    return view;
 }
 
 DataObject World::CaptureObjectState(ObjectHandle handle) const {
@@ -3284,6 +3676,31 @@ WorldResult<void> World::SetObjectEnergy(ObjectHandle handle, std::uint64_t ener
     if (!object) { return eastl::unexpected(WorldError::invalid_handle); }
     if (!object->behavior_) { return eastl::unexpected(WorldError::invalid_request); }
     const auto result = object->behavior_->SetEnergy(energy);
+    if (result) {
+        impl_->MarkDirty(ChunkOf(object->position), false);
+        impl_->powerSystem.SyncObject(handle);
+    }
+    return result;
+}
+
+WorldResult<void> World::PrepareGeneratorInterval(ObjectHandle handle, Tick now) {
+    auto* object = Live(impl_->objects, handle);
+    if (!object || !object->behavior_) { return eastl::unexpected(WorldError::invalid_handle); }
+    const auto result = object->behavior_->PrepareGeneratorInterval(now);
+    if (result) { impl_->MarkDirty(ChunkOf(object->position), false); }
+    return result;
+}
+WorldResult<void> World::SpendGeneratorEnergy(ObjectHandle handle, std::uint64_t energy) {
+    auto* object = Live(impl_->objects, handle);
+    if (!object || !object->behavior_) { return eastl::unexpected(WorldError::invalid_handle); }
+    const auto result = object->behavior_->SpendGeneratorEnergy(energy);
+    if (result) { impl_->MarkDirty(ChunkOf(object->position), false); }
+    return result;
+}
+WorldResult<void> World::FundGridMachine(ObjectHandle handle, Tick ticks) {
+    auto* object = Live(impl_->objects, handle);
+    if (!object || !object->behavior_) { return eastl::unexpected(WorldError::invalid_handle); }
+    const auto result = object->behavior_->FundGridWork(ticks);
     if (result) { impl_->MarkDirty(ChunkOf(object->position), false); }
     return result;
 }
@@ -3377,6 +3794,7 @@ ObjectUseResult World::UseObject(ActorHandle actor, ObjectHandle handle, ObjectA
         object = Live(impl_->objects, handle);
         Require(object != nullptr);
         impl_->MarkDirty(ChunkOf(object->position), false);
+        impl_->powerSystem.SyncObject(handle);
     }
     return result;
 }
@@ -3458,6 +3876,7 @@ WorldResult<void> World::DestroyObject(ObjectHandle handle) {
     const bool blocksSight = definition && definition->blocksSight;
     if (blocksSight) { impl_->MarkGeometryDirty(ChunkOf(position)); }
     if (blocksSight || (value->enabled && value->light.intensity)) { impl_->MarkLightingDirty(ChunkOf(position)); }
+    impl_->powerSystem.UnregisterObject(value->id);
     impl_->objects.erase(dod::slot_map64<InteractiveObject>::key{handle.value});
     impl_->MarkDirty(ChunkOf(position), true, true);
     return {};
@@ -3472,6 +3891,7 @@ WorldResult<void> World::SetObjectEnabled(ObjectHandle handle, bool enabled) {
     if (value->light.intensity) { impl_->MarkLightingDirty(ChunkOf(value->position)); }
     value->enabled = enabled;
     impl_->RefreshSchedule(*value);
+    impl_->powerSystem.SyncObject(handle);
     impl_->MarkDirty(ChunkOf(value->position), true, true);
     return {};
 }
@@ -3490,6 +3910,7 @@ WorldResult<void> World::SetObjectAppearance(ObjectHandle handle, ObjectKind kin
     object->kind = kind;
     object->facing = facing;
     object->broken = broken;
+    impl_->powerSystem.SyncObject(handle);
     impl_->MarkDirty(ChunkOf(object->position), true, true);
     return {};
 }
@@ -3710,6 +4131,19 @@ Tick World::GetObjectRemainingTicks(ObjectHandle handle) const {
 void World::ElapseTicks(Tick elapsed) {
     Impl::GravityBatch batch(*this);
     if (elapsed == 0) { return; }
+    const Tick end = CheckedTickAdd(impl_->tick, elapsed);
+    while (impl_->tick < end) {
+        impl_->powerSystem.ProcessEvents();
+        auto segment = end - impl_->tick;
+        if (const auto event = impl_->powerSystem.NextEventIn()) {
+            Require(*event != 0);
+            segment = eastl::min(segment, *event);
+        }
+        ElapseSegment(segment);
+    }
+}
+
+void World::ElapseSegment(Tick elapsed) {
     const Tick nextTick = CheckedTickAdd(impl_->tick, elapsed);
     // Relative timers on disk change even though runtime deadlines do not.
     // Dirty at chunk granularity, avoiding writes to every scheduled entity.
@@ -3892,6 +4326,7 @@ bool World::ProcessObjectEvents() {
                 Require(object->updates != eastl::numeric_limits<std::uint64_t>::max());
                 ++object->updates;
                 impl_->MarkDirty(ChunkOf(object->position), false);
+                impl_->powerSystem.SyncObject(record.handle);
             }
         } else {
             if (object->type.value || object->updateDeadline.dueTick > impl_->tick) { continue; }
@@ -3936,6 +4371,19 @@ WorldResult<void> World::RecordObjectUpdate(ObjectHandle handle) {
 
 bool World::CheckInvariants() const {
     const Impl& state = *impl_;
+    if (!state.powerSystem.CheckState(state.tick, state.next_id)) { return false; }
+    for (const auto& device : state.powerSystem.Devices()) {
+        if (device.object == 0 || device.object >= state.next_id) { return false; }
+        const auto chunk = ChunkOf(device.position);
+        if (state.GetChunk(chunk)) {
+            const auto* object = GetObject(FindObject(device.object));
+            if (!object || object->position != device.position) { return false; }
+        } else if (!state.archives.contains(chunk) && !state.warmArchives.contains(chunk) && !state.database) {
+            return false;
+        }
+        // Disk-only records were checked at Open and will be checked again on
+        // incoming archive read; invariants deliberately do not scan the database.
+    }
     for (const auto& player : state.memories) {
         if (player.first == 0 || player.first >= state.next_id || player.second.empty()) { return false; }
         for (const auto& chunk : player.second) {
@@ -4068,11 +4516,14 @@ bool World::CheckInvariants() const {
     for (const auto& entry : state.objects.items()) {
         const InteractiveObject& value = entry.second.get();
         const ObjectHandle handle{entry.first.raw};
+        if (!MatchesPowerObject(state.powerSystem, state.content, value.id, value.position,
+                value.type, value.enabled, value.broken, DescribeObjectState(handle).value_or(ObjectStateView{}), state.tick)) { return false; }
         const bool running = !value.type.value && value.enabled && IsActive(value.position);
         if (value.updateDeadline.suspended == running) { return false; }
         if (value.type.value) {
             const auto* definition = state.content.TryGetObject(value.type);
-            if (!definition || (definition->behavior == ObjectBehaviorKind::None) != !value.behavior_
+            if (!definition || (definition->behavior == ObjectBehaviorKind::None
+                    || definition->behavior == ObjectBehaviorKind::GridBattery) != !value.behavior_
                 || !ValidateObjectBehaviorState(*definition, CaptureObjectState(handle))) { return false; }
             if ((definition->blocksMovement && ActorAt(value.position).value)
                 || (definition->capacityVolumeMl && state.ObjectVolume(handle) > *definition->capacityVolumeMl)) { return false; }
@@ -4217,7 +4668,8 @@ bool World::CheckInvariants() const {
     for (const auto& entry : state.archives) {
         const Archive& archive = entry.second;
         Vector<PersistentId> checkedIds;
-        if (!ValidateArchive(state.content, archive, state.next_id, checkedIds)) { return false; }
+        if (!ValidateArchive(state.content, archive, state.next_id, checkedIds)
+            || !ValidPowerArchive(state.powerSystem, state.content, archive, state.tick)) { return false; }
     }
     if (state.warmArchives.size() > Impl::maxWarmEntries
         || state.warmOrder.size() != state.warmArchives.size()) { return false; }
@@ -4230,7 +4682,8 @@ bool World::CheckInvariants() const {
                 [](const SavedObject& object) { return object.type.value != 0; })
             || state.GetChunk(archive.position)
             || Occurrences(archived_positions, archive.position) != 0
-            || !ValidateArchive(state.content, archive, state.next_id, ids)) { return false; }
+            || !ValidateArchive(state.content, archive, state.next_id, ids)
+            || !ValidPowerArchive(state.powerSystem, state.content, archive, state.tick)) { return false; }
         archived_positions.push_back(archive.position);
         warmBytes += Impl::WarmCost(archive);
         for (const SavedActor& actor : archive.actors) {

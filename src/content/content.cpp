@@ -702,6 +702,8 @@ struct PendingItem {
     Vector<String> flags;
     String artPath;
     String powerStore;
+    String wiringMaterial;
+    String placedObject;
     Vector<String> books;
     String readingPower;
     String handlingSkill;
@@ -791,6 +793,7 @@ struct PendingObject {
     ObjectDefinition definition;
     String input;
     String output;
+    String fuelItem;
     std::size_t inputOrder = 0;
     Context context;
 };
@@ -832,7 +835,7 @@ bool ParseAiProfile(yyjson_val* object, PendingAiProfile& pending) {
 bool ParseObject(yyjson_val* object, PendingObject& pending) {
     const auto& context = pending.context;
     auto& definition = pending.definition;
-    if (!CheckObject(object, {"id", "name", "behavior", "machine", "capacity_volume_ml", "kind",
+    if (!CheckObject(object, {"id", "name", "behavior", "machine", "generator", "capacity_volume_ml", "kind",
                               "blocks_movement", "blocks_sight", "movable", "move_cost", "light"}, context)
         || !ReadId(yyjson_obj_get(object, "id"), definition.id, context.Child("id"))
         || !ReadString(yyjson_obj_get(object, "name"), definition.name, context.Child("name"))) { return false; }
@@ -871,6 +874,33 @@ bool ParseObject(yyjson_val* object, PendingObject& pending) {
     }
     auto* behavior = yyjson_obj_get(object, "behavior");
     if (!yyjson_is_str(behavior)) { return context.Child("behavior").Fail("expected a behavior kind string"); }
+    const auto behaviorName = JsonString(behavior);
+    if (behaviorName != "generator" && yyjson_obj_get(object, "generator")) {
+        return context.Child("generator").Fail("generator config requires generator behavior");
+    }
+    if (behaviorName != "crafting_machine" && yyjson_obj_get(object, "machine")) {
+        return context.Child("machine").Fail("machine config requires crafting_machine behavior");
+    }
+    if (behaviorName == "grid_battery") {
+        definition.behavior = ObjectBehaviorKind::GridBattery;
+        return true;
+    }
+    if (behaviorName == "generator") {
+        definition.behavior = ObjectBehaviorKind::Generator;
+        auto* generator = yyjson_obj_get(object, "generator");
+        const auto child = context.Child("generator");
+        auto& config = definition.generator;
+        if (!CheckObject(generator, {"fuel_item", "fuel_capacity", "energy_per_fuel", "output_per_tick"}, child)
+            || !ReadId(yyjson_obj_get(generator, "fuel_item"), pending.fuelItem, child.Child("fuel_item"))
+            || !ReadBoundedInteger(yyjson_obj_get(generator, "energy_per_fuel"), 1, UINT32_MAX, config.energyPerFuel, child.Child("energy_per_fuel"))
+            || !ReadBoundedInteger(yyjson_obj_get(generator, "output_per_tick"), 1, UINT32_MAX, config.outputPerTick, child.Child("output_per_tick"))) { return false; }
+        auto* capacity = yyjson_obj_get(generator, "fuel_capacity");
+        if (!yyjson_is_uint(capacity) || yyjson_get_uint(capacity) < config.energyPerFuel) {
+            return child.Child("fuel_capacity").Fail("expected chemical energy capacity >= energy_per_fuel");
+        }
+        config.fuelCapacity = yyjson_get_uint(capacity);
+        return true;
+    }
     if (JsonString(behavior) == "none") {
         if (yyjson_obj_get(object, "machine")) { return context.Child("machine").Fail("none behavior has no machine config"); }
         return true;
@@ -881,7 +911,7 @@ bool ParseObject(yyjson_val* object, PendingObject& pending) {
     const auto machineContext = context.Child("machine");
     auto& config = definition.machine;
     std::uint32_t duration = 0;
-    if (!CheckObject(machine, {"input", "input_count", "output", "output_count", "duration_ticks", "energy_capacity", "energy_per_tick"}, machineContext)
+    if (!CheckObject(machine, {"input", "input_count", "output", "output_count", "duration_ticks", "energy_capacity", "energy_per_tick", "grid_powered"}, machineContext)
         || !ReadId(yyjson_obj_get(machine, "input"), pending.input, machineContext.Child("input"))
         || !ReadId(yyjson_obj_get(machine, "output"), pending.output, machineContext.Child("output"))
         || !ReadBoundedInteger(yyjson_obj_get(machine, "input_count"), 1, 1024, config.inputCount, machineContext.Child("input_count"))
@@ -889,10 +919,13 @@ bool ParseObject(yyjson_val* object, PendingObject& pending) {
         || !ReadBoundedInteger(yyjson_obj_get(machine, "duration_ticks"), 1, std::numeric_limits<std::uint32_t>::max(), duration, machineContext.Child("duration_ticks"))
         || !ReadBoundedInteger(yyjson_obj_get(machine, "energy_per_tick"), 1, std::numeric_limits<std::uint32_t>::max(), config.energyPerTick, machineContext.Child("energy_per_tick"))) { return false; }
     config.duration = duration;
+    if (auto* grid = yyjson_obj_get(machine, "grid_powered")) {
+        if (!ReadBool(grid, config.gridPowered, machineContext.Child("grid_powered"))) { return false; }
+    }
     auto* capacity = yyjson_obj_get(machine, "energy_capacity");
-    if (!yyjson_is_uint(capacity) || yyjson_get_uint(capacity) < config.energyPerTick
+    if (!yyjson_is_uint(capacity) || (config.gridPowered ? yyjson_get_uint(capacity) != 0 : yyjson_get_uint(capacity) < config.energyPerTick)
         || yyjson_get_uint(capacity) > std::numeric_limits<std::uint64_t>::max() / 2) {
-        return machineContext.Child("energy_capacity").Fail("expected energy_per_tick <= capacity <= UINT64_MAX / 2");
+        return machineContext.Child("energy_capacity").Fail("grid machines require zero capacity; local machines require energy_per_tick <= capacity <= UINT64_MAX / 2");
     }
     config.energyCapacity = yyjson_get_uint(capacity);
     return true;
@@ -1194,7 +1227,7 @@ bool ParseItemMelee(yyjson_val* object, MeleeProfile& profile, const Context& co
 bool ParseItem(yyjson_val* object, PendingItem& item, const ItemBehaviorRegistry& registry) {
     const auto& context = item.context;
     auto& definition = item.definition;
-    if (!CheckObject(object, {"type", "id", "name", "description", "art", "flags", "melee", "armor", "mass_g", "volume_ml", "capabilities", "tool_traits", "recovery_allowed", "crafting_power", "books", "reading_power"}, context)
+    if (!CheckObject(object, {"type", "id", "name", "description", "art", "flags", "melee", "armor", "mass_g", "volume_ml", "capabilities", "tool_traits", "recovery_allowed", "crafting_power", "books", "reading_power", "wiring_material", "wiring_tiles_per_material", "placed_object", "grid_meter"}, context)
         || !ReadId(yyjson_obj_get(object, "id"), definition.id, context.Child("id"))
         || !ReadString(yyjson_obj_get(object, "name"), definition.name, context.Child("name"))
         || !ReadItemInteger(object, "mass_g", 0, definition.massGrams, context)
@@ -1240,6 +1273,30 @@ bool ParseItem(yyjson_val* object, PendingItem& item, const ItemBehaviorRegistry
             || !ReadId(yyjson_obj_get(power, "store"), item.powerStore, child.Child("store"))
             || !ReadBoundedInteger(yyjson_obj_get(power, "energy_per_work"), 1, UINT32_MAX,
                                    definition.craftingEnergyPerWork, child.Child("energy_per_work"))) { return false; }
+        if (item.powerStore == "grid") {
+            definition.craftingGridPower = true;
+            item.powerStore.clear();
+        }
+    }
+    if (auto* wiring = yyjson_obj_get(object, "wiring_material")) {
+        if (!ReadId(wiring, item.wiringMaterial, context.Child("wiring_material"))) { return false; }
+        if (item.wiringMaterial == definition.id) {
+            return context.Child("wiring_material").Fail("wiring tool must not be its own consumed material");
+        }
+    }
+    if (auto* tiles = yyjson_obj_get(object, "wiring_tiles_per_material")) {
+        std::uint32_t amount = 0;
+        if (!ReadBoundedInteger(tiles, 1, 256, amount, context.Child("wiring_tiles_per_material"))) { return false; }
+        if (item.wiringMaterial.empty() && amount != 16) {
+            return context.Child("wiring_tiles_per_material").Fail("nondefault wiring coverage requires wiring_material");
+        }
+        definition.wiringTilesPerMaterial = static_cast<std::uint16_t>(amount);
+    }
+    if (auto* placed = yyjson_obj_get(object, "placed_object")) {
+        if (!ReadId(placed, item.placedObject, context.Child("placed_object"))) { return false; }
+    }
+    if (auto* meter = yyjson_obj_get(object, "grid_meter")) {
+        if (!ReadBool(meter, definition.gridMeter, context.Child("grid_meter"))) { return false; }
     }
     if (!ParseUniqueIds(yyjson_obj_get(object, "books"), item.books, context.Child("books"))) { return false; }
     if (auto* power = yyjson_obj_get(object, "reading_power")) {
@@ -1293,6 +1350,9 @@ bool ParseItem(yyjson_val* object, PendingItem& item, const ItemBehaviorRegistry
         if (!ItemEnergyStore(definition, definition.craftingPower)) {
             return context.Child("crafting_power").Child("store").Fail("crafting power store must name this item's energy store");
         }
+    }
+    if (definition.craftingGridPower && !definition.energyStores.empty()) {
+        return context.Child("crafting_power").Fail("grid crafting tools must not have local energy stores");
     }
     if (!item.readingPower.empty()) {
         definition.readingPower = FindItemCapability(definition, View(item.readingPower));
@@ -3324,6 +3384,15 @@ ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sourc
         catalog.items_.push_back(eastl::move(item.definition));
     }
     catalog.corpseItem_ = catalog.FindItem("combat_corpse");
+    for (std::size_t i = 0; i < items.size(); ++i) {
+        if (items[i].wiringMaterial.empty()) { continue; }
+        const auto material = catalog.FindItem(View(items[i].wiringMaterial));
+        if (!material.value) {
+            items[i].context.Child("wiring_material").Fail("unknown wiring material item reference");
+            return eastl::unexpected(ContentError::InvalidData);
+        }
+        catalog.items_[i].wiringMaterial = material;
+    }
     if (!recipes.empty() || !recyclers.empty()) { catalog.unfinishedCraftItem_ = catalog.FindItem("unfinished_craft"); }
     eastl::sort(recipes.begin(), recipes.end(), [](const PendingCrafting& left, const PendingCrafting& right) {
         return left.definition.id < right.definition.id;
@@ -3364,6 +3433,13 @@ ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sourc
     });
     catalog.objects_.reserve(objects.size());
     for (auto& object : objects) {
+        if (object.definition.behavior == ObjectBehaviorKind::Generator) {
+            object.definition.generator.fuelItem = catalog.FindItem(View(object.fuelItem));
+            if (!object.definition.generator.fuelItem.value) {
+                object.context.Child("generator").Child("fuel_item").Fail("unknown generator fuel item reference");
+                return eastl::unexpected(ContentError::InvalidData);
+            }
+        }
         if (object.definition.behavior == ObjectBehaviorKind::CraftingMachine) {
             object.definition.machine.input = catalog.FindItem(View(object.input));
             object.definition.machine.output = catalog.FindItem(View(object.output));
@@ -3392,6 +3468,22 @@ ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sourc
             return eastl::unexpected(ContentError::InvalidData);
         }
         catalog.objects_.push_back(eastl::move(object.definition));
+    }
+    for (std::size_t i = 0; i < items.size(); ++i) {
+        if (items[i].placedObject.empty()) { continue; }
+        const auto placed = catalog.FindObject(View(items[i].placedObject));
+        if (!placed.value) {
+            items[i].context.Child("placed_object").Fail("unknown placed object reference");
+            return eastl::unexpected(ContentError::InvalidData);
+        }
+        catalog.items_[i].placedObject = placed;
+        if (catalog.GetObject(placed).behavior == ObjectBehaviorKind::GridBattery) {
+            const auto& stores = catalog.items_[i].energyStores;
+            if (stores.size() != 1 || !stores[0].config.rechargeable) {
+                items[i].context.Child("placed_object").Fail("grid battery installation requires a sole rechargeable energy store");
+                return eastl::unexpected(ContentError::InvalidData);
+            }
+        }
     }
     catalog.definitions_.reserve(pending.size());
     for (auto& terrain : pending) { catalog.definitions_.push_back(eastl::move(terrain.definition)); }

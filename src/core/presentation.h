@@ -37,6 +37,12 @@ struct TileInspection {
     bool hasJob = false;
     bool running = false;
     Tick remainingWork = 0;
+    bool gridPowered = false;
+    bool runRequested = false;
+    Tick fundedTicks = 0;
+    std::uint64_t generatorOutputRemaining = 0;
+    Tick generatorIntervalStart = 0;
+    bool generatorIntervalInitialized = false;
     Vector<InspectionItem> items; // Preorder, stored roots at depth 1; ground roots at 0.
 };
 enum class InspectionStatus : std::uint8_t { Complete, TooLarge, Unavailable, Disconnected };

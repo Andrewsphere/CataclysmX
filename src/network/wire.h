@@ -6,12 +6,12 @@
 
 namespace cataclysmx::network::wire {
 
-// Version 22 adds sparse enemy health to gameplay snapshots.
-inline constexpr std::uint32_t protocol = 0x43584e16;
+// Version 23 adds power commands, meter views and powered object inspection.
+inline constexpr std::uint32_t protocol = 0x43584e17;
 inline constexpr int maxViewRadius = maxPresentationRadius;
 inline constexpr int maxViewDimension = 2 * maxViewRadius + 1;
 static_assert(maxViewDimension <= UINT8_MAX && maxViewDimension * maxViewDimension <= UINT16_MAX);
-// Worst-case 129 squared cells use 765486 bytes (one 46-byte run per cell),
+// Worst-case 129 squared cells use 898614 bytes (one 54-byte run per cell),
 // before inventory and session metadata. Repeated cells use one run instead.
 inline constexpr std::size_t maxPacket = 1024 * 1024;
 inline constexpr std::size_t maxItemEntries = 2048;

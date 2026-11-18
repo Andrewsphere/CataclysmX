@@ -43,6 +43,7 @@ void DescribeTile(const ContentCatalog& content, const WorldView& view, TileCoor
         output.push_back("Outside current view"); return;
     }
     const auto& cell = view.cells[static_cast<std::size_t>(z * view.width + x)];
+    if (view.currentPower) output.push_back(cell.powerGridId ? "Power grid #" + UnsignedText(cell.powerGridId) : String("No power grid"));
     if (cell.terrainVisibility != Visibility::Unknown) {
         const auto& terrain = content.GetTerrain(cell.tile.terrain);
         String line = terrain.name;
@@ -93,6 +94,9 @@ void DescribeTile(const ContentCatalog& content, const WorldView& view, TileCoor
             String work = details.running ? "Running" : details.hasJob ? "Paused" : "Idle";
             if (details.hasJob) { work += " | Remaining "; work += UnsignedText(details.remainingWork); }
             output.push_back(eastl::move(work));
+            if (details.gridPowered) output.push_back("Grid powered | Funded ticks " + UnsignedText(details.fundedTicks));
+            if (details.runRequested) output.push_back("Run requested (may be waiting for power or fuel)");
+            if (details.generatorIntervalInitialized) output.push_back("Generator output remaining " + UnsignedText(details.generatorOutputRemaining));
         }
         for (const auto& item : details.items) if (item.stored) ItemLine(content, item, output);
     }

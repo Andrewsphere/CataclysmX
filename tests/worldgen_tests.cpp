@@ -297,7 +297,7 @@ TEST_CASE("Generation content validates passable roles and supports terrain-only
 }
 
 TEST_CASE("Generation version three preserves version two surface terrain and damage output", "[worldgen][determinism]") {
-    REQUIRE(world_generation_version == 6);
+    REQUIRE(world_generation_version == 7);
     // Environmental seam, rotated divided house, and abandoned cross-chunk long house.
     const ChunkCoord chunks[] = {{-17, 20}, {-16, 20}, {5, 4}, {9, 7}, {10, 7}};
     const std::uint32_t expected[] = {2483476373U, 3666744973U, 2506376988U, 2959312743U, 518236207U};

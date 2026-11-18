@@ -77,6 +77,10 @@ bool CaptureTileInspection(const World& world, const WorldView& view, TileCoord 
         if (const auto state = world.DescribeObjectState(objectHandle); state && state->behavior != ObjectBehaviorKind::None) {
             output.machine = true; output.energy = state->energy; output.energyCapacity = state->energyCapacity;
             output.hasJob = state->hasJob; output.running = state->running; output.remainingWork = state->remainingWork;
+            output.gridPowered = state->gridPowered; output.runRequested = state->runRequested;
+            output.fundedTicks = state->fundedTicks; output.generatorOutputRemaining = state->generatorOutputRemaining;
+            output.generatorIntervalStart = state->generatorIntervalStart;
+            output.generatorIntervalInitialized = state->generatorIntervalInitialized;
         }
         if (world.GetActor(observer) && world.CanUseObject(observer, objectHandle))
             for (auto item : object->contents)

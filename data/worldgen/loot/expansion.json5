@@ -32,6 +32,7 @@
     {item:'cooling_fan',weight:4},{item:'display_module',weight:4},{item:'distance_sensor',weight:3},
   ]},
   {type:'loot_pool',id:'loot_electrical_parts',entries:[
+    {item:'wiring_kit',weight:4},{item:'generator_fuel_packet',weight:3},
     {item:'resistor',weight:4,count:{min:1,max:4}},{item:'capacitor',weight:4,count:{min:1,max:3}},
     {item:'light_emitting_diode',weight:3,count:{min:1,max:3}},{item:'toggle_switch',weight:3},
     {item:'power_relay',weight:3},{item:'cartridge_fuse',weight:3,count:{min:1,max:3}},
@@ -48,6 +49,7 @@
   ]},
   // Ground-only pools: never nest in general furniture loot, regardless of chance.
   {type:'loot_pool',id:'loot_workshop_bulk_ground',entries:[
+    {item:'portable_fuel_generator',weight:2},
     {item:'plywood_panel',weight:4},{item:'metal_toolbox',weight:3},{item:'socket_wrench_set',weight:4},
   ]},
   {type:'loot_pool',id:'loot_camping_bulk_ground',entries:[
@@ -60,4 +62,13 @@
   ]},
   {type:'loot_pool',id:'loot_kitchen_appliance_ground',entries:[{item:'toaster',weight:1}]},
   {type:'loot_pool',id:'loot_cleaning_bulk_ground',entries:[{item:'utility_bucket',weight:1}]},
+  // Separate guaranteed ground drops keep the first-house route seed independent.
+  {type:'loot_pool',id:'power_starter_wire',entries:[{item:'wiring_kit',weight:1}]},
+  {type:'loot_pool',id:'power_starter_meter',entries:[{item:'multimeter',weight:1}]},
+  {type:'loot_pool',id:'power_starter_generator',entries:[{item:'portable_fuel_generator',weight:1}]},
+  {type:'loot_pool',id:'power_starter_fuel',entries:[{item:'generator_fuel_packet',weight:1,count:{min:2,max:2}}]},
+  {type:'loot_pool',id:'power_starter_battery',entries:[{item:'aa_rechargeable_battery',weight:1}]},
+  {type:'loot_pool',id:'power_starter_iron',entries:[{item:'soldering_iron',weight:1}]},
+  {type:'loot_pool',id:'power_starter_solder',entries:[{item:'solder_wire',weight:1}]},
+  {type:'loot_pool',id:'power_starter_copper',entries:[{item:'copper_wire',weight:1,count:{min:4,max:4}}]},
 ]}

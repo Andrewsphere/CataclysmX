@@ -132,7 +132,7 @@ TEST_CASE("Explicit V7 item payload loads without rewriting its state", "[save][
     {
         sqlite3* db = nullptr;
         REQUIRE(sqlite3_open_v2(file.path.c_str(), &db, SQLITE_OPEN_READWRITE, nullptr) == SQLITE_OK);
-        REQUIRE(sqlite3_exec(db, "UPDATE world_state SET payload=json_remove(payload,'$.session.circle_residency');"
+        REQUIRE(sqlite3_exec(db, "UPDATE world_state SET payload=json_remove(payload,'$.power','$.session.circle_residency');"
             "UPDATE metadata SET format_version=7", nullptr, nullptr, nullptr) == SQLITE_OK);
         REQUIRE(sqlite3_close(db) == SQLITE_OK);
     }

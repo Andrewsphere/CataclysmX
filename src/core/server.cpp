@@ -1,6 +1,7 @@
 #include <cstdlib>
 
 #include "core/server.h"
+#include "power/power_system.h"
 #include "core/first_house_scenario.h"
 #include "actors/movement.h"
 
@@ -105,8 +106,8 @@ bool ResidencyFits(TileCoord position, int active, int resident,
 
 LoadRequest RequestResident(World& world, TileCoord position, int resident,
     eastl::optional<CircleResidency> circle) {
-    return circle ? Take(world.RequestCircle({position, circle->radiusTiles}, LoadMode::resident))
-        : Take(world.RequestChunks({BubbleCenter(position), resident}, LoadMode::resident));
+    return circle ? Take(world.RequestCircle({position, circle->radiusTiles}, LoadMode::resident, LoadReason::Player))
+        : Take(world.RequestChunks({BubbleCenter(position), resident}, LoadMode::resident, LoadReason::Player));
 }
 
 void UpdateResident(World& world, LoadRequest request, TileCoord position, int resident,
@@ -151,7 +152,7 @@ SaveResult<void> StageBubble(World& world, TileCoord position, int active, int r
     if (FootprintLoaded(world, position, active, resident, circle)) { return {}; }
     staging.push_back(RequestResident(world, position, resident, circle));
     if (circle) {
-        staging.push_back(Take(world.RequestChunks({BubbleCenter(position), active}, LoadMode::resident)));
+        staging.push_back(Take(world.RequestChunks({BubbleCenter(position), active}, LoadMode::resident, LoadReason::Player)));
     }
     const auto result = world.ReconcileChunks();
     if (!result) { ReleaseStaging(world, staging); }
@@ -347,17 +348,20 @@ bool ValidCommandShape(const Command& command) {
     // Transport and local submissions share this admission policy; catalog,
     // ownership and ability-grant authority are checked at execution.
     const auto kind = command.kind;
+    if (kind != CommandKind::wire_grid && command.powerBounds != PowerBounds{}) { return false; }
+    if (kind != CommandKind::place_power_object && command.position != TileCoord{}) { return false; }
     const bool direction = kind == CommandKind::move || kind == CommandKind::interact
         || kind == CommandKind::grab || kind == CommandKind::use_item;
     const bool item = kind == CommandKind::pick_up || kind == CommandKind::drop
         || kind == CommandKind::use_item || kind == CommandKind::store_item
         || kind == CommandKind::wield_item || kind == CommandKind::transfer_item
+        || kind == CommandKind::wire_grid || kind == CommandKind::place_power_object
         || (kind >= CommandKind::recycle && kind <= CommandKind::cancel_craft);
     if ((!direction && (command.dx || command.dz || command.dy))
         || (!item && command.item)
         || (kind != CommandKind::wait && command.waitCost != ticks_per_turn)
         || (kind != CommandKind::use_item && (command.capability.value || !command.itemAction.empty()))
-        || (kind != CommandKind::use_item && kind != CommandKind::store_item && command.otherItem)
+        || (kind != CommandKind::use_item && kind != CommandKind::store_item && kind != CommandKind::place_power_object && command.otherItem)
         || (kind != CommandKind::attack && command.target)
         || (kind != CommandKind::combat_style && command.style != CombatStyle::Balanced)
         || (kind != CommandKind::interact_action && command.interaction != InteractionRequest{})
@@ -422,6 +426,15 @@ bool ValidCommandShape(const Command& command) {
             && (command.kind == CommandKind::study_book ? command.book.value != 0 : command.book.value == 0);
     }
     if (command.book.value != 0) { return false; }
+    if (kind == CommandKind::wire_grid) {
+        const auto bounds = command.powerBounds;
+        return command.item != 0 && ValidPowerBounds(bounds) && bounds.min.y == bounds.max.y
+            && std::int64_t{bounds.max.x} - bounds.min.x < maxPowerWiringExtent
+            && std::int64_t{bounds.max.z} - bounds.min.z < maxPowerWiringExtent;
+    }
+    if (kind == CommandKind::place_power_object) {
+        return command.item != 0 && command.item != command.otherItem && ValidPosition(command.position);
+    }
     if (command.kind == CommandKind::wield_item || command.kind == CommandKind::transfer_item) {
         return command.dx == 0 && command.dz == 0 && command.dy == 0 && command.waitCost == ticks_per_turn
             && command.capability.value == 0 && command.itemAction.empty() && command.otherItem == 0
@@ -482,6 +495,8 @@ const char* OutcomeMessage(Outcome outcome) {
     case Outcome::art_study_paused: return "You pause studying the combat art.";
     case Outcome::character_dead: return "Your character is dead.";
     case Outcome::character_created: return "You begin with a fresh character.";
+    case Outcome::power_changed: return "Power installation completed.";
+    case Outcome::power_refused: return "Power installation refused.";
     case Outcome::study_started: return "You start studying.";
     case Outcome::study_paused: return "You pause studying after the funded work finishes.";
     case Outcome::study_refused: return "You cannot study that book.";
@@ -539,6 +554,9 @@ const char* OutcomeMessage(Outcome outcome) {
 }
 
 String CommandResultMessage(const CommandResult& result) {
+    if (result.outcome == Outcome::power_changed || result.outcome == Outcome::power_refused) {
+        return PowerActionMessage(result.powerOutcome);
+    }
     if (result.outcome == Outcome::study_refused) {
         switch (result.studyOutcome) {
         case StudyOutcome::ActorUnavailable: return "You cannot study here now.";
@@ -631,7 +649,7 @@ Server::Server(const ContentCatalog& content, std::uint32_t seed, NewGameScenari
         const TileCoord playerPosition{0, -edge + 1};
         active_radius_ = eastl::max(active_radius_, edge / chunk_size + 1);
         resident_radius_ = eastl::max(resident_radius_, active_radius_);
-        active_request_ = Take(world_.RequestChunks({{0, 0}, active_radius_}, LoadMode::active));
+        active_request_ = Take(world_.RequestChunks({{0, 0}, active_radius_}, LoadMode::active, LoadReason::Player));
         resident_request_ = RequestResident(world_, playerPosition, resident_radius_, circleResidency_);
         Require(world_.ReconcileChunks().has_value());
         for (int z = -edge; z <= edge; ++z) {
@@ -658,7 +676,7 @@ Server::Server(const ContentCatalog& content, std::uint32_t seed, NewGameScenari
         const auto start = scenario == NewGameScenario::FirstHouse
             ? FindFirstHouseStart(content, seed) : FindTownStart(content, seed);
         Require(start.has_value());
-        active_request_ = Take(world_.RequestChunks({BubbleCenter(start->playerPosition), active_radius_}, LoadMode::active));
+        active_request_ = Take(world_.RequestChunks({BubbleCenter(start->playerPosition), active_radius_}, LoadMode::active, LoadReason::Player));
         resident_request_ = RequestResident(world_, start->playerPosition, resident_radius_, circleResidency_);
         Require(world_.ReconcileChunks().has_value());
         player_ = Take(world_.CreateActor(start->playerPosition, true));
@@ -669,7 +687,7 @@ Server::Server(const ContentCatalog& content, std::uint32_t seed, NewGameScenari
         SynchronizePacing();
         return;
     }
-    active_request_ = Take(world_.RequestChunks({{0, 0}, active_radius_}, LoadMode::active));
+    active_request_ = Take(world_.RequestChunks({{0, 0}, active_radius_}, LoadMode::active, LoadReason::Player));
     resident_request_ = RequestResident(world_, {0, 0}, resident_radius_, circleResidency_);
     Require(world_.ReconcileChunks().has_value());
     constexpr TileCoord floors[] = {{0, 0}, {1, 0}, {2, 0}, {5, 5}};
@@ -848,6 +866,20 @@ CommandResult Server::Execute(ActorHandle handle, PlayerSlot& slot, Command comm
     Outcome outcome = Outcome::invalid_command;
     std::uint32_t baseCost = command.kind == CommandKind::wait ? command.waitCost : ticks_per_turn;
     switch (command.kind) {
+    case CommandKind::wire_grid:
+    case CommandKind::place_power_object: {
+        const auto power = command.kind == CommandKind::wire_grid
+            ? world_.WireGrid(handle, world_.FindItem(command.item), command.powerBounds)
+            : world_.PlacePowerObject(handle, world_.FindItem(command.item), world_.FindItem(command.otherItem), command.position);
+        if (power.outcome != PowerActionOutcome::Succeeded) {
+            auto result = failed(Outcome::power_refused);
+            result.powerOutcome = power.outcome;
+            return result;
+        }
+        baseCost = power.baseCost;
+        outcome = Outcome::power_changed;
+        break;
+    }
     case CommandKind::grab: {
         const TileCoord target{position.x + command.dx, position.z + command.dz, position.y};
         const auto objectHandle = world_.ObjectAt(target);
@@ -1145,6 +1177,7 @@ CommandResult Server::Execute(ActorHandle handle, PlayerSlot& slot, Command comm
     world_.UpdatePlayerObservations();
     CommandResult result{outcome, true, GetTick()};
     result.cost = cost;
+    if (outcome == Outcome::power_changed) { result.powerOutcome = PowerActionOutcome::Succeeded; }
     return result;
 }
 
@@ -1229,7 +1262,7 @@ SessionResult<PlayerJoin> Server::JoinPlayer(eastl::string_view name,
             slot.position = *position;
             slot.center = BubbleCenter(*position);
             slot.residentRequest = Take(world_.RequestChunks(
-                {BubbleCenter(slot.position), 0}, LoadMode::resident));
+                {BubbleCenter(slot.position), 0}, LoadMode::resident, LoadReason::Player));
             if (!world_.ReconcileChunks()) {
                 Require(world_.ReleaseRequest(slot.residentRequest).has_value());
                 slot.residentRequest = {};
@@ -1284,7 +1317,7 @@ SessionResult<PlayerJoin> Server::JoinPlayer(eastl::string_view name,
     slot.position = world_.GetActor(actor)->position;
     slot.center = BubbleCenter(slot.position);
     slot.state = PlayerConnectionState::Joining;
-    slot.residentRequest = Take(world_.RequestChunks({slot.center, 0}, LoadMode::resident));
+    slot.residentRequest = Take(world_.RequestChunks({slot.center, 0}, LoadMode::resident, LoadReason::Player));
     const PlayerJoin joined{slot.id, slot.token};
     players_.push_back(eastl::move(slot));
     ++revision_;
@@ -1317,7 +1350,7 @@ SessionResult<void> Server::ActivatePlayer(PersistentId id) {
     }
     if (!world_.IsActorAlive(actor)) {
         slot->state = PlayerConnectionState::Active;
-        slot->activeRequest = Take(world_.RequestChunks({BubbleCenter(slot->position), active_radius_}, LoadMode::active));
+        slot->activeRequest = Take(world_.RequestChunks({BubbleCenter(slot->position), active_radius_}, LoadMode::active, LoadReason::Player));
         UpdateResident(world_, slot->residentRequest, slot->position, resident_radius_, circleResidency_);
         ReleaseStaging(world_, staging);
         Require(world_.ReconcileChunks().has_value());
@@ -1334,7 +1367,7 @@ SessionResult<void> Server::ActivatePlayer(PersistentId id) {
                 const TileCoord candidate{slot->position.x + dx, slot->position.z + dz, slot->position.y};
                 if (!ResidencyFits(candidate, active_radius_, resident_radius_, circleResidency_)) { continue; }
                 if (!world_.GetTile(candidate)) {
-                    staging.push_back(Take(world_.RequestChunks({BubbleCenter(candidate), 0}, LoadMode::resident)));
+                    staging.push_back(Take(world_.RequestChunks({BubbleCenter(candidate), 0}, LoadMode::resident, LoadReason::Player)));
                     if (!world_.ReconcileChunks()) {
                         rollback();
                         return eastl::unexpected(SessionError::StorageFailure);
@@ -1363,7 +1396,7 @@ SessionResult<void> Server::ActivatePlayer(PersistentId id) {
     Require(world_.MoveActor(actor, spawn).has_value());
     Require(world_.SetActorParked(actor, false).has_value());
     slot->state = PlayerConnectionState::Active;
-    slot->activeRequest = Take(world_.RequestChunks({BubbleCenter(spawn), active_radius_}, LoadMode::active));
+    slot->activeRequest = Take(world_.RequestChunks({BubbleCenter(spawn), active_radius_}, LoadMode::active, LoadReason::Player));
     CommitPlayerBubble(*slot);
     ReleaseStaging(world_, staging);
     Require(world_.ReconcileChunks().has_value());
@@ -1574,6 +1607,13 @@ SessionUpdate Server::Update(std::uint64_t elapsedMicroseconds) {
     std::uint64_t remaining = elapsedMicroseconds;
     constexpr Tick maximum = eastl::numeric_limits<Tick>::max();
     for (;;) {
+        // Equipment intent/topology can change without player movement. Settle
+        // workshop/source demand before advancing and release completed holds at
+        // the next session boundary, including an otherwise idle update.
+        if (const auto residency = world_.ReconcileChunks(); !residency) {
+            result.storageError = residency.error();
+            break;
+        }
         SynchronizePacing();
         if (pacer_.IsIdle()) { break; }
 
@@ -1583,6 +1623,10 @@ SessionUpdate Server::Update(std::uint64_t elapsedMicroseconds) {
         const SimulationResult simulation = cataclysmx::AdvanceUntilInput(world_, rng_state_, limit);
         if (GetTick() != before) { ++revision_; }
         pacer_.ConsumeTicks(GetTick() - before);
+        if (const auto residency = world_.ReconcileChunks(); !residency) {
+            result.storageError = residency.error();
+            break;
+        }
         SynchronizePacing();
         if (ResolveRound(result, pacer_.ExpiredPlayers())) { continue; }
         if (pacer_.IsIdle()) { break; }
@@ -1792,6 +1836,20 @@ WorldView Server::ViewForPlayerAtLayer(PersistentId id, int radius, int layerY) 
         }
     }
     // Damage and healing can change while the map projection is reused.
+    result.powerSettings = world_.Power().Settings();
+    const bool meter = observing && world_.CanInspectPower(player);
+    if (meter) {
+        result.currentPower.emplace();
+        world_.Power().Inspect(actor->position, *result.currentPower);
+    }
+    // Recompute even when reusing terrain: carrying a meter and grid geometry
+    // can change independently of the terrain projection cache.
+    for (std::size_t i = 0; i < result.cells.size(); ++i) {
+        const TileCoord position{result.origin.x + static_cast<int>(i % result.width),
+            result.origin.z + static_cast<int>(i / result.width), layerY};
+        const auto grid = meter ? world_.Power().GridAt(position) : eastl::optional<PowerGridId>{};
+        result.cells[i].powerGridId = grid ? grid->value : 0;
+    }
     if (observing && layerY == actor->position.y) { CollectEnemyHealth(world_, actor->combat.faction, result); }
     result.inventory = DescribeItems(world_, player, actor->inventory);
     result.wieldedItem = actor->wieldedItem.value ? world_.GetItem(actor->wieldedItem)->id : 0;
@@ -2006,7 +2064,7 @@ SaveResult<eastl::unique_ptr<Server>> Server::LoadSave(const ContentCatalog& con
     server->resident_radius_ = session.residentRadius;
     server->circleResidency_ = session.circleResidency;
     server->active_request_ = Take(server->world_.RequestChunks(
-        {server->bubbleCenter_, session.activeRadius}, LoadMode::active));
+        {server->bubbleCenter_, session.activeRadius}, LoadMode::active, LoadReason::Player));
     server->resident_request_ = RequestResident(server->world_, session.playerPosition,
         session.residentRadius, session.circleResidency);
     // Materialize the whole roster together: reconciliation settles gravity,
@@ -2021,7 +2079,7 @@ SaveResult<eastl::unique_ptr<Server>> Server::LoadSave(const ContentCatalog& con
         }
         if (saved.actor == session.player) { continue; }
         const auto request = server->world_.RequestChunks(
-            {BubbleCenter(saved.position), 0}, LoadMode::resident);
+            {BubbleCenter(saved.position), 0}, LoadMode::resident, LoadReason::Player);
         if (!request) { return eastl::unexpected(SaveError::InvalidData); }
         staging.push_back(*request);
     }

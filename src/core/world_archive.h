@@ -72,6 +72,7 @@ struct SaveSnapshot {
     SessionState session;
     std::uint8_t skyLight = defaultSkyLight;
     Vector<PlayerMemory> memories;
+    SavedPowerState power;
 };
 
 }

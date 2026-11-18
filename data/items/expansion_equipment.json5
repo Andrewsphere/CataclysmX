@@ -17,6 +17,7 @@
    flags:['tool','pointed','electrically_conductive','ferromagnetic','combustible','water_absorbent','porous','rigid','opaque','thermally_conductive'],
    art:'/art/items/hand_drill/art.txt'},
   {type:'item', id:'multimeter', name:'multimeter', mass_g:350, volume_ml:500,
+    grid_meter:true,
    description:'A service sticker curls away from the case, its next inspection date still legible. The probes are wound around it as carefully as if the technician meant to return.',
    flags:['tool','electronics','combustible','rigid','opaque','electrically_insulating'],
    art:'/art/items/multimeter/art.txt'},

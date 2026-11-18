@@ -2,6 +2,7 @@
 
 #include "crafting/crafting_state.h"
 #include "core/world_result.h"
+#include "power/power_types.h"
 #include <EASTL/array.h>
 #include <EASTL/optional.h>
 
@@ -41,6 +42,7 @@ private:
     };
     // Reused funding scratch, bounded by 8*255 retained tools + 4 trait tools.
     Vector<ToolCharge> charges_;
+    Vector<PowerDemand> gridDemands_;
     CraftingJobState* State(ItemHandle item);
     const CraftingJobState* State(ItemHandle item) const;
     bool Reachable(ActorHandle actor, ItemHandle item, unsigned radius) const;

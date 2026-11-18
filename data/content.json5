@@ -1,5 +1,6 @@
 {format_version: 1, files: [
   'flags/core.json5',
+  'items/power.json5', 'objects/power.json5', 'crafting/power.json5',
   'skills/core.json5', 'books/starter.json5', 'items/learning.json5',
   'combat/core.json5', 'items/combat.json5',
   'terrain/base.json5', 'items/demo.json5', 'crafting/demo.json5',

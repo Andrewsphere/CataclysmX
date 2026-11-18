@@ -15,6 +15,7 @@ using namespace cataclysmx;
 using namespace cataclysmx::network;
 
 constexpr std::size_t combatViewWireSize = 171;
+constexpr std::size_t cellRunWireSize = 54; // Includes protocol-23 powerGridId.
 
 // Locate a field by changing only that field in a valid same-size encoding.
 // Variable item/player/learning/combat-history tails need no mirrored layout.
@@ -93,7 +94,7 @@ TEST_CASE("Network wire rejects truncated values, invalid enums and oversized sn
     CHECK_FALSE(badState.View(result));
     wire::Writer commandBytes;
     commandBytes.CommandValue({CommandKind::wait});
-    commandBytes.bytes[0] = static_cast<std::uint8_t>(CommandKind::new_character) + 1;
+    commandBytes.bytes[0] = static_cast<std::uint8_t>(CommandKind::place_power_object) + 1;
     wire::Reader badCommand{{commandBytes.bytes.data(), commandBytes.bytes.size()}};
     Command decodedCommand;
     CHECK_FALSE(badCommand.CommandValue(decodedCommand));
@@ -135,7 +136,7 @@ bool Poll(LanHost& host, LanClient& a, LanClient& b, Predicate predicate) {
 }
 
 TEST_CASE("Current protocol preserves signed six-axis commands and authoritative shapes", "[network][codec][3d]") {
-    CHECK(wire::protocol == 0x43584e16);
+    CHECK(wire::protocol == 0x43584e17);
     for (const auto kind : {CommandKind::move, CommandKind::interact}) {
         for (const TileCoord direction : {TileCoord{1, 0, 0}, {-1, 0, 0}, {0, 1, 0},
             {0, -1, 0}, {0, 0, 1}, {0, 0, -1}, {0, 0, 0}, {1, 0, 1}, {0, 1, -1}, {0, 0, INT_MIN}}) {
@@ -257,7 +258,7 @@ TEST_CASE("Radius 64 snapshots roundtrip and reject oversized dimensions counts 
     wire::Writer writer;
     REQUIRE(writer.View(view));
     // Same metadata and player run, with exactly two additional unknown runs.
-    CHECK(writer.bytes.size() == singleCell.bytes.size() + 2 * 46);
+    CHECK(writer.bytes.size() == singleCell.bytes.size() + 2 * cellRunWireSize);
     CHECK(writer.bytes.size() < wire::maxPacket);
     wire::Reader reader{{writer.bytes.data(), writer.bytes.size()}};
     WorldView decoded;
@@ -323,8 +324,8 @@ TEST_CASE("Run encoded snapshots bound expansion and preserve repeated and varyi
         cell.overlayDepth = static_cast<unsigned>(i % 2); cell.overlayLight = LightBand::Dim;
     }
     wire::Writer varied; REQUIRE(varied.View(view));
-    // Protocol 19 worst-case cell runs use 765486 bytes, excluding metadata.
-    CHECK(varied.bytes.size() == compact.bytes.size() + (129 * 129 - 1) * 46);
+    // Protocol 23 worst-case cell runs use 898614 bytes, excluding metadata.
+    CHECK(varied.bytes.size() == compact.bytes.size() + (129 * 129 - 1) * cellRunWireSize);
     CHECK(varied.bytes.size() > 32768); // Cannot collapse into a small uniform run.
     CHECK(varied.bytes.size() <= wire::maxPacket);
     auto moved = eastl::move(varied);
@@ -565,7 +566,7 @@ TEST_CASE("Hidden cells are default and projection origins may extend past horiz
     // one unknown cell from the final run into the first run (4,1,4 -> 5,1,3).
     view.cells[4] = view.cells[5]; view.cells[5] = {};
     wire::Writer centered; REQUIRE(centered.View(view));
-    constexpr std::size_t firstRun = 87, runRecordSize = 46;
+    constexpr std::size_t firstRun = 87, runRecordSize = cellRunWireSize;
     REQUIRE(centered.bytes[firstRun + 1] == 4);
     REQUIRE(centered.bytes[firstRun + runRecordSize + 1] == 1);
     REQUIRE(centered.bytes[firstRun + 2 * runRecordSize + 1] == 4);

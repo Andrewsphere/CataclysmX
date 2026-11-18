@@ -26,7 +26,7 @@
     g:{terrain:'floor_concrete',monsters:[{group:'monsters_workshop',chance:10000}]},
     h:{terrain:'floor_concrete',object:'metal_locker',facing:'west',loot:[{pool:'loot_work_protection',rolls:2,destination:'furniture'}]},
     i:{terrain:'floor_concrete',object:'utility_cabinet',facing:'east',loot:[{pool:'loot_utility',rolls:3,destination:'furniture'}]},
-    j:{terrain:'floor_concrete',object:'industrial_workbench',facing:'north'},
+    j:{terrain:'floor_concrete',object:'grid_scrap_press',facing:'north'},
     k:{terrain:'floor_concrete',object:'store_shelf',facing:'north'},
     l:{terrain:'floor_concrete',monsters:[{group:'monsters_workshop',chance:4000}]},
     m:{terrain:'floor_concrete',object:'warehouse_crate',loot:[{pool:'loot_hardware',rolls:3,destination:'furniture'}]},

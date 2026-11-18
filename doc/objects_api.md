@@ -1,4 +1,4 @@
-# Typed objects and crafting machines
+# Typed objects, crafting machines, and power behaviors
 
 ## Content
 
@@ -72,10 +72,12 @@ bool enabled)` constructor initialize the retained public fields, including
 the suspended legacy `updateDeadline`, and leave `type` zero and `behavior_` null. Only
 `World`, a friend, installs or invokes its private owned behavior.
 
-`ObjectDefinition` is a value with a closed `ObjectBehaviorKind` and a typed
-`CraftingMachineDefinition`. `MakeObjectBehavior(definition, state,
+`ObjectDefinition` is a value with a closed `ObjectBehaviorKind` and typed
+`CraftingMachineDefinition` / `GeneratorDefinition` configurations. The enum
+appends `Generator` and `GridBattery`, preserving the values of `None` and
+`CraftingMachine`. `MakeObjectBehavior(definition, state,
 diagnostics)` uses explicit dispatch to create at most one behavior; `None`
-returns a successful null pointer. This avoids a registry, capability lists,
+and `GridBattery` return a successful null pointer. This avoids a registry, capability lists,
 or action-vector allocations for this small closed set. The behavior borrows
 the **entire immutable definition**: the catalog must outlive it and must not
 be moved, replaced, or structurally mutated while objects exist.
@@ -91,6 +93,13 @@ be moved, replaced, or structurally mutated while objects exist.
 | `SaveState()` | Owned strict `DataObject` state. |
 | `Describe()` | Typed value snapshot of energy/capacity, job/running/work/duration, recipe/counts; no disposable action vector. |
 | `SetEnergy(uint64_t)` | Rejects over-capacity values without mutation; may pause a running job. |
+| `PrepareGeneratorInterval(Tick now)` | Claims the remaining allowance in an absolute 100-tick generator interval; never burns fuel. |
+| `SpendGeneratorEnergy(uint64_t)` | Atomically subtracts generator fuel and allowance; rejects insufficient fuel/allowance or absent intent. |
+| `FundGridWork(Tick)` | Grants prepaid grid-machine work; requires an intended job, no outstanding paid ticks, and a positive amount no greater than remaining work. |
+
+The three power methods default to `WorldError::invalid_request` for unrelated
+behaviors. World owns access and scheduling; power-system integration invokes
+these methods through World's private wrappers.
 
 Successful uses return `Succeeded`, reason `None`, base cost 100. All other
 outcomes have base cost zero. `NoInputs`, `NoPower`, `NoJob`, `Busy`,
@@ -103,7 +112,7 @@ The [callback context](object_callbacks.md) carries explicit object identity,
 performs atomic item transactions immediately, and defers self-destruction and
 item notifications until the behavior returns.
 
-## Machine rules
+## Internal-power machine rules
 
 * New machines start fully charged, idle, with no reserved inputs.
 * Start on an idle machine first checks that at least one full tick is powered,
@@ -134,6 +143,66 @@ The product subtracted by Elapse cannot overflow: elapsed work is bounded by
 remaining, the machine pauses immediately and has no event left to process.
 At completion, output remains due until ProcessEvent, including when energy
 has simultaneously reached zero.
+
+## Grid machines and generators
+
+`CraftingMachineDefinition::gridPowered` defaults to false. A grid machine has
+positive `energyPerTick` but zero `energyCapacity`; it has no private electrical
+store and starts with zero energy. Recipe/count/duration validation is shared
+with internal-power machines. Start atomically reserves the initial recipe
+inputs and records `runRequested` even when there is no supply. Resume consumes
+no additional inputs. A waiting intended job still makes Start return Busy.
+
+Power allocation prepays work using `FundGridWork`. Only intended, funded work
+advances: `Elapse` spends at most `fundedTicks`, subtracting the same number from
+remaining work. Exhausting a paid slice leaves `runRequested` true and waits for
+another allocation. `Describe().running` is true exactly when intent and paid
+ticks are both present. There is no energy balance to refill through `SetEnergy`;
+that operation is rejected for grid machines. `NextEventIn` reports the paid
+slice boundary, or zero for pending completion.
+
+**Manual Stop preserves and freezes unused paid ticks**, together with progress,
+but clears intent. Neither elapsed time nor funding can resume a manually
+paused job. Explicit Start resumes its existing paid slice. This matches the
+pause semantics of internal machines and avoids charging twice for the same
+work. Completion produces output once through `ProcessEvent`, then clears job
+and intent; completion never automatically starts another recipe.
+
+`GeneratorDefinition` contains `fuelItem`, `fuelCapacity` (chemical-energy
+charges), `energyPerFuel`, and `outputPerTick`. Fuel item IDs must be nonzero;
+energy per fuel and output per tick must be positive. Capacity must hold at
+least one fuel item. Capacity checks use subtraction before refueling so even
+`UINT64_MAX` capacity is safe. A generator cannot have a
+machine config; other behavior kinds cannot have a generator config.
+
+Generators start with **zero fuel and no run intent**. Refuel checks room for
+the complete `energyPerFuel`, atomically consumes one `fuelItem` using the
+callback context, and adds its chemical energy. Failure consumes nothing.
+Refueling never starts a generator. Start records intent and refuses empty
+fuel with NoPower; Stop clears intent and discards unused interval allowance.
+`Describe` reports fuel as `energy`, fuel capacity as `energyCapacity`, output
+rate as `energyPerTick`, and `running = runRequested && energy > 0`.
+
+Generator quanta are aligned to absolute multiples of `ticks_per_turn` (100).
+When an intended generator first prepares a new interval at `now`, its allowance
+is `outputPerTick * (100 - now % 100)`. Repeated preparation in the same interval
+never reissues allowance. Preparing a later interval expires the old allowance;
+skipped intervals do not accumulate. Stop/restart in an already claimed interval
+cannot replenish its discarded allowance. An idle, never-started generator does
+not claim an interval merely by being prepared. Preparation rejects an interval
+older than its persisted anchor. Power integration must prepare the current
+interval before spending; spending has no time argument.
+
+Only `SpendGeneratorEnergy` consumes fuel, subtracting the requested amount from
+both fuel and allowance after checking both. Generators have no local scheduled
+event, elapsed-time work, or output callback work. The power system prepares
+their allocation boundaries. Allowance is a rate limit, not stored electricity;
+it may exceed the fuel currently available.
+
+`GridBattery` has empty behavior state and a null behavior. It forbids object
+storage capacity and both behavior configs. Its original installed battery
+child is the sole authority for electrical charge; no behavior-local charge is
+created or persisted.
 
 ## Saved state format and safe defaults
 
@@ -187,6 +256,39 @@ A null behavior (both type-zero compatibility objects and typed `None`
 definitions) saves an empty `DataObject{}` through the owning World. A generic
 state must be an empty object. Do not fabricate a machine version envelope
 for it.
+
+### Strict power state version 2
+
+Internal-power machines retain version 1 and its defaults. Grid machines and
+generators require version 2, with every listed field required and correctly
+typed; they never interpret a legacy version-1 machine charge as grid power or
+fuel. Version 2 is not accepted by internal-power machines. Unknown fields are
+errors in both formats.
+
+```text
+grid machine:
+{version: unsigned 2, has_job: bool, run_requested: bool,
+ remaining_work: unsigned Tick, funded_ticks: unsigned Tick}
+
+generator:
+{version: unsigned 2, energy: unsigned uint64, run_requested: bool,
+ generator_output_remaining: unsigned uint64,
+ generator_interval_start: unsigned Tick,
+ generator_interval_initialized: bool}
+```
+
+Grid funded ticks cannot exceed remaining work, which cannot exceed duration.
+No job implies zero work, zero paid ticks, and false intent. False intent with
+nonzero paid ticks is a valid manual pause. True intent with zero paid ticks
+is a valid supply wait; reload preserves this distinction.
+
+Generator fuel cannot exceed capacity. The interval start must be aligned to
+100 ticks and must be zero when uninitialized. Allowance is at most one full
+quantum's output and must be zero without intent or without an initialized
+interval. Intent with empty fuel is valid after exhaustion and remains distinct
+from manual Stop. Saving both remaining allowance and the absolute claimed
+interval prevents reload or same-interval restart from granting another budget.
+`GridBattery`, like `None`, accepts only an empty object state.
 
 ## World API and scheduling
 

@@ -319,6 +319,7 @@ TEST_CASE("Legacy v7 through v9 actors remain untyped and reject the optional v1
         Populate(content, file.path.c_str());
         {
             RawDatabase raw(file.path.c_str());
+            raw.Exec("UPDATE world_state SET payload=json_remove(payload,'$.power')");
             raw.Exec("UPDATE chunks SET payload=json_set(payload,'$.actors',json((SELECT json_group_array(json_remove(value,'$.combat','$.monster_type','$.wielded_item','$.learning','$.equipment','$.character_combat')) FROM json_each(chunks.payload,'$.actors'))))");
             raw.Exec("UPDATE world_state SET payload=json_set(payload,'$.session.players',json((SELECT json_group_array("
                 "json_remove(value,'$.session')) FROM json_each(world_state.payload,'$.session.players'))))");

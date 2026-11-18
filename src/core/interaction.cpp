@@ -6,7 +6,7 @@ namespace cataclysmx {
 bool ValidInteraction(const InteractionRequest& request) {
     if (!ValidPosition(request.position) || request.kind > InteractionKind::PullObject) { return false; }
     if (request.kind == InteractionKind::Object) {
-        return request.object != 0 && request.terrain.value == 0 && request.action >= ObjectAction::Start && request.action <= ObjectAction::Disable;
+        return request.object != 0 && request.terrain.value == 0 && request.action >= ObjectAction::Start && request.action <= ObjectAction::Refuel;
     }
     if (request.kind == InteractionKind::PushObject || request.kind == InteractionKind::PullObject) {
         return request.object != 0 && request.terrain.value == 0 && request.action == ObjectAction::Start;

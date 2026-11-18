@@ -1,0 +1,22 @@
+@text-art 1
+@color frame #89959B
+@color tank #C8A453
+@color panel #739198
+@color engine #53616A
+@color steel #B4C1C6
+@color rubber #41474B
+@default frame
+---
+       ╭──────────────╮
+       │ ╭──────────╮ │
+   ╭───┴─┴──────────┴─┴───╮
+   │  <tank>╭────────╮ <panel>╭─────╮<reset>  │
+   │  <tank>│   <rubber>▄▄<tank>   │ <panel>│ <steel>- -<panel> │<reset>  │
+   │  <tank>╰────────╯ <panel>│  <steel>O<panel>  │<reset>  │
+   │ <engine>╭─────────╮ <panel>╰─────╯<reset>  │
+   │ <engine>│ ╭─────╮ │ ╭─────╮<reset>  │
+   │ <engine>│ │ <steel>╳╳╳<engine> │ │ │ <steel>═══<engine> │<reset>  │
+   │ <engine>│ ╰─────╯ │ │ <steel>═══<engine> │<reset>  │
+   │ <engine>╰─────────╯ ╰─────╯<reset>  │
+   ╰──┬────────────────┬─╯
+     <rubber>▀▀▀              ▀▀▀

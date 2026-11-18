@@ -27,6 +27,7 @@
     {item:'electrical_cord',weight:1},{item:'wire_bundle',weight:1},
   ]},
   {type:'loot_pool', id:'loot_hardware', entries:[
+    {item:'wiring_kit',weight:4},{item:'generator_fuel_packet',weight:2},
     {pool:'house_workshop',weight:4},{item:'steel_sheet',weight:3},{item:'copper_tube',weight:3},
     {item:'aluminum_scrap',weight:3},{item:'rigid_plastic_scrap',weight:3},
     {item:'rubber_hose',weight:3},{item:'timber_plank',weight:3},{item:'glass_shard',weight:2},

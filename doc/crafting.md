@@ -69,6 +69,15 @@ that slice. A worker must afford the whole next slice; insufficient power pauses
 the job. Funded slices are processed in wrapper persistent-ID order, so shared
 tools pay sequentially and deterministically.
 
+Tools declaring `crafting_power: {store: 'grid', energy_per_work: ...}` draw from
+the grid at the worker's position, regardless of whether the selected tool is
+carried or otherwise reachable. All distinct grid-tool charges for a slice are
+preflighted together with local stores before any payment. A grid must cover the
+worker even when fractional accounting makes this slice's whole-unit charge zero.
+Grid-powered slices stop at the next power-system slice boundary; other crafting
+keeps its usual timing. A paid slice survives disconnection, while a subsequent
+shortage pauses the job until explicitly resumed.
+
 Work is fixed-point in 1/10000 base-work units. Slice timing also retains its
 integer-division residue; a speed change rescales that sub-fixed-point residue
 with integer flooring. Energy rates use `ratioScale` (10000 is one energy per

@@ -7,6 +7,33 @@
 namespace cataclysmx::network::wire {
 namespace {
 inline constexpr std::size_t combatEventWireSize = 133;
+bool ValidPowerResult(const CommandResult& v) {
+    if (v.powerOutcome > PowerActionOutcome::NoNewCoverage) return false;
+    if (v.outcome == Outcome::power_changed) return v.powerOutcome == PowerActionOutcome::Succeeded && v.advanced && v.cost;
+    if (v.outcome == Outcome::power_refused) return v.powerOutcome != PowerActionOutcome::Succeeded && !v.advanced && !v.cost;
+    return v.powerOutcome == PowerActionOutcome::Unavailable;
+}
+bool ValidPowerView(const WorldView& v) {
+    if (!ValidPowerSettings(v.powerSettings)) return false;
+    if (v.currentPower) {
+        const auto& p = *v.currentPower;
+        if ((p.grid && !p.grid->value) || p.batteryEnergy > p.batteryCapacity) return false;
+        if (!p.grid && (p.mainsAvailable || p.batteryEnergy || p.batteryCapacity || p.generatorOutputAvailable
+            || p.batteries || p.runningGenerators || p.runningMachines || p.waitingMachines || p.unloadedDevices)) return false;
+    } else {
+        for (const auto& cell : v.cells) if (cell.powerGridId) return false;
+    }
+    return true;
+}
+void WritePower(Writer& w, const WorldView& v) {
+    w.I32(v.powerSettings.maxWiringWidth); w.I32(v.powerSettings.maxWiringDepth);
+    w.U8(v.currentPower.has_value());
+    if (!v.currentPower) return;
+    const auto& p = *v.currentPower;
+    w.U64(p.grid ? p.grid->value : 0); w.U8(p.mainsAvailable);
+    w.U64(p.batteryEnergy); w.U64(p.batteryCapacity); w.U64(p.generatorOutputAvailable);
+    w.U32(p.batteries); w.U32(p.runningGenerators); w.U32(p.runningMachines); w.U32(p.waitingMachines); w.U32(p.unloadedDevices);
+}
 bool ReadBool(Reader& r, bool& value) {
     std::uint8_t byte;
     if (!r.U8(byte) || byte > 1) return false;
@@ -885,11 +912,14 @@ bool Writer::CommandValue(const Command& v) {
     U8(static_cast<std::uint8_t>(v.ability.target.kind)); U64(v.ability.target.actor);
     I32(v.ability.target.tile.x); I32(v.ability.target.tile.z); I32(v.ability.target.tile.y);
     U8(static_cast<std::uint8_t>(v.ability.target.direction)); U32(v.art.value);
+    I32(v.powerBounds.min.x); I32(v.powerBounds.min.z); I32(v.powerBounds.min.y);
+    I32(v.powerBounds.max.x); I32(v.powerBounds.max.z); I32(v.powerBounds.max.y);
+    I32(v.position.x); I32(v.position.z); I32(v.position.y);
     return bytes.size() <= maxPacket;
 }
 bool Writer::Result(const PlayerCommandResult& v) {
     if (!v.player || !v.sequence || !v.opportunity || v.result.outcome < Outcome::waited ||
-        v.result.outcome > Outcome::character_created || v.result.combatReason > CombatRefusal::InvalidDefinition || !ValidCraftingResult(v.result) || !ValidInventoryResult(v.result) || !ValidStudyResult(v.result) ||
+        v.result.outcome > Outcome::power_refused || !ValidPowerResult(v.result) || v.result.combatReason > CombatRefusal::InvalidDefinition || !ValidCraftingResult(v.result) || !ValidInventoryResult(v.result) || !ValidStudyResult(v.result) ||
         (v.result.storageError && (*v.result.storageError < SaveError::Io || *v.result.storageError > SaveError::NotOpen)) ||
         !ValidItemUseReason(v.result.itemOutcome, v.result.itemReason)) return false;
     U64(v.player); U64(v.sequence); U64(v.opportunity);
@@ -904,10 +934,11 @@ bool Writer::Result(const PlayerCommandResult& v) {
     U8(static_cast<std::uint8_t>(v.result.inventoryOutcome));
     U8(static_cast<std::uint8_t>(v.result.studyOutcome));
     U8(static_cast<std::uint8_t>(v.result.combatReason));
+    U8(static_cast<std::uint8_t>(v.result.powerOutcome));
     return bytes.size() <= maxPacket;
 }
 bool Writer::View(const WorldView& v, bool inspection) {
-    if (!ValidViewBounds(v, inspection) ||
+    if (!ValidPowerView(v) || !ValidViewBounds(v, inspection) ||
         v.cells.size() != static_cast<std::size_t>(v.width * v.height) ||
         !ValidLists(v) || !ValidCraftingJobs(v.craftingJobs) || !ValidLearning(v.learning) || v.players.size() > 32 ||
         v.playerId == 0 || v.opportunity == 0 || v.speed == 0 || v.pacing.ticksPerSecond == 0 ||
@@ -944,6 +975,7 @@ bool Writer::View(const WorldView& v, bool inspection) {
         U8(static_cast<std::uint8_t>(c.terrainLight)); U8(static_cast<std::uint8_t>(c.overlayLight));
         U32(c.monsterType.value);
         U32(c.objectAppearance.type.value);
+        U64(c.powerGridId);
         i += run;
     }
     if (!WriteEntries(*this, v.inventory) || !WriteEntries(*this, v.groundItems)) return false;
@@ -982,6 +1014,7 @@ bool Writer::View(const WorldView& v, bool inspection) {
     U32(static_cast<std::uint32_t>(v.combatEvents.size()));
     for (const auto& e : v.combatEvents) WriteEvent(*this, e);
     if (!inspection && !WriteEnemyHealth(*this, v)) return false;
+    WritePower(*this, v);
     return bytes.size() <= maxPacket;
 }
 bool Reader::U8(std::uint8_t& v) { if (offset >= bytes.size()) return false; v = bytes[offset++]; return true; }
@@ -999,7 +1032,7 @@ bool Reader::Text(String& v, std::size_t limit) {
 bool Reader::CommandValue(Command& v) {
     std::uint8_t kind, style, interactionKind, objectAction;
     v = {};
-    if (bytes.size() > maxPacket || !U8(kind) || kind > static_cast<std::uint8_t>(CommandKind::new_character) ||
+    if (bytes.size() > maxPacket || !U8(kind) || kind > static_cast<std::uint8_t>(CommandKind::place_power_object) ||
         !I32(v.dx) || !I32(v.dz) || !U64(v.item) || !U32(v.waitCost) ||
         !U16(v.capability.value) || v.capability.value > maxItemCapabilities ||
         !Text(v.itemAction, maxItemActionName) || !U64(v.otherItem) || !I32(v.dy) ||
@@ -1007,7 +1040,7 @@ bool Reader::CommandValue(Command& v) {
     if (!I32(v.interaction.position.x) || !I32(v.interaction.position.z) || !I32(v.interaction.position.y)
         || !U64(v.interaction.object) || !U32(v.interaction.terrain.value)
         || !U8(interactionKind) || interactionKind > static_cast<std::uint8_t>(InteractionKind::PullObject)
-        || !U8(objectAction) || objectAction > static_cast<std::uint8_t>(ObjectAction::Disable)
+        || !U8(objectAction) || objectAction > static_cast<std::uint8_t>(ObjectAction::Refuel)
         || !U32(v.recipe.value)) { return false; }
     v.interaction.kind = static_cast<InteractionKind>(interactionKind);
     v.interaction.action = static_cast<ObjectAction>(objectAction);
@@ -1020,13 +1053,16 @@ bool Reader::CommandValue(Command& v) {
         || !ReadEnum(*this, v.ability.target.kind, AbilityTargetKind::CardinalDirection) || !U64(v.ability.target.actor)
         || !I32(v.ability.target.tile.x) || !I32(v.ability.target.tile.z) || !I32(v.ability.target.tile.y)
         || !ReadEnum(*this, v.ability.target.direction, CardinalDirection::West) || !U32(v.art.value)) return false;
+    if (!I32(v.powerBounds.min.x) || !I32(v.powerBounds.min.z) || !I32(v.powerBounds.min.y)
+        || !I32(v.powerBounds.max.x) || !I32(v.powerBounds.max.z) || !I32(v.powerBounds.max.y)
+        || !I32(v.position.x) || !I32(v.position.z) || !I32(v.position.y)) return false;
     return (v.itemAction.empty() || ValidItemActionId(v.itemAction)) && ValidCommandShape(v);
 }
 bool Reader::Result(PlayerCommandResult& v) {
     std::uint8_t outcome, advanced;
     if (bytes.size() > maxPacket || !U64(v.player) || !v.player || !U64(v.sequence) || !v.sequence ||
         !U64(v.opportunity) || !v.opportunity || !U8(outcome) ||
-        outcome > static_cast<std::uint8_t>(Outcome::character_created) || !U8(advanced) || advanced > 1 ||
+        outcome > static_cast<std::uint8_t>(Outcome::power_refused) || !U8(advanced) || advanced > 1 ||
         !U64(v.result.tick) || !U64(v.result.cost)) return false;
     std::uint8_t hasError;
     if (!U8(hasError) || hasError > 1) return false;
@@ -1052,7 +1088,8 @@ bool Reader::Result(PlayerCommandResult& v) {
     if (!U8(studyOutcome)) return false;
     v.result.studyOutcome = static_cast<StudyOutcome>(studyOutcome);
     if (!ReadEnum(*this, v.result.combatReason, CombatRefusal::InvalidDefinition)) return false;
-    return ValidCraftingResult(v.result) && ValidInventoryResult(v.result) && ValidStudyResult(v.result);
+    if (!ReadEnum(*this, v.result.powerOutcome, PowerActionOutcome::NoNewCoverage)) return false;
+    return ValidPowerResult(v.result) && ValidCraftingResult(v.result) && ValidInventoryResult(v.result) && ValidStudyResult(v.result);
 }
 bool Reader::View(WorldView& v, bool inspection) {
     if (bytes.size() > maxPacket) return false;
@@ -1085,7 +1122,7 @@ bool Reader::View(WorldView& v, bool inspection) {
             !U8(terrainLight) || !U8(overlayLight) || !U32(c.monsterType.value)) return false;
         c.player = player;
         c.objectAppearance = {static_cast<ObjectKind>(kind), static_cast<ObjectFacing>(facing), active != 0, broken != 0};
-        if (!U32(c.objectAppearance.type.value)) return false;
+        if (!U32(c.objectAppearance.type.value) || !U64(c.powerGridId)) return false;
         c.terrainDepth = terrainDepth; c.overlayDepth = overlayDepth;
         c.overlayVisibility = static_cast<Visibility>(overlayVisibility);
         c.terrainLight = static_cast<LightBand>(terrainLight); c.overlayLight = static_cast<LightBand>(overlayLight);
@@ -1156,7 +1193,19 @@ bool Reader::View(WorldView& v, bool inspection) {
         previousSerial = e.serial; v.combatEvents.push_back(e);
     }
     v.enemyHealth.clear();
-    return inspection || ReadEnemyHealth(*this, v);
+    if (!inspection && !ReadEnemyHealth(*this, v)) return false;
+    bool present;
+    if (!I32(v.powerSettings.maxWiringWidth) || !I32(v.powerSettings.maxWiringDepth)
+        || !ValidPowerSettings(v.powerSettings) || !ReadBool(*this, present)) return false;
+    v.currentPower.reset();
+    if (present) {
+        v.currentPower.emplace(); auto& p = *v.currentPower; std::uint64_t grid;
+        if (!U64(grid) || !ReadBool(*this, p.mainsAvailable) || !U64(p.batteryEnergy) || !U64(p.batteryCapacity)
+            || !U64(p.generatorOutputAvailable) || !U32(p.batteries) || !U32(p.runningGenerators)
+            || !U32(p.runningMachines) || !U32(p.waitingMachines) || !U32(p.unloadedDevices)) return false;
+        if (grid) p.grid = PowerGridId{grid};
+    }
+    return ValidPowerView(v);
 }
 
 namespace {
@@ -1216,8 +1265,14 @@ bool ValidDetails(const PlayerInspection& value) {
         (!d.actor && (d.speed || d.combat != CombatView{})) || !ValidCombatView(d.combat) || d.combat.feedback != CombatView{}.feedback ||
         (d.object && (!visible || d.object != c.object || d.objectKind == ObjectKind::None || d.objectKind > ObjectKind::Lamp)) ||
         (!d.object && (d.objectType.value || d.objectKind != ObjectKind::None || d.enabled || d.broken || d.machine)) ||
-        (!d.machine && (d.energy || d.energyCapacity || d.hasJob || d.running || d.remainingWork)) ||
-        d.energy > d.energyCapacity || (!d.hasJob && (d.running || d.remainingWork)) || d.items.size() > maxInspectionItems) return false;
+        (!d.machine && (d.energy || d.energyCapacity || d.hasJob || d.running || d.remainingWork || d.gridPowered
+            || d.runRequested || d.fundedTicks || d.generatorOutputRemaining || d.generatorIntervalStart || d.generatorIntervalInitialized)) ||
+        d.energy > d.energyCapacity || (!d.hasJob && d.remainingWork)
+        || (!d.generatorIntervalInitialized && (d.generatorIntervalStart || d.generatorOutputRemaining))
+        || d.fundedTicks > powerQuantumTicks
+        || (d.generatorIntervalInitialized && (d.generatorIntervalStart > value.view.tick
+            || d.generatorIntervalStart % powerQuantumTicks != 0))
+        || d.items.size() > maxInspectionItems) return false;
     bool ground = false; unsigned previousDepth = 0; bool first = true;
     for (const auto& item : d.items) {
         if (!visible || !item.item || !item.type.value || item.depth > maxInspectionDepth ||
@@ -1270,6 +1325,10 @@ bool Writer::Inspection(const PlayerInspection& value) {
     if (d.object) {
         U32(d.objectType.value); U8(static_cast<std::uint8_t>(d.objectKind)); U8(d.enabled); U8(d.broken); U8(d.machine);
         if (d.machine) { U64(d.energy); U64(d.energyCapacity); U8(d.hasJob); U8(d.running); U64(d.remainingWork); }
+        if (d.machine) {
+            U8(d.gridPowered); U8(d.runRequested); U64(d.fundedTicks); U64(d.generatorOutputRemaining);
+            U64(d.generatorIntervalStart); U8(d.generatorIntervalInitialized);
+        }
     }
     U16(static_cast<std::uint16_t>(d.items.size()));
     for (const auto& item : d.items) { U64(item.item); U32(item.type.value); U8(static_cast<std::uint8_t>(item.depth)); U8(item.stored); }
@@ -1293,6 +1352,9 @@ bool Reader::Inspection(PlayerInspection& value) {
             std::uint8_t job, running;
             if (!U64(d.energy) || !U64(d.energyCapacity) || !U8(job) || job > 1 || !U8(running) || running > 1 || !U64(d.remainingWork)) return false;
             d.hasJob = job; d.running = running;
+            if (!ReadBool(*this, d.gridPowered) || !ReadBool(*this, d.runRequested) || !U64(d.fundedTicks)
+                || !U64(d.generatorOutputRemaining) || !U64(d.generatorIntervalStart)
+                || !ReadBool(*this, d.generatorIntervalInitialized)) return false;
         }
     }
     std::uint16_t count;

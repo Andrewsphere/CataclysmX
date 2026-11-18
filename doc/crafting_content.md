@@ -28,12 +28,30 @@ item type from being recovered by recycling, rather than preventing it from
 being used as a crafting input or recycling target.
 
 Item `crafting_power` is optional. When present, both fields are required:
-`store` names an energy-store capability **on that item**, and `energy_per_work`
+`store` names an energy-store capability **on that item**, or the reserved string
+`grid` for power drawn from the crafter's building grid. `energy_per_work`
 is an integer 1–UINT32_MAX. The rate uses the project integer-ratio convention:
 10000 means one energy per base work, 1000 means 0.1 energy per base work.
 The loader resolves the stable capability name after lexical capability sorting.
 There is no implicit energy-store selection or default billing. Existing behavior
 registration is sufficient; crafting fields introduce no capability type.
+
+A grid-powered tool must have no local energy-store capabilities. Its resolved
+`craftingGridPower` is true and `craftingPower` remains zero. The rate is still
+required and strictly positive; the string `grid` alone is not a valid
+`crafting_power` value. Unknown keys and attempts to combine local/grid stores
+are errors. Omitting `crafting_power` preserves unpowered tool behavior.
+
+The full and first-house packs give `soldering_iron` the `soldering` tier-1 trait
+and `{store:'grid',energy_per_work:10000}`. `solder_electrical_connectors`
+consumes one `copper_wire` and one `solder_wire`, produces ten
+`electrical_connector` items, and needs 200 base work (200 energy at the authored
+rate). This is a default-known, electronics-level-0 training recipe.
+`assemble_wiring_kit` is also default-known and unpowered: six `steel_scrap`, one
+`copper_wire`, one `cloth_repair_tape`, retained `combination_pliers`, and 400 work
+produce a reusable tool with no energy store. Using it consumes separate ordinary
+`copper_wire` leaf items at 16 newly covered tiles per item, rounded up per action.
+Crafting the kit neither creates electrical charge nor needs electricity.
 
 ## Crafting recipes
 

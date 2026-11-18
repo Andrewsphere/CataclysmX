@@ -60,7 +60,10 @@ bool ItemDefinition::operator==(const ItemDefinition& other) const {
         || craftingPower != other.craftingPower || craftingEnergyPerWork != other.craftingEnergyPerWork
         || books != other.books || readingPower != other.readingPower
         || recoveryAllowed != other.recoveryAllowed || unfinishedCraft != other.unfinishedCraft
-        || armor != other.armor) { return false; }
+        || armor != other.armor || craftingGridPower != other.craftingGridPower
+        || wiringMaterial != other.wiringMaterial || wiringTilesPerMaterial != other.wiringTilesPerMaterial
+        || placedObject != other.placedObject
+        || gridMeter != other.gridMeter) { return false; }
     for (std::size_t i = 0; i < behaviors.size(); ++i) {
         const auto& left = behaviors[i];
         const auto& right = other.behaviors[i];

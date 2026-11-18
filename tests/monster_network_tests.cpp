@@ -9,7 +9,7 @@ using namespace cataclysmx;
 using namespace cataclysmx::network;
 
 constexpr std::size_t viewHeaderSize = 87;
-constexpr std::size_t runRecordSize = 46;
+constexpr std::size_t runRecordSize = 54; // Protocol 23 appends the meter-only grid ID.
 constexpr std::size_t firstMonsterType = viewHeaderSize + 2 + 36;
 
 ContentCatalog MonsterContent() {

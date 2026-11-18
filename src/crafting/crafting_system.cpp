@@ -2,6 +2,7 @@
 #include "core/world.h"
 #include "core/ratio.h"
 #include "objects/storage_access.h"
+#include "power/power_system.h"
 #include "skills/learning_system.h"
 #include "skills/skill_state.h"
 #include <EASTL/algorithm.h>
@@ -274,13 +275,6 @@ CraftingOutcome CraftingSystem::Fund(ActorHandle handle, CraftingJobState& state
     // Convert the sub-fixed-point timing residue when speed changes. The durable
     // fixed-point work itself is never rounded or discarded at a slice boundary.
     const auto residue = std::uint64_t{state.timingRemainder} * speed / state.timingSpeed;
-    Tick duration = state.settings.maxSliceTicks;
-    const auto left = std::uint64_t{state.totalWork} * ratioScale - state.work;
-    auto work = (duration * workPerTickNumerator + residue) / speed;
-    if (work >= left) {
-        duration = (left * speed - residue + workPerTickNumerator - 1) / workPerTickNumerator;
-        duration = eastl::max<Tick>(1, duration); work = left;
-    }
     charges_.clear();
     for (auto item : retained_) { charges_.push_back({item}); }
     for (auto item : tools) { if (item.value) { charges_.push_back({item}); } }
@@ -291,19 +285,45 @@ CraftingOutcome CraftingSystem::Fund(ActorHandle handle, CraftingJobState& state
         return a.item == b.item;
     });
     charges_.erase(uniqueEnd, charges_.end());
+    bool gridPowered = false;
+    for (const auto& payment : charges_) {
+        const auto& definition = world_.GetContent().GetItem(world_.GetItem(payment.item)->type);
+        gridPowered |= definition.craftingGridPower && definition.craftingEnergyPerWork != 0;
+    }
+    Tick duration = state.settings.maxSliceTicks;
+    if (gridPowered) {
+        duration = eastl::min(duration, world_.Power().SliceLimit(world_.GetTick()));
+        if (!duration || !world_.Power().GridAt(actor->position)) { return CraftingOutcome::InsufficientEnergy; }
+    }
+    const auto left = std::uint64_t{state.totalWork} * ratioScale - state.work;
+    auto work = (duration * workPerTickNumerator + residue) / speed;
+    if (work >= left) {
+        duration = (left * speed - residue + workPerTickNumerator - 1) / workPerTickNumerator;
+        duration = eastl::max<Tick>(1, duration); work = left;
+    }
+    gridDemands_.clear();
     auto remainder = state.energyRemainder;
     for (auto& payment : charges_) {
         const auto& definition = world_.GetContent().GetItem(world_.GetItem(payment.item)->type);
         if (!definition.craftingEnergyPerWork) { continue; }
-        const auto energy = world_.GetItemEnergy(payment.item, definition.craftingPower);
         const auto numerator = work * definition.craftingEnergyPerWork + remainder;
         const auto charge = numerator / craftingEnergyDenominator;
-        if (!energy || charge > energy->energy) { return CraftingOutcome::InsufficientEnergy; }
-        payment.power = definition.craftingPower;
-        payment.energyAfter = energy->energy - static_cast<std::uint32_t>(charge);
+        if (definition.craftingGridPower) {
+            gridDemands_.push_back({actor->position, charge});
+        } else {
+            const auto energy = world_.GetItemEnergy(payment.item, definition.craftingPower);
+            if (!energy || charge > energy->energy) { return CraftingOutcome::InsufficientEnergy; }
+            payment.power = definition.craftingPower;
+            payment.energyAfter = energy->energy - static_cast<std::uint32_t>(charge);
+        }
         remainder = numerator % craftingEnergyDenominator;
     }
+    const eastl::span<const PowerDemand> demands{gridDemands_.data(), gridDemands_.size()};
+    if (gridPowered && world_.Power().CanSupply(demands) != PowerOutcome::Supplied) {
+        return CraftingOutcome::InsufficientEnergy;
+    }
     if (!commit) { return CraftingOutcome::Started; }
+    if (gridPowered) { Require(world_.Power().TrySupply(demands) == PowerOutcome::Supplied); }
     for (const auto& payment : charges_) {
         if (payment.power.value) { Require(world_.SetItemEnergy(payment.item, payment.power, payment.energyAfter).has_value()); }
     }

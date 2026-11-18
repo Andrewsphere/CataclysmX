@@ -1,6 +1,7 @@
 #include "terminal/debug_menu.h"
 
 #include "client/ai_debug.h"
+#include "client/power_view.h"
 #include "client/item_browser.h"
 #include "client/worldgen_debug.h"
 #include "terminal/render.h"
@@ -39,6 +40,15 @@ public:
     }
 
     ftxui::Element OnRender() override {
+        if (powerMode_) {
+            ftxui::Elements rows;
+            for (std::size_t i = 0; i < powerLines_.size(); ++i) {
+                auto row = ftxui::text(std::string(powerLines_[i].data(), powerLines_[i].size()));
+                if (i == powerLine_) row = row | ftxui::focus;
+                rows.push_back(std::move(row));
+            }
+            return ftxui::vbox(std::move(rows)) | ftxui::yframe | ftxui::flex | ftxui::border;
+        }
         if (browser_.IsOpen()) { return RenderBrowser(); }
         if (aiMode_) { return RenderAi(); }
         ftxui::Elements lines{
@@ -103,6 +113,7 @@ public:
                 lines.push_back(ftxui::text("1-5/Tab layers; +/- zoom; PgUp/PgDn details"));
             } else { lines.push_back(ftxui::paragraph(Controls())); }
         }
+        lines.push_back(ftxui::text("p: power grids / chunk residency"));
         lines.push_back(ftxui::text(ToggleHint()));
         lines.push_back(ftxui::text(keymap_ ? Hint(InputAction::Debug) + " / Escape" : "F11 / Escape / q: close"));
         return ftxui::vbox(std::move(lines)) | ftxui::border;
@@ -134,6 +145,18 @@ public:
         }
         if (action == InputAction::Debug || action == InputAction::Cancel) {
             if (onClose_) { onClose_(); }
+            return true;
+        }
+        if (chord && chord->key == "p") {
+            powerMode_ = true; powerLine_ = 0;
+            CapturePowerDebug(world_, powerSnapshot_);
+            DescribePowerDebug(powerSnapshot_, aiInitialPosition_, powerLines_);
+            return true;
+        }
+        if (powerMode_) {
+            if ((action == InputAction::South || action == InputAction::DetailsDown) && powerLine_ + 1 < powerLines_.size()) ++powerLine_;
+            if ((action == InputAction::North || action == InputAction::DetailsUp) && powerLine_) --powerLine_;
+            if (action == InputAction::Inspect) powerMode_ = false;
             return true;
         }
         if (action == InputAction::Inventory) {
@@ -352,6 +375,10 @@ private:
     TileCoord aiInitialPosition_;
     TileCoord aiCursor_;
     AiDebugView aiView_;
+    PowerDebugSnapshot powerSnapshot_;
+    Vector<String> powerLines_;
+    std::size_t powerLine_ = 0;
+    bool powerMode_ = false;
     std::size_t aiDetailLine_ = 0;
     bool aiMode_ = false;
     std::function<void()> onClose_;

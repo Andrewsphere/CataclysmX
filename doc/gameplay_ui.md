@@ -69,6 +69,65 @@ the terminal is small; history uses at most half the gameplay height.
 
 ## On-demand windows
 
+### Power workshop (terminal and SDL, including LAN)
+
+Open **Crafting** from its gameplay binding or Quick actions, then press **p**
+for the **Power workshop**. The workshop lists carried reusable wiring kits and
+placeable batteries/generators, including carried container contents. Installed
+components are excluded. Commands always refer to the selected persistent item
+IDs; the server rechecks ownership, materials, reach, layer, occupancy and costs
+when the action executes.
+
+- **Tab** cycles carried wiring kits; **g** cycles carried placeable equipment.
+- **p** switches between wiring and placing equipment.
+- **w / W** increases/decreases width; **d / D** increases/decreases depth,
+  wrapping through the configured range. The initial size is the server's
+  maximum (default 16×16, configurable from 1 to 64 per axis); smaller rectangular
+  regions down to 1×1 are supported.
+- **Arrows** select the inclusive rectangle's minimum corner, or the placement
+  destination. **Home** returns to the player's tile. Wiring remains on the
+  actor's layer; placement is on the current or an adjacent tile.
+- **Enter** submits the selected installation. Wiring consumes accessible ordinary
+  material leaf items: `ceil(newly covered tiles / kit.wiringTilesPerMaterial)`.
+  The selected kit remains reusable and has no consumable energy store. Its
+  material type and tiles per item are shown in the workshop. A battery
+  installation costs four tile equivalents, so the default 16-tiles-per-material
+  kit consumes **one material item**. **Escape** returns to crafting;
+  **PageUp/PageDown** scroll the workshop, including its coverage map.
+
+Carry a **multimeter** to see the current grid's present mains availability,
+battery energy/capacity, available generator output, machine counts and a
+viewport-bounded coverage map. Each map symbol represents a grid ID modulo 36;
+the exact IDs are listed below the map. The map uses the viewed layer, while
+the current inspection describes the player's own tile. Losing carried access
+to the meter removes both inspection and coverage. Normal player snapshots
+contain no future mains cutoff information.
+
+Host-only **Debug (F11) → p** opens power/chunk diagnostics. Press **p** to
+refresh the read-only snapshot, and **a** to return to world generation. It
+shows coverage and full grid IDs, power workload counters, and a 17×17 chunk
+column map centered on the player. `P` means player demand, `M` machine demand,
+`B` both, and `O` other demand; uppercase is active, lowercase resident, and `.`
+unloaded. Counts distinguish loaded/active/player/machine/machine-only/shared
+columns and loaded/archived chunks. Below the map, every machine-only loaded
+column is listed by X/Z coordinates and active/resident state, with machine-owner,
+machine-dependency and other-request counts, including columns outside the map.
+SDL captures diagnostics on the session
+owner thread before presenting them; the UI never queries the live world.
+
+Headless verification commands:
+
+```text
+power
+power-debug
+wire-grid <kit-id> <min-x> <min-z> <max-x> <max-z> <y>
+place-power <equipment-id> <wiring-kit-id-or-0> <x> <z> <y>
+```
+
+`power` uses normal meter eligibility; `power-debug` is administrative inspection.
+See [power commands and presentation](power_presentation.md) for the shared DTO,
+wire validation and session-thread API design.
+
 | Action name | Default key | Window |
 | --- | --- | --- |
 | `inventory` | `i` | Carried descendants and accessible ground items, selected by persistent ID |

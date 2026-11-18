@@ -131,6 +131,47 @@ their graph. Reciprocal closed/open doors and self-references are legal; they
 are transitions, not inheritance. Absence becomes the invalid ID zero. The
 loader does not impose extra gameplay rules on target passability or appearance.
 
+## Electrical item metadata
+
+Items accept four optional top-level fields in addition to
+[`crafting_power`](crafting_content.md):
+
+| Field | Value and resolved representation |
+| --- | --- |
+| `wiring_material` | Stable ordinary item ID; resolves after all items load to `ItemTypeId wiringMaterial` |
+| `wiring_tiles_per_material` | Integer 1..256, default 16; resolves to `uint16_t wiringTilesPerMaterial` |
+| `placed_object` | Stable object ID; resolves after all objects load to `ObjectTypeId placedObject` |
+| `grid_meter` | Boolean, default false |
+
+`wiring_material` names the ordinary leaf items consumed while using a reusable
+wiring tool. The reference must exist and must not name the tool itself. A
+nondefault `wiring_tiles_per_material` requires `wiring_material`; explicit default
+16 is also valid without a material. World consumes
+`ceil(newlyCoveredTiles / wiringTilesPerMaterial)` accessible material items.
+Battery installation is equivalent to four tiles, so the default consumes one
+material item. Wiring material is never represented as battery charge or an
+energy-store capability; the reusable `wiring_kit` has no energy store and names
+`copper_wire` at 16 tiles per item. The old `wiring_supply` field is rejected.
+
+`placed_object` allows installation of equipment from an item. If the target has
+`grid_battery` behavior, the item must have exactly one rechargeable energy store;
+installation preserves that item's authoritative charge rather than making a
+second battery balance. Missing object/material references and nonboolean meter
+values fail loading. Absence resolves to invalid IDs/false. Item equality includes
+all electrical fields, including the grid/local crafting distinction.
+
+The canonical `WriteCombatContent` supplement includes electrical item fields
+with stable item/object/capability names and authored-style object behaviors and
+configs. It includes `grid_powered` even when false, while `grid_battery` emits no
+machine/generator config. Electrical metadata therefore participates in canonical
+content hashing without depending on runtime handles.
+
+The full and first-house manifests include `items/power.json5`,
+`objects/power.json5`, and `crafting/power.json5`. They reuse `multimeter`,
+`aa_rechargeable_battery`, and `soldering_iron`. The standalone demo remains a
+legacy local-power pack. See [house content](house_content.md) for generator,
+battery-station, machine schemas and building descriptor integration.
+
 ## AI profiles
 
 The optional top-level `ai_profiles` array contains closed-schema objects with a

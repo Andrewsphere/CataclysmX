@@ -442,7 +442,7 @@ TEST_CASE("Legacy zero-head worker releases its paid crafting slice for a fresh 
         REQUIRE(sqlite3_step(statement.value) == SQLITE_DONE);
         REQUIRE(sqlite3_changes(database.value) == 1);
         REQUIRE(sqlite3_exec(database.value,
-            "UPDATE world_state SET payload=json_remove(payload,'$.session.players[0].session')",
+            "UPDATE world_state SET payload=json_remove(payload,'$.power','$.session.players[0].session')",
             nullptr, nullptr, nullptr) == SQLITE_OK);
         REQUIRE(sqlite3_exec(database.value, "UPDATE metadata SET format_version=13", nullptr, nullptr, nullptr) == SQLITE_OK);
     }

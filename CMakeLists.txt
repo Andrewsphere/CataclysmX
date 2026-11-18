@@ -99,6 +99,8 @@ add_library(cataclysmx_engine STATIC
     src/content/crafting_definition.h src/core/static_list.h src/core/ratio.h
     src/crafting/crafting_types.h src/crafting/crafting_state.cpp src/crafting/crafting_state.h
     src/crafting/crafting_system.cpp src/crafting/crafting_system.h
+    src/power/power_system.cpp src/power/power_system.h
+    src/power/power_state.cpp src/power/power_types.h
     src/skills/skill_types.h src/skills/skill_state.cpp src/skills/skill_state.h
     src/skills/learning_system.cpp src/skills/learning_system.h src/skills/learning_types.h
     src/content/skill_definition.h src/content/book_definition.h
@@ -165,6 +167,7 @@ add_library(cataclysmx_client STATIC src/client/text.cpp src/client/text.h
     src/client/item_ui.cpp src/client/item_ui.h
     src/client/item_browser.cpp src/client/item_browser.h
     src/client/crafting_menu.cpp src/client/crafting_menu.h
+    src/client/power_view.cpp src/client/power_view.h
     src/client/message_history.cpp src/client/message_history.h
     src/client/tile_inspection.cpp src/client/tile_inspection.h
     src/client/combat_text.cpp src/client/combat_text.h
@@ -318,6 +321,10 @@ if(CATACLYSMX_BUILD_TESTS)
         tests/crafting_content_tests.cpp tests/crafting_world_tests.cpp tests/crafting_save_tests.cpp
         tests/crafting_server_tests.cpp tests/crafting_network_tests.cpp tests/crafting_ui_tests.cpp
         tests/crafting_demo_tests.cpp
+        tests/power_tests.cpp tests/power_content_tests.cpp tests/worldgen_power_tests.cpp
+        tests/power_crafting_tests.cpp tests/power_save_tests.cpp
+        tests/power_frontend_tests.cpp tests/power_network_tests.cpp
+        tests/power_world_tests.cpp
         tests/skill_progression_tests.cpp tests/skill_content_tests.cpp
         tests/skill_world_tests.cpp tests/skill_save_tests.cpp tests/skill_crafting_tests.cpp
         tests/skill_server_tests.cpp tests/skill_network_tests.cpp

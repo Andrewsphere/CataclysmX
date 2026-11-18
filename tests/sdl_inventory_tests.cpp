@@ -399,7 +399,7 @@ TEST_CASE("SDL item slice and expansion render through the item browser", "[item
     Localization localization; REQUIRE(localization.Load(CATACLYSMX_LOC_DIRECTORY, "en"));
     const auto keys = DefaultKeymap();
     ItemBrowser browser; browser.Open(content, localization);
-    CHECK(browser.Frame().matches.size() == 176); // Authored definitions only; both generated containers are hidden.
+    CHECK(browser.Frame().matches.size() == 179); // Authored definitions only; both generated containers are hidden.
     for (const auto type : browser.Frame().matches) {
         CHECK(type != content.CorpseItem());
         CHECK_FALSE(content.GetItem(type).unfinishedCraft);
@@ -416,6 +416,7 @@ TEST_CASE("SDL item slice and expansion render through the item browser", "[item
         REQUIRE(assets.State() == AssetState::Ready);
         unsigned rendered = 0;
         unsigned learningRendered = 0;
+        unsigned powerRendered = 0;
         unsigned combatListed = 0;
         unsigned expansionRendered = 0;
         for (std::size_t index = 0; index < browser.Frame().matches.size(); ++index) {
@@ -471,11 +472,14 @@ TEST_CASE("SDL item slice and expansion render through the item browser", "[item
             if (expansion) { ++expansionRendered; }
             else if (item.id == "workshop_primer_print" || item.id == "salvage_notes_print"
                 || item.id == "workshop_ebook_reader") { ++learningRendered; }
+            else if (item.id == "wiring_kit" || item.id == "portable_fuel_generator"
+                || item.id == "generator_fuel_packet") { ++powerRendered; }
             else { ++rendered; }
         }
         CHECK(rendered == 60);
         CHECK(expansionRendered == 80);
         CHECK(learningRendered == 3);
+        CHECK(powerRendered == 3);
         CHECK(combatListed == 6);
     }
 }

@@ -57,6 +57,7 @@
    flags:['rigid','opaque','electrically_conductive'],
    capabilities:[{type:'energy_store', id:'power', capacity_energy:1000, initial_energy:1000, rechargeable:false, battery_class:'aa'}]},
   {type:'item', id:'aa_rechargeable_battery', name:'AA rechargeable battery', mass_g:30, volume_ml:10,
+    placed_object:'grid_battery_station',
    description:'One rechargeable AA cell, supplied empty.', art:'/art/items/aa_rechargeable_battery/art.txt',
    flags:['rigid','opaque','electrically_conductive'],
    capabilities:[{type:'energy_store', id:'power', capacity_energy:1000, initial_energy:0, rechargeable:true, battery_class:'aa'}]},

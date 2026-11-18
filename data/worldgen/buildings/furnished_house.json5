@@ -4,7 +4,7 @@
   rows:[
     '###w####u###',
     '#KPS..#.#Bt#',
-    '#q.cT.#.#v.#',
+    '#q.cTE#.#v.#',
     '#s....+.#+##',
     '#..l..#..l.#',
     '#k....#a.ob#',
@@ -12,6 +12,12 @@
     '###+########',
   ],
   palette:{'#':'wall', '.':'floor', '+':'closed_door', '>':'stairs', w:'window',u:'window_curtained',
+    E:{terrain:'floor',loot:[
+      {pool:'power_starter_wire',destination:'ground'},{pool:'power_starter_meter',destination:'ground'},
+      {pool:'power_starter_generator',destination:'ground'},{pool:'power_starter_fuel',destination:'ground'},
+      {pool:'power_starter_battery',destination:'ground'},{pool:'power_starter_iron',destination:'ground'},
+      {pool:'power_starter_solder',destination:'ground'},{pool:'power_starter_copper',destination:'ground'}]},
+    M:{terrain:'floor',object:'grid_scrap_press'},
     s:{terrain:'floor',object:'kitchen_stove',facing:'east'},
     q:{terrain:'floor',loot:[{pool:'loot_kitchen_appliance_ground',chance:2000,destination:'ground'}]},
     v:{terrain:'floor',loot:[{pool:'loot_cleaning_bulk_ground',chance:2000,destination:'ground'}]},
@@ -43,12 +49,12 @@
   basements:[
     // Rear pantry/storage room; cupboards beside the stair landing.
     {id:'storage_cellar',weight:1,rows:[
-      '############','#C........p#','#..........#','#..........#',
+      '############','#C........p#','#........M.#','#..........#',
       '####+#######','#d..l......#','#..>......H#','############',
     ]},
     // Bench/tool room and household/bulk-storage landing.
     {id:'workshop_cellar',weight:1,rows:[
-      '############','#WF....C..Z#','#..........#','#..........#',
+      '############','#WF....C..Z#','#........M.#','#..........#',
       '####+#######','#h..l......#','#..>......D#','############',
     ]},
   ],

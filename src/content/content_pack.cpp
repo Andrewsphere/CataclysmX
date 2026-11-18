@@ -180,6 +180,24 @@ DataObject WriteCombatContent(const ContentCatalog& catalog) {
     DataObject items = DataObject::List();
     for (std::uint32_t i = 1; i <= catalog.ItemCount(); ++i) {
         const auto& item = catalog.GetItem({i}); DataObject entry; entry.SetString("id", item.id);
+        entry.SetBoolean("grid_meter", item.gridMeter);
+        entry.SetUnsigned("wiring_tiles_per_material", item.wiringTilesPerMaterial);
+        if (item.wiringMaterial.value) {
+            entry.SetString("wiring_material", catalog.GetItem(item.wiringMaterial).id);
+        }
+        if (item.placedObject.value) {
+            entry.SetString("placed_object", catalog.GetObject(item.placedObject).id);
+        }
+        if (item.craftingEnergyPerWork != 0) {
+            DataObject power;
+            if (item.craftingGridPower) { power.SetString("store", "grid"); }
+            else {
+                const auto* capability = TryGetItemCapability(item, item.craftingPower);
+                power.SetString("store", capability ? eastl::string_view(capability->id) : eastl::string_view{});
+            }
+            power.SetUnsigned("energy_per_work", item.craftingEnergyPerWork);
+            entry.Set("crafting_power", eastl::move(power));
+        }
         entry.SetBoolean("has_melee", item.melee.has_value()); entry.SetBoolean("has_armor", item.armor.has_value());
         if (item.melee) {
             const auto& melee = *item.melee; DataObject m;
@@ -200,6 +218,63 @@ DataObject WriteCombatContent(const ContentCatalog& catalog) {
         items.Append(eastl::move(entry));
     }
     out.Set("items", eastl::move(items));
+    DataObject objects = DataObject::List();
+    for (std::uint32_t i = 1; i <= catalog.ObjectCount(); ++i) {
+        const auto& object = catalog.GetObject({i});
+        DataObject entry;
+        entry.SetString("id", object.id);
+        entry.SetString("name", object.name);
+        entry.SetBoolean("blocks_movement", object.blocksMovement);
+        entry.SetBoolean("blocks_sight", object.blocksSight);
+        entry.SetBoolean("movable", object.movable);
+        entry.SetUnsigned("move_cost", object.moveCost);
+        if (object.capacityVolumeMl) { entry.SetUnsigned("capacity_volume_ml", *object.capacityVolumeMl); }
+        switch (object.kind) {
+        case ObjectKind::None: std::abort();
+        case ObjectKind::Generic: entry.SetString("kind", "generic"); break;
+        case ObjectKind::Chair: entry.SetString("kind", "chair"); break;
+        case ObjectKind::Table: entry.SetString("kind", "table"); break;
+        case ObjectKind::Lamp: entry.SetString("kind", "lamp"); break;
+        }
+        DataObject light;
+        light.SetUnsigned("intensity", object.light.intensity);
+        light.SetUnsigned("range", object.light.range);
+        entry.Set("light", eastl::move(light));
+        switch (object.behavior) {
+        case ObjectBehaviorKind::None:
+            entry.SetString("behavior", "none");
+            break;
+        case ObjectBehaviorKind::GridBattery:
+            entry.SetString("behavior", "grid_battery");
+            break;
+        case ObjectBehaviorKind::Generator: {
+            entry.SetString("behavior", "generator");
+            DataObject generator;
+            generator.SetString("fuel_item", catalog.GetItem(object.generator.fuelItem).id);
+            generator.SetUnsigned("fuel_capacity", object.generator.fuelCapacity);
+            generator.SetUnsigned("energy_per_fuel", object.generator.energyPerFuel);
+            generator.SetUnsigned("output_per_tick", object.generator.outputPerTick);
+            entry.Set("generator", eastl::move(generator));
+            break;
+        }
+        case ObjectBehaviorKind::CraftingMachine: {
+            entry.SetString("behavior", "crafting_machine");
+            DataObject machine;
+            machine.SetString("input", catalog.GetItem(object.machine.input).id);
+            machine.SetUnsigned("input_count", object.machine.inputCount);
+            machine.SetString("output", catalog.GetItem(object.machine.output).id);
+            machine.SetUnsigned("output_count", object.machine.outputCount);
+            machine.SetUnsigned("duration_ticks", object.machine.duration);
+            machine.SetUnsigned("energy_capacity", object.machine.energyCapacity);
+            machine.SetUnsigned("energy_per_tick", object.machine.energyPerTick);
+            machine.SetBoolean("grid_powered", object.machine.gridPowered);
+            entry.Set("machine", eastl::move(machine));
+            break;
+        }
+        }
+        objects.Append(eastl::move(entry));
+    }
+    out.Set("objects", eastl::move(objects));
     DataObject books = DataObject::List();
     for (std::uint32_t i = 1; i <= catalog.BookCount(); ++i) {
         const auto& book = catalog.GetBook({i}); DataObject entry; entry.SetString("id", book.id);

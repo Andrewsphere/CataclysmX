@@ -4,6 +4,7 @@
 #include "core/simulation.h"
 #include "combat/combat_system.h"
 #include "skills/learning_system.h"
+#include "power/power_system.h"
 
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
 #error Engine must compile without exceptions
@@ -35,6 +36,7 @@ SimulationResult AdvanceUntilInput(World& world, Tick& tick,
         const auto dueItemEvent = world.NextItemEventIn();
         effectsCompleted |= dueItemEvent && *dueItemEvent == 0;
         world.ProcessItemEvents();
+        effectsCompleted |= world.Power().ProcessEvents();
         effectsCompleted |= world.ProcessCraftingEvents();
         effectsCompleted |= world.Learning().ProcessEvents();
         const auto combatEvent = world.Combat().NextEventIn();
@@ -83,6 +85,13 @@ SimulationResult AdvanceUntilInput(World& world, Tick& tick,
         if (const auto itemEvent = world.NextItemEventIn()) {
             Require(*itemEvent != 0);
             if (*itemEvent < next) { next = *itemEvent; }
+            hasEvents = true;
+        }
+        if (const auto powerEvent = world.Power().NextEventIn()) {
+            // Crafting or another due effect can invalidate supply after the
+            // first power pass. Settle that notification before choosing time.
+            if (*powerEvent == 0) { continue; }
+            if (*powerEvent < next) { next = *powerEvent; }
             hasEvents = true;
         }
         if (!hasEvents) { return result; }

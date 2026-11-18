@@ -8,6 +8,7 @@
 #include "worldgen/worldgen.h"
 #include "crafting/crafting_state.h"
 #include "combat/combat_persistence.h"
+#include "power/power_types.h"
 
 #include <EASTL/algorithm.h>
 #include <EASTL/sort.h>
@@ -134,12 +135,15 @@ struct JsonWriter {
     void Boolean(yyjson_mut_val* object, const char* key, bool value) {
         Add(object, key, yyjson_mut_bool(doc, value));
     }
-    void Position(yyjson_mut_val* object, TileCoord position) {
+    yyjson_mut_val* Coordinates(TileCoord position) {
         auto* value = Object();
         Integer(value, "x", position.x);
         Integer(value, "z", position.z);
         Integer(value, "y", position.y);
-        Add(object, "position", value);
+        return value;
+    }
+    void Position(yyjson_mut_val* object, TileCoord position) {
+        Add(object, "position", Coordinates(position));
     }
     String Finish(yyjson_mut_val* root) {
         yyjson_mut_doc_set_root(doc, root);
@@ -502,6 +506,13 @@ SaveResult<void> ValidateEntityState(const ContentCatalog& content, const ChunkA
 
 bool ValidSnapshot(const SaveSnapshot& snapshot) {
     const auto& session = snapshot.session;
+    if (!ValidPowerState(snapshot.power, session.tick)) { return false; }
+    for (const auto& device : snapshot.power.devices) {
+        if (device.object >= snapshot.nextId) { return false; }
+    }
+    for (const auto& grid : snapshot.power.grids) {
+        if (grid.fairnessCursor >= snapshot.nextId) { return false; }
+    }
     if (session.pacing.ticksPerSecond == 0 || snapshot.nextId == 0 || session.player >= snapshot.nextId
         || !ValidPosition(session.playerPosition) || session.activeRadius < 0
         || session.residentRadius < session.activeRadius || session.residentRadius > 8
@@ -866,6 +877,122 @@ bool ValidateChunk(const ContentCatalog& content, const ChunkArchive& chunk,
     return true;
 }
 
+yyjson_mut_val* EncodePower(JsonWriter& writer, const SavedPowerState& power) {
+    auto* root = writer.Object();
+    writer.Integer(root, "version", power.version);
+    writer.Counter(root, "next_grid_id", power.nextGridId);
+    writer.Counter(root, "mains_cutoff_tick", power.mainsCutoffTick);
+    auto* settings = writer.Object();
+    writer.Integer(settings, "max_wiring_width", power.settings.maxWiringWidth);
+    writer.Integer(settings, "max_wiring_depth", power.settings.maxWiringDepth);
+    writer.Add(root, "settings", settings);
+    auto* grids = writer.Array();
+    for (const auto& grid : power.grids) {
+        auto* entry = writer.Object();
+        writer.Counter(entry, "id", grid.id.value);
+        auto* regions = writer.Array();
+        for (const auto& region : grid.regions) {
+            auto* bounds = writer.Object();
+            writer.Add(bounds, "min", writer.Coordinates(region.min));
+            writer.Add(bounds, "max", writer.Coordinates(region.max));
+            writer.Append(regions, bounds);
+        }
+        writer.Add(entry, "regions", regions);
+        writer.Boolean(entry, "mains_connected", grid.mainsConnected);
+        writer.Counter(entry, "fairness_cursor", grid.fairnessCursor);
+        writer.Counter(entry, "processed_interval", grid.processedInterval);
+        writer.Boolean(entry, "interval_processed", grid.intervalProcessed);
+        writer.Counter(entry, "mains_charge_interval", grid.mainsChargeInterval);
+        writer.Boolean(entry, "mains_charge_processed", grid.mainsChargeProcessed);
+        writer.Append(grids, entry);
+    }
+    writer.Add(root, "grids", grids);
+    auto* devices = writer.Array();
+    for (const auto& device : power.devices) {
+        auto* entry = writer.Object();
+        writer.Counter(entry, "object", device.object);
+        writer.Position(entry, device.position);
+        writer.Integer(entry, "kind", static_cast<int>(device.kind));
+        writer.Boolean(entry, "workshop_hold", device.workshopHold);
+        writer.Counter(entry, "charge_interval", device.chargeInterval);
+        writer.Boolean(entry, "charge_processed", device.chargeProcessed);
+        writer.Append(devices, entry);
+    }
+    writer.Add(root, "devices", devices);
+    auto* bindings = writer.Array();
+    for (const auto& binding : power.generatedBindings) {
+        auto* entry = writer.Object();
+        writer.Add(entry, "origin", writer.Coordinates(binding.origin));
+        writer.Counter(entry, "grid", binding.grid.value);
+        writer.Append(bindings, entry);
+    }
+    writer.Add(root, "generated_bindings", bindings);
+    return root;
+}
+
+bool DecodePower(yyjson_val* root, SavedPowerState& power) {
+    auto* settings = Get(root, "settings");
+    auto* grids = Get(root, "grids");
+    auto* devices = Get(root, "devices");
+    auto* bindings = Get(root, "generated_bindings");
+    if (!Fields(root, {"version", "next_grid_id", "mains_cutoff_tick", "settings", "grids", "devices", "generated_bindings"})
+        || !Unsigned32(Get(root, "version"), power.version)
+        || !Counter(Get(root, "next_grid_id"), power.nextGridId)
+        || !Counter(Get(root, "mains_cutoff_tick"), power.mainsCutoffTick)
+        || !Fields(settings, {"max_wiring_width", "max_wiring_depth"})
+        || !Integer(Get(settings, "max_wiring_width"), power.settings.maxWiringWidth)
+        || !Integer(Get(settings, "max_wiring_depth"), power.settings.maxWiringDepth)
+        || !yyjson_is_arr(grids) || !yyjson_is_arr(devices) || !yyjson_is_arr(bindings)) { return false; }
+    auto iterator = yyjson_arr_iter_with(grids);
+    while (auto* entry = yyjson_arr_iter_next(&iterator)) {
+        SavedPowerGrid grid;
+        auto* regions = Get(entry, "regions");
+        if (!Fields(entry, {"id", "regions", "mains_connected", "fairness_cursor", "processed_interval",
+                "interval_processed", "mains_charge_interval", "mains_charge_processed"})
+            || !Counter(Get(entry, "id"), grid.id.value) || !yyjson_is_arr(regions)
+            || !yyjson_is_bool(Get(entry, "mains_connected"))
+            || !Counter(Get(entry, "fairness_cursor"), grid.fairnessCursor)
+            || !Counter(Get(entry, "processed_interval"), grid.processedInterval)
+            || !yyjson_is_bool(Get(entry, "interval_processed"))
+            || !Counter(Get(entry, "mains_charge_interval"), grid.mainsChargeInterval)
+            || !yyjson_is_bool(Get(entry, "mains_charge_processed"))) { return false; }
+        grid.mainsConnected = yyjson_get_bool(Get(entry, "mains_connected"));
+        grid.intervalProcessed = yyjson_get_bool(Get(entry, "interval_processed"));
+        grid.mainsChargeProcessed = yyjson_get_bool(Get(entry, "mains_charge_processed"));
+        auto regionIterator = yyjson_arr_iter_with(regions);
+        while (auto* bounds = yyjson_arr_iter_next(&regionIterator)) {
+            PowerBounds region;
+            if (!Fields(bounds, {"min", "max"}) || !Position(Get(bounds, "min"), region.min)
+                || !Position(Get(bounds, "max"), region.max)) { return false; }
+            grid.regions.push_back(region);
+        }
+        power.grids.push_back(eastl::move(grid));
+    }
+    iterator = yyjson_arr_iter_with(devices);
+    while (auto* entry = yyjson_arr_iter_next(&iterator)) {
+        SavedPowerDevice device;
+        int kind = 0;
+        if (!Fields(entry, {"object", "position", "kind", "workshop_hold", "charge_interval", "charge_processed"})
+            || !Counter(Get(entry, "object"), device.object) || !Position(Get(entry, "position"), device.position)
+            || !Integer(Get(entry, "kind"), kind) || kind < 0 || kind > 2
+            || !yyjson_is_bool(Get(entry, "workshop_hold"))
+            || !Counter(Get(entry, "charge_interval"), device.chargeInterval)
+            || !yyjson_is_bool(Get(entry, "charge_processed"))) { return false; }
+        device.kind = static_cast<PowerDeviceKind>(kind);
+        device.workshopHold = yyjson_get_bool(Get(entry, "workshop_hold"));
+        device.chargeProcessed = yyjson_get_bool(Get(entry, "charge_processed"));
+        power.devices.push_back(device);
+    }
+    iterator = yyjson_arr_iter_with(bindings);
+    while (auto* entry = yyjson_arr_iter_next(&iterator)) {
+        SavedBuildingGridBinding binding;
+        if (!Fields(entry, {"origin", "grid"}) || !Position(Get(entry, "origin"), binding.origin)
+            || !Counter(Get(entry, "grid"), binding.grid.value)) { return false; }
+        power.generatedBindings.push_back(binding);
+    }
+    return true;
+}
+
 String EncodeSnapshot(const SaveSnapshot& snapshot) {
     JsonWriter writer;
     auto* root = writer.Object();
@@ -905,6 +1032,7 @@ String EncodeSnapshot(const SaveSnapshot& snapshot) {
         writer.Add(session, "circle_residency", yyjson_mut_null(writer.doc));
     }
     writer.Add(root, "session", session);
+    writer.Add(root, "power", EncodePower(writer, snapshot.power));
     return writer.Finish(root);
 }
 
@@ -916,7 +1044,10 @@ SaveResult<SaveSnapshot> DecodeSnapshot(const char* text, std::size_t length,
         return Failure(SaveError::InvalidData, "Invalid world_state JSON", diagnostics);
     }
     auto* root = yyjson_doc_get_root(document.value);
-    if (!Fields(root, {"seed", "generation_version", "next_id", "sky_light", "session"})
+    const bool rootFields = formatVersion >= 15
+        ? Fields(root, {"seed", "generation_version", "next_id", "sky_light", "session", "power"})
+        : Fields(root, {"seed", "generation_version", "next_id", "sky_light", "session"});
+    if (!rootFields
         || !Byte(Get(root, "sky_light"), snapshot.skyLight)
         || !Unsigned32(Get(root, "seed"), snapshot.seed)
         || !Unsigned32(Get(root, "generation_version"), snapshot.generationVersion)
@@ -980,6 +1111,14 @@ SaveResult<SaveSnapshot> DecodeSnapshot(const char* text, std::size_t length,
         player.name.assign(yyjson_get_str(name), yyjson_get_len(name));
         if (formatVersion < 14) { player.session = player.actor; }
         state.players.push_back(eastl::move(player));
+    }
+    if (formatVersion >= 15) {
+        if (!DecodePower(Get(root, "power"), snapshot.power)) {
+            return Failure(SaveError::InvalidData, "Invalid power state fields", diagnostics);
+        }
+    } else {
+        snapshot.power = SavedPowerState{};
+        snapshot.power.mainsCutoffTick = SeededMainsCutoff(snapshot.seed);
     }
     if (!ValidSnapshot(snapshot)) {
         return Failure(SaveError::InvalidData, "Invalid player roster or session", diagnostics);
@@ -1656,6 +1795,7 @@ SaveResult<void> ValidateDatabase(const ContentCatalog& content, sqlite3* db,
     Vector<PersistentId> memoryOwners;
     Vector<PersistentId> studyingActors;
     Vector<PersistentId> craftingWorkers;
+    std::size_t powerDevicesFound = 0;
     const bool authoritative = snapshot.session.player != 0 || !snapshot.session.players.empty();
     bool havePrevious = false;
     ChunkCoord previous{};
@@ -1717,7 +1857,43 @@ SaveResult<void> ValidateDatabase(const ContentCatalog& content, sqlite3* db,
                 }
             }
         }
-        for (const auto& object : chunk->objects) { ids.push_back(object.id); }
+        for (const auto& object : chunk->objects) {
+            ids.push_back(object.id);
+            const auto device = eastl::lower_bound(snapshot.power.devices.begin(), snapshot.power.devices.end(), object.id,
+                [](const SavedPowerDevice& value, PersistentId id) { return value.object < id; });
+            const bool indexed = device != snapshot.power.devices.end() && device->object == object.id;
+            const auto* definition = content.TryGetObject(object.type);
+            eastl::optional<PowerDeviceKind> kind;
+            if (definition) {
+                switch (definition->behavior) {
+                case ObjectBehaviorKind::Generator: kind = PowerDeviceKind::Generator; break;
+                case ObjectBehaviorKind::GridBattery: kind = PowerDeviceKind::Battery; break;
+                case ObjectBehaviorKind::CraftingMachine:
+                    if (definition->machine.gridPowered) { kind = PowerDeviceKind::Machine; }
+                    break;
+                case ObjectBehaviorKind::None: break;
+                }
+            }
+            if (indexed != kind.has_value()) {
+                return Failure(SaveError::InvalidData, "Power equipment index is incomplete or refers to non-equipment", diagnostics);
+            }
+            if (!indexed) { continue; }
+            // DecodeChunk has already validated the behavior-owned state. Read only
+            // the typed facts needed to cross-check the global index, without
+            // constructing runtime behavior or decoding the chunk a second time.
+            const bool generator = *kind == PowerDeviceKind::Generator;
+            const bool battery = *kind == PowerDeviceKind::Battery;
+            const bool requested = !battery && *object.state.GetBoolean("run_requested");
+            const bool hasWork = generator || (!battery && *object.state.GetBoolean("has_job"));
+            const bool hold = object.enabled && !object.broken && requested && hasWork;
+            if (device->position != object.position || device->kind != *kind || device->workshopHold != hold) {
+                return Failure(SaveError::InvalidData, "Power equipment role, position or workshop hold differs from durable object", diagnostics);
+            }
+            if (generator && *object.state.GetUnsigned("generator_interval_start") > snapshot.session.tick) {
+                return Failure(SaveError::InvalidData, "Generator interval is in the future", diagnostics);
+            }
+            ++powerDevicesFound;
+        }
         for (const auto& item : chunk->items) {
             ids.push_back(item.id);
             if (content.GetItem(item.type).unfinishedCraft) {
@@ -1727,6 +1903,9 @@ SaveResult<void> ValidateDatabase(const ContentCatalog& content, sqlite3* db,
         }
     }
     if (code != SQLITE_DONE) { return Failure(SqlError(code), sqlite3_errmsg(db), diagnostics); }
+    if (powerDevicesFound != snapshot.power.devices.size()) {
+        return Failure(SaveError::InvalidData, "Power device is not a durable object", diagnostics);
+    }
     eastl::sort(studyingActors.begin(), studyingActors.end());
     for (auto worker : craftingWorkers) {
         if (eastl::binary_search(studyingActors.begin(), studyingActors.end(), worker)) {
@@ -1814,7 +1993,7 @@ SaveResult<void> SaveDatabase::Create(const char* path, Diagnostics* diagnostics
         "BEGIN IMMEDIATE;"
         "CREATE TABLE metadata(singleton INTEGER PRIMARY KEY CHECK(singleton=1),"
         "format_version INTEGER NOT NULL,game_version TEXT NOT NULL);"
-        "INSERT INTO metadata VALUES(1,14,'0.1.0');"
+        "INSERT INTO metadata VALUES(1,15,'0.1.0');"
         "CREATE TABLE world_state(singleton INTEGER PRIMARY KEY CHECK(singleton=1),payload TEXT NOT NULL);"
         "CREATE TABLE chunks(x INTEGER NOT NULL,z INTEGER NOT NULL,y INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(x,z,y));"
         "CREATE TABLE player_memories(player_id TEXT NOT NULL,x INTEGER NOT NULL,z INTEGER NOT NULL,y INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(player_id,x,z,y));"
@@ -1987,7 +2166,7 @@ SaveResult<void> SaveDatabase::Begin(Diagnostics* diagnostics) {
         if (code == SQLITE_OK) { code = sqlite3_step(statement.value); }
         if (code != SQLITE_DONE) { return impl_->WriteFailure(code, diagnostics); }
     }
-    auto upgraded = Execute(db, "UPDATE metadata SET format_version=14 WHERE singleton=1", diagnostics);
+    auto upgraded = Execute(db, "UPDATE metadata SET format_version=15 WHERE singleton=1", diagnostics);
     if (!upgraded) { impl_->Rollback(); return upgraded; }
     impl_->effectiveVersion = save_format_version;
     return {};

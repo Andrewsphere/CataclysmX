@@ -11,7 +11,7 @@ namespace cataclysmx {
 
 class World;
 
-enum class ObjectAction { Start, Stop, Collect, Enable, Disable };
+enum class ObjectAction { Start, Stop, Collect, Enable, Disable, Refuel };
 enum class ObjectUseOutcome { Succeeded, Refused, Inaccessible, InvalidAction };
 enum class ObjectUseReason {
     None, NoInputs, NoPower, NoJob, Busy, NoCapacity, NoContents, OutOfReach, InvalidActor,
@@ -53,6 +53,12 @@ struct ObjectStateView {
     std::uint32_t inputCount = 0;
     ItemTypeId output{};
     std::uint32_t outputCount = 0;
+    bool gridPowered = false;
+    bool runRequested = false;
+    Tick fundedTicks = 0;
+    std::uint64_t generatorOutputRemaining = 0;
+    Tick generatorIntervalStart = 0;
+    bool generatorIntervalInitialized = false;
 };
 
 // Callback-scoped mutation services. World implements the atomic transactions
@@ -87,6 +93,9 @@ public:
     virtual DataObject SaveState() const = 0;
     virtual ObjectStateView Describe() const = 0;
     virtual WorldResult<void> SetEnergy(std::uint64_t energy) = 0;
+    virtual WorldResult<void> PrepareGeneratorInterval(Tick now);
+    virtual WorldResult<void> SpendGeneratorEnergy(std::uint64_t energy);
+    virtual WorldResult<void> FundGridWork(Tick ticks);
 };
 
 // The immutable definition must outlive the returned behavior.

@@ -258,6 +258,8 @@ int main(int argc, char** argv) {
             case CommandKind::study_art: return std::string("study combat art");
             case CommandKind::pause_art_study: return std::string("pause art study");
             case CommandKind::new_character: return std::string("create new character");
+            case CommandKind::wire_grid: return std::string("wire power grid");
+            case CommandKind::place_power_object: return std::string("install power equipment");
             case CommandKind::equipment: return std::string("change equipment");
             }
             return std::string("action");
@@ -532,7 +534,7 @@ int main(int argc, char** argv) {
             if (guest.GetState() == cataclysmx::network::ConnectionState::Active
                 || guest.GetState() == cataclysmx::network::ConnectionState::Joining
                 || guest.GetState() == cataclysmx::network::ConnectionState::Connecting) {
-                SetMessage("Worldgen debug view is available only in the local game."); return true;
+                SetMessage("Debug inspection is available to the host only."); return true;
             }
             interacting = false; lastUpdate = now;
             const auto position = server.GetWorld().GetActor(server.GetPlayer())->position;

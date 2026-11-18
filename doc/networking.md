@@ -1,9 +1,12 @@
 # LAN networking API
 
-## Current protocol 22
+## Current protocol 23
 
-The current protocol constant is `0x43584e16`. Peers need matching builds and
-content. Protocol 22 adds sparse injured enemy health to ordinary gameplay views.
+The current protocol constant is `0x43584e17`. Peers need matching builds and
+content. Protocol 23 adds grid wiring/equipment placement, typed power outcomes,
+meter-gated coverage and supply views, and powered-object inspection. Future mains
+shutdown timing remains host DEBUG information. See [power presentation](power_presentation.md).
+Protocol 22 added sparse injured enemy health to ordinary gameplay views.
 Protocol 21 introduced expanded combat and character lifecycle, protocol 20
 introduced learning views and book study, protocol 19 added observed object types,
 and protocol 18 introduced owned player presentation, typed inspection and

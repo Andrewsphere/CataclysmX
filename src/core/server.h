@@ -5,6 +5,7 @@
 #include "core/pacing.h"
 #include "core/inventory.h"
 #include "skills/learning_types.h"
+#include "power/power_types.h"
 
 #include <EASTL/optional.h>
 #include <EASTL/span.h>
@@ -17,7 +18,8 @@ enum class CommandKind {
     wait, move, pick_up, drop, interact, use_item, store_item, attack, combat_style, interact_action,
     craft, recycle, resume_craft, pause_craft, cancel_craft, grab, release_grab,
     wield_item, transfer_item, study_book, pause_study,
-    equipment, select_combat_style, use_ability, study_art, pause_art_study, new_character
+    equipment, select_combat_style, use_ability, study_art, pause_art_study, new_character,
+    wire_grid, place_power_object
 };
 struct Command {
     CommandKind kind = CommandKind::wait;
@@ -45,6 +47,8 @@ struct Command {
     CombatStyleId combatStyle{};
     AbilityRequest ability;
     CombatArtId art{};
+    PowerBounds powerBounds{}; // wire_grid: inclusive rectangle on the actor's layer.
+    TileCoord position{}; // place_power_object: absolute destination.
 };
 bool ValidCommandShape(const Command& command);
 enum class Outcome {
@@ -58,7 +62,7 @@ enum class Outcome {
     object_moved, grabbed, released, nothing_to_grab, grab_lost, grab_blocked,
     wielded, unwielded, transferred, inventory_refused, study_started, study_paused, study_refused,
     equipment_changed, ability_used, combat_refused, art_study_started, art_study_paused,
-    character_dead, character_created
+    character_dead, character_created, power_changed, power_refused
 };
 const char* OutcomeMessage(Outcome outcome);
 // The demo requires floor, wall, and closed_door; floor must be passable.
@@ -80,6 +84,7 @@ struct CommandResult {
     InventoryOutcome inventoryOutcome = InventoryOutcome::Succeeded;
     StudyOutcome studyOutcome = StudyOutcome::ActorUnavailable;
     CombatRefusal combatReason = CombatRefusal::None;
+    PowerActionOutcome powerOutcome = PowerActionOutcome::Unavailable;
 };
 String CommandResultMessage(const CommandResult& result);
 
@@ -152,6 +157,7 @@ struct ViewCell {
     // Only a visible non-player actor may carry a nonzero catalog-local type.
     // Unknown/remembered overlays never retain monster identity.
     MonsterTypeId monsterType{};
+    std::uint64_t powerGridId = 0; // Meter-only coverage at the view layer.
     bool operator==(const ViewCell&) const = default;
 };
 struct InventoryEntry {
@@ -231,6 +237,8 @@ struct WorldView {
     CombatInfoView combatInfo;
     Vector<CombatEvent> combatEvents; // Bounded presentation history, never simulation input.
     Vector<EnemyHealthView> enemyHealth; // Injured visible hostiles, in cell order.
+    eastl::optional<PowerInspection> currentPower;
+    PowerSettings powerSettings;
 };
 
 // Authoritative deterministic endpoint. No transport or clock access.

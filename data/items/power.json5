@@ -1,0 +1,14 @@
+{format_version:1, definitions:[
+  {type:'item', id:'wiring_kit', name:'building wiring kit', mass_g:1000, volume_ml:1200,
+   description:'A service pouch of cutters and terminal tools, tagged with a faded room number. Enough of the old maintenance routine survives to make a dark room useful again.',
+   flags:['tool','salvage','flexible','opaque','electrically_conductive'],
+   art:'/art/items/wiring_kit/art.txt', wiring_material:'copper_wire',wiring_tiles_per_material:16},
+  {type:'item', id:'portable_fuel_generator', name:'portable fuel generator', mass_g:18000, volume_ml:24000,
+   description:'The rental number is still painted across the frame. Its handle remembers a hundred short trips from a van to somebody else\'s emergency.',
+   flags:['tool','electronics','rigid','opaque','ferromagnetic'],
+   art:'/art/items/portable_fuel_generator/art.txt', placed_object:'generator'},
+  {type:'item', id:'generator_fuel_packet', name:'generator fuel packet', mass_g:500, volume_ml:600,
+   description:'A sealed refill of synthetic generator fuel, stamped for a maintenance depot that no longer answers. The tear strip remains folded flat against the pouch.',
+   flags:['salvage','combustible','flexible','opaque','watertight','airtight'],
+   art:'/art/items/generator_fuel_packet/art.txt'},
+]}

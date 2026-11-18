@@ -31,6 +31,67 @@ at most 255, range at most `maxLightRange`. `CreateObject` copies this initial
 light to the runtime object, whose enabled state gates emission. A lamp with
 nonzero light therefore illuminates its surroundings.
 
+### Grid equipment
+
+The root `objects` array additionally supports these closed behavior schemas:
+
+```json5
+{id:'generator',name:'Portable fuel generator',behavior:'generator',
+ generator:{fuel_item:'generator_fuel_packet',fuel_capacity:24000,
+            energy_per_fuel:6000,output_per_tick:4}}
+{id:'grid_battery_station',name:'Installed grid battery',behavior:'grid_battery'}
+{id:'grid_scrap_press',name:'Grid scrap press',behavior:'crafting_machine',
+ machine:{input:'steel_scrap',input_count:20,output:'steel_sheet',output_count:1,
+          duration_ticks:300,energy_capacity:0,energy_per_tick:2,grid_powered:true}}
+```
+
+`generator` requires exactly its `generator` config; `fuel_item` resolves after
+item loading. `fuel_capacity` is uint64 chemical-energy storage, **not a count of
+packets**, and must be at least `energy_per_fuel`. The two rates are positive
+uint32 integers. Fuel is consumed only for supplied energy, including battery
+charging; no idle burn or autonomous free production is authored here.
+`grid_battery` takes neither machine nor generator config and cannot expose
+`capacity_volume_ml`. It holds the original installed battery item through the
+power-specific installation path. Other behaviors reject `generator` config;
+only `crafting_machine` accepts `machine` config.
+
+Machine `grid_powered` is an optional boolean defaulting to false. True requires
+explicit `energy_capacity:0`; false retains the existing local-energy-capacity
+validation. Population creates equipment stopped; content does not auto-start it.
+
+The furnished house guarantees starter power equipment on the kitchen floor at
+authored `(5,2,0)` and a grid scrap press at `(9,2,-1)` in either cellar variant.
+Ground placement deliberately accommodates the bulky generator. Workshop towns
+also have a grid press; hardware/electrical pools supply wiring and fuel, and
+the ground-only workshop bulk pool can supply generators.
+The starter cache includes four separate copper-wire items for wiring, battery
+installation, and the simple soldering recipe. The kit itself is reusable and
+has no charge balance; installation's four-tile cost consumes one copper-wire
+item at the default 16 tiles per material.
+
+### Generated building grid descriptors
+
+`worldgen/worldgen.h` exposes
+`GenerateBuildingPower(content, plan, chunk, output)`. Like chunk placements, it
+clears and reuses caller-owned storage. Every intersecting building emits its
+complete inclusive `PowerBounds` and stable `origin` (surface footprint minimum,
+Y=0), independent of requesting chunk/floor and placement order. All authored
+layers, including roof layers, and the selected basement belong to one extent;
+unselected basements and implicit unauthored roofs do not enlarge it. Park and
+square sites emit no descriptor. Neighboring buildings remain separate records.
+The same record may be emitted from several chunks; register it idempotently.
+
+For the first-house/scenario path call
+`DescribeBuildingPower(pattern, footprint, basementVariant)`, using the same
+rotated half-open surface footprint and 1-based basement selection as terrain
+generation (zero means none). Register its optional descriptor before devices or
+player wiring. This helper requires no region cache or RNG.
+
+`world_generation_version` is 7. Version 7 uses the v6 town/terrain algorithm and
+the same v6 feature-seed domain for basements and population; versions 2..6 retain
+their existing routes. World registers generated electrical grids only for v7+;
+the descriptor helpers themselves leave registration/version policy to the caller.
+
 ## Loot and monsters
 
 These records go in the root `definitions` array:

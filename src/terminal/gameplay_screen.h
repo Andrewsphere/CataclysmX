@@ -3,6 +3,7 @@
 #include "client/localization.h"
 #include "client/message_history.h"
 #include "client/crafting_menu.h"
+#include "client/power_view.h"
 #include "client/item_ui.h"
 #include "client/combat_menu.h"
 
@@ -97,6 +98,9 @@ private:
     void BeginCombatChoice(const CombatMenuEntry& entry, const WorldView& view,
         const std::function<bool(Command)>& submit);
     Vector<CraftingMenuRow> craftingRows_;
+    PowerWorkshop powerWorkshop_;
+    bool powerOpen_ = false;
+    Vector<String> powerLines_;
     Vector<String> learningLines_;
     eastl::optional<Command> craftingSelection_;
     std::size_t craftingIndex_ = 0;

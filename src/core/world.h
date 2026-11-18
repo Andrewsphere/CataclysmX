@@ -16,6 +16,7 @@
 #include "objects/interactive_object.h"
 #include "objects/object_behavior.h"
 #include "objects/object_movement.h"
+#include "power/power_types.h"
 
 #include <EASTL/array.h>
 #include <EASTL/expected.h>
@@ -30,6 +31,7 @@ namespace cataclysmx {
 struct VisibilityMask;
 class CombatSystem;
 class LearningSystem;
+class PowerSystem;
 
 // Authoritative server state captured in the same transaction as chunk values.
 struct SavedPlayer {
@@ -152,6 +154,7 @@ private:
 };
 
 enum class LoadMode { resident, active };
+enum class LoadReason { Other, Player };
 struct ChunkRegion {
     // Horizontal columns through every world layer; center.y is ignored.
     ChunkCoord center{};
@@ -176,10 +179,10 @@ public:
     World(World&&) = delete;
     World& operator=(World&&) = delete;
 
-    WorldResult<LoadRequest> RequestChunks(ChunkRegion region, LoadMode mode);
+    WorldResult<LoadRequest> RequestChunks(ChunkRegion region, LoadMode mode, LoadReason reason = LoadReason::Other);
     WorldResult<void> UpdateRequest(LoadRequest request, ChunkRegion region, LoadMode mode);
     // Tile-space circle, full-height columns, center.y ignored; no implicit halo.
-    WorldResult<LoadRequest> RequestCircle(TileCircleRegion region, LoadMode mode);
+    WorldResult<LoadRequest> RequestCircle(TileCircleRegion region, LoadMode mode, LoadReason reason = LoadReason::Other);
     WorldResult<void> UpdateCircleRequest(LoadRequest request, TileCircleRegion region, LoadMode mode);
     WorldResult<void> ReleaseRequest(LoadRequest request);
     // Synchronous boundary operation. Overlapping requests combine; active wins.
@@ -220,6 +223,8 @@ public:
     // Unspecified column order; each full-height column is contiguous, ascending Y.
     Vector<ChunkCoord> LoadedChunks() const;
     std::size_t ArchivedChunkCount() const;
+    void CollectChunkResidencyDebug(Vector<ChunkResidencyDebug>& output,
+        ChunkResidencyCounters& counters) const;
 
     const Actor* GetActor(ActorHandle handle) const;
     // World owns the coordinator; combat rules and action transitions live there.
@@ -227,6 +232,12 @@ public:
     const CombatSystem& Combat() const;
     LearningSystem& Learning();
     const LearningSystem& Learning() const;
+    PowerSystem& Power();
+    const PowerSystem& Power() const;
+    PowerActionResult WireGrid(ActorHandle actor, ItemHandle kit, PowerBounds bounds);
+    PowerActionResult PlacePowerObject(ActorHandle actor, ItemHandle equipment,
+        ItemHandle wiringKit, TileCoord position);
+    bool CanInspectPower(ActorHandle actor) const;
     // Completion credit reaches a living contributor even while its chunk is archived.
     void LearnRecipe(PersistentId actor, CraftingRecipeId recipe, std::uint64_t points);
     const Item* GetItem(ItemHandle handle) const;
@@ -396,6 +407,13 @@ private:
     friend class CombatSystem;
     friend class CraftingSystem;
     friend class LearningSystem;
+    friend class PowerSystem;
+    void PowerChanged();
+    SaveResult<void> ReconcileChunksPass(Diagnostics* diagnostics);
+    WorldResult<void> PrepareGeneratorInterval(ObjectHandle object, Tick now);
+    WorldResult<void> SpendGeneratorEnergy(ObjectHandle object, std::uint64_t energy);
+    WorldResult<void> FundGridMachine(ObjectHandle object, Tick ticks);
+    void ElapseSegment(Tick elapsed);
     void AttachCrafting(ItemHandle item);
     void DetachCrafting(ItemHandle item);
     void BeginCraftingMutation();

@@ -1,0 +1,12 @@
+{format_version:1, definitions:[
+  {type:'tool_trait',id:'soldering',name:'Soldering'},
+  // No electricity prerequisite: a survivor can wire shelter before finding power.
+  {type:'recipe',id:'assemble_wiring_kit',name:'Bundle a building wiring kit',
+   inputs:[{item:'steel_scrap',count:6},{item:'copper_wire',count:1},{item:'cloth_repair_tape',count:1},
+           {item:'combination_pliers',count:1,retained:true}],
+   result:{item:'wiring_kit',count:1},work:400,training:[{skill:'electronics',level:0}]},
+  {type:'recipe',id:'solder_electrical_connectors',name:'Solder electrical connectors',
+   inputs:[{item:'copper_wire',count:1},{item:'solder_wire',count:1}],
+   tool_traits:[{id:'soldering',tier:1}],result:{item:'electrical_connector',count:10},
+   work:200,training:[{skill:'electronics',level:0}]},
+]}

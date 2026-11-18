@@ -8,7 +8,7 @@
 
 namespace cataclysmx {
 
-enum class ObjectBehaviorKind { None, CraftingMachine };
+enum class ObjectBehaviorKind { None, CraftingMachine, Generator, GridBattery };
 
 struct CraftingMachineDefinition {
     ItemTypeId input{};
@@ -18,7 +18,16 @@ struct CraftingMachineDefinition {
     Tick duration = 0;
     std::uint64_t energyCapacity = 0;
     std::uint32_t energyPerTick = 0;
+    bool gridPowered = false;
     bool operator==(const CraftingMachineDefinition&) const = default;
+};
+
+struct GeneratorDefinition {
+    ItemTypeId fuelItem{};
+    std::uint64_t fuelCapacity = 0;
+    std::uint32_t energyPerFuel = 0;
+    std::uint32_t outputPerTick = 0;
+    bool operator==(const GeneratorDefinition&) const = default;
 };
 
 struct ObjectDefinition {
@@ -35,6 +44,7 @@ struct ObjectDefinition {
     bool movable = false;
     std::uint32_t moveCost = ticks_per_turn; // Base ticks per cardinal dragged step.
     LightEmission light{}; // Initial emission, gated by the object's enabled state.
+    GeneratorDefinition generator;
     bool operator==(const ObjectDefinition&) const = default;
 };
 

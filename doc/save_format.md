@@ -1,10 +1,10 @@
 # Save format
 
-CataclysmX saves are SQLite database files. The strict v14 format is governed by
-one authoritative `metadata.format_version = 14` for both SQL and JSON. The
+CataclysmX saves are SQLite database files. The strict v15 format is governed by
+one authoritative `metadata.format_version = 15` for both SQL and JSON. The
 `metadata` columns are `singleton INTEGER PRIMARY KEY CHECK(singleton=1)`,
 `format_version INTEGER NOT NULL`, and `game_version TEXT NOT NULL`; its single
-row is `(1, 14, "0.1.0")`. The other tables are
+row is `(1, 15, "0.1.0")`. The other tables are
 `world_state(singleton INTEGER PRIMARY KEY CHECK(singleton=1), payload TEXT NOT
 NULL)` and `chunks(x INTEGER NOT NULL, z INTEGER NOT NULL, y INTEGER NOT NULL,
 payload TEXT NOT NULL, PRIMARY KEY(x,z,y))`, and
@@ -13,6 +13,48 @@ y INTEGER NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(player_id,x,z,y))`.
 Extra application tables/schema objects are rejected.
 
 ## JSON payloads
+
+### Format 15: global electricity
+
+The world-state root adds required `power`, in the same snapshot transaction as
+session, chunks and memories. The four SQL tables are unchanged. Power version 1
+has exactly `version` (uint32 JSON integer), `next_grid_id`, `mains_cutoff_tick`,
+`settings`, `grids`, `devices`, and `generated_bindings`. IDs and tick counters
+are canonical unsigned uint64 decimal strings, including zero where permitted.
+Settings has exactly integer `max_wiring_width` and `max_wiring_depth` (1–64).
+
+- Grids have exactly `id`, `regions`, `mains_connected`, `fairness_cursor`,
+  `processed_interval`, `interval_processed`, `mains_charge_interval`, and
+  `mains_charge_processed`. Regions are inclusive `{min: {x,z,y}, max: {x,z,y}}`
+  tile boxes, retaining geometry rather than expanding it into tiles.
+- Devices have exactly `object`, `position`, `kind` (Battery=0, Generator=1,
+  Machine=2), `workshop_hold`, `charge_interval`, and `charge_processed`.
+  Holds and charge ledgers survive even for objects outside player residency.
+- Generated bindings have exactly `origin: {x,z,y}` and `grid`.
+
+Flags are JSON booleans. `ValidPowerState(state, session.tick)` owns semantic
+validation: ordered unique grid/device IDs, bounds and cross-grid overlap,
+binding identities/references, cutoff, settings and interval markers. Processed
+markers must be quantum-aligned and not in the future; unprocessed markers have
+zero interval. The database additionally bounds object/cursor IDs by `next_id`
+and requires each registered device to identify a durable typed object at the saved
+position and with the matching equipment role. Every saved generator, grid battery,
+and grid-powered machine must appear in the index, including offscreen objects.
+The saved hold must match `enabled && !broken && runRequested` and, for machines,
+`hasJob`. Behavior state is validated before these checks; generator budget
+intervals must be aligned and no later than the session tick. Cursors can refer
+to former contenders. Runtime handles are absent.
+Battery charge, generator fuel, machine paid work and item/object behavior state
+remain authoritative in their existing entity payloads; power does not copy them.
+The interval ledgers prevent a checkpoint from granting the same budget twice.
+
+Formats 7–14 retain their exact original root fields and decode missing electricity
+as a fresh empty `SavedPowerState`, with `nextGridId = 1`, default settings, no
+grids/devices/bindings and `SeededMainsCutoff(seed)`. Migration never creates charge
+or fuel. Opening remains read-only; the first checkpoint rewrites all old chunks
+and the snapshot and advances metadata to 15 atomically. Rollback restores the
+original metadata and payloads. Generation-version acceptance follows
+`world_generation_version` independently; migration preserves the saved version.
 
 ### Format 14: equipment, combat arts, terminal life, and player sessions
 
@@ -144,7 +186,7 @@ Formats 7–10 remain readable and upgrade transactionally on write; they defaul
 to unarmed. Combat envelope version 1 remains readable with a zero weapon ID.
 
 The single `world_state.payload` object has exactly `seed`,
-`generation_version`, `next_id`, `sky_light`, and `session`. `sky_light` is a
+`generation_version`, `next_id`, `sky_light`, `session`, and (in v15) `power`. `sky_light` is a
 required integer in 0–255: the fixed environment illumination (new-world default
 192), independent of wall-clock time. The session object has exactly
 `tick`, `rng_state`, `player`, `position` (`x`, `z`, `y`), `active_radius`,
@@ -298,15 +340,16 @@ state. See [entity scheduling](entity_scheduling.md) for suspension and arithmet
 IDs must be unique across all chunks and less than `next_id`; entity positions,
 ownership, chunks and session player identity/position are validated. Generic
 `World` saves allow session player ID zero; `Server` requires a nonzero player.
-`generation_version` accepts 1..6; other values fail with
-`SaveError::UnsupportedVersion`. New worlds use generation version 6, with
-street-led towns. Saved versions 1..5 retain their recorded generation algorithm;
+`generation_version` accepts 1..7; other values fail with
+`SaveError::UnsupportedVersion`. New worlds use generation version 7, with
+v6 street-led towns and persistent per-building electrical grids. Saved versions
+1..6 retain their recorded generation algorithm;
 version 4 introduced authored layers and population. Regeneration depends on the
 supplied immutable content: changed patterns or palettes can change ungenerated
 chunks even when the saved generation version is unchanged. Region plans are
-regenerated, not serialized, and v6 does not itself change the save schema.
-The SQL/JSON save schema is version 12; strict v7/v8/v9/v10/v11 saves are also
-accepted as described below. Save formats v1 through v6 and all other schema
+regenerated, not serialized; global electrical state is serialized independently.
+The SQL/JSON save schema is version 15; strict formats 7 through 14 are also
+accepted and migrated as described below. Save formats v1 through v6 and all other schema
 versions are rejected. In particular, v2 command-count ticks are not silently reinterpreted as
 simulation ticks. Content's own format version is independent of both versions.
 Version 7 explicitly adds illumination sources, object semantic identity,

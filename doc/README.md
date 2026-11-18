@@ -53,6 +53,10 @@
 - [Runtime skills](skills.md) and [skill content](skills_content.md): progression,
   books, crafting gates and shipped definitions.
 - [Objects API](objects_api.md): furniture, storage, movement, lighting, crafting machines and saved state.
+- [Electrical power](power_design.md): coverage grids, mains cutoff, generators,
+  installed batteries, funded jobs, remote workshop residency and persistence.
+- [Power commands and views](power_presentation.md): wiring/placement, multimeter
+  coverage and host-only grid/chunk diagnostics in terminal, SDL and LAN.
 - [Object gameplay](object_gameplay.md): interaction, collection and push/pull scheduling.
 - [Grabbing](grabbing.md): persistent eight-direction furniture movement, timing and feedback.
 - [Object callbacks](object_callbacks.md): explicit identity, atomic transactions,
@@ -119,7 +123,7 @@
   crossings, parcels/buildings, terrain materialization and debug inspection.
 - [Diagnostics](diagnostics.md): structured error causes and contextual frames.
 - [Terrain rendering](terrain_rendering.md): UTF-8 symbols, colors, and frontend behavior.
-- [Save format](save_format.md): SQLite persistence, snapshots, validation and checkpoints; current combat save format is v14.
+- [Save format](save_format.md): SQLite persistence, snapshots, validation and checkpoints; current save format is v15 with global electrical state.
 - [Furniture sprites](furniture_sprites.md): imported artwork, normalization, object mappings and remembered identity.
 - [LAN networking](networking.md): ENet hosting, joining, authoritative messages and discovery.
 - [Network presentation](network_presentation.md): owned map visuals, interaction
@@ -143,6 +147,9 @@ successful checkpoint permits eviction.
 These documents describe implemented direction alongside remaining design work;
 the API pages document current contracts:
 
+- [Urban workshop progression plan](urban_workshop_progression.md): implemented grid
+  power, fueled workshops, computer information, 3D printing, old/futuristic cities,
+  population and reward progression, and coordinated design/implementation passes.
 - [Combat design](../md/CombatDesign.md): JSON-defined arts, progression, weighted
   move/target selection, reactions, active abilities, two-hand equipment, armor,
   human death, and headless balance experiments.

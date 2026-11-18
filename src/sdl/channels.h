@@ -4,6 +4,7 @@
 #include "core/debug_items.h"
 #include "client/settings.h"
 #include "client/ai_debug.h"
+#include "client/power_view.h"
 #include "client/tile_inspection.h"
 #include "sdl/item_visual.h"
 #include "network/network.h"
@@ -18,7 +19,7 @@ namespace cataclysmx::sdl {
 enum class SessionMode { Local, Host, Guest };
 enum class RequestKind {
     Command, Pause, Resume, Inspect, ApplySettings, ResumeAndCommand, InspectAi, ItemCommand, PauseForItems,
-    OpenLan, CloseLan, Connect, Disconnect, RefreshDiscovery, StopDiscovery, Save, DebugGiveItems
+    OpenLan, CloseLan, Connect, Disconnect, RefreshDiscovery, StopDiscovery, Save, DebugGiveItems, InspectPower
 };
 struct SessionRequest {
     RequestKind kind = RequestKind::Command;
@@ -38,7 +39,7 @@ struct SessionRequest {
 };
 enum class ReplyKind {
     Started, StartupFailed, Admission, Completed, Paused, Resumed, Stale, Cancelled, Inspected,
-    SettingsApplied, SettingsFailed, AiInspected, MenuOpened, ControlCompleted, ControlFailed, ItemsGiven
+    SettingsApplied, SettingsFailed, AiInspected, MenuOpened, ControlCompleted, ControlFailed, ItemsGiven, PowerInspected
 };
 enum class StartupError { None, InvalidContent, InvalidSettings, Network, Storage };
 struct SessionReply {
@@ -53,6 +54,7 @@ struct SessionReply {
     eastl::optional<ExaminedEnemy> examinedEnemy = {};
     Settings runtimeSettings;
     AiDebugView aiDebug;
+    PowerDebugSnapshot powerDebug;
     // Authoritative input context may be newer than the last rendered view.
     PlayerInputContext input;
     eastl::optional<network::NetworkError> networkError;

@@ -175,6 +175,7 @@ String Localization::OutcomeText(Outcome outcome) const {
     case Outcome::art_study_paused: return Text("outcome.art_study_paused", OutcomeMessage(outcome));
     case Outcome::character_dead: return Text("outcome.character_dead", OutcomeMessage(outcome));
     case Outcome::character_created: return Text("outcome.character_created", OutcomeMessage(outcome));
+    case Outcome::power_changed: case Outcome::power_refused: return OutcomeMessage(outcome);
     case Outcome::study_started: return Text("outcome.study_started", OutcomeMessage(outcome));
     case Outcome::study_paused: return Text("outcome.study_paused", OutcomeMessage(outcome));
     case Outcome::study_refused: return Text("outcome.study_refused", OutcomeMessage(outcome));
@@ -199,6 +200,7 @@ String Localization::OutcomeText(Outcome outcome) const {
     std::abort();
 }
 String Localization::ResultText(const CommandResult& result) const {
+    if (result.outcome == Outcome::power_changed || result.outcome == Outcome::power_refused) return CommandResultMessage(result);
     if (result.outcome == Outcome::combat_refused) {
         return OutcomeText(result.outcome) + " " + CombatRefusalText(result.combatReason);
     }

@@ -1,0 +1,20 @@
+@text-art 1
+@color pouch #B4B7A9
+@color seam #7B827C
+@color label #CDB67D
+@color ink #65573E
+@default pouch
+---
+        <seam>╔══════════════╗
+        <seam>║ ░░░░░░░░░░░░ ║
+       ╱                ╲
+      ╱                  ╲
+     │    <label>┌──────────┐<reset>    │
+     │    <label>│          │<reset>    │
+     │    <label>│    <ink>╱╲<label>    │<reset>    │
+     │    <label>│   <ink>╱  ╲<label>   │<reset>    │
+     │    <label>│   <ink>╲▄▄╱<label>   │<reset>    │
+     │    <label>│          │<reset>    │
+     │    <label>└──────────┘<reset>    │
+      ╲                  ╱
+       <seam>╚════════════════╝

@@ -2,11 +2,13 @@
 
 #include "core/world.h"
 #include "core/static_list.h"
+#include "power/power_types.h"
 
 namespace cataclysmx {
 
 inline constexpr int region_size = 256;
-inline constexpr std::uint32_t world_generation_version = 6;
+inline constexpr std::uint32_t world_generation_version = 7;
+// V7 adds building power; v6 terrain/population streams remain unchanged.
 // Street-led profiles and family-first frontage packing; see urban_generation_v6_design.md.
 inline constexpr std::size_t maxRegionRoads = 18; // Legacy 6+12; v6 at most 4 streets+12 connectors.
 
@@ -140,6 +142,23 @@ struct ChunkPlacements {
     bool operator==(const ChunkPlacements&) const = default;
 };
 
+struct GeneratedBuildingPower {
+    TileCoord origin{}; // Surface footprint minimum; stable across chunks/floors.
+    PowerBounds bounds{};
+    bool operator==(const GeneratedBuildingPower&) const = default;
+};
+
+// Complete inclusive extents, not clipped to the requesting chunk. Authored upper
+// layers and the selected basement share one grid. Outdoor civic sites emit none.
+// Clears output retaining capacity; registration may repeat from multiple chunks.
+void GenerateBuildingPower(const ContentCatalog& content, const RegionPlan& plan,
+    ChunkCoord chunk, Vector<GeneratedBuildingPower>& output);
+// First-house/scenario hook: footprint is the rotated, half-open surface extent;
+// basementVariant is zero or the same 1-based selection used for terrain/population.
+// The caller registers the result before spawning devices. No machines are started.
+eastl::optional<GeneratedBuildingPower> DescribeBuildingPower(const BuildingPattern& pattern,
+    TileRect footprint, std::uint32_t basementVariant);
+
 // Invalid public coordinates abort, including INT_MIN/INT_MAX, before arithmetic.
 // Tiles: [-1,000,000,1,000,000]; regions: [-3907,3906]; chunks:
 // [-62500,62500], on horizontal axes; tile/chunk Y: [world_min_y,world_max_y].
@@ -157,7 +176,9 @@ ContentResult<void> ValidateWorldgenContent(const ContentCatalog& content,
 EnvironmentSample SampleEnvironment(std::uint64_t seed, TileCoord position);
 RegionPlan GenerateRegionPlan(const ContentCatalog& content, std::uint64_t seed,
                               RegionCoord region);
-// Explicit legacy/current selection: accepts 2..6. The three-argument call
+// Explicit legacy/current selection: accepts 2..7. Version 7 preserves v6 terrain
+// and population streams; World adds generated building grids only for v7+.
+// The three-argument call
 // selects world_generation_version; version 1 surface generation stays in World.
 RegionPlan GenerateRegionPlan(const ContentCatalog& content, std::uint64_t seed,
                               RegionCoord region, std::uint32_t generationVersion);
@@ -165,8 +186,8 @@ RegionPlan GenerateRegionPlan(const ContentCatalog& content, std::uint64_t seed,
 // Surface-only calls permit legacy catalogs without air. Upper-layer generation
 // requires the 'air' openSpace role; missing/invalid roles are invariant failures.
 // Base Y<0 is solid wall; Y>0 is air. Versions 2..4 have rectangular Y=1 roofs;
-// versions 5/6 leave civic outdoor sites and surface grass/tree/road/pavement open.
-// Versions 4..6 overlay authored layers and a once-selected basement. Taller
+// versions 5..7 leave civic outdoor sites and surface grass/tree/road/pavement open.
+// Versions 4..7 overlay authored layers and a once-selected basement. Taller
 // buildings explicitly author their floors and roof; air cells allow setbacks.
 // Required floor/wall terrain absence is an invariant failure. Optional grass,
 // tree, road, rubble, pavement fall back to floor, wall, floor, floor, floor.
@@ -201,6 +222,7 @@ const BuildingPlan* BuildingAt(const RegionPlan& plan, TileCoord position);
 // pedestrian lanes. The enclosing town bounds are not a pavement fill mask.
 // Weighted fitting templates rotate from any entrance side (corner preference:
 // north, east, south, west). No cache, entities, persistence, or neighbor loads.
+// Version 7 preserves v6 terrain and population, adding World-registered power grids.
 // Generation is deterministic for the same catalog and world_generation_version.
 // World persists that version separately from the save schema. Edge records exist on borders
 // outside the world; their nominal geometry is simply clipped when rasterized.

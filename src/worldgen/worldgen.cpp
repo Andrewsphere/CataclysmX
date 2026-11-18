@@ -200,7 +200,8 @@ std::uint64_t FeatureSeed(std::uint64_t seed, const FeatureOwner& owner,
     SeedField(state, static_cast<std::uint64_t>(owner.region.z));
     SeedField(state, owner.parcel);
     SeedString(state, pattern.id);
-    SeedField(state, version);
+    // V7 adds electrical descriptors without changing v6 population choices.
+    SeedField(state, version == 7 ? 6 : version);
     return state;
 }
 struct GenerationRandom {
@@ -461,7 +462,7 @@ BuildingPatternId SelectFrontage(const ContentCatalog& content, const RegionPlan
     if (scratch.fitting.empty()) { return {}; }
     // Classification precedes selection, independent of candidate footprint or
     // entrance. Civic classes retain neutral weights, including fallback parks.
-    const auto preference = plan.generationVersion == 6 && site == BuildingSite::Building
+    const auto preference = plan.generationVersion >= 6 && site == BuildingSite::Building
         ? ClassifyFrontageSlot(plan, strip) : SlotPreference{};
     std::uint64_t total = 0;
     for (const auto first : scratch.families) {
@@ -1022,13 +1023,13 @@ RegionPlan GenerateRegionPlan(const ContentCatalog& content, std::uint64_t seed,
         Crossing(seed, BorderAxis::Z, z + 256, region.x),
         Crossing(seed, BorderAxis::X, x, region.z)}};
 
-    if (generationVersion == 6 && plan.bounds.min.x == x && plan.bounds.min.z == z
+    if (generationVersion >= 6 && plan.bounds.min.x == x && plan.bounds.min.z == z
         && plan.bounds.max.x == x + region_size && plan.bounds.max.z == z + region_size) {
         GenerateTownV6(content, plan);
         return plan;
     }
     // V6 partial regions deliberately use nominal v5 roads, without a town.
-    if (generationVersion == 6) { plan.hasTown = false; }
+    if (generationVersion >= 6) { plan.hasTown = false; }
 
     // Three vertical/horizontal town streets, followed by N,E,S,W connectors.
     for (int offset : {72, 128, 184}) {
@@ -1155,7 +1156,7 @@ eastl::array<Tile, chunk_size * chunk_size> GenerateChunk(
             if (plan.generationVersion == 5 && plan.hasTown && Inside(plan.townBounds, p)) {
                 tile.terrain = palette.pavement;
             }
-            if (plan.generationVersion == 6) {
+            if (plan.generationVersion >= 6) {
                 if (const auto* parcel = ParcelAt(plan, p)) {
                     const auto b = parcel->bounds;
                     bool front = false;
@@ -1219,6 +1220,53 @@ eastl::array<Tile, chunk_size * chunk_size> GenerateChunk(
         }
     }
     return tiles;
+}
+
+eastl::optional<GeneratedBuildingPower> DescribeBuildingPower(const BuildingPattern& pattern,
+    TileRect footprint, std::uint32_t basementVariant) {
+    Require(footprint.min.x < footprint.max.x && footprint.min.z < footprint.max.z);
+    Require(basementVariant <= pattern.basements.size());
+    if (pattern.site == BuildingSite::Park || pattern.site == BuildingSite::Square) { return eastl::nullopt; }
+    int minY = 0;
+    int maxY = 0;
+    for (const auto& layer : pattern.layers) {
+        minY = Min(minY, layer.y);
+        maxY = Max(maxY, layer.y);
+    }
+    if (basementVariant != 0) {
+        const auto y = pattern.basements[basementVariant - 1].layer.y;
+        minY = Min(minY, y);
+        maxY = Max(maxY, y);
+    }
+    GeneratedBuildingPower result;
+    result.origin = {footprint.min.x, footprint.min.z, 0};
+    result.bounds = {{footprint.min.x, footprint.min.z, minY},
+        {footprint.max.x - 1, footprint.max.z - 1, maxY}};
+    Require(ValidPowerBounds(result.bounds));
+    return result;
+}
+
+void GenerateBuildingPower(const ContentCatalog& content, const RegionPlan& plan,
+    ChunkCoord chunk, Vector<GeneratedBuildingPower>& output) {
+    output.clear();
+    constexpr int chunkLimit = world_coordinate_limit / chunk_size;
+    Require(chunk.x >= -chunkLimit && chunk.x <= chunkLimit
+        && chunk.z >= -chunkLimit && chunk.z <= chunkLimit
+        && chunk.y >= world_min_y && chunk.y <= world_max_y);
+    CheckRegion(plan.region);
+    Require((RegionCoord{FloorDiv(chunk.x * chunk_size, region_size),
+        FloorDiv(chunk.z * chunk_size, region_size)}) == plan.region);
+    // Registration policy/version gating belongs to World; no terrain/version change.
+    const TileRect chunkBounds{{chunk.x * chunk_size, chunk.z * chunk_size},
+        {(chunk.x + 1) * chunk_size, (chunk.z + 1) * chunk_size}};
+    for (const auto& building : plan.buildings) {
+        if (!Intersects(building.bounds, chunkBounds)) { continue; }
+        const auto descriptor = DescribeBuildingPower(content.GetBuildingPattern(building.pattern),
+            building.bounds, building.basementVariant);
+        if (descriptor && chunk.y >= descriptor->bounds.min.y && chunk.y <= descriptor->bounds.max.y) {
+            output.push_back(*descriptor);
+        }
+    }
 }
 
 void GenerateChunkPlacements(const ContentCatalog& content, std::uint64_t seed,
