@@ -28,6 +28,7 @@ struct MapPacket {
     MapIdentity identity;
     int width = 0, height = 0;
     Vector<PreparedMapCell> cells;
+    Vector<EnemyHealthView> enemyHealth;
 };
 MapPacket PrepareMapPacket(const WorldView& view, const ContentCatalog& content,
     const TilesetDefinition& tileset, MapIdentity identity, const Vector<MapItemVisual>& items = {});

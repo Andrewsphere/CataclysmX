@@ -115,7 +115,7 @@ String CombatEventText(const CombatEvent& event, const ContentCatalog& content) 
 }
 
 namespace {
-String StatusText(const CombatView& view, const String& styleName) {
+String StatusText(const CombatView& view, const String& styleName, bool includePartInjuries) {
     bool present = false;
     for (const auto& part : view.parts) { present |= part.maximum != 0; }
     if (!present) { return {}; }
@@ -125,6 +125,7 @@ String StatusText(const CombatView& view, const String& styleName) {
     }
     text += "\nstamina "; text += UnsignedText(view.stamina); text += "% | "; text += ActionName(view.action);
     if (view.accuracyPenalty) { text += "\naccuracy -"; text += UnsignedText(view.accuracyPenalty); text += "%"; }
+    if (!includePartInjuries) { return text; }
     for (std::size_t i = 0; i < body_part_count; ++i) {
         const auto& part = view.parts[i];
         if (!part.maximum || (part.hp == part.maximum && !part.broken)) { continue; }
@@ -136,13 +137,13 @@ String StatusText(const CombatView& view, const String& styleName) {
 }
 }
 
-String CombatStatusText(const CombatView& view) {
-    return StatusText(view, CombatStyleName(view.style));
+String CombatStatusText(const CombatView& view, bool includePartInjuries) {
+    return StatusText(view, CombatStyleName(view.style), includePartInjuries);
 }
 
 String CombatStatusText(const WorldView& view, const ContentCatalog& content) {
     const auto* style = content.TryGetCombatStyle(view.combat.styleId);
-    return StatusText(view.combat, style ? style->name : String(CombatStyleName(view.combat.style)));
+    return StatusText(view.combat, style ? style->name : String(CombatStyleName(view.combat.style)), true);
 }
 
 String CombatFeedbackText(const CombatView& view) {

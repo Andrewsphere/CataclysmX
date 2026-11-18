@@ -276,6 +276,7 @@ TEST_CASE("Paused session inspections and settings never advance time and resume
     REQUIRE(session.TrySubmit(request) == EnqueueResult::Accepted);
     REQUIRE(WaitForReply(session,wake,reply)); REQUIRE(reply.kind == ReplyKind::Inspected);
     CHECK_FALSE(reply.details.empty()); CHECK(reply.id == 2);
+    CHECK_FALSE(reply.examinedEnemy);
     CHECK(reply.inspectionView.origin.y == request.cursor.y);
     request.cursor.y = 1; request.id = 20;
     REQUIRE(session.TrySubmit(request) == EnqueueResult::Accepted);

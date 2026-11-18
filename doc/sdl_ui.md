@@ -39,10 +39,9 @@ When a centered tile leaves insufficient room, a side window may narrow to at
 least 180 pixels. Geometry is a pure calculation, independently testable without
 a renderer.
 
-Popups render only when their body contains nonempty text. Examine keeps the
-last description visible while a new inspection reply is pending, so moving
-the cursor does not hide the panel. On first opening, only the cursor highlight
-and camera are shown until the first description arrives.
+Popups render only when their body contains nonempty text. Examine shows a
+loading row until a description for the current cursor arrives. Live refreshes
+at the same cursor keep the last description visible while a new reply is pending.
 Popups prefer a 320-pixel width and a height of 60% of the map viewport, with
 space for at least one body line plus a title and footer. Large text can borrow
 the full content area below the top bar when the compact map is too short. Content
@@ -79,6 +78,19 @@ paused wall time. A single available interaction still executes immediately.
 
 ## Health presentation
 
+During gameplay, `DrawEnemyTileHealth` draws the health of injured visible
+hostiles after the sprite passes. `MapPacket` keeps the health records with their
+own map cells so asynchronous preparation preserves the actor-to-tile association.
+The guest viewport crop remaps those cell indices. Drawing is clipped to the map
+viewport, with each overlay fitting inside the lower-right of its tile.
+
+A simple enemy has one row for Attack, Core, and Movement. A detailed enemy has
+three columns with the actor's left on the left. Hands flank Head in the top row
+and legs flank Torso in the bottom row. Every present group gets a proportional
+fill. Healthy tracks are muted, and empty tracks have a cross. Tiles below 24
+rendered pixels use the same positions with a pip per group. Full recovery,
+death, or loss of visibility removes the overlay at the next map update.
+
 `DrawHealth` consumes only the existing owned `CombatView`. It draws a segmented,
 front-facing silhouette, with the character's left on the viewer's right. The
 upper limbs represent the existing hand zones; labels do not invent arm health.
@@ -90,6 +102,21 @@ cross and explicit text. `HealthPartText` retains hundredths precision, omitting
 only a zero fractional suffix. Values and labels convey health without color.
 The doll and labels scale together when necessary to fit all parts, including
 broken states. The helper restores renderer scale after drawing.
+
+Enemy Examine puts the actor name and its health rows before terrain, objects,
+and items. `DescribeTile` can return an owned `ExaminedEnemy` from the matching
+visible inspection actor. The SDL reply carries it alongside the text rows and
+only displays it for the cursor the reply describes. Player and known friendly
+or neutral actors use the regular text description. The untyped demo enemy uses
+the visible creature description. The existing inspection payload supplies all HP data.
+
+`AppendEnemyExamine` adds one anchored `ScreenHealthRow` per present body group,
+including full and empty groups. Core comes first for simple bodies. Head and
+Torso come first for detailed bodies. Vital, Broken, and Disabled labels convey
+defeat conditions and lost function. The bar fill uses current HP divided by
+effective maximum HP, and the adjacent numbers use the HUD's HP formatting.
+Tracks share a width, and narrow popups place them below the text at the user's
+chosen font size. The rows scroll together with the inspection text.
 
 `CombatSummaryText` is SDL-specific: it retains style, stamina, action state, and
 accuracy penalties without repeating limb values. Combat feedback remains in

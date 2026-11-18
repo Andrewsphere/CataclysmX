@@ -231,6 +231,12 @@ bool DrawFrame(SDL_Renderer* renderer, SdlText& text, const SdlAssets& assets, c
                 }
             }
         }
+        if ((!screen || !screen->visible) && !inventory) {
+            for (const auto& health : packet->enemyHealth) {
+                const auto tile = MapCellRect(layout, health.cellIndex % packet->width, health.cellIndex / packet->width);
+                if (SDL_HasRectIntersection(&tile, &clip) && !DrawEnemyTileHealth(renderer, tile, health)) { return false; }
+            }
+        }
         if (!SDL_SetRenderClipRect(renderer, nullptr)) { return false; }
         char info[256];
         std::snprintf(info, sizeof(info), "Tick %llu  XYZ %d,%d,%d\n%s%s\nItems %zu  Mass %llug / %llug",

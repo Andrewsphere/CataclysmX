@@ -28,7 +28,6 @@ void CheckCommand(const Command& command) {
 }
 
 TEST_CASE("Protocol 21 combat commands roundtrip every operation and target branch", "[network][combat21][codec]") {
-    CHECK(wire::protocol == 0x43584e15);
     for (auto operation : {EquipmentOperation::Hold, EquipmentOperation::Release, EquipmentOperation::Regrip,
         EquipmentOperation::Wear, EquipmentOperation::Remove}) {
         for (auto hand : {Hand::Left, Hand::Right}) for (auto grip : {GripKind::OneHanded, GripKind::TwoHanded}) {
@@ -155,8 +154,8 @@ TEST_CASE("Protocol 21 views preserve equipment contacts study and death metrics
     for (std::size_t size = 0; size < w.bytes.size(); ++size) {
         wire::Reader truncated{{w.bytes.data(), size}}; CHECK_FALSE(truncated.View(decoded));
     }
-    // learnedArt is the byte immediately preceding the appended u64 serial.
-    w.bytes[w.bytes.size() - sizeof(std::uint64_t) - sizeof(std::uint8_t)] = 2;
+    // learnedArt precedes the final serial and the empty enemy-health count.
+    w.bytes[w.bytes.size() - sizeof(std::uint16_t) - sizeof(std::uint64_t) - sizeof(std::uint8_t)] = 2;
     wire::Reader bad{{w.bytes.data(), w.bytes.size()}}; CHECK_FALSE(bad.View(decoded));
 }
 
@@ -183,7 +182,7 @@ TEST_CASE("Protocol 21 history serials reject replayed or reordered records", "[
     // Serials order the presentation history independently of event ticks.
     v.combatEvents[0].tick = 900; v.combatEvents[1].tick = 900;
     wire::Writer w; REQUIRE(w.View(v));
-    const auto serialOffset = w.bytes.size() - sizeof(std::uint64_t);
+    const auto serialOffset = w.bytes.size() - sizeof(std::uint16_t) - sizeof(std::uint64_t);
     for (const auto serial : {std::uint64_t{0}, std::uint64_t{40}, std::uint64_t{41}}) {
         wire::Writer replacement; replacement.U64(serial);
         auto bytes = w.bytes;

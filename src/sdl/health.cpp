@@ -1,7 +1,10 @@
 #include "sdl/health.h"
 #include "sdl/layout.h"
+#include "sdl/screens.h"
 
 #include "client/text.h"
+#include "client/tile_inspection.h"
+#include "core/ratio.h"
 
 #include <algorithm>
 #include <cmath>
@@ -22,18 +25,7 @@ void AppendHp(String& output, std::uint32_t hp) {
     }
 }
 
-}
-
-RgbColor HealthColor(const CombatPartView& part) {
-    if (!part.maximum || !part.hp) { return {70, 78, 82}; }
-    const std::uint64_t hp = std::uint64_t{part.hp} * 100;
-    if (hp > std::uint64_t{part.maximum} * 75) { return {88, 194, 132}; }
-    if (hp > std::uint64_t{part.maximum} * 50) { return {225, 204, 89}; }
-    if (hp > std::uint64_t{part.maximum} * 25) { return {229, 145, 69}; }
-    return {220, 83, 83};
-}
-
-String HealthPartText(BodyPart part, const CombatPartView& state, const Localization* localization) {
+String PartLabel(BodyPart part, const Localization* localization) {
     const char* key = "", *fallback = "";
     switch (part) {
     case BodyPart::Head: key = "sdl.health.head"; fallback = "Head"; break;
@@ -47,13 +39,109 @@ String HealthPartText(BodyPart part, const CombatPartView& state, const Localiza
     case BodyPart::Core: key = "sdl.health.core"; fallback = "Core"; break;
     case BodyPart::Count: return {};
     }
-    String result = Label(localization, key, fallback);
+    return Label(localization, key, fallback);
+}
+
+void AppendHpValue(String& value, const CombatPartView& state) {
+    AppendHp(value, state.hp);
+    value += '/';
+    AppendHp(value, state.maximum);
+}
+
+bool DrawTilePart(SDL_Renderer* renderer, SDL_FRect track, std::uint16_t ratio) {
+    if (!SDL_SetRenderDrawColor(renderer, 66, 74, 80, 255) || !SDL_RenderFillRect(renderer, &track)) { return false; }
+    if (!ratio) {
+        if (!SDL_SetRenderDrawColor(renderer, 227, 233, 230, 255)) { return false; }
+        const float x = track.x + static_cast<int>(track.w) / 2;
+        const float y = track.y + static_cast<int>(track.h) / 2;
+        if (track.w < 3 || track.h < 3) { return SDL_RenderPoint(renderer, x, y); }
+        return SDL_RenderLine(renderer, x - 1, y - 1, x + 1, y + 1)
+            && SDL_RenderLine(renderer, x - 1, y + 1, x + 1, y - 1);
+    }
+    const int width = static_cast<int>(track.w);
+    const bool full = ratio == ratioScale;
+    const auto color = full ? RgbColor{94, 143, 111} : HealthColor({ratio, ratioScale});
+    if (!full && width > 1) {
+        track.w = static_cast<float>(std::clamp(static_cast<int>(ScaleRatioFloor(width, ratio)), 1, width - 1));
+    }
+    return SDL_SetRenderDrawColor(renderer, color.red, color.green, color.blue, 255) && SDL_RenderFillRect(renderer, &track);
+}
+
+}
+
+RgbColor HealthColor(const CombatPartView& part) {
+    if (!part.maximum || !part.hp) { return {70, 78, 82}; }
+    const std::uint64_t hp = std::uint64_t{part.hp} * 100;
+    if (hp > std::uint64_t{part.maximum} * 75) { return {88, 194, 132}; }
+    if (hp > std::uint64_t{part.maximum} * 50) { return {225, 204, 89}; }
+    if (hp > std::uint64_t{part.maximum} * 25) { return {229, 145, 69}; }
+    return {220, 83, 83};
+}
+
+String HealthPartText(BodyPart part, const CombatPartView& state, const Localization* localization) {
+    if (part == BodyPart::Count) { return {}; }
+    String result = PartLabel(part, localization);
     result += ' ';
-    AppendHp(result, state.hp);
-    result += '/';
-    AppendHp(result, state.maximum);
+    AppendHpValue(result, state);
     if (state.broken) { result += "  "; result += Label(localization, "sdl.health.broken", "Broken"); }
     return result;
+}
+
+void AppendEnemyExamine(const ExaminedEnemy& enemy, const Localization& localization, ScreenFrame& frame) {
+    frame.rows.push_back({enemy.name});
+    constexpr BodyPart order[] = {BodyPart::Core, BodyPart::AttackApparatus, BodyPart::Locomotion,
+        BodyPart::Head, BodyPart::Torso, BodyPart::LeftHand, BodyPart::RightHand, BodyPart::LeftLeg, BodyPart::RightLeg};
+    for (const auto part : order) {
+        const auto& state = enemy.combat.parts[static_cast<unsigned>(part)];
+        if (!state.maximum) { continue; }
+        String label = part == BodyPart::Locomotion ? localization.Text("sdl.examine.movement", "Movement")
+            : PartLabel(part, &localization);
+        if (part == BodyPart::Core || part == BodyPart::Head || part == BodyPart::Torso) {
+            label += " · "; label += localization.Text("sdl.examine.vital", "Vital");
+        } else if (state.broken) {
+            label += " · "; label += localization.Text("sdl.health.broken", "Broken");
+        } else if (!state.hp) {
+            label += " · "; label += localization.Text("sdl.examine.disabled", "Disabled");
+        }
+        String value;
+        AppendHpValue(value, state);
+        frame.rows.push_back({eastl::move(label), false, ScreenHealthRow{state, eastl::move(value)}});
+    }
+    frame.rows.push_back({enemy.status});
+    frame.rows.push_back({});
+}
+
+bool DrawEnemyTileHealth(SDL_Renderer* renderer, SDL_Rect tile, const EnemyHealthView& health) {
+    constexpr int columns = 3;
+    constexpr BodyPart simple[] = {BodyPart::AttackApparatus, BodyPart::Core, BodyPart::Locomotion};
+    constexpr BodyPart detailed[] = {BodyPart::LeftHand, BodyPart::Head, BodyPart::RightHand,
+        BodyPart::LeftLeg, BodyPart::Torso, BodyPart::RightLeg};
+    const bool simpleBody = health.bodyKind == BodyKind::Simple;
+    const auto* parts = simpleBody ? simple : detailed;
+    const int rows = simpleBody ? 1 : 2;
+    const int size = std::min(tile.w, tile.h);
+    const int inset = size >= 12 ? 1 : 0;
+    const int padding = size >= 16 ? 1 : 0;
+    const int gap = size >= 8 ? 1 : 0;
+    const int scale = std::clamp(size / 32, 1, 2);
+    const bool pips = size < 24;
+    const int width = std::min(pips ? 3 : 8 * scale, (tile.w - inset - 2 * padding - (columns - 1) * gap) / columns);
+    const int height = std::min(pips ? width : 3 * scale, (tile.h - inset - 2 * padding - (rows - 1) * gap) / rows);
+    if (width <= 0 || height <= 0) { return true; }
+    const int panelWidth = columns * width + (columns - 1) * gap + 2 * padding;
+    const int panelHeight = rows * height + (rows - 1) * gap + 2 * padding;
+    const int x = tile.x + tile.w - inset - panelWidth, y = tile.y + tile.h - inset - panelHeight;
+    const SDL_FRect panel{float(x), float(y), float(panelWidth), float(panelHeight)};
+    if (!SDL_SetRenderDrawColor(renderer, 16, 22, 27, 255) || !SDL_RenderFillRect(renderer, &panel)) { return false; }
+    for (int row = 0; row < rows; ++row) {
+        for (int column = 0; column < columns; ++column) {
+            const SDL_FRect track{float(x + padding + column * (width + gap)),
+                float(y + padding + row * (height + gap)), float(width), float(height)};
+            const auto part = parts[row * columns + column];
+            if (!DrawTilePart(renderer, track, health.partRatios[static_cast<unsigned>(part)])) { return false; }
+        }
+    }
+    return true;
 }
 
 String CombatSummaryText(const CombatView& view) {

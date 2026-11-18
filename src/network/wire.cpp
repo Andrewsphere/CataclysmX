@@ -1,4 +1,5 @@
 #include "network/wire.h"
+#include "core/ratio.h"
 #include "items/item_behavior.h"
 
 #include <EASTL/utility.h>
@@ -160,6 +161,58 @@ bool ValidCombatView(const CombatView& v) {
     }
     return true;
 }
+bool ValidEnemyHealth(const WorldView& view, const EnemyHealthView& health) {
+    if (health.cellIndex >= view.cells.size() || health.bodyKind > BodyKind::Simple) return false;
+    const auto& cell = view.cells[health.cellIndex];
+    if (cell.overlayVisibility != Visibility::Visible || !cell.actor || cell.player) return false;
+    bool injured = false;
+    for (std::size_t p = 0; p < body_part_count; ++p) {
+        const auto part = static_cast<BodyPart>(p);
+        const auto ratio = health.partRatios[p];
+        if (HasPart(health.bodyKind, part)) {
+            const bool vital = part == BodyPart::Head || part == BodyPart::Torso || part == BodyPart::Core;
+            if (!ValidUnitRatio(ratio) || (vital && !ratio)) return false;
+            injured |= ratio < ratioScale;
+        } else if (ratio) { return false; }
+    }
+    return injured;
+}
+
+bool WriteEnemyHealth(Writer& w, const WorldView& view) {
+    if (view.enemyHealth.size() > view.cells.size()) return false;
+    w.U16(static_cast<std::uint16_t>(view.enemyHealth.size()));
+    int previous = -1;
+    for (const auto& health : view.enemyHealth) {
+        if (health.cellIndex <= previous || !ValidEnemyHealth(view, health)) return false;
+        previous = health.cellIndex;
+        w.U16(health.cellIndex);
+        w.U8(static_cast<std::uint8_t>(health.bodyKind));
+        for (std::size_t p = 0; p < body_part_count; ++p) {
+            if (HasPart(health.bodyKind, static_cast<BodyPart>(p))) w.U16(health.partRatios[p]);
+        }
+    }
+    return true;
+}
+
+bool ReadEnemyHealth(Reader& r, WorldView& view) {
+    constexpr std::size_t minimumRecordSize = 2 + 1 + 3 * 2;
+    std::uint16_t count;
+    if (!r.U16(count) || count > view.cells.size() || count > (r.bytes.size() - r.offset) / minimumRecordSize) return false;
+    view.enemyHealth.reserve(count);
+    int previous = -1;
+    for (unsigned i = 0; i < count; ++i) {
+        EnemyHealthView health;
+        if (!r.U16(health.cellIndex) || health.cellIndex <= previous || !ReadEnum(r, health.bodyKind, BodyKind::Simple)) return false;
+        for (std::size_t p = 0; p < body_part_count; ++p) {
+            if (HasPart(health.bodyKind, static_cast<BodyPart>(p)) && !r.U16(health.partRatios[p])) return false;
+        }
+        if (!ValidEnemyHealth(view, health)) return false;
+        previous = health.cellIndex;
+        view.enemyHealth.push_back(health);
+    }
+    return true;
+}
+
 void WriteCombat(Writer& w, const CombatView& v) {
     w.U8(static_cast<std::uint8_t>(v.bodyKind)); w.U8(static_cast<std::uint8_t>(v.style));
     w.U8(static_cast<std::uint8_t>(v.action)); w.U32(v.stamina); w.U8(v.accuracyPenalty);
@@ -928,6 +981,7 @@ bool Writer::View(const WorldView& v, bool inspection) {
     U64(v.characterId); WriteCombatInfo(*this, v.combatInfo);
     U32(static_cast<std::uint32_t>(v.combatEvents.size()));
     for (const auto& e : v.combatEvents) WriteEvent(*this, e);
+    if (!inspection && !WriteEnemyHealth(*this, v)) return false;
     return bytes.size() <= maxPacket;
 }
 bool Reader::U8(std::uint8_t& v) { if (offset >= bytes.size()) return false; v = bytes[offset++]; return true; }
@@ -1101,7 +1155,8 @@ bool Reader::View(WorldView& v, bool inspection) {
         if (!ReadEvent(*this, e) || e.serial <= previousSerial) return false;
         previousSerial = e.serial; v.combatEvents.push_back(e);
     }
-    return true;
+    v.enemyHealth.clear();
+    return inspection || ReadEnemyHealth(*this, v);
 }
 
 namespace {

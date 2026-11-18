@@ -13,6 +13,9 @@ The client requires SDL 3.4's GPU renderer; PNG sprites receive light, depth and
 memory shading. See [sprite shading](doc/sprite_shading.md) for GPU requirements
 and validation.
 
+Use [Sledgehammer Editor](doc/sledgehammer_editor.md) to paint buildings and outdoor
+sites, author their content, and preview seeded regions in a local browser.
+
 ## Play and inspect
 
 After building:

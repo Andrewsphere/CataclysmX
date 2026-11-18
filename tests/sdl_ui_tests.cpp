@@ -4,11 +4,14 @@
 #include "sdl/renderer.h"
 #include "sdl/screens.h"
 #include "client/text.h"
+#include "client/tile_inspection.h"
+#include "core/ratio.h"
 #include "settings_fixture.h"
 #include "content_fixture.h"
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <cstdlib>
 #include <thread>
 
@@ -172,6 +175,65 @@ TEST_CASE("SDL health distinguishes thresholds broken parts and effective maximu
     CHECK(HealthPartText(BodyPart::LeftLeg, {1, 9999}) == "L leg 0.01/99.99");
 }
 
+TEST_CASE("SDL gameplay draws all injured enemy body groups inside adjacent tiles", "[sdl][ui][render][enemy-health]") {
+    Display display(800, 600); REQUIRE(display.renderer);
+    SdlText text(display.renderer, nullptr, 14); REQUIRE(text.Ready());
+    SdlAssets assets;
+    for (int i = 0; i < 1000000 && assets.Poll(display.renderer) == AssetState::Loading; ++i) { std::this_thread::yield(); }
+    REQUIRE(assets.State() == AssetState::Ready);
+    REQUIRE(assets.Definition().cellWidth == 32);
+    REQUIRE(assets.Definition().cellHeight == 32);
+
+    Server server(TestContent());
+    auto view = server.View(3);
+    const auto index = static_cast<std::uint16_t>(view.width * 3 + 4);
+    for (unsigned i = 0; i < 2; ++i) {
+        auto& cell = view.cells[index + i];
+        cell.terrainVisibility = cell.overlayVisibility = Visibility::Visible;
+        cell.tile.terrain = TestTerrain("floor");
+        cell.object = 0; cell.objectAppearance = {}; cell.actor = 100 + i;
+    }
+    EnemyHealthView detailed{index, BodyKind::Detailed};
+    detailed.partRatios = {5000, 2500, 0, ratioScale, ratioScale, 3000};
+    EnemyHealthView simple{static_cast<std::uint16_t>(index + 1), BodyKind::Simple};
+    simple.partRatios = {0, 0, 0, 0, 0, 0, ratioScale, 0, 2500};
+    view.enemyHealth = {detailed, simple};
+    const auto packet = PrepareMapPacket(view, TestContent(), assets.Definition(), {});
+    CHECK(packet.enemyHealth == view.enemyHealth);
+
+    const auto pixel = [&](int x, int y) {
+        Uint8 r, g, b, a;
+        REQUIRE(SDL_ReadSurfacePixel(display.surface, x, y, &r, &g, &b, &a));
+        return RgbColor{r, g, b};
+    };
+    const RgbColor full{94, 143, 111}, empty{66, 74, 80}, disabled{227, 233, 230};
+    const RgbColor orange{229, 145, 69}, red{220, 83, 83};
+    for (const int zoom : {0, -8}) {
+        REQUIRE(DrawFrame(display.renderer, text, assets, &view, TestContent(), "", "", 0, &packet, zoom));
+        const auto map = MakeGameplayLayout(800, 600, view.width, view.height, 32, 32, zoom, 1, {}, text.LineHeight()).map;
+        const auto left = MapCellRect(map, 4, 3);
+        const auto right = MapCellRect(map, 5, 3);
+        const bool pips = zoom < 0;
+        const int start = pips ? 0 : 4, step = pips ? 3 : 9;
+        const int top = left.y + (pips ? 3 : 23), bottom = left.y + (pips ? 6 : 27);
+        CHECK(pixel(left.x + start + (pips ? 1 : 4), top + 1) == disabled); // L hand
+        CHECK(pixel(left.x + start + step, top) == orange); // Head
+        CHECK(pixel(left.x + start + step + (pips ? 1 : 4), top) == empty);
+        CHECK(pixel(left.x + start + step * 2, top) == full); // R hand
+        CHECK(pixel(left.x + start, bottom) == full); // L leg
+        CHECK(pixel(left.x + start + step, bottom) == red); // Torso
+        CHECK(pixel(left.x + start + step * 2, bottom) == orange); // R leg
+        CHECK(pixel(right.x + start, bottom) == full); // Attack
+        CHECK(pixel(right.x + start + step, bottom) == red); // Core
+        CHECK(pixel(right.x + start + step * 2 + (pips ? 1 : 4), bottom + 1) == disabled); // Movement
+        ScreenFrame popup;
+        popup.visible = true; popup.presentation = ScreenPresentation::Anchored;
+        REQUIRE(DrawFrame(display.renderer, text, assets, &view, TestContent(), "", "", 0, &packet, zoom,
+            1, {}, nullptr, nullptr, &popup));
+        CHECK(pixel(right.x + start, bottom) != full);
+    }
+}
+
 TEST_CASE("SDL health fits all labels and restores the renderer scale", "[sdl][ui][render]") {
     Display display(480, 360); REQUIRE(display.renderer);
     SdlText text(display.renderer); REQUIRE(text.Ready());
@@ -187,6 +249,80 @@ TEST_CASE("SDL health fits all labels and restores the renderer scale", "[sdl][u
     CHECK(x == 1.5f); CHECK(y == 1.5f);
     REQUIRE(DrawHealth(display.renderer, text, {}, {0, 0, 240, 164}, used));
     CHECK(used == 0);
+}
+
+TEST_CASE("SDL enemy Examine shows proportional bars for every present body group", "[sdl][ui][render]") {
+    const auto makeFrame = [](const ExaminedEnemy& enemy, TileCoord cursor) {
+        ScreenFrame frame;
+        frame.visible = true;
+        frame.presentation = ScreenPresentation::Anchored;
+        frame.followCursor = true;
+        frame.title = "Examine";
+        frame.footer = "Escape close | PgUp/PgDn scroll";
+        frame.cursor = cursor;
+        AppendEnemyExamine(enemy, Localization{}, frame);
+        frame.rows.push_back({"Floor"});
+        return frame;
+    };
+    ExaminedEnemy simple{"cellar zombie", "Speed 100", {}};
+    simple.combat.bodyKind = BodyKind::Simple;
+    simple.combat.parts[static_cast<unsigned>(BodyPart::Core)] = {4000, 10000};
+    simple.combat.parts[static_cast<unsigned>(BodyPart::AttackApparatus)] = {6000, 6000};
+    simple.combat.parts[static_cast<unsigned>(BodyPart::Locomotion)] = {0, 6000};
+    Server server(TestContent());
+    const auto view = server.View();
+    const TileCoord cursor{view.player_position.x + 1, view.player_position.z, view.player_position.y};
+    {
+        Display display(1120, 600); REQUIRE(display.renderer);
+        SdlText text(display.renderer, nullptr, 14); REQUIRE(text.Ready());
+        auto frame = makeFrame(simple, cursor);
+        REQUIRE(frame.rows.size() == 7);
+        CHECK(frame.rows[0].text == "cellar zombie");
+        CHECK(frame.rows[1].text == "Core · Vital");
+        REQUIRE(frame.rows[1].health);
+        CHECK(frame.rows[1].health->value == "40/100");
+        CHECK(frame.rows[2].text == "Attack");
+        CHECK(frame.rows[3].text == "Movement · Disabled");
+        REQUIRE(DrawScreen(display.renderer, text, frame, 1120, 600, &view, 32, 64, 0, 1));
+        REQUIRE(SDL_RenderPresent(display.renderer));
+        CHECK(frame.rowHeights[1] == text.LineHeight());
+        int full = 0, partial = 0, empty = 0;
+        for (int y = 0; y < display.surface->h; ++y) {
+            int green = 0, orange = 0, gray = 0;
+            for (int x = 0; x < display.surface->w; ++x) {
+                Uint8 r, g, b, a;
+                if (!SDL_ReadSurfacePixel(display.surface, x, y, &r, &g, &b, &a)) { FAIL(SDL_GetError()); }
+                green += r == 88 && g == 194 && b == 132;
+                orange += r == 229 && g == 145 && b == 69;
+                gray += r == 70 && g == 78 && b == 82;
+            }
+            full = std::max(full, green);
+            partial = std::max(partial, orange);
+            empty = std::max(empty, gray);
+        }
+        CHECK(full >= 48);
+        CHECK(partial == full * 40 / 100);
+        CHECK(empty == full);
+    }
+    {
+        Display display(480, 360); REQUIRE(display.renderer);
+        SdlText text(display.renderer, nullptr, 24); REQUIRE(text.Ready());
+        ExaminedEnemy detailed{"humanoid", "Speed 100", view.combat};
+        detailed.combat.parts[static_cast<unsigned>(BodyPart::LeftHand)] = {0, 7534, true};
+        auto frame = makeFrame(detailed, cursor);
+        REQUIRE(frame.rows.size() == 10);
+        CHECK(frame.rows[1].text == "Head · Vital");
+        CHECK(frame.rows[2].text == "Torso · Vital");
+        CHECK(frame.rows[3].text == "L hand · Broken");
+        REQUIRE(frame.rows[3].health);
+        CHECK(frame.rows[3].health->value == "0/75.34");
+        REQUIRE(DrawScreen(display.renderer, text, frame, 480, 360, &view, 32, 64, 0, 1));
+        CHECK(frame.rowHeights[3] >= text.LineHeight() * 2);
+        frame.scroll = 999;
+        REQUIRE(DrawScreen(display.renderer, text, frame, 480, 360, &view, 32, 64, 0, 1));
+        CHECK(frame.scroll > 0);
+        CHECK(frame.scroll < 999);
+    }
 }
 
 TEST_CASE("SDL contextual panels scroll long text and keep the world visible", "[sdl][ui][render]") {

@@ -28,6 +28,15 @@ void CropView(WorldView& view, Vector<MapItemVisual>& items, int radius) {
     }
     view.cells.resize(static_cast<std::size_t>(width * width));
     items.resize(view.cells.size());
+    std::size_t keptHealth = 0;
+    for (auto health : view.enemyHealth) {
+        const int column = health.cellIndex % view.width - x;
+        const int row = health.cellIndex / view.width - z;
+        if (column < 0 || column >= width || row < 0 || row >= width) { continue; }
+        health.cellIndex = static_cast<std::uint16_t>(row * width + column);
+        view.enemyHealth[keptHealth++] = health;
+    }
+    view.enemyHealth.resize(keptHealth);
     view.origin.x += x; view.origin.z += z;
     view.width = view.height = width;
 }
@@ -437,7 +446,7 @@ void SessionOwner::Inspection(PlayerInspection inspection, const Pending& pendin
     SessionReply reply{ReplyKind::Inspected, pending.generation, pending.id};
     switch (inspection.status) {
     case InspectionStatus::Complete:
-        DescribeTile(content_, inspection.view, inspection.cursor, inspection.details, reply.details);
+        DescribeTile(content_, inspection.view, inspection.cursor, inspection.details, reply.details, &reply.examinedEnemy);
         reply.inspectionView = eastl::move(inspection.view);
         reply.inspectionItems = eastl::move(inspection.mapItems);
         break;

@@ -4,6 +4,7 @@
 #include "core/debug_items.h"
 #include "client/settings.h"
 #include "client/ai_debug.h"
+#include "client/tile_inspection.h"
 #include "sdl/item_visual.h"
 #include "network/network.h"
 #include "client/lan_profile.h"
@@ -49,6 +50,7 @@ struct SessionReply {
     Vector<String> details;
     WorldView inspectionView;
     Vector<MapItemVisual> inspectionItems;
+    eastl::optional<ExaminedEnemy> examinedEnemy = {};
     Settings runtimeSettings;
     AiDebugView aiDebug;
     // Authoritative input context may be newer than the last rendered view.

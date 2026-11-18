@@ -7,6 +7,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(CATACLYSMX_BUILD_TESTS "Build the Catch2 integration harness" ON)
 option(CATACLYSMX_BUILD_TERMINAL "Build the FTXUI adapter and manual probe" ON)
 option(CATACLYSMX_BUILD_SDL "Build the SDL3 prototype frontend" OFF)
+option(CATACLYSMX_BUILD_SLEDGEHAMMER_EDITOR "Build the Sledgehammer Editor worker" OFF)
 option(CATACLYSMX_ENABLE_ASAN "Enable MSVC AddressSanitizer" OFF)
 option(CATACLYSMX_ENABLE_ASAN_UBSAN "Enable Clang/GCC ASan and UBSan" OFF)
 option(CATACLYSMX_ENABLE_PROFILING "Build MSVC symbols and link for Visual Studio instrumentation" OFF)
@@ -235,14 +236,28 @@ if(CATACLYSMX_BUILD_TERMINAL)
     cataclysmx_no_exceptions(cataclysmx_perception_benchmark)
 endif()
 
+if(CATACLYSMX_BUILD_SDL OR CATACLYSMX_BUILD_SLEDGEHAMMER_EDITOR OR CATACLYSMX_BUILD_TESTS)
+    add_library(cataclysmx_tileset STATIC
+        src/content/tileset.cpp src/content/tileset.h
+        src/content/tileset_source.cpp src/content/tileset_source.h)
+    target_link_libraries(cataclysmx_tileset PUBLIC cataclysmx_engine PRIVATE yyjson::yyjson)
+    cataclysmx_no_exceptions(cataclysmx_tileset)
+endif()
+
+if(CATACLYSMX_BUILD_SLEDGEHAMMER_EDITOR)
+    add_executable(sledgehammer_editor
+        tools/sledgehammer_editor/main.cpp
+        tools/sledgehammer_editor/workspace.cpp tools/sledgehammer_editor/workspace.h)
+    target_link_libraries(sledgehammer_editor PRIVATE cataclysmx_tileset yyjson::yyjson)
+    cataclysmx_no_exceptions(sledgehammer_editor)
+endif()
+
 if(CATACLYSMX_BUILD_SDL)
     find_package(SDL3 3.4 CONFIG REQUIRED)
     find_package(SDL3_image CONFIG REQUIRED)
     find_package(SDL3_ttf CONFIG REQUIRED)
     find_package(unofficial-shaderc CONFIG REQUIRED)
     add_library(cataclysmx_sdl STATIC
-        src/content/tileset.cpp src/content/tileset.h
-        src/content/tileset_source.cpp src/content/tileset_source.h
         src/sdl/atlas_builder.cpp src/sdl/atlas_builder.h
         src/sdl/screens.cpp src/sdl/screens.h
         src/sdl/multiplayer_screen.cpp src/sdl/multiplayer_screen.h
@@ -262,7 +277,7 @@ if(CATACLYSMX_BUILD_SDL)
         src/sdl/gpu_renderer.cpp src/sdl/gpu_renderer.h
         src/sdl/sprite_shader.cpp src/sdl/sprite_shader.h
         src/sdl/app.cpp src/sdl/app.h)
-    target_link_libraries(cataclysmx_sdl PUBLIC cataclysmx_client cataclysmx_network SDL3::SDL3 SDL3_ttf::SDL3_ttf Threads::Threads
+    target_link_libraries(cataclysmx_sdl PUBLIC cataclysmx_client cataclysmx_network cataclysmx_tileset SDL3::SDL3 SDL3_ttf::SDL3_ttf Threads::Threads
         PRIVATE SDL3_image::SDL3_image yyjson::yyjson unofficial::shaderc::shaderc)
     target_compile_definitions(cataclysmx_sdl PRIVATE
         CATACLYSMX_DEFAULT_TILESET="${CMAKE_CURRENT_SOURCE_DIR}/assets/tiles/gen1_32x32"
@@ -336,7 +351,8 @@ if(CATACLYSMX_BUILD_TESTS)
         CATACLYSMX_ZOMBIE_SHOWCASE_PACK="${CMAKE_CURRENT_SOURCE_DIR}/data/zombie_showcase.json5"
         CATACLYSMX_CONTENT_PACK="${CMAKE_CURRENT_SOURCE_DIR}/data/content.json5")
     target_compile_definitions(cataclysmx_tests PRIVATE CATACLYSMX_LOC_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/data/loc")
-    target_link_libraries(cataclysmx_tests PRIVATE cataclysmx_client cataclysmx_network Catch2::Catch2WithMain unofficial::sqlite3::sqlite3 Threads::Threads)
+    target_link_libraries(cataclysmx_tests PRIVATE cataclysmx_client cataclysmx_network cataclysmx_tileset
+        Catch2::Catch2WithMain unofficial::sqlite3::sqlite3 Threads::Threads)
     if(CATACLYSMX_BUILD_SDL)
         target_sources(cataclysmx_tests PRIVATE tests/sdl_input_tests.cpp tests/sdl_app_tests.cpp
             tests/sdl_session_tests.cpp tests/sdl_render_tests.cpp tests/sdl_tileset_tests.cpp
