@@ -228,6 +228,15 @@ DataObject WriteCombatContent(const ContentCatalog& catalog) {
         entry.SetBoolean("blocks_sight", object.blocksSight);
         entry.SetBoolean("movable", object.movable);
         entry.SetUnsigned("move_cost", object.moveCost);
+        DataObject traits = DataObject::List();
+        for (const auto& trait : object.toolTraits) {
+            DataObject value;
+            value.SetString("id", catalog.GetToolTrait(trait.trait).id);
+            value.SetUnsigned("tier", trait.tier);
+            traits.Append(eastl::move(value));
+        }
+        entry.Set("tool_traits", eastl::move(traits));
+        if (object.packingItem.value) { entry.SetString("packing_item", catalog.GetItem(object.packingItem).id); }
         if (object.capacityVolumeMl) { entry.SetUnsigned("capacity_volume_ml", *object.capacityVolumeMl); }
         switch (object.kind) {
         case ObjectKind::None: std::abort();

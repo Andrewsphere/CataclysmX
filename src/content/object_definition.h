@@ -1,6 +1,7 @@
 #pragma once
 
 #include "items/item_types.h"
+#include "content/crafting_definition.h"
 #include "core/object_appearance.h"
 #include "core/light_types.h"
 
@@ -45,6 +46,8 @@ struct ObjectDefinition {
     std::uint32_t moveCost = ticks_per_turn; // Base ticks per cardinal dragged step.
     LightEmission light{}; // Initial emission, gated by the object's enabled state.
     GeneratorDefinition generator;
+    StaticList<TraitRequirement, maxRecipeTraits> toolTraits;
+    ItemTypeId packingItem{}; // Protected original equipment; zero denotes a fixed fixture.
     bool operator==(const ObjectDefinition&) const = default;
 };
 

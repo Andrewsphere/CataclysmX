@@ -794,6 +794,8 @@ struct PendingObject {
     String input;
     String output;
     String fuelItem;
+    String packingItem;
+    SmallVector<PendingTrait, 1> traits;
     std::size_t inputOrder = 0;
     Context context;
 };
@@ -836,9 +838,13 @@ bool ParseObject(yyjson_val* object, PendingObject& pending) {
     const auto& context = pending.context;
     auto& definition = pending.definition;
     if (!CheckObject(object, {"id", "name", "behavior", "machine", "generator", "capacity_volume_ml", "kind",
-                              "blocks_movement", "blocks_sight", "movable", "move_cost", "light"}, context)
+                              "blocks_movement", "blocks_sight", "movable", "move_cost", "light", "tool_traits", "packing_item"}, context)
         || !ReadId(yyjson_obj_get(object, "id"), definition.id, context.Child("id"))
-        || !ReadString(yyjson_obj_get(object, "name"), definition.name, context.Child("name"))) { return false; }
+        || !ReadString(yyjson_obj_get(object, "name"), definition.name, context.Child("name"))
+        || !ParseTraits(yyjson_obj_get(object, "tool_traits"), pending.traits, context.Child("tool_traits"))) { return false; }
+    if (auto* item = yyjson_obj_get(object, "packing_item")) {
+        if (!ReadId(item, pending.packingItem, context.Child("packing_item"))) { return false; }
+    }
     if (auto* capacity = yyjson_obj_get(object, "capacity_volume_ml")) {
         std::uint32_t amount = 0;
         if (!ReadBoundedInteger(capacity, 1, UINT32_MAX, amount, context.Child("capacity_volume_ml"))) { return false; }
@@ -3433,6 +3439,17 @@ ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sourc
     });
     catalog.objects_.reserve(objects.size());
     for (auto& object : objects) {
+        if (!ResolveTraits(object.traits, object.definition.toolTraits, catalog, object.context.Child("tool_traits"))) {
+            return eastl::unexpected(ContentError::InvalidData);
+        }
+        if (!object.packingItem.empty()) {
+            object.definition.packingItem = catalog.FindItem(View(object.packingItem));
+            const auto* packing = catalog.TryGetItem(object.definition.packingItem);
+            if (!packing || packing->unfinishedCraft || !packing->toolTraits.Empty()) {
+                object.context.Child("packing_item").Fail("expected an ordinary packing item without tool traits");
+                return eastl::unexpected(ContentError::InvalidData);
+            }
+        }
         if (object.definition.behavior == ObjectBehaviorKind::Generator) {
             object.definition.generator.fuelItem = catalog.FindItem(View(object.fuelItem));
             if (!object.definition.generator.fuelItem.value) {
@@ -3477,12 +3494,24 @@ ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sourc
             return eastl::unexpected(ContentError::InvalidData);
         }
         catalog.items_[i].placedObject = placed;
+        const auto packing = catalog.GetObject(placed).packingItem;
+        if (packing.value && packing.value != i + 1) {
+            items[i].context.Child("placed_object").Fail("portable station requires its unique packing item");
+            return eastl::unexpected(ContentError::InvalidData);
+        }
         if (catalog.GetObject(placed).behavior == ObjectBehaviorKind::GridBattery) {
             const auto& stores = catalog.items_[i].energyStores;
             if (stores.size() != 1 || !stores[0].config.rechargeable) {
                 items[i].context.Child("placed_object").Fail("grid battery installation requires a sole rechargeable energy store");
                 return eastl::unexpected(ContentError::InvalidData);
             }
+        }
+    }
+    for (std::size_t i = 0; i < catalog.objects_.size(); ++i) {
+        const auto packing = catalog.objects_[i].packingItem;
+        if (packing.value && catalog.GetItem(packing).placedObject.value != i + 1) {
+            objects[i].context.Child("packing_item").Fail("packing item must place this same object");
+            return eastl::unexpected(ContentError::InvalidData);
         }
     }
     catalog.definitions_.reserve(pending.size());

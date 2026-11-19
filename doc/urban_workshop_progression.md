@@ -2,7 +2,7 @@
 
 ## Status and use
 
-**Coordinating plan; electricity accepted and implemented.** This document records the agreed
+**Coordinating plan; electricity accepted and implemented; workshop design in review.** This document records the agreed
 direction and organizes subsequent design, implementation, content, and validation
 passes. Implemented electricity contracts are in [power design](power_design.md)
 and [power commands and presentation](power_presentation.md).
@@ -157,6 +157,14 @@ failure outcomes, accounting rules and verification evidence.
 ### D2 — Workshop stations, fuel, and metalworking
 
 **Deliverable:** `doc/workshop_design.md`; consumes D1.
+
+**Accepted contract:** [workshop design](workshop_design.md). It specifies placed
+station capabilities, one active manual job per station, ignition plus work-based
+forge fuel, refundable reserved ingredients with nonrefundable operating costs,
+and selectable autonomous jobs using D1 funding/residency. Both reconnecting
+progression branches and the matching gates for existing sword recipes are
+approved. W1 station foundations are implemented and verified; exact W3 roster/balance
+and the W4/D3 machine boundary still need their bounded reviews.
 
 Decide:
 
@@ -439,21 +447,21 @@ verification can finish while the external visual pass remains pending.
 | --- | --- | --- |
 | Coordinating plan | Draft | Accepted user goals and current interfaces recorded; subsystem decisions remain open. |
 | D1 Power | Accepted | User reviewed geometry, connection, mains, accounting, residency and inspection rules; see [power design](power_design.md). |
-| D2 Workshop/fuel | Pending | Next design pass; use the implemented D1 resource/connection contract. |
+| D2 Workshop/fuel | Accepted | [Workshop design](workshop_design.md): fuel, occupancy, cancellation/recovery, both branches and sword gates approved. W1 verified; W2 next, with W3 roster and W4/D3 coordination remaining. |
 | D3 Digital fabrication | Pending | Coordinate general autonomous machine recipes and computer/file access with D2. |
 | D4 Cities | Pending | D1 infrastructure is available; draft remaining acquisition needs and city design. |
 | D5 Integration/roster | Pending | Reconcile accepted D1–D4. |
 | I2 Power foundation | Verified (functional) | Debug suite: 1,317 passed, 2 skipped; SDL build and four executable/LAN checks passed. Dedicated sprites and two existing-artwork test failures are tracked in [power design](power_design.md#verification). |
-| I1, I3–I7 | Pending | Broader implementation/content work follows the remaining design dependencies. |
+| I3 Workshop and fueled forge | In progress | W1 verified: 13/13 workshop tests, Debug/SDL builds and SDL smoke pass. Broader regression results in [workshop design](workshop_design.md#current-evidence-and-handoff). W2 fueled work is next. |
+| I1, I4–I7 | Pending | Broader implementation/content work follows the remaining design dependencies. |
 | A1 SDL artwork | Pending, external workstation | Prepare briefs after identities and visual coverage are selected. |
 
 Suggested next-pass brief:
 
-> Read this coordinating plan and the implemented power contracts. Perform D2:
-> settle workshop stations, fueled forges, metalworking dependencies, and general
-> machine jobs with the user. Reuse D1's grid/battery authority, paid work and
-> residency rules. Keep computers, information transfer and printer progression
-> coordinated with D3. Preserve the early power slice during catalog reorganization.
+> Implement W2 on the verified W1 station foundation:
+> fueled manual work. Review the bounded content roster before W3 and coordinate
+> W4 selectable machine jobs with D3. Reuse D1's grid/battery authority, paid work
+> and residency rules; preserve the early power slice during catalog reorganization.
 
 After each accepted design or verified implementation pass, update this table,
 link its durable document, and record any cross-system decision that changes a

@@ -79,6 +79,24 @@ eastl::optional<ItemEnergyView> ItemSnapshotContext::Energy(PersistentId item, I
 StateResult<void> ValidateItemSnapshot(const ContentCatalog& content, const ChunkArchive& chunk,
     Diagnostics* diagnostics) {
     const ItemSnapshotContext context(content, chunk);
+    for (const auto& object : chunk.objects) {
+        const auto* definition = content.TryGetObject(object.type);
+        if (!definition || !definition->packingItem.value) {
+            if (object.equipment) { return Invalid(object.id, "equipment", "Unexpected station equipment", diagnostics); }
+            continue;
+        }
+        const auto* equipment = context.FindItem(object.equipment);
+        if (!equipment || equipment->type != definition->packingItem || equipment->location != LocationKind::object
+            || equipment->owner != object.id || equipment->installation.value) {
+            return Invalid(object.id, "equipment", "Missing or invalid original station equipment", diagnostics);
+        }
+        for (const auto& item : chunk.items) {
+            if (item.location == LocationKind::item && item.owner == equipment->id) {
+                return Invalid(object.id, "equipment", "Station equipment must be a leaf", diagnostics);
+            }
+        }
+    }
+    Vector<PersistentId> claimedStations;
     // Check every definition and local payload before exposing the archive to
     // behavior hooks, which may inspect other items in the same tree.
     for (std::size_t i = 0; i < chunk.items.size(); ++i) {
@@ -103,6 +121,28 @@ StateResult<void> ValidateItemSnapshot(const ContentCatalog& content, const Chun
             auto state = ReadCraftingState(*payload);
             if (!state) { return eastl::unexpected(state.error()); }
             if (!ResolveCraftingState(content, *state)) { return Invalid(item.id, "state", "Invalid crafting recipe or work", diagnostics); }
+            for (auto station : state->stations) {
+                for (auto previous : claimedStations) {
+                    if (station == previous) { return Invalid(item.id, "stations", "Station claimed by multiple jobs", diagnostics); }
+                }
+                claimedStations.push_back(station);
+                for (const auto& object : chunk.objects) {
+                    if (object.id != station) { continue; }
+                    const auto* provider = content.TryGetObject(object.type);
+                    const auto& traits = state->kind == CraftingKind::Craft
+                        ? content.GetCraftingRecipe(state->craftingRecipe).toolTraits
+                        : content.GetRecyclingRecipe(state->recyclingRecipe).toolTraits;
+                    bool matches = false;
+                    if (provider && object.enabled && !object.broken) {
+                        for (const auto& need : traits) {
+                            for (const auto& supplied : provider->toolTraits) {
+                                matches |= supplied.trait == need.trait && supplied.tier >= need.tier;
+                            }
+                        }
+                    }
+                    if (!matches) { return Invalid(item.id, "stations", "Claimed station cannot provide a required trait", diagnostics); }
+                }
+            }
             const auto& inputs = state->kind == CraftingKind::Craft
                 ? content.GetCraftingRecipe(state->craftingRecipe).inputs : content.GetRecyclingRecipe(state->recyclingRecipe).inputs;
             StaticList<ItemOutput, 9> expected;

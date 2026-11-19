@@ -349,20 +349,20 @@ bool ValidCommandShape(const Command& command) {
     // ownership and ability-grant authority are checked at execution.
     const auto kind = command.kind;
     if (kind != CommandKind::wire_grid && command.powerBounds != PowerBounds{}) { return false; }
-    if (kind != CommandKind::place_power_object && command.position != TileCoord{}) { return false; }
+    if (kind != CommandKind::place_power_object && kind != CommandKind::place_station && command.position != TileCoord{}) { return false; }
     const bool direction = kind == CommandKind::move || kind == CommandKind::interact
         || kind == CommandKind::grab || kind == CommandKind::use_item;
     const bool item = kind == CommandKind::pick_up || kind == CommandKind::drop
         || kind == CommandKind::use_item || kind == CommandKind::store_item
         || kind == CommandKind::wield_item || kind == CommandKind::transfer_item
-        || kind == CommandKind::wire_grid || kind == CommandKind::place_power_object
+        || kind == CommandKind::wire_grid || kind == CommandKind::place_power_object || kind == CommandKind::place_station
         || (kind >= CommandKind::recycle && kind <= CommandKind::cancel_craft);
     if ((!direction && (command.dx || command.dz || command.dy))
         || (!item && command.item)
         || (kind != CommandKind::wait && command.waitCost != ticks_per_turn)
         || (kind != CommandKind::use_item && (command.capability.value || !command.itemAction.empty()))
         || (kind != CommandKind::use_item && kind != CommandKind::store_item && kind != CommandKind::place_power_object && command.otherItem)
-        || (kind != CommandKind::attack && command.target)
+        || (kind != CommandKind::attack && kind != CommandKind::pack_station && command.target)
         || (kind != CommandKind::combat_style && command.style != CombatStyle::Balanced)
         || (kind != CommandKind::interact_action && command.interaction != InteractionRequest{})
         || (kind != CommandKind::craft && command.recipe.value)
@@ -435,6 +435,8 @@ bool ValidCommandShape(const Command& command) {
     if (kind == CommandKind::place_power_object) {
         return command.item != 0 && command.item != command.otherItem && ValidPosition(command.position);
     }
+    if (kind == CommandKind::place_station) { return command.item != 0 && ValidPosition(command.position); }
+    if (kind == CommandKind::pack_station) { return command.target != 0; }
     if (command.kind == CommandKind::wield_item || command.kind == CommandKind::transfer_item) {
         return command.dx == 0 && command.dz == 0 && command.dy == 0 && command.waitCost == ticks_per_turn
             && command.capability.value == 0 && command.itemAction.empty() && command.otherItem == 0
@@ -497,6 +499,8 @@ const char* OutcomeMessage(Outcome outcome) {
     case Outcome::character_created: return "You begin with a fresh character.";
     case Outcome::power_changed: return "Power installation completed.";
     case Outcome::power_refused: return "Power installation refused.";
+    case Outcome::station_changed: return "Workshop equipment changed.";
+    case Outcome::station_refused: return "Workshop action refused.";
     case Outcome::study_started: return "You start studying.";
     case Outcome::study_paused: return "You pause studying after the funded work finishes.";
     case Outcome::study_refused: return "You cannot study that book.";
@@ -554,6 +558,9 @@ const char* OutcomeMessage(Outcome outcome) {
 }
 
 String CommandResultMessage(const CommandResult& result) {
+    if (result.outcome == Outcome::station_changed || result.outcome == Outcome::station_refused) {
+        return StationActionMessage(result.stationOutcome);
+    }
     if (result.outcome == Outcome::power_changed || result.outcome == Outcome::power_refused) {
         return PowerActionMessage(result.powerOutcome);
     }
@@ -587,6 +594,7 @@ String CommandResultMessage(const CommandResult& result) {
         case CraftingOutcome::CapacityExceeded: return "There is not enough capacity for crafting.";
         case CraftingOutcome::MissingSkills: return "You lack the required skill levels.";
         case CraftingOutcome::MissingRecipeReference: return "You need an accessible reference for that recipe.";
+        case CraftingOutcome::StationBusy: return "A required workshop station is in use.";
         default: return OutcomeMessage(result.outcome);
         }
     }
@@ -878,6 +886,19 @@ CommandResult Server::Execute(ActorHandle handle, PlayerSlot& slot, Command comm
         }
         baseCost = power.baseCost;
         outcome = Outcome::power_changed;
+        break;
+    }
+    case CommandKind::place_station:
+    case CommandKind::pack_station: {
+        const auto action = command.kind == CommandKind::place_station
+            ? world_.PlaceStation(handle, world_.FindItem(command.item), command.position)
+            : world_.PackStation(handle, world_.FindObject(command.target));
+        if (!action) { return failed(Outcome::invalid_command); }
+        if (action->outcome != StationActionOutcome::Placed && action->outcome != StationActionOutcome::Packed) {
+            auto result = failed(Outcome::station_refused);
+            result.stationOutcome = action->outcome; return result;
+        }
+        baseCost = static_cast<std::uint32_t>(action->cost); outcome = Outcome::station_changed;
         break;
     }
     case CommandKind::grab: {
@@ -1178,6 +1199,9 @@ CommandResult Server::Execute(ActorHandle handle, PlayerSlot& slot, Command comm
     CommandResult result{outcome, true, GetTick()};
     result.cost = cost;
     if (outcome == Outcome::power_changed) { result.powerOutcome = PowerActionOutcome::Succeeded; }
+    if (outcome == Outcome::station_changed) {
+        result.stationOutcome = command.kind == CommandKind::place_station ? StationActionOutcome::Placed : StationActionOutcome::Packed;
+    }
     return result;
 }
 
@@ -1889,6 +1913,7 @@ WorldView Server::ViewForPlayerAtLayer(PersistentId id, int radius, int layerY) 
             storage.volumeLimitMl = *definition.capacityVolumeMl;
             storage.volumeMl = world_.GetObjectUsedVolume(objectHandle);
             for (const auto handle : object->contents) {
+                if (handle == object->equipment) { continue; }
                 storage.massGrams += world_.GetItemMass(handle);
                 AppendItemTreeDescription(world_, player, handle, result.nearbyItems);
             }
@@ -1919,8 +1944,9 @@ WorldView Server::ViewForPlayerAtLayer(PersistentId id, int radius, int layerY) 
     for (const auto& job : jobs) {
         result.craftingJobs.push_back({job.id, job.kind, job.craftingRecipe, job.recyclingRecipe,
             job.status, job.worker, job.totalWork, job.completedWork,
-            job.fundedTicksRemaining, job.pauseRequested});
+            job.fundedTicksRemaining, job.pauseRequested, job.stations});
     }
+    world_.CollectStations(player, result.stations);
     if (observing) { result.groundItems = DescribeItems(world_, player, world_.ItemsAt(actor->position)); }
     result.carriedMassGrams = world_.GetCarriedMass(player);
     result.carryCapacityGrams = actor->carryCapacityGrams;

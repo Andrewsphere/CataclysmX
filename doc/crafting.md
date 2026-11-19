@@ -125,11 +125,18 @@ unfinished definitions only. Recipe stable
 names resolve to current numeric IDs during loading. Snapshot validation checks
 recipe/work consistency, bounded residues and timers, exact reserved child counts,
 leaf ownership, and duplicate worker claims within an archive.
-Job payload version 2 records worker contributions; version 1 migrates prior work
+Job payload version 3 adds active `stations` bindings; versions 1/2 load with none.
+Version 2 introduced worker contributions; version 1 migrates prior work
 as unattributed. It stores scalar `energy_remainder`, strictly
 less than 100000000. Active statuses require a worker; pause status and flag must
 agree. Paused/refused jobs cannot retain pending work or timers. Worker-unavailable
 jobs may retain already funded work for explicit reassignment.
+Placed, enabled and unbroken object `tool_traits` join item providers in persistent
+ID order. Reach follows storage geometry without requiring a storage bin. Each
+selected station is claimed once per active manual job; another worker skips it
+or receives `StationBusy`. A pause releases claims after paid work, while station
+loss or worker inactivity releases them immediately without erasing paid work.
+See [workshop APIs and recovery](workshop_design.md#w1-runtime-interfaces).
 Recycling also persists the original target's persistent ID in `target` (zero for
 crafting jobs). Snapshot validation requires it to identify exactly one direct
 reserved child with the recipe's target type. Additional inputs may have that same

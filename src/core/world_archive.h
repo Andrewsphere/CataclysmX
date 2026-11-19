@@ -45,6 +45,7 @@ struct SavedObject {
     LightEmission light{};
     ObjectTypeId type{};
     DataObject state;
+    PersistentId equipment = 0;
 };
 
 struct SavedItem {

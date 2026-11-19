@@ -192,6 +192,8 @@ TEST_CASE("Remembered furniture stores stable types and reads legacy memory", "[
             MemorySql raw(file.path.c_str());
             raw.Exec("UPDATE world_state SET payload=json_remove(payload,'$.power')");
             raw.Exec("UPDATE metadata SET format_version=11");
+            raw.Exec("UPDATE chunks SET payload=json_set(payload,'$.objects',json((SELECT json_group_array("
+                "json_remove(value,'$.equipment')) FROM json_each(chunks.payload,'$.objects'))))");
             raw.Exec("UPDATE chunks SET payload=json_set(payload,'$.actors',json((SELECT json_group_array("
                 "json_remove(json_set(value,'$.combat',json_extract(value,'$.combat.legacy')),"
                 "'$.learning','$.equipment','$.character_combat')) FROM json_each(chunks.payload,'$.actors'))))");

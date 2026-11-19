@@ -35,6 +35,7 @@ struct CraftingJobState {
     // Strictly less than craftingEnergyDenominator, including persisted states.
     std::uint64_t energyRemainder = 0;
     bool pauseRequested = false;
+    StaticList<PersistentId, maxRecipeTraits> stations; // Active claims, sorted persistent object IDs.
 };
 bool ValidCraftingSettings(CraftingSettings settings);
 DataObject WriteCraftingState(const CraftingJobState& state);

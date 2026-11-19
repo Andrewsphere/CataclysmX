@@ -264,6 +264,9 @@ std::uint64_t ContentFingerprint(const ContentCatalog& content) {
             HashNumber(hash, object.blocksMovement); HashNumber(hash, object.blocksSight);
             HashNumber(hash, object.movable);
             HashNumber(hash, object.moveCost);
+            HashTraits(hash, object.toolTraits);
+            HashNumber(hash, object.packingItem.value != 0);
+            if (object.packingItem.value) { HashString(hash, content.GetItem(object.packingItem).id); }
             HashNumber(hash, object.light.intensity); HashNumber(hash, object.light.range);
             HashNumber(hash, static_cast<std::uint64_t>(object.behavior));
             switch (object.behavior) {

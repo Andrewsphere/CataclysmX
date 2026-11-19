@@ -7,7 +7,12 @@ namespace cataclysmx {
 bool CanReachStorage(const World& world, TileCoord from, ObjectHandle handle, unsigned radius) {
     const auto* object = world.GetObject(handle);
     const auto* definition = object ? world.GetContent().TryGetObject(object->type) : nullptr;
-    if (radius > 8 || !definition || !definition->capacityVolumeMl || !world.IsActive(from)
+    return definition && definition->capacityVolumeMl && CanReachStation(world, from, handle, radius);
+}
+bool CanReachStation(const World& world, TileCoord from, ObjectHandle handle, unsigned radius) {
+    const auto* object = world.GetObject(handle);
+    const auto* definition = object ? world.GetContent().TryGetObject(object->type) : nullptr;
+    if (radius > 8 || !definition || !world.IsActive(from)
         || !world.IsActive(object->position)) { return false; }
     const TileCoord target = object->position;
     const auto* tile = world.GetTile(target);

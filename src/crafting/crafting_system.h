@@ -26,6 +26,10 @@ public:
     bool ProcessEvents();
     bool Busy(ActorHandle actor) const;
     eastl::optional<Tick> ActorEventIn(ActorHandle actor) const;
+    PersistentId StationWorker(PersistentId station, const CraftingJobState* except = nullptr) const;
+    void ReleaseStation(PersistentId station);
+    void ReleaseWorkerStations(PersistentId worker);
+    void ReleaseUnavailableStations();
 private:
     World& world_;
     CraftingSettings settings_{};
@@ -35,6 +39,11 @@ private:
     Vector<ItemHandle> consumed_;
     Vector<ItemHandle> retained_;
     Vector<ItemHandle> traversal_;
+    Vector<ObjectHandle> stations_;
+    struct ToolProvider {
+        ItemHandle item{};
+        ObjectHandle object{};
+    };
     struct ToolCharge {
         ItemHandle item{};
         ItemCapabilityId power{};
@@ -48,9 +57,9 @@ private:
     bool Reachable(ActorHandle actor, ItemHandle item, unsigned radius) const;
     void Gather(ActorHandle actor, unsigned radius);
     CraftingOutcome Select(const CraftingJobState& state, bool inputs, ItemHandle target,
-        eastl::array<ItemHandle, 4>& tools);
+        eastl::array<ToolProvider, maxRecipeTraits>& tools);
     CraftingOutcome Fund(ActorHandle actor, CraftingJobState& state,
-        const eastl::array<ItemHandle, 4>& tools, bool commit);
+        const eastl::array<ToolProvider, maxRecipeTraits>& tools, bool commit);
     WorldResult<CraftingResult> Begin(ActorHandle actor, CraftingJobState state, ItemHandle target);
     CraftingOutcome ActorAvailability(ActorHandle actor) const;
     CraftingOutcome LearningAvailability(ActorHandle actor, const CraftingJobState& state, unsigned radius) const;

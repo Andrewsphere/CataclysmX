@@ -260,6 +260,8 @@ int main(int argc, char** argv) {
             case CommandKind::new_character: return std::string("create new character");
             case CommandKind::wire_grid: return std::string("wire power grid");
             case CommandKind::place_power_object: return std::string("install power equipment");
+            case CommandKind::place_station: return std::string("place workshop station");
+            case CommandKind::pack_station: return std::string("pack workshop station");
             case CommandKind::equipment: return std::string("change equipment");
             }
             return std::string("action");

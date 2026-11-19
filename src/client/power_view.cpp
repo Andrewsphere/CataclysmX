@@ -24,12 +24,27 @@ namespace cataclysmx {
         else if (key.key == "g") Cycle(equipmentItems_, equipment_);
         else if (key.key == "p") placing_ = !placing_;
         else if (key.key == "Home") cursor_ = view.player_position;
+        else if (key.key == "r") {
+            for (const auto& station : view.stations) {
+                if (station.position != cursor_ || station.packing != StationActionOutcome::Packed) continue;
+                Command command; command.kind = CommandKind::pack_station; command.target = station.id;
+                return command;
+            }
+        }
         else if (key.key == "Enter") {
             Command command;
             if (placing_) {
                 if (!equipment_ || eastl::find(equipmentItems_.begin(), equipmentItems_.end(), equipment_) == equipmentItems_.end()) return {};
                 command.kind = CommandKind::place_power_object; command.item = equipment_; command.otherItem = kit_;
                 command.position = cursor_;
+                for (const auto& item : view.inventory) {
+                    if (item.id != equipment_) continue;
+                    const auto* station = content.TryGetObject(content.GetItem(item.type).placedObject);
+                    if (station && station->packingItem.value) {
+                        command.kind = CommandKind::place_station; command.otherItem = 0;
+                    }
+                    break;
+                }
             } else {
                 if (!kit_ || eastl::find(kits_.begin(), kits_.end(), kit_) == kits_.end()) return {};
                 command.kind = CommandKind::wire_grid; command.item = kit_;
@@ -43,9 +58,9 @@ namespace cataclysmx {
     }
     void PowerWorkshop::Describe(const WorldView& view, const ContentCatalog& content, Vector<String>& lines) {
         Refresh(view, content); lines.clear();
-        lines.push_back("Power workshop | Enter: install | p: wire/place | Escape: back");
+        lines.push_back("Power workshop | Enter: install | p: wire/place | r: pack station at cursor | Escape: back");
         lines.push_back("Arrows: region origin / destination | Home: player | w/W: width +/- | d/D: depth +/-");
-        lines.push_back("Tab: reusable wiring kit | g: carried battery/generator | PgUp/PgDn: scroll");
+        lines.push_back("Tab: reusable wiring kit | g: carried equipment/station | PgUp/PgDn: scroll");
         lines.push_back(String(placing_ ? "Place at " : "Wire inclusive rectangle from ") + NumberText(cursor_.x) + "," + NumberText(cursor_.z)
             + " Y=" + NumberText(view.player_position.y) + " | " + NumberText(width_) + " x " + NumberText(depth_));
         lines.push_back("Kit: " + Name(view, content, kit_) + " | Equipment: " + Name(view, content, equipment_));
@@ -58,6 +73,19 @@ namespace cataclysmx {
             lines.push_back("Battery installation: 4 tile equivalents = " + UnsignedText((4u + kit.wiringTilesPerMaterial - 1) / kit.wiringTilesPerMaterial)
                 + " material item(s). Materials must be accessible ordinary leaf items.");
             break;
+        }
+        for (const auto& station : view.stations) {
+            const auto* definition = content.TryGetObject(station.type);
+            if (!definition) continue;
+            String line = definition->name + " #" + UnsignedText(station.id) + " at "
+                + NumberText(station.position.x) + "," + NumberText(station.position.z);
+            line += station.broken ? " [broken]" : !station.enabled ? " [disabled]" : station.worker ? " [in use]" : " [available]";
+            if (station.worker) line += " worker #" + UnsignedText(station.worker);
+            for (const auto& trait : definition->toolTraits) {
+                line += " | " + content.GetToolTrait(trait.trait).name + " " + UnsignedText(trait.tier);
+            }
+            line += station.packing == StationActionOutcome::Packed ? " | can pack" : String(" | ") + StationActionMessage(station.packing);
+            lines.push_back(eastl::move(line));
         }
         if (!view.currentPower) { lines.push_back("Carry a grid multimeter to inspect power and coverage."); return; }
         const auto& p = *view.currentPower;

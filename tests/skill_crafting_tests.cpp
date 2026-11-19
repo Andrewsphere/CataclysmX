@@ -268,7 +268,7 @@ DataObject LegacyPayload(const CraftingJobState& state) {
     const auto current = WriteCraftingState(state);
     DataObject legacy;
     for (std::size_t i = 0; i < current.Size(); ++i) {
-        if (current.Name(i) != "contributions") { legacy.Set(current.Name(i), current.At(i)); }
+        if (current.Name(i) != "contributions" && current.Name(i) != "stations") { legacy.Set(current.Name(i), current.At(i)); }
     }
     legacy.SetUnsigned("version", 1);
     return legacy;
@@ -279,7 +279,7 @@ TEST_CASE("Crafting contribution persistence accepts legacy work and rejects mal
     state.recipeName = "make"; state.totalWork = 7; state.work = 3 * ratioScale;
     state.contributions.push_back({2, ratioScale}); state.contributions.push_back({5, 2 * ratioScale});
     const auto valid = WriteCraftingState(state);
-    CHECK(*valid.GetUnsigned("version") == 2);
+    CHECK(*valid.GetUnsigned("version") == 3);
     REQUIRE(ReadCraftingState(valid));
     const auto legacy = Take(ReadCraftingState(LegacyPayload(state)));
     CHECK(legacy.work == state.work); CHECK(legacy.contributions.empty());
@@ -299,7 +299,13 @@ TEST_CASE("Crafting contribution persistence accepts legacy work and rejects mal
     SECTION("strict version one status bound") {
         bad = LegacyPayload(state); bad.SetUnsigned("status", static_cast<unsigned>(CraftingStatus::MissingSkills));
     }
-    SECTION("strict version two status bound") { bad.SetUnsigned("status", 8); }
+    SECTION("strict version two status bound") {
+        bad = DataObject{};
+        for (std::size_t i = 0; i < valid.Size(); ++i) {
+            if (valid.Name(i) != "stations") { bad.Set(valid.Name(i), valid.At(i)); }
+        }
+        bad.SetUnsigned("version", 2); bad.SetUnsigned("status", 8);
+    }
     CHECK_FALSE(ReadCraftingState(bad));
 }
 }

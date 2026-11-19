@@ -8,7 +8,7 @@ bool ValidCraftingSettings(CraftingSettings settings) {
 }
 DataObject WriteCraftingState(const CraftingJobState& s) {
     DataObject out;
-    out.SetUnsigned("version", 2);
+    out.SetUnsigned("version", 3);
     out.SetUnsigned("kind", static_cast<unsigned>(s.kind));
     out.SetString("recipe", s.recipeName);
     out.SetUnsigned("status", static_cast<unsigned>(s.status));
@@ -32,6 +32,9 @@ DataObject WriteCraftingState(const CraftingJobState& s) {
         contributions.Append(eastl::move(entry));
     }
     out.Set("contributions", eastl::move(contributions));
+    auto stations = DataObject::List();
+    for (auto station : s.stations) { stations.Append(DataObject::Unsigned(station)); }
+    out.Set("stations", eastl::move(stations));
     return out;
 }
 StateResult<CraftingJobState> ReadCraftingState(const DataObject& in) {
@@ -39,8 +42,8 @@ StateResult<CraftingJobState> ReadCraftingState(const DataObject& in) {
     if (in.Type() != DataType::Object) { return invalid(); }
     const auto version = in.GetUnsigned("version");
     if (!version) { return invalid(); }
-    if (*version != 1 && *version != 2) { return eastl::unexpected(StateError::UnsupportedVersion); }
-    if (in.Size() != (*version == 1 ? 16 : 17)) { return invalid(); }
+    if (*version < 1 || *version > 3) { return eastl::unexpected(StateError::UnsupportedVersion); }
+    if (in.Size() != 15 + *version) { return invalid(); }
     const auto kind = in.GetUnsigned("kind"), status = in.GetUnsigned("status");
     const auto radius = in.GetUnsigned("radius"), slice = in.GetUnsigned("slice");
     const auto worker = in.GetUnsigned("worker"), total = in.GetUnsigned("total");
@@ -51,7 +54,7 @@ StateResult<CraftingJobState> ReadCraftingState(const DataObject& in) {
     const auto recipe = in.GetString("recipe");
     const auto pause = in.GetBoolean("pause");
     const auto energy = in.GetUnsigned("energy_remainder");
-    if (!kind || *kind > 1 || !status || *status > (*version == 1 ? 5u : 7u) || !radius || *radius > 8
+    if (!kind || *kind > 1 || !status || *status > (*version == 1 ? 5u : *version == 2 ? 7u : 8u) || !radius || *radius > 8
         || !slice || *slice == 0 || *slice > 1000 || !worker || !total || !*total || *total > UINT32_MAX
         || !work || !pending || !remaining || *remaining > 1000 || !speed || !*speed || *speed > UINT32_MAX
         || !remainder || *remainder >= *speed || !recipe || recipe->empty() || !pause
@@ -72,7 +75,7 @@ StateResult<CraftingJobState> ReadCraftingState(const DataObject& in) {
     s.timingSpeed = static_cast<std::uint32_t>(*speed); s.timingRemainder = static_cast<std::uint32_t>(*remainder);
     s.pauseRequested = *pause;
     s.energyRemainder = *energy;
-    if (*version == 2) {
+    if (*version >= 2) {
         const auto entries = in.Get("contributions", DataType::List);
         if (!entries) { return invalid(); }
         PersistentId previous = 0;
@@ -84,6 +87,18 @@ StateResult<CraftingJobState> ReadCraftingState(const DataObject& in) {
                 || !completed || !*completed || *completed > s.work - attributed) { return invalid(); }
             s.contributions.push_back({*contributor, *completed});
             previous = *contributor; attributed += *completed;
+        }
+    }
+    if (*version >= 3) {
+        const auto entries = in.Get("stations", DataType::List);
+        if (!entries || (*entries)->Size() > maxRecipeTraits || (!assigned && (*entries)->Size())) { return invalid(); }
+        PersistentId previous = 0;
+        for (std::size_t i = 0; i < (*entries)->Size(); ++i) {
+            const auto& entry = (*entries)->At(i);
+            if (entry.Type() != DataType::Unsigned) { return invalid(); }
+            const auto station = entry.UnsignedValue();
+            if (station <= previous || !s.stations.PushBack(station)) { return invalid(); }
+            previous = station;
         }
     }
     return s;

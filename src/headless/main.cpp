@@ -294,6 +294,16 @@ bool Execute(eastl::unique_ptr<Server>& ownedServer, eastl::string_view line, bo
         std::puts("released");
         return true;
     }
+    if (name == "stations" && count == 1) {
+        const auto view = server.View();
+        for (const auto& station : view.stations) {
+            std::printf("station=%llu name=%s position=%d,%d,%d enabled=%d broken=%d worker=%llu packing=%s\n",
+                static_cast<unsigned long long>(station.id), server.GetWorld().GetContent().GetObject(station.type).name.c_str(),
+                station.position.x, station.position.z, station.position.y, station.enabled, station.broken,
+                static_cast<unsigned long long>(station.worker), StationActionMessage(station.packing));
+        }
+        return true;
+    }
     Command command;
     if (name == "wire-grid" && count == 7) {
         command.kind = CommandKind::wire_grid;
@@ -305,6 +315,13 @@ bool Execute(eastl::unique_ptr<Server>& ownedServer, eastl::string_view line, bo
         command.kind = CommandKind::place_power_object;
         if (!Number(words[1], command.item) || !Number(words[2], command.otherItem)
             || !Number(words[3], command.position.x) || !Number(words[4], command.position.z) || !Number(words[5], command.position.y)) return false;
+    } else if (name == "place-station" && count == 5) {
+        command.kind = CommandKind::place_station;
+        if (!Number(words[1], command.item) || !Number(words[2], command.position.x)
+            || !Number(words[3], command.position.z) || !Number(words[4], command.position.y)) return false;
+    } else if (name == "pack-station" && count == 2) {
+        command.kind = CommandKind::pack_station;
+        if (!Number(words[1], command.target) || !command.target) return false;
     } else if (name == "new-character" && count == 1) {
         command.kind = CommandKind::new_character;
     } else if (name == "study-art" && count == 3) {

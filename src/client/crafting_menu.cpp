@@ -16,6 +16,7 @@ const char* Status(CraftingStatus status) {
     case CraftingStatus::WorkerUnavailable: return "worker unavailable";
     case CraftingStatus::MissingSkills: return "missing skills";
     case CraftingStatus::MissingRecipeReference: return "missing recipe reference";
+    case CraftingStatus::StationBusy: return "station in use";
     }
     return "unknown";
 }
@@ -156,6 +157,7 @@ void CollectCraftingMenu(const WorldView& view, const ContentCatalog& content,
         label += " ["; label += Status(job.status); label += "] worker #" + UnsignedText(job.worker);
         label += " paid ticks " + UnsignedText(job.fundedTicksRemaining);
         if (job.pauseRequested) { label += " (pause requested)"; }
+        for (auto station : job.stations) { label += " | station #" + UnsignedText(station); }
         for (const auto kind : {CommandKind::resume_craft, CommandKind::pause_craft, CommandKind::cancel_craft}) {
             Command command; command.kind = kind; command.item = job.id;
             rows.push_back({command, String(kind == CommandKind::resume_craft ? "Resume" : kind == CommandKind::pause_craft ? "Pause" : "Cancel") + label});

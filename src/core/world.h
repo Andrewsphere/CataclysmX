@@ -1,4 +1,5 @@
 #pragma once
+#include "objects/workshop_types.h"
 
 #include "core/containers.h"
 #include "content/content.h"
@@ -238,6 +239,11 @@ public:
     PowerActionResult PlacePowerObject(ActorHandle actor, ItemHandle equipment,
         ItemHandle wiringKit, TileCoord position);
     bool CanInspectPower(ActorHandle actor) const;
+    WorldResult<StationActionResult> PlaceStation(ActorHandle actor, ItemHandle equipment, TileCoord position);
+    WorldResult<StationActionResult> PackStation(ActorHandle actor, ObjectHandle station);
+    StationActionOutcome QueryPackStation(ActorHandle actor, ObjectHandle station) const;
+    PersistentId StationWorker(ObjectHandle station) const;
+    void CollectStations(ActorHandle actor, Vector<StationView>& output) const;
     // Completion credit reaches a living contributor even while its chunk is archived.
     void LearnRecipe(PersistentId actor, CraftingRecipeId recipe, std::uint64_t points);
     const Item* GetItem(ItemHandle handle) const;
@@ -405,6 +411,7 @@ public:
 
 private:
     friend class CombatSystem;
+    WorldResult<ObjectHandle> CreateTypedObject(ObjectTypeId type, TileCoord position, bool enabled, ItemHandle equipment);
     friend class CraftingSystem;
     friend class LearningSystem;
     friend class PowerSystem;

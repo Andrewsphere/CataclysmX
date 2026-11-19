@@ -134,7 +134,7 @@ TEST_CASE("Power view codec preserves meter inspection and rejects unauthorized 
     CHECK(decoded.currentPower->generatorOutputAvailable == 25); CHECK(decoded.currentPower->unloadedDevices == 5);
     CHECK(decoded.cells == view.cells);
     auto bad = writer.bytes;
-    bad[bad.size() - 54] = 255; // Optional inspection presence is a strict boolean.
+    bad[bad.size() - 56] = 255; // Strict presence boolean, followed by meter data and the empty station count.
     wire::Reader invalidPresence{{bad.data(), bad.size()}};
     CHECK_FALSE(invalidPresence.View(decoded));
     wire::Reader truncated{{writer.bytes.data(), writer.bytes.size() - 1}};
@@ -169,10 +169,10 @@ TEST_CASE("Power view settings accept the named maximum and reject out of range 
         wire::Writer badWidth; CHECK_FALSE(badWidth.View(bad));
         bad = view; bad.powerSettings.maxWiringDepth = invalid;
         wire::Writer badDepth; CHECK_FALSE(badDepth.View(bad));
-        // No meter: tail is width I32, depth I32, optional-inspection boolean.
-        auto bytes = writer.bytes; bytes[bytes.size() - 6] = static_cast<std::uint8_t>(invalid);
+        // No meter/stations: width I32, depth I32, presence boolean, station count U16.
+        auto bytes = writer.bytes; bytes[bytes.size() - 8] = static_cast<std::uint8_t>(invalid);
         wire::Reader widthReader{{bytes.data(), bytes.size()}}; CHECK_FALSE(widthReader.View(decoded));
-        bytes = writer.bytes; bytes[bytes.size() - 2] = static_cast<std::uint8_t>(invalid);
+        bytes = writer.bytes; bytes[bytes.size() - 4] = static_cast<std::uint8_t>(invalid);
         wire::Reader depthReader{{bytes.data(), bytes.size()}}; CHECK_FALSE(depthReader.View(decoded));
     }
 }

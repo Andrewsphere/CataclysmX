@@ -860,7 +860,7 @@ bool ValidateChunk(const ContentCatalog& content, const ChunkArchive& chunk,
         std::uint64_t usedVolume = 0;
         for (std::size_t i = 0; i < chunk.items.size(); ++i) {
             const auto& item = chunk.items[i];
-            if (item.location != LocationKind::object || item.owner != object.id) { continue; }
+            if (item.location != LocationKind::object || item.owner != object.id || item.id == object.equipment) { continue; }
             if (externalVolumes[i] > UINT64_MAX - usedVolume) { return false; }
             usedVolume += externalVolumes[i];
         }
@@ -1181,6 +1181,7 @@ String EncodeChunk(const ContentCatalog& content, const ChunkArchive& chunk) {
         EncodeLight(writer, value, object.light);
         writer.Text(value, "type", object.type == ObjectTypeId{} ? "" : content.TryGetObject(object.type)->id.c_str());
         writer.Add(value, "state", EncodeValue(writer, object.state));
+        writer.Counter(value, "equipment", object.equipment);
         writer.Counter(value, "updates", object.updates);
         writer.Integer(value, "update_interval", object.updateInterval);
         writer.Counter(value, "remaining_ticks", object.remainingTicks);
@@ -1435,7 +1436,9 @@ SaveResult<ChunkArchive> DecodeChunk(const ContentCatalog& content, const char* 
     while (auto* value = yyjson_arr_iter_next(&objectIterator)) {
         SavedObject object{};
         ObjectAppearance appearance;
-        const bool fields = formatVersion < 9
+        const bool fields = formatVersion >= 16
+            ? Fields(value, {"id", "position", "enabled", "updates", "contents", "update_interval", "remaining_ticks", "kind", "facing", "broken", "light", "type", "state", "equipment"})
+            : formatVersion < 9
             ? Fields(value, {"id", "position", "enabled", "updates", "contents", "update_interval", "remaining_ticks", "kind", "facing", "broken", "light"})
             : Fields(value, {"id", "position", "enabled", "updates", "contents", "update_interval", "remaining_ticks", "kind", "facing", "broken", "light", "type", "state"});
         if (!fields
@@ -1451,6 +1454,9 @@ SaveResult<ChunkArchive> DecodeChunk(const ContentCatalog& content, const char* 
         object.kind = appearance.kind;
         object.facing = appearance.facing;
         object.broken = yyjson_get_bool(Get(value, "broken"));
+        if (formatVersion >= 16 && !Counter(Get(value, "equipment"), object.equipment)) {
+            return Failure(SaveError::InvalidData, "Invalid station equipment identity", diagnostics);
+        }
         if (formatVersion >= 9) {
             auto* type = Get(value, "type");
             if (!yyjson_is_str(type)) { return Failure(SaveError::InvalidData, "Object type must be a stable string", diagnostics); }
@@ -1795,6 +1801,8 @@ SaveResult<void> ValidateDatabase(const ContentCatalog& content, sqlite3* db,
     Vector<PersistentId> memoryOwners;
     Vector<PersistentId> studyingActors;
     Vector<PersistentId> craftingWorkers;
+    Vector<PersistentId> claimedStations;
+    Vector<PersistentId> stationIds;
     std::size_t powerDevicesFound = 0;
     const bool authoritative = snapshot.session.player != 0 || !snapshot.session.players.empty();
     bool havePrevious = false;
@@ -1859,6 +1867,8 @@ SaveResult<void> ValidateDatabase(const ContentCatalog& content, sqlite3* db,
         }
         for (const auto& object : chunk->objects) {
             ids.push_back(object.id);
+            const auto* station = content.TryGetObject(object.type);
+            if (station && !station->toolTraits.Empty() && object.enabled && !object.broken) { stationIds.push_back(object.id); }
             const auto device = eastl::lower_bound(snapshot.power.devices.begin(), snapshot.power.devices.end(), object.id,
                 [](const SavedPowerDevice& value, PersistentId id) { return value.object < id; });
             const bool indexed = device != snapshot.power.devices.end() && device->object == object.id;
@@ -1899,10 +1909,18 @@ SaveResult<void> ValidateDatabase(const ContentCatalog& content, sqlite3* db,
             if (content.GetItem(item.type).unfinishedCraft) {
                 const auto job = ReadCraftingState(*item.state.Find("crafting_job"));
                 if (job->worker) { craftingWorkers.push_back(job->worker); }
+                for (auto station : job->stations) { claimedStations.push_back(station); }
             }
         }
     }
     if (code != SQLITE_DONE) { return Failure(SqlError(code), sqlite3_errmsg(db), diagnostics); }
+    if (!Unique(claimedStations)) { return Failure(SaveError::InvalidData, "Station claimed by multiple crafting jobs", diagnostics); }
+    eastl::sort(stationIds.begin(), stationIds.end());
+    for (auto station : claimedStations) {
+        if (!eastl::binary_search(stationIds.begin(), stationIds.end(), station)) {
+            return Failure(SaveError::InvalidData, "Crafting station claim has no durable station", diagnostics);
+        }
+    }
     if (powerDevicesFound != snapshot.power.devices.size()) {
         return Failure(SaveError::InvalidData, "Power device is not a durable object", diagnostics);
     }
@@ -1993,7 +2011,7 @@ SaveResult<void> SaveDatabase::Create(const char* path, Diagnostics* diagnostics
         "BEGIN IMMEDIATE;"
         "CREATE TABLE metadata(singleton INTEGER PRIMARY KEY CHECK(singleton=1),"
         "format_version INTEGER NOT NULL,game_version TEXT NOT NULL);"
-        "INSERT INTO metadata VALUES(1,15,'0.1.0');"
+        "INSERT INTO metadata VALUES(1,16,'0.1.0');"
         "CREATE TABLE world_state(singleton INTEGER PRIMARY KEY CHECK(singleton=1),payload TEXT NOT NULL);"
         "CREATE TABLE chunks(x INTEGER NOT NULL,z INTEGER NOT NULL,y INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(x,z,y));"
         "CREATE TABLE player_memories(player_id TEXT NOT NULL,x INTEGER NOT NULL,z INTEGER NOT NULL,y INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(player_id,x,z,y));"
@@ -2166,7 +2184,7 @@ SaveResult<void> SaveDatabase::Begin(Diagnostics* diagnostics) {
         if (code == SQLITE_OK) { code = sqlite3_step(statement.value); }
         if (code != SQLITE_DONE) { return impl_->WriteFailure(code, diagnostics); }
     }
-    auto upgraded = Execute(db, "UPDATE metadata SET format_version=15 WHERE singleton=1", diagnostics);
+    auto upgraded = Execute(db, "UPDATE metadata SET format_version=16 WHERE singleton=1", diagnostics);
     if (!upgraded) { impl_->Rollback(); return upgraded; }
     impl_->effectiveVersion = save_format_version;
     return {};

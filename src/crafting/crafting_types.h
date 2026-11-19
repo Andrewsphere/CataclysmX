@@ -8,13 +8,13 @@ namespace cataclysmx {
 enum class CraftingKind : std::uint8_t { Craft, Recycle };
 enum class CraftingStatus : std::uint8_t {
     Paused, Working, PauseRequested, MissingTools, InsufficientEnergy, WorkerUnavailable,
-    MissingSkills, MissingRecipeReference
+    MissingSkills, MissingRecipeReference, StationBusy
 };
 enum class CraftingOutcome : std::uint8_t {
     Started, Resumed, PauseRequested, Paused, Cancelled, ActorUnavailable,
     ActorBusy, JobBusy, OutOfReach, RecipeDisabled, InvalidTarget,
     MissingInputs, MissingTools, InsufficientEnergy, CapacityExceeded,
-    MissingSkills, MissingRecipeReference
+    MissingSkills, MissingRecipeReference, StationBusy
 };
 struct CraftingSettings {
     std::uint8_t nearbyRadius = 1;
@@ -36,5 +36,6 @@ struct CraftingJobView {
     std::uint32_t completedWork = 0;
     Tick fundedTicksRemaining = 0;
     bool pauseRequested = false;
+    StaticList<PersistentId, maxRecipeTraits> stations;
 };
 }

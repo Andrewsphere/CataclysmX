@@ -1,9 +1,15 @@
 # LAN networking API
 
-## Current protocol 23
+## Current protocol 24
 
-The current protocol constant is `0x43584e17`. Peers need matching builds and
-content. Protocol 23 adds grid wiring/equipment placement, typed power outcomes,
+The current protocol constant is `0x43584e18`. Peers need matching builds and
+content. Protocol 24 adds `place_station` (item ID and position), `pack_station`
+(target object ID), typed station outcomes, nearby station inspection and sorted
+active station IDs on crafting jobs. Views carry at most 289 nearby stations
+(radius 8); each has persistent identity, content type, position, enabled/broken
+flags, worker identity and packing availability. Object traits and packing mappings
+participate in content fingerprints. See [workshop design](workshop_design.md).
+Protocol 23 added grid wiring/equipment placement, typed power outcomes,
 meter-gated coverage and supply views, and powered-object inspection. Future mains
 shutdown timing remains host DEBUG information. See [power presentation](power_presentation.md).
 Protocol 22 added sparse injured enemy health to ordinary gameplay views.

@@ -399,7 +399,7 @@ bool ValidateArchive(const ContentCatalog& content, const Archive& saved,
         if (!definition->capacityVolumeMl) { continue; }
         std::uint64_t used = 0;
         for (const auto& item : saved.items) {
-            if (item.location != LocationKind::object || item.owner != object.id) { continue; }
+            if (item.location != LocationKind::object || item.owner != object.id || item.id == object.equipment) { continue; }
             const auto amount = volume(volume, item);
             if (amount > *definition->capacityVolumeMl - used) { return false; }
             used += amount;
@@ -556,15 +556,18 @@ public:
         const Chunk* chunk = GetChunk(ChunkOf(actor.position));
         actor.actionDeadline.SetRunning(tick, actor.combat.life == ActorLifeState::Alive && chunk && chunk->active && !actor.parked
             && (actor.player || actor.controller_));
+        if (actor.actionDeadline.suspended) { craftingSystem.ReleaseWorkerStations(actor.id); }
     }
     void RefreshSchedule(InteractiveObject& object) {
         const Chunk* chunk = GetChunk(ChunkOf(object.position));
         object.updateDeadline.SetRunning(tick, chunk && chunk->active && object.enabled && !object.type.value);
+        if (!chunk || !chunk->active || !object.enabled || object.broken) { craftingSystem.ReleaseStation(object.id); }
     }
     void SetChunkActive(Chunk& chunk, bool active) {
         chunk.active = active;
         for (auto handle : chunk.actors) { RefreshSchedule(*Live(actors, handle)); }
         for (auto handle : chunk.objects) { RefreshSchedule(*Live(objects, handle)); }
+        if (!active) { craftingSystem.ReleaseUnavailableStations(); }
     }
     SaveResult<void> ValidateActivation(const Chunk& chunk, Diagnostics* diagnostics) const {
         const Tick room = eastl::numeric_limits<Tick>::max() - tick;
@@ -881,6 +884,7 @@ public:
     // Preflight belongs to the caller. No callbacks observe partial relocation.
     void RelocateObject(World& world, ObjectHandle handle, TileCoord destination) {
         auto* object = Live(objects, handle);
+        craftingSystem.ReleaseStation(object->id);
         const ChunkCoord previous = ChunkOf(object->position), next = ChunkOf(destination);
         QueueGravity(object->position);
         QueueGravity(destination);
@@ -1064,6 +1068,7 @@ public:
     std::uint64_t ObjectVolume(ObjectHandle handle) const {
         std::uint64_t result = 0;
         for (ItemHandle child : Live(objects, handle)->contents) {
+            if (child == Live(objects, handle)->equipment) { continue; }
             result = CheckedAdd(result, ExternalVolume(child));
         }
         return result;
@@ -1156,12 +1161,12 @@ public:
         if (root.kind == LocationKind::object) {
             const auto* object = Live(objects, root.object);
             const auto* objectDefinition = content.TryGetObject(object->type);
-            if (objectDefinition && objectDefinition->capacityVolumeMl) {
+            if (objectDefinition && objectDefinition->capacityVolumeMl && (!moving.value || moving != object->equipment)) {
                 const auto inserted = moving.value ? ExternalVolume(moving)
                     : (definition.unfinishedCraft ? 0 : definition.volumeMl);
                 std::uint64_t used = 0;
                 for (ItemHandle child : object->contents) {
-                    if (child != moving) {
+                    if (child != moving && child != object->equipment) {
                         used = CheckedAdd(used, ProjectedVolume(child, moving, location, inserted));
                     }
                 }
@@ -1453,7 +1458,8 @@ public:
             saved.objects.push_back({object->id, object->position, object->enabled, object->updates,
                 object->updateInterval, object->updateDeadline.Remaining(tick), object->kind, object->facing,
                 object->broken, object->light, object->type,
-                object->behavior_ ? object->behavior_->SaveState() : DataObject{}});
+                object->behavior_ ? object->behavior_->SaveState() : DataObject{},
+                object->equipment.value ? Live(items, object->equipment)->id : 0});
             for (ItemHandle item : object->contents) {
                 pending.push_back(item);
             }
@@ -1482,6 +1488,8 @@ public:
     }
 
     void Unload(const Chunk& value) {
+        for (auto actor : value.actors) { craftingSystem.ReleaseWorkerStations(Live(actors, actor)->id); }
+        for (auto object : value.objects) { craftingSystem.ReleaseStation(Live(objects, object)->id); }
         Vector<ItemHandle> pending;
         Archive saved = Capture(value, &pending);
         // First capture all values; then retire every runtime key. Do not reset
@@ -1594,6 +1602,9 @@ public:
             Require(itemSystem.Initialize(restored, &item.state).has_value());
             const auto key = items.emplace(eastl::move(restored));
             Collection(location).push_back({key.raw});
+        }
+        for (const auto& object : saved.objects) {
+            Live(objects, FindObject(object.id))->equipment = FindItem(object.equipment);
         }
         for (const auto& actor : saved.actors) {
             const auto handle = FindActor(actor.id);
@@ -2468,6 +2479,104 @@ PowerActionResult World::PlacePowerObject(ActorHandle actorHandle, ItemHandle eq
     return {PowerActionOutcome::Succeeded, cost};
 }
 
+const char* StationActionMessage(StationActionOutcome outcome) {
+    switch (outcome) {
+    case StationActionOutcome::Placed: return "Workshop station placed";
+    case StationActionOutcome::Packed: return "Workshop station packed";
+    case StationActionOutcome::OutOfReach: return "Workshop station is out of reach";
+    case StationActionOutcome::Occupied: return "The station tile is occupied";
+    case StationActionOutcome::InvalidEquipment: return "Carry the station's empty packing item";
+    case StationActionOutcome::StationBusy: return "Workshop station is in use";
+    case StationActionOutcome::NotEmpty: return "Empty the station before packing it";
+    case StationActionOutcome::Broken: return "Broken stations cannot be packed";
+    case StationActionOutcome::FixedFixture: return "This station is a fixed fixture";
+    case StationActionOutcome::Unavailable: return "Workshop action is unavailable";
+    }
+    return "Invalid workshop action";
+}
+
+PersistentId World::StationWorker(ObjectHandle handle) const {
+    const auto* object = GetObject(handle);
+    return object ? impl_->craftingSystem.StationWorker(object->id) : 0;
+}
+
+WorldResult<StationActionResult> World::PlaceStation(ActorHandle actorHandle, ItemHandle equipment, TileCoord position) {
+    const auto* actor = GetActor(actorHandle);
+    const auto* item = GetItem(equipment);
+    if (!actor || !item) { return eastl::unexpected(WorldError::invalid_handle); }
+    if (!ValidPosition(position)) { return eastl::unexpected(WorldError::invalid_request); }
+    if (!IsActorAlive(actorHandle) || actor->parked || !IsActive(actor->position)
+        || actor->actionDeadline.Remaining(impl_->tick) || actor->combat.action.kind != ActorActionKind::None
+        || impl_->craftingSystem.Busy(actorHandle) || impl_->learningSystem.Busy(actorHandle)
+        || ActionTicks(400, actor->speed) > UINT64_MAX - impl_->tick) { return StationActionResult{}; }
+    const auto& definition = impl_->content.GetItem(item->type);
+    const auto* station = impl_->content.TryGetObject(definition.placedObject);
+    if (!station || station->packingItem != item->type || !CarriedPowerItem(*this, actorHandle, equipment)
+        || !item->contents.empty()) { return StationActionResult{StationActionOutcome::InvalidEquipment}; }
+    if (!CanAccessGroundStorage(actorHandle, position)) { return StationActionResult{StationActionOutcome::OutOfReach}; }
+    if (ObjectAt(position).value || (station->blocksMovement && ActorAt(position).value)) {
+        return StationActionResult{StationActionOutcome::Occupied};
+    }
+    Impl::GravityBatch batch(*this); BeginCraftingMutation();
+    Require(CreateTypedObject(definition.placedObject, position, true, equipment).has_value());
+    EndCraftingMutation();
+    return StationActionResult{StationActionOutcome::Placed, 400};
+}
+
+StationActionOutcome World::QueryPackStation(ActorHandle actorHandle, ObjectHandle handle) const {
+    const auto* actor = GetActor(actorHandle);
+    const auto* object = GetObject(handle);
+    if (!actor || !object || !IsActorAlive(actorHandle) || actor->parked || !IsActive(actor->position)
+        || actor->actionDeadline.Remaining(impl_->tick) || actor->combat.action.kind != ActorActionKind::None
+        || impl_->craftingSystem.Busy(actorHandle) || impl_->learningSystem.Busy(actorHandle)
+        || ActionTicks(400, actor->speed) > UINT64_MAX - impl_->tick) { return StationActionOutcome::Unavailable; }
+    if (!CanReachStation(*this, actor->position, handle, 1)) { return StationActionOutcome::OutOfReach; }
+    const auto* definition = impl_->content.TryGetObject(object->type);
+    if (!definition || !definition->packingItem.value) { return StationActionOutcome::FixedFixture; }
+    if (object->broken) { return StationActionOutcome::Broken; }
+    if (StationWorker(handle)) { return StationActionOutcome::StationBusy; }
+    const auto* equipment = GetItem(object->equipment);
+    if (!equipment || equipment->type != definition->packingItem || !equipment->contents.empty()
+        || equipment->location != ItemLocation::Stored(handle)) { return StationActionOutcome::InvalidEquipment; }
+    if (object->contents.size() != 1) { return StationActionOutcome::NotEmpty; }
+    return StationActionOutcome::Packed;
+}
+
+WorldResult<StationActionResult> World::PackStation(ActorHandle actor, ObjectHandle handle) {
+    if (!GetActor(actor) || !GetObject(handle)) { return eastl::unexpected(WorldError::invalid_handle); }
+    const auto outcome = QueryPackStation(actor, handle);
+    if (outcome != StationActionOutcome::Packed) { return StationActionResult{outcome}; }
+    const auto equipment = GetObject(handle)->equipment;
+    const auto position = GetObject(handle)->position;
+    Impl::GravityBatch batch(*this); BeginCraftingMutation();
+    Live(impl_->objects, handle)->equipment = {};
+    const auto carried = TransferItem(equipment, ItemLocation::Carried(actor));
+    if (!carried) {
+        Require(carried.error() == WorldError::capacity_exceeded);
+        Require(TransferItem(equipment, ItemLocation::Ground(position)).has_value());
+    }
+    Require(DestroyObject(handle).has_value());
+    EndCraftingMutation();
+    return StationActionResult{StationActionOutcome::Packed, 400};
+}
+
+void World::CollectStations(ActorHandle actorHandle, Vector<StationView>& output) const {
+    output.clear();
+    const auto* actor = GetActor(actorHandle);
+    if (!actor || !IsActorAlive(actorHandle) || actor->parked || !IsActive(actor->position)) { return; }
+    const int radius = eastl::max<int>(1, GetCraftingSettings().nearbyRadius);
+    for (int z = -radius; z <= radius; ++z) { for (int x = -radius; x <= radius; ++x) {
+        const auto handle = ObjectAt({actor->position.x + x, actor->position.z + z, actor->position.y});
+        const auto* object = GetObject(handle);
+        const auto* definition = object ? impl_->content.TryGetObject(object->type) : nullptr;
+        if (!definition || (definition->toolTraits.Empty() && !definition->packingItem.value)
+            || !CanReachStation(*this, actor->position, handle, radius)) { continue; }
+        output.push_back({object->id, object->type, object->position, object->enabled, object->broken,
+            StationWorker(handle), QueryPackStation(actorHandle, handle)});
+    } }
+    eastl::sort(output.begin(), output.end(), [](const StationView& a, const StationView& b) { return a.id < b.id; });
+}
+
 bool World::CanInspectPower(ActorHandle actorHandle) const {
     const auto* actor = GetActor(actorHandle);
     if (!actor || !IsActorAlive(actorHandle) || actor->parked || !IsActive(actor->position)) { return false; }
@@ -2963,6 +3072,7 @@ WorldResult<void> World::SetActorParked(ActorHandle handle, bool parked) {
     value->parked = parked;
     impl_->OccupyActorTile(handle);
     impl_->RefreshSchedule(*value);
+    if (parked) { impl_->craftingSystem.ReleaseUnavailableStations(); }
     if (value->light.intensity) { impl_->MarkLightingDirty(ChunkOf(value->position)); }
     impl_->MarkDirty(ChunkOf(value->position));
     impl_->QueueGravity(value->position);
@@ -2998,6 +3108,7 @@ WorldResult<void> World::DestroyActor(ActorHandle handle) {
     EraseOne(impl_->GetChunk(ChunkOf(position))->actors, handle);
     impl_->VacateActorTile(handle);
     if (value->player) { impl_->ForgetPlayer(value->id); }
+    impl_->craftingSystem.ReleaseWorkerStations(value->id);
     if (value->light.intensity && !value->parked) { impl_->MarkLightingDirty(ChunkOf(position)); }
     Require(impl_->actorIds.erase(value->id) == 1);
     impl_->actors.erase(dod::slot_map64<Actor>::key{handle.value});
@@ -3029,6 +3140,7 @@ void World::MarkActorDead(ActorHandle handle, PersistentId killer) {
         auto state = ReadCraftingState(*data.Find("crafting_job"));
         Require(state.has_value());
         state->worker = 0; state->pauseRequested = false; state->status = CraftingStatus::WorkerUnavailable;
+        state->stations = {};
         data.Set("crafting_job", WriteCraftingState(*state));
         DetachCrafting(item);
         Require(impl_->itemSystem.Initialize(*MutableItem(item), &data).has_value());
@@ -3268,6 +3380,7 @@ WorldResult<void> World::TransferItem(ItemHandle handle, ItemLocation location) 
     EraseOne(impl_->Collection(value->location), handle);
     impl_->Collection(*destination).push_back(handle);
     value->location = *destination;
+    impl_->craftingSystem.ReleaseUnavailableStations();
     impl_->itemSystem.BeginCallback();
     for (ItemHandle current : moved) { impl_->itemSystem.Notify({ItemChangeKind::Moved, current, {}}); }
     if (old.kind == LocationKind::item) { impl_->itemSystem.Notify({ItemChangeKind::ContentsChanged, old.item, old.installation}); }
@@ -3328,6 +3441,10 @@ bool World::IsReservedItem(ItemHandle handle) const {
     for (unsigned depth = 0; item && item->location.kind == LocationKind::item && depth < 64; ++depth) {
         item = GetItem(item->location.item);
         if (item && impl_->content.GetItem(item->type).unfinishedCraft) { return true; }
+    }
+    if (item && item->location.kind == LocationKind::object) {
+        const auto* object = GetObject(item->location.object);
+        return object && object->equipment.value && GetItem(object->equipment) == item;
     }
     return false;
 }
@@ -3492,6 +3609,10 @@ WorldResult<ObjectHandle> World::CreateObject(TileCoord position, bool enabled) 
 }
 
 WorldResult<ObjectHandle> World::CreateObject(ObjectTypeId type, TileCoord position, bool enabled) {
+    return CreateTypedObject(type, position, enabled, {});
+}
+
+WorldResult<ObjectHandle> World::CreateTypedObject(ObjectTypeId type, TileCoord position, bool enabled, ItemHandle equipment) {
     const auto* definition = impl_->content.TryGetObject(type);
     if (!definition) { return eastl::unexpected(WorldError::invalid_request); }
     if (auto available = impl_->Available(position); !available) { return eastl::unexpected(available.error()); }
@@ -3511,6 +3632,16 @@ WorldResult<ObjectHandle> World::CreateObject(ObjectTypeId type, TileCoord posit
     const auto key = impl_->objects.emplace(eastl::move(object));
     const ObjectHandle handle{key.raw};
     impl_->GetChunk(ChunkOf(position))->objects.push_back(handle);
+    if (definition->packingItem.value) {
+        BeginCraftingMutation();
+        if (!equipment.value) {
+            const auto created = CreateItem(definition->packingItem, ItemLocation::Ground(position));
+            Require(created.has_value()); equipment = *created;
+        }
+        Live(impl_->objects, handle)->equipment = equipment;
+        Require(TransferItem(equipment, ItemLocation::Stored(handle)).has_value());
+        EndCraftingMutation();
+    }
     impl_->RefreshSchedule(*Live(impl_->objects, handle));
     impl_->MarkDirty(ChunkOf(position), true, true);
     impl_->MarkGeometryDirty(ChunkOf(position));
@@ -3582,6 +3713,7 @@ ObjectMoveResult World::QueryObjectMove(ActorHandle actorHandle, ObjectHandle ha
     if (a.y != o.y || std::abs(dx) + std::abs(dz) != 1) { return {ObjectMoveOutcome::OutOfReach}; }
     const auto* definition = impl_->content.TryGetObject(object->type);
     if (!definition || !definition->movable) { return {ObjectMoveOutcome::Immovable}; }
+    if (StationWorker(handle)) { return {ObjectMoveOutcome::Occupied}; }
     const TileCoord actorDestination = kind == ObjectMoveKind::Push ? o : TileCoord{a.x - dx, a.z - dz, a.y};
     const TileCoord objectDestination = kind == ObjectMoveKind::Push ? TileCoord{o.x + dx, o.z + dz, o.y} : a;
     for (TileCoord destination : {actorDestination, objectDestination}) {
@@ -3625,6 +3757,7 @@ ObjectMoveResult World::QueryObjectStep(ActorHandle actorHandle, ObjectHandle ha
     }
     const auto* definition = impl_->content.TryGetObject(object->type);
     if (!definition || !definition->movable) { return {ObjectMoveOutcome::Immovable}; }
+    if (StationWorker(handle)) { return {ObjectMoveOutcome::Occupied}; }
     const TileCoord actorDestination{a.x + direction.x, a.z + direction.z, a.y};
     const TileCoord objectDestination{o.x + direction.x, o.z + direction.z, o.y};
     // The pair may enter each other's vacated tile, but cannot displace a third occupant.
@@ -3731,18 +3864,20 @@ ObjectUseReason ObjectReadContext::CheckCollect(ActorHandle actor) const {
         return ObjectUseReason::OutOfReach;
     }
     const auto& contents = world_.GetObject(self_)->contents;
-    if (contents.empty()) { return ObjectUseReason::NoContents; }
+    bool found = false;
     const auto capacity = world_.GetActor(actor)->carryCapacityGrams;
     const auto mass = world_.GetCarriedMass(actor);
     std::uint64_t available = capacity > mass ? capacity - mass : 0;
     for (auto item : contents) {
+        if (world_.IsReservedItem(item)) { continue; }
+        found = true;
         const auto weight = world_.GetItemMass(item);
         if (weight > available || !world_.CheckItemTransfer(item, ItemLocation::Carried(actor))) {
             return ObjectUseReason::NoCapacity;
         }
         available -= weight;
     }
-    return ObjectUseReason::None;
+    return found ? ObjectUseReason::None : ObjectUseReason::NoContents;
 }
 void World::QueryObjectActions(ActorHandle actor, ObjectHandle handle, Vector<ObjectActionInfo>& output) const {
     const auto* object = GetObject(handle);
@@ -3829,6 +3964,7 @@ WorldResult<void> World::CollectObjectContents(ActorHandle actorHandle, ObjectHa
     if (!CanUseObject(actorHandle, handle)) { return eastl::unexpected(WorldError::blocked); }
     const auto* actor = GetActor(actorHandle);
     Vector<ItemHandle> contents = GetObject(handle)->contents;
+    eastl::erase_if(contents, [this](ItemHandle item) { return IsReservedItem(item); });
     eastl::sort(contents.begin(), contents.end(), [this](ItemHandle a, ItemHandle b) { return GetItem(a)->id < GetItem(b)->id; });
     if (contents.empty()) { return eastl::unexpected(WorldError::invalid_request); }
     std::uint64_t available = actor->carryCapacityGrams - GetCarriedMass(actorHandle);
@@ -3865,6 +4001,8 @@ WorldResult<void> World::DestroyObject(ObjectHandle handle) {
         return eastl::unexpected(WorldError::invalid_handle);
     }
     const TileCoord position = value->position;
+    impl_->craftingSystem.ReleaseStation(value->id);
+    value->equipment = {}; // Destruction releases the original item to the ground.
     impl_->QueueGravity(position);
     while (!value->contents.empty()) {
         Require(TransferItem(value->contents.back(), ItemLocation::Ground(position)).has_value());
@@ -3890,6 +4028,7 @@ WorldResult<void> World::SetObjectEnabled(ObjectHandle handle, bool enabled) {
     if (value->enabled == enabled) { return {}; }
     if (value->light.intensity) { impl_->MarkLightingDirty(ChunkOf(value->position)); }
     value->enabled = enabled;
+    if (!enabled) { impl_->craftingSystem.ReleaseStation(value->id); }
     impl_->RefreshSchedule(*value);
     impl_->powerSystem.SyncObject(handle);
     impl_->MarkDirty(ChunkOf(value->position), true, true);
@@ -3910,6 +4049,7 @@ WorldResult<void> World::SetObjectAppearance(ObjectHandle handle, ObjectKind kin
     object->kind = kind;
     object->facing = facing;
     object->broken = broken;
+    if (broken) { impl_->craftingSystem.ReleaseStation(object->id); }
     impl_->powerSystem.SyncObject(handle);
     impl_->MarkDirty(ChunkOf(object->position), true, true);
     return {};
@@ -4525,6 +4665,11 @@ bool World::CheckInvariants() const {
             if (!definition || (definition->behavior == ObjectBehaviorKind::None
                     || definition->behavior == ObjectBehaviorKind::GridBattery) != !value.behavior_
                 || !ValidateObjectBehaviorState(*definition, CaptureObjectState(handle))) { return false; }
+            const auto* equipment = GetItem(value.equipment);
+            if (definition->packingItem.value) {
+                if (!equipment || equipment->type != definition->packingItem || !equipment->contents.empty()
+                    || equipment->location != ItemLocation::Stored(handle)) { return false; }
+            } else if (value.equipment.value) { return false; }
             if ((definition->blocksMovement && ActorAt(value.position).value)
                 || (definition->capacityVolumeMl && state.ObjectVolume(handle) > *definition->capacityVolumeMl)) { return false; }
         } else if (value.behavior_) { return false; }

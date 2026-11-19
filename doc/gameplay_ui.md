@@ -122,6 +122,9 @@ power
 power-debug
 wire-grid <kit-id> <min-x> <min-z> <max-x> <max-z> <y>
 place-power <equipment-id> <wiring-kit-id-or-0> <x> <z> <y>
+stations
+place-station <equipment-id> <x> <z> <y>
+pack-station <object-id>
 ```
 
 `power` uses normal meter eligibility; `power-debug` is administrative inspection.

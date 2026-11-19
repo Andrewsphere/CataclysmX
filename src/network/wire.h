@@ -6,8 +6,8 @@
 
 namespace cataclysmx::network::wire {
 
-// Version 23 adds power commands, meter views and powered object inspection.
-inline constexpr std::uint32_t protocol = 0x43584e17;
+// Version 24 adds portable stations, workshop views and crafting station claims.
+inline constexpr std::uint32_t protocol = 0x43584e18;
 inline constexpr int maxViewRadius = maxPresentationRadius;
 inline constexpr int maxViewDimension = 2 * maxViewRadius + 1;
 static_assert(maxViewDimension <= UINT8_MAX && maxViewDimension * maxViewDimension <= UINT16_MAX);

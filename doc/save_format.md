@@ -348,13 +348,29 @@ version 4 introduced authored layers and population. Regeneration depends on the
 supplied immutable content: changed patterns or palettes can change ungenerated
 chunks even when the saved generation version is unchanged. Region plans are
 regenerated, not serialized; global electrical state is serialized independently.
-The SQL/JSON save schema is version 15; strict formats 7 through 14 are also
+The SQL/JSON save schema is version 16; strict formats 7 through 15 are also
 accepted and migrated as described below. Save formats v1 through v6 and all other schema
 versions are rejected. In particular, v2 command-count ticks are not silently reinterpreted as
 simulation ticks. Content's own format version is independent of both versions.
 Version 7 explicitly adds illumination sources, object semantic identity,
 fixed skylight and independent per-player observations. Individual state migrations are a separate,
 explicit capability-version policy; no generic auto-clamp or fallback applies.
+
+### Version 16 workshop equipment
+
+Objects append `equipment`, a canonical decimal persistent-item ID string (zero
+for fixtures and pre-workshop equipment). It identifies the original protected
+direct child of a portable station; its type must match the object's
+`packing_item`, and it must have no children or installation. The backing item
+does not occupy public storage volume. Formats 7–15 decode this field as zero;
+restoration never creates a missing backing item. Checkpoint upgrade writes the
+new exact object field set transactionally.
+
+Manual-job payload version 3 adds a sorted, unique `stations` list of at most four
+nonzero persistent object IDs. Unassigned jobs have no claims; versions 1/2 migrate
+with an empty list and retain their paid work. Database validation rejects duplicate
+claims and claims without durable station objects. Unloading releases claims before
+archive capture; a live checkpoint preserves active bindings.
 
 ### Combat state
 

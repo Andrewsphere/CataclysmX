@@ -34,6 +34,7 @@ public:
     bool broken = false;
     LightEmission light{};
     ObjectTypeId type{};
+    ItemHandle equipment{}; // Protected backing child of a portable station.
 private:
     friend class World;
     eastl::unique_ptr<ObjectBehavior> behavior_;

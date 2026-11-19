@@ -19,7 +19,7 @@ enum class CommandKind {
     craft, recycle, resume_craft, pause_craft, cancel_craft, grab, release_grab,
     wield_item, transfer_item, study_book, pause_study,
     equipment, select_combat_style, use_ability, study_art, pause_art_study, new_character,
-    wire_grid, place_power_object
+    wire_grid, place_power_object, place_station, pack_station
 };
 struct Command {
     CommandKind kind = CommandKind::wait;
@@ -62,7 +62,7 @@ enum class Outcome {
     object_moved, grabbed, released, nothing_to_grab, grab_lost, grab_blocked,
     wielded, unwielded, transferred, inventory_refused, study_started, study_paused, study_refused,
     equipment_changed, ability_used, combat_refused, art_study_started, art_study_paused,
-    character_dead, character_created, power_changed, power_refused
+    character_dead, character_created, power_changed, power_refused, station_changed, station_refused
 };
 const char* OutcomeMessage(Outcome outcome);
 // The demo requires floor, wall, and closed_door; floor must be passable.
@@ -85,6 +85,7 @@ struct CommandResult {
     StudyOutcome studyOutcome = StudyOutcome::ActorUnavailable;
     CombatRefusal combatReason = CombatRefusal::None;
     PowerActionOutcome powerOutcome = PowerActionOutcome::Unavailable;
+    StationActionOutcome stationOutcome = StationActionOutcome::Unavailable;
 };
 String CommandResultMessage(const CommandResult& result);
 
@@ -193,6 +194,7 @@ struct CraftingEntry {
     std::uint32_t completedWork = 0;
     Tick fundedTicksRemaining = 0;
     bool pauseRequested = false;
+    StaticList<PersistentId, maxRecipeTraits> stations;
     bool operator==(const CraftingEntry&) const = default;
 };
 struct EnemyHealthView {
@@ -239,6 +241,7 @@ struct WorldView {
     Vector<EnemyHealthView> enemyHealth; // Injured visible hostiles, in cell order.
     eastl::optional<PowerInspection> currentPower;
     PowerSettings powerSettings;
+    Vector<StationView> stations;
 };
 
 // Authoritative deterministic endpoint. No transport or clock access.

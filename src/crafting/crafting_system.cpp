@@ -16,12 +16,14 @@ void SetWorkerUnavailable(CraftingJobState& state) {
     state.worker = 0;
     state.status = CraftingStatus::WorkerUnavailable;
     state.pauseRequested = false;
+    state.stations = {};
 }
 CraftingStatus RefusalStatus(CraftingOutcome outcome) {
     switch (outcome) {
     case CraftingOutcome::MissingSkills: return CraftingStatus::MissingSkills;
     case CraftingOutcome::MissingRecipeReference: return CraftingStatus::MissingRecipeReference;
     case CraftingOutcome::MissingTools: return CraftingStatus::MissingTools;
+    case CraftingOutcome::StationBusy: return CraftingStatus::StationBusy;
     case CraftingOutcome::InsufficientEnergy: return CraftingStatus::InsufficientEnergy;
     default: std::abort();
     }
@@ -108,7 +110,7 @@ bool CraftingSystem::Reachable(ActorHandle actorHandle, ItemHandle handle, unsig
             && CanReachStorage(world_, actor->position, item->location.object, radius));
 }
 void CraftingSystem::Gather(ActorHandle handle, unsigned radius) {
-    candidates_.clear(); traversal_.clear();
+    candidates_.clear(); traversal_.clear(); stations_.clear();
     const auto* actor = world_.GetActor(handle);
     if (!actor) { return; }
     traversal_.insert(traversal_.end(), actor->inventory.begin(), actor->inventory.end());
@@ -117,6 +119,10 @@ void CraftingSystem::Gather(ActorHandle handle, unsigned radius) {
     for (int z = -r; z <= r; ++z) { for (int x = -r; x <= r; ++x) {
         const TileCoord tile{position.x + x, position.z + z, position.y};
         const auto object = world_.ObjectAt(tile);
+        const auto* station = world_.GetObject(object);
+        const auto* definition = station ? world_.GetContent().TryGetObject(station->type) : nullptr;
+        if (definition && !definition->toolTraits.Empty() && station->enabled && !station->broken
+            && CanReachStation(world_, position, object, radius)) { stations_.push_back(object); }
         if (CanReachStorage(world_, position, object, radius)) {
             const auto& contents = world_.GetObject(object)->contents;
             traversal_.insert(traversal_.end(), contents.begin(), contents.end());
@@ -133,6 +139,44 @@ void CraftingSystem::Gather(ActorHandle handle, unsigned radius) {
         traversal_.insert(traversal_.end(), item->contents.begin(), item->contents.end());
     }
     eastl::sort(candidates_.begin(), candidates_.end(), [this](auto a, auto b) { return world_.GetItem(a)->id < world_.GetItem(b)->id; });
+    eastl::sort(stations_.begin(), stations_.end(), [this](auto a, auto b) { return world_.GetObject(a)->id < world_.GetObject(b)->id; });
+}
+PersistentId CraftingSystem::StationWorker(PersistentId station, const CraftingJobState* except) const {
+    for (auto item : assigned_) {
+        const auto* state = State(item);
+        if (!state || state == except || state->stations.Empty() || !world_.ItemEligible(item)) { continue; }
+        const auto* actor = world_.GetActor(world_.FindActor(state->worker));
+        if (!actor || actor->combat.life != ActorLifeState::Alive || actor->parked || !world_.IsActive(actor->position)) { continue; }
+        for (auto id : state->stations) { if (id == station) { return state->worker; } }
+    }
+    return 0;
+}
+void CraftingSystem::ReleaseStation(PersistentId station) {
+    for (auto item : assigned_) {
+        auto* state = State(item);
+        if (!state) { continue; }
+        StaticList<PersistentId, maxRecipeTraits> remaining;
+        for (auto id : state->stations) { if (id != station) { Require(remaining.PushBack(id)); } }
+        if (remaining == state->stations) { continue; }
+        state->stations = remaining; world_.MarkItemDirty(item);
+    }
+}
+void CraftingSystem::ReleaseWorkerStations(PersistentId worker) {
+    for (auto item : assigned_) {
+        auto* state = State(item);
+        if (!state || state->worker != worker || state->stations.Empty()) { continue; }
+        state->stations = {}; world_.MarkItemDirty(item);
+    }
+}
+void CraftingSystem::ReleaseUnavailableStations() {
+    for (auto item : assigned_) {
+        auto* state = State(item);
+        if (!state || state->stations.Empty()) { continue; }
+        const auto* actor = world_.GetActor(world_.FindActor(state->worker));
+        if (actor && actor->combat.life == ActorLifeState::Alive && !actor->parked
+            && world_.IsActive(actor->position) && world_.ItemEligible(item)) { continue; }
+        state->stations = {}; world_.MarkItemDirty(item);
+    }
 }
 CraftingOutcome CraftingSystem::ActorAvailability(ActorHandle handle) const {
     const auto* actor = world_.GetActor(handle);
@@ -206,7 +250,7 @@ eastl::optional<Tick> CraftingSystem::ActorEventIn(ActorHandle handle) const {
     return eastl::nullopt;
 }
 CraftingOutcome CraftingSystem::Select(const CraftingJobState& state, bool inputs, ItemHandle target,
-    eastl::array<ItemHandle, 4>& tools) {
+    eastl::array<ToolProvider, maxRecipeTraits>& tools) {
     consumed_.clear(); retained_.clear(); tools.fill({});
     const auto& content = world_.GetContent();
     const auto& entries = state.kind == CraftingKind::Craft ? content.GetCraftingRecipe(state.craftingRecipe).inputs
@@ -241,13 +285,28 @@ CraftingOutcome CraftingSystem::Select(const CraftingJobState& state, bool input
                         if (other == handle || candidate->type != item->type || !candidate->contents.empty()
                             || Has(consumed_, other) || Has(retained_, other)) { continue; }
                         bool selected = false;
-                        for (std::size_t j = 0; j < i; ++j) { selected |= tools[j] == other; }
+                        for (std::size_t j = 0; j < i; ++j) { selected |= tools[j].item == other; }
                         if (!selected) { ++leaves; }
                     }
                     if (leaves < needed) { continue; }
-                    tools[i] = handle; break;
+                    tools[i].item = handle; break;
                 }
-                if (!tools[i].value) { return CraftingOutcome::MissingTools; }
+                bool claimed = false;
+                for (auto handle : stations_) {
+                    const auto* object = world_.GetObject(handle);
+                    if (tools[i].item.value && world_.GetItem(tools[i].item)->id < object->id) { break; }
+                    const auto& definition = content.GetObject(object->type);
+                    bool matches = false;
+                    for (const auto& trait : definition.toolTraits) {
+                        matches |= trait.trait == traits[i].trait && trait.tier >= traits[i].tier;
+                    }
+                    if (!matches) { continue; }
+                    if (StationWorker(object->id, &state)) { claimed = true; continue; }
+                    tools[i] = {{}, handle}; break;
+                }
+                if (!tools[i].item.value && !tools[i].object.value) {
+                    return claimed ? CraftingOutcome::StationBusy : CraftingOutcome::MissingTools;
+                }
             }
         }
         for (const auto& entry : entries) {
@@ -258,7 +317,7 @@ CraftingOutcome CraftingSystem::Select(const CraftingJobState& state, bool input
                 if (item->type != entry.Item() || Has(consumed_, handle) || Has(retained_, handle)
                     || content.GetItem(item->type).unfinishedCraft || (!entry.Retained() && !item->contents.empty())) { continue; }
                 bool traitTool = false;
-                for (auto tool : tools) { traitTool |= tool == handle; }
+                for (auto tool : tools) { traitTool |= tool.item == handle; }
                 if (!entry.Retained() && traitTool) { continue; }
                 (entry.Retained() ? retained_ : consumed_).push_back(handle);
                 if (++count == entry.Count()) { break; }
@@ -269,7 +328,7 @@ CraftingOutcome CraftingSystem::Select(const CraftingJobState& state, bool input
     return CraftingOutcome::Started;
 }
 CraftingOutcome CraftingSystem::Fund(ActorHandle handle, CraftingJobState& state,
-    const eastl::array<ItemHandle, 4>& tools, bool commit) {
+    const eastl::array<ToolProvider, maxRecipeTraits>& tools, bool commit) {
     const auto* actor = world_.GetActor(handle);
     const auto speed = actor->speed;
     // Convert the sub-fixed-point timing residue when speed changes. The durable
@@ -277,7 +336,16 @@ CraftingOutcome CraftingSystem::Fund(ActorHandle handle, CraftingJobState& state
     const auto residue = std::uint64_t{state.timingRemainder} * speed / state.timingSpeed;
     charges_.clear();
     for (auto item : retained_) { charges_.push_back({item}); }
-    for (auto item : tools) { if (item.value) { charges_.push_back({item}); } }
+    StaticList<PersistentId, maxRecipeTraits> stations;
+    for (auto tool : tools) {
+        if (tool.item.value) { charges_.push_back({tool.item}); }
+        if (tool.object.value) {
+            const auto id = world_.GetObject(tool.object)->id;
+            if (StationWorker(id, &state)) { return CraftingOutcome::StationBusy; }
+            if (eastl::find(stations.begin(), stations.end(), id) == stations.end()) { Require(stations.PushBack(id)); }
+        }
+    }
+    eastl::sort(stations.begin(), stations.end());
     eastl::sort(charges_.begin(), charges_.end(), [this](const auto& a, const auto& b) {
         return world_.GetItem(a.item)->id < world_.GetItem(b.item)->id;
     });
@@ -328,6 +396,7 @@ CraftingOutcome CraftingSystem::Fund(ActorHandle handle, CraftingJobState& state
         if (payment.power.value) { Require(world_.SetItemEnergy(payment.item, payment.power, payment.energyAfter).has_value()); }
     }
     state.energyRemainder = remainder;
+    state.stations = stations;
     state.pendingWork = work; state.remaining = duration;
     state.timingRemainder = static_cast<std::uint32_t>((duration * workPerTickNumerator + residue) % speed);
     state.timingSpeed = speed; state.worker = actor->id; state.status = CraftingStatus::Working;
@@ -365,7 +434,7 @@ WorldResult<CraftingResult> CraftingSystem::Begin(ActorHandle actor, CraftingJob
     if (learning != CraftingOutcome::Started) { return CraftingResult{learning}; }
     if (target.value && !Reachable(actor, target, state.settings.nearbyRadius)) { return CraftingResult{CraftingOutcome::OutOfReach}; }
     Gather(actor, state.settings.nearbyRadius);
-    eastl::array<ItemHandle, 4> tools{};
+    eastl::array<ToolProvider, maxRecipeTraits> tools{};
     auto outcome = Select(state, true, target, tools);
     if (outcome != CraftingOutcome::Started) { return CraftingResult{outcome}; }
     outcome = Fund(actor, state, tools, false);
@@ -407,6 +476,7 @@ void CraftingSystem::Detach(ItemHandle item) {
     if (auto* state = State(item); state && state->worker) {
         const auto actor = world_.FindActor(state->worker);
         if (auto* value = world_.MutableActor(actor)) { value->actionDeadline.Set(world_.GetTick(), 0); world_.ActorChanged(actor); }
+        state->stations = {};
     }
     eastl::erase(assigned_, item);
 }
@@ -415,6 +485,7 @@ void CraftingSystem::ReleaseWorker(CraftingJobState& state) {
     if (auto* value = world_.MutableActor(actor)) { value->actionDeadline.Set(world_.GetTick(), 0); world_.ActorChanged(actor); }
     state.worker = 0;
     state.pauseRequested = false;
+    state.stations = {};
 }
 WorldResult<CraftingResult> CraftingSystem::Resume(ActorHandle actor, ItemHandle item) {
     auto* state = State(item);
@@ -444,7 +515,7 @@ WorldResult<CraftingResult> CraftingSystem::Resume(ActorHandle actor, ItemHandle
         return CraftingResult{CraftingOutcome::Resumed, item};
     }
     Gather(actor, state->settings.nearbyRadius);
-    eastl::array<ItemHandle, 4> tools{};
+    eastl::array<ToolProvider, maxRecipeTraits> tools{};
     auto outcome = Select(*state, false, {}, tools);
     if (outcome == CraftingOutcome::Started) { outcome = Fund(actor, *state, tools, true); }
     if (outcome == CraftingOutcome::Started) { Attach(item); outcome = CraftingOutcome::Resumed; }
@@ -485,7 +556,8 @@ eastl::optional<CraftingJobView> CraftingSystem::Inspect(ItemHandle item) const 
     const auto* state = State(item);
     if (!state || !state->totalWork) { return eastl::nullopt; }
     return CraftingJobView{world_.GetItem(item)->id, item, state->kind, state->craftingRecipe, state->recyclingRecipe,
-        state->status, state->worker, state->totalWork, static_cast<std::uint32_t>(state->work / ratioScale), state->remaining, state->pauseRequested};
+        state->status, state->worker, state->totalWork, static_cast<std::uint32_t>(state->work / ratioScale), state->remaining,
+        state->pauseRequested, state->stations};
 }
 void CraftingSystem::Collect(ActorHandle actor, Vector<CraftingJobView>& output) const {
     output.clear();
@@ -536,7 +608,10 @@ bool CraftingSystem::ProcessEvents() {
             SetWorkerUnavailable(*state);
             eastl::erase(assigned_, item); world_.MarkItemDirty(item); changed = true; continue;
         }
-        if (actor->parked || !world_.IsActive(actor->position)) { continue; }
+        if (actor->parked || !world_.IsActive(actor->position)) {
+            if (!state->stations.Empty()) { state->stations = {}; world_.MarkItemDirty(item); changed = true; }
+            continue;
+        }
         if (!world_.ItemEligible(item)) {
             ReleaseWorker(*state);
             SetWorkerUnavailable(*state);
@@ -554,7 +629,7 @@ bool CraftingSystem::ProcessEvents() {
             ReleaseWorker(*state); eastl::erase(assigned_, item); continue;
         }
         Gather(handle, state->settings.nearbyRadius);
-        eastl::array<ItemHandle, 4> tools{};
+        eastl::array<ToolProvider, maxRecipeTraits> tools{};
         auto outcome = LearningAvailability(handle, *state, state->settings.nearbyRadius);
         if (outcome == CraftingOutcome::Started) { outcome = Select(*state, false, {}, tools); }
         if (outcome == CraftingOutcome::Started) { outcome = Fund(handle, *state, tools, true); }

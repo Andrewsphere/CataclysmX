@@ -163,7 +163,7 @@ TEST_CASE("Power snapshot retains offscreen holds and consumed interval ledgers"
     REQUIRE(loaded);
     CHECK(loaded->power == expected.power);
     PowerRawDatabase raw(file.path.c_str());
-    CHECK(raw.Version() == 15);
+    CHECK(raw.Version() == save_format_version);
 }
 
 TEST_CASE("Legacy power initialization and checkpoint upgrade are transactional", "[save][power][migration]") {
@@ -201,7 +201,7 @@ TEST_CASE("Legacy power initialization and checkpoint upgrade are transactional"
     CHECK(loaded->power.nextGridId == 1);
     CHECK(loaded->power.mainsCutoffTick == SeededMainsCutoff(loaded->seed));
     PowerRawDatabase raw(file.path.c_str());
-    CHECK(raw.Version() == 15);
+    CHECK(raw.Version() == save_format_version);
 }
 
 TEST_CASE("Power decoding rejects malformed fields and invalid relationships", "[save][power][validation]") {
