@@ -69,7 +69,9 @@ private:
         channels_.PublishReply(eastl::move(reply), terminal);
         Notify();
     }
-    void Status(const char* text) { status_ = text; ++statusVersion_; forcePublish_ = true; }
+    void Status(const char* text, bool forHistory = true) {
+        status_ = text; statusForHistory_ = forHistory; ++statusVersion_; forcePublish_ = true;
+    }
     bool Local(SessionReply& failure, bool fallback = false);
     bool Runtime(SessionReply& failure);
     bool Connect(network::ConnectionSettings settings, bool newCharacter, SessionReply& reply);
@@ -79,7 +81,7 @@ private:
     bool ReturnLocal();
     void Save(SessionReply& reply);
     void Publish();
-    void Receipt(const PlayerCommandResult& result);
+    void Receipt(const PlayerCommandResult& result, eastl::optional<SaveError> updateStorageError = {});
     void FinishItemRecovery();
     void Settle();
     void Request(SessionRequest request);
@@ -103,6 +105,7 @@ private:
     eastl::optional<client::ProfileError> profileError_;
     eastl::optional<network::NetworkError> networkError_;
     eastl::optional<SaveError> storageError_;
+    bool storageErrorFromReply_ = false;
     network::ConnectionSettings connection_;
     std::uint64_t persistedToken_ = 0;
     SessionMode mode_ = SessionMode::Local;
@@ -125,6 +128,7 @@ private:
     std::uint64_t discoveryElapsed_ = 0;
     std::uint64_t statusVersion_ = 0;
     String status_;
+    bool statusForHistory_ = true;
     bool forcePublish_ = true;
     std::uint64_t publishedRevision_ = 0;
     PlayerInputContext publishedInput_{};
@@ -269,7 +273,7 @@ bool SessionOwner::Connect(network::ConnectionSettings settings, bool newCharact
         ReturnLocal(); return false;
     }
     baseline_ = Clock::now();
-    Status("Connecting to LAN game");
+    Status("Connecting to LAN game", false);
     return true;
 }
 
@@ -297,7 +301,7 @@ void SessionOwner::Save(SessionReply& reply) {
     }
     Diagnostics diagnostics;
     if (auto saved = server_->Save(&diagnostics); !saved) {
-        storageError_ = saved.error(); reply.storageError = saved.error();
+        reply.storageError = saved.error();
         reply.details.push_back(FormatDiagnostics(diagnostics));
     } else { storageError_.reset(); reply.kind = ReplyKind::ControlCompleted; }
     forcePublish_ = true;
@@ -325,6 +329,7 @@ bool SessionOwner::ReturnLocal() {
     const bool restored = Local(failure, true);
     if (!restored) {
         storageError_ = failure.storageError;
+        storageErrorFromReply_ = false;
         String message = "Local fallback could not be created; session stopped";
         for (const auto& detail : failure.details) {
             if (!detail.empty()) { message += ": "; message += detail; }
@@ -355,6 +360,7 @@ void SessionOwner::Publish() {
     building_.input = input;
     building_.runtimeSettings = options_.settings;
     building_.storageError = storageError_;
+    building_.storageErrorFromReply = storageErrorFromReply_;
     building_.networkError = networkError_;
     building_.profileError = profileError_;
     building_.hasSave = hasSave_ && mode_ != SessionMode::Guest;
@@ -363,7 +369,6 @@ void SessionOwner::Publish() {
     building_.discoveryPort = mode_ == SessionMode::Host ? host_->GetDiscoveryPort() : discoveryPort_;
     if (discoveryActive_) { building_.sessions = discoveredSessions_; }
     else { building_.sessions.clear(); }
-    building_.statusVersion = statusVersion_; building_.status = status_;
     building_.seed = 0; building_.generationVersion = 0;
     building_.interactions.clear(); building_.mapItems.clear();
     if (mode_ == SessionMode::Guest) {
@@ -404,12 +409,13 @@ void SessionOwner::Publish() {
     } else { building_.view = {}; }
     building_.networkError = networkError_;
     building_.statusVersion = statusVersion_; building_.status = status_;
+    building_.statusForHistory = statusForHistory_;
     channels_.PublishSnapshot(building_);
     publishedRevision_ = revision; publishedInput_ = input;
     Notify();
 }
 
-void SessionOwner::Receipt(const PlayerCommandResult& result) {
+void SessionOwner::Receipt(const PlayerCommandResult& result, eastl::optional<SaveError> updateStorageError) {
     if (!pending_ || pending_->sequence != result.sequence) { return; }
     if (mode_ != SessionMode::Guest && result.player != server_->GetHostPlayerId()) { return; }
     if (result.result.outcome == Outcome::queued) {
@@ -420,6 +426,7 @@ void SessionOwner::Receipt(const PlayerCommandResult& result) {
     } else {
         const auto pending = *pending_;
         pending_.reset();
+        if (updateStorageError && result.result.storageError == updateStorageError) { storageErrorFromReply_ = true; }
         if (mode_ == SessionMode::Local) { FinishItemRecovery(); }
         forcePublish_ = true;
         Publish(); // Completion must expose authoritative context before releasing input ownership.
@@ -486,7 +493,8 @@ void SessionOwner::Settle() {
         guest_->Pump(delta);
         const auto state = guest_->GetState();
         if (before != state) {
-            Status(state == network::ConnectionState::Active ? "Joined LAN game" : "Joining LAN game");
+            if (state == network::ConnectionState::Active) { Status("Joined LAN game"); }
+            else if (state == network::ConnectionState::Joining) { Status("Joining LAN game", false); }
         }
         const auto token = guest_->GetReconnectToken();
         if (token && token != persistedToken_ && (state == network::ConnectionState::Joining || state == network::ConnectionState::Active)) {
@@ -517,13 +525,13 @@ void SessionOwner::Settle() {
     } else if (server_ && (mode_ == SessionMode::Host || !paused_)) {
         if (mode_ == SessionMode::Host) {
             const auto update = host_->Pump(delta);
-            if (update.storageError) { storageError_ = update.storageError; forcePublish_ = true; }
+            if (update.storageError) { storageError_ = update.storageError; storageErrorFromReply_ = false; forcePublish_ = true; }
             if (update.networkError) { networkError_ = update.networkError; Status(network::NetworkErrorMessage(*networkError_)); }
-            for (const auto& result : update.commandResults) { Receipt(result); }
+            for (const auto& result : update.commandResults) { Receipt(result, update.storageError); }
         } else {
             const auto update = server_->Update(delta);
-            if (update.storageError) { storageError_ = update.storageError; forcePublish_ = true; }
-            for (const auto& result : update.commandResults) { Receipt(result); }
+            if (update.storageError) { storageError_ = update.storageError; storageErrorFromReply_ = false; forcePublish_ = true; }
+            for (const auto& result : update.commandResults) { Receipt(result, update.storageError); }
             FinishItemRecovery();
         }
     }
@@ -710,8 +718,12 @@ void SessionOwner::Request(SessionRequest request) {
     case RequestKind::ResumeAndCommand:
         Gameplay(eastl::move(request)); return;
     }
-    if (reply.networkError) { networkError_ = reply.networkError; Status(network::NetworkErrorMessage(*reply.networkError)); }
-    if (reply.storageError) { storageError_ = reply.storageError; forcePublish_ = true; }
+    if (reply.networkError) {
+        networkError_ = reply.networkError;
+        const bool controlReply = reply.kind == ReplyKind::ControlCompleted || reply.kind == ReplyKind::ControlFailed;
+        Status(network::NetworkErrorMessage(*reply.networkError), !controlReply);
+    }
+    if (reply.storageError) { storageError_ = reply.storageError; storageErrorFromReply_ = true; forcePublish_ = true; }
     Publish(); Reply(eastl::move(reply));
 }
 

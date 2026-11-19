@@ -211,10 +211,11 @@ TEST_CASE("Gameplay history keeps recent messages visible through resizing and i
     for (int i = 0; i < 12; ++i) {
         String message = "Outcome "; message += NumberText(i); history.Add({message.data(), message.size()});
     }
+    history.Add("Outcome 11");
     auto screen = f.Draw(120, 40);
     CHECK_FALSE(Find(screen, "Outcome 0"));
     const auto first = Find(screen, "Outcome 2"); REQUIRE(first);
-    const auto last = Find(screen, "Outcome 11"); REQUIRE(last);
+    const auto last = Find(screen, "Outcome 11 ×2"); REQUIRE(last);
     CHECK(last->y > first->y);
     CHECK(last->y == 38);
     for (const auto size : {Position{80, 24}, Position{40, 16}, Position{120, 40}}) {
@@ -227,8 +228,15 @@ TEST_CASE("Gameplay history keeps recent messages visible through resizing and i
     screen = f.Draw(80, 24);
     CHECK(Find(screen, "Outcome 11"));
     CHECK(Find(screen, "Interact in which direction?"));
+    f.presentation.interacting = false;
+    f.presentation.choosingGrab = true;
+    screen = f.Draw(80, 24);
+    CHECK(Find(screen, "Grab where?"));
+    CHECK(Find(screen, "Outcome 11 ×2"));
+    f.presentation.choosingGrab = false;
     history.SetCapacity(2);
     screen = f.Draw(80, 24);
+    CHECK_FALSE(Find(screen, "Grab where?"));
     CHECK_FALSE(Find(screen, "Outcome 9"));
     CHECK(Find(screen, "Outcome 10"));
 }
@@ -487,13 +495,23 @@ TEST_CASE("Status groups readiness location and pacing with aligned values and c
     f.view.remainingTicks = 0;
     CHECK(Find(f.Draw(100, 24), "Ready"));
     f.presentation.pending = "move east #14";
+    f.view.commandQueued = true;
+    f.presentation.pendingAge = std::chrono::milliseconds(199);
     auto screen = f.Draw(100, 24);
+    CHECK(Find(screen, "Ready"));
+    CHECK_FALSE(Find(screen, "Pending"));
+    CHECK_FALSE(Find(screen, "Queued"));
+    f.presentation.pendingAge = std::chrono::milliseconds(200);
+    screen = f.Draw(100, 24);
     CHECK(Find(screen, "Pending"));
     CHECK(Find(screen, "Pending: move east #14"));
     CHECK(Find(screen, "Combat: Balanced"));
     CHECK(Find(screen, "stamina 100%"));
     CHECK(Find(screen, "Location"));
     CHECK(Find(screen, "Latest outcome."));
+    f.presentation.pending.clear();
+    f.view.commandQueued = false;
+    CHECK_FALSE(Find(f.Draw(100, 24), "Pending"));
 }
 
 TEST_CASE("Small gameplay modals fit content and long lists expose overflow markers", "[terminal][gameplay][layout]") {

@@ -326,7 +326,7 @@ bool DrawFrame(SDL_Renderer* renderer, SdlText& text, const SdlAssets& assets, c
         String messages;
         for (const auto& entry : hud.history->Entries()) {
             if (!messages.empty()) { messages += '\n'; }
-            messages += entry;
+            AppendMessageHistoryEntry(messages, entry);
         }
         const SDL_Rect historyClip{panelX, statusY, wrap, std::max(0, panelBottom - statusY)};
         if (!SDL_SetRenderClipRect(renderer, &historyClip)

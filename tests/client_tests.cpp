@@ -21,22 +21,24 @@ TEST_CASE("Message history retains events in order and trims its configurable ca
     CHECK(history.Entries().empty());
     for (int i = 0; i < 12; ++i) { history.Add(String(1, static_cast<char>('A' + i))); }
     REQUIRE(history.Entries().size() == 10);
-    CHECK(history.Entries().front() == "C");
-    CHECK(history.Entries().back() == "L");
+    CHECK(history.Entries().front().text == "C");
+    CHECK(history.Entries().back().text == "L");
     history.SetCapacity(2);
     REQUIRE(history.Entries().size() == 2);
-    CHECK(history.Entries().front() == "K");
+    CHECK(history.Entries().front().text == "K");
     history.Add("L");
-    CHECK(history.Entries()[0] == "L");
-    CHECK(history.Entries()[1] == "L");
+    CHECK(history.Entries().front().text == "K");
+    CHECK(history.Entries().back().text == "L");
+    CHECK(history.Entries().back().count == 2);
     history.SetCapacity(1);
+    CHECK(history.Entries().back().count == 2);
     history.Add("Moved east.");
     REQUIRE(history.Entries().size() == 1);
-    CHECK(history.Entries().back() == "Moved east.");
+    CHECK(history.Entries().back().text == "Moved east.");
     history.SetCapacity(100);
     history.Add("You wait.");
     CHECK(history.Entries().size() == 2);
-    CHECK(history.Entries().front() == "Moved east.");
+    CHECK(history.Entries().front().text == "Moved east.");
 }
 
 TEST_CASE("Message history preserves order after exceeding inline capacity", "[client][messages]") {
@@ -45,12 +47,42 @@ TEST_CASE("Message history preserves order after exceeding inline capacity", "[c
     for (int i = 0; i < 15; ++i) { history.Add(String(1, static_cast<char>('A' + i))); }
     REQUIRE(history.Entries().size() == 12);
     for (int i = 0; i < 12; ++i) {
-        CHECK(history.Entries()[i] == String(1, static_cast<char>('D' + i)));
+        CHECK(history.Entries()[i].text == String(1, static_cast<char>('D' + i)));
     }
     history.SetCapacity(5);
     REQUIRE(history.Entries().size() == 5);
-    CHECK(history.Entries().front() == "K");
-    CHECK(history.Entries().back() == "O");
+    CHECK(history.Entries().front().text == "K");
+    CHECK(history.Entries().back().text == "O");
+}
+
+TEST_CASE("Message history groups adjacent text and keeps actionable outcomes", "[client][messages]") {
+    for (const auto outcome : {Outcome::moved, Outcome::waited, Outcome::queued, Outcome::attacked,
+             Outcome::attack_missed, Outcome::attack_parried, Outcome::attack_blocked, Outcome::target_defeated}) {
+        CHECK_FALSE(ShouldRecordOutcome(outcome));
+    }
+    for (const auto outcome : {Outcome::blocked, Outcome::occupied, Outcome::locked, Outcome::object_moved,
+             Outcome::picked_up, Outcome::attack_windup, Outcome::ability_used, Outcome::combat_refused, Outcome::stale_input}) {
+        CHECK(ShouldRecordOutcome(outcome));
+    }
+
+    MessageHistory history;
+    history.Add("The way is blocked.");
+    history.Add("");
+    history.Add("The way is blocked.");
+    history.Add("The way is blocked.");
+    history.Add("You pick up the item.");
+    history.Add("The way is blocked.");
+    REQUIRE(history.Entries().size() == 3);
+    CHECK(history.Entries()[0].count == 3);
+    String line;
+    AppendMessageHistoryEntry(line, history.Entries()[0]);
+    CHECK(line == "The way is blocked. ×3");
+    line.clear();
+    AppendMessageHistoryEntry(line, history.Entries()[1]);
+    CHECK(line == "You pick up the item.");
+    line.clear();
+    AppendMessageHistoryEntry(line, history.Entries()[2]);
+    CHECK(line == "The way is blocked.");
 }
 
 ContentCatalog AppearanceContent() {

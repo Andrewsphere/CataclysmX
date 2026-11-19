@@ -170,6 +170,13 @@ TEST_CASE("SDL software renderer draws visibility and missing glyph fallback", "
         REQUIRE(sdl::DrawFrame(renderer, text, assets, &view, *content, "", "", 0, nullptr,
             0, 1.0f, {}, nullptr, nullptr, nullptr, {&history, &keys, &localization}));
         CHECK(text.Height(4) < twoMessages);
+        const int singleMessageWidth = text.Width(4);
+        const int singleMessageHeight = text.Height(4);
+        history.Add("Second outcome.");
+        REQUIRE(sdl::DrawFrame(renderer, text, assets, &view, *content, "", "", 0, nullptr,
+            0, 1.0f, {}, nullptr, nullptr, nullptr, {&history, &keys, &localization}));
+        CHECK(text.Width(4) > singleMessageWidth);
+        CHECK(text.Height(4) == singleMessageHeight);
         if (const char* path = std::getenv("CATACLYSMX_SDL_PREVIEW")) {
             Server server(TestContent());
             const auto preview = server.View();

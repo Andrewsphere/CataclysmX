@@ -6,7 +6,12 @@
 #include <EASTL/optional.h>
 #include <EASTL/string_view.h>
 
+#include <chrono>
+
 namespace cataclysmx {
+
+// Short-lived command receipts should settle before they reach the HUD.
+inline constexpr std::chrono::milliseconds pendingCommandStatusDelay{200};
 
 // A key is one UTF-8 scalar or an explicit name (Left, Enter, F2, ...).
 // Printable keys retain case; Shift is explicit only for named keys.

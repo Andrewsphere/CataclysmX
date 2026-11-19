@@ -281,7 +281,10 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
         messageHistory.SetCapacity(store.Effective().messageHistorySize);
         messageHistory.Add({message.data(), message.size()});
     };
-    SetMessage(sessionOptions.join ? "Connecting to LAN session..." : "Starting session...");
+    const auto RecordStorageError = [&](SaveError error) {
+        SetMessage("World storage failed (error=" + NumberText(static_cast<int>(error)) + ").");
+    };
+    message = sessionOptions.join ? "Connecting to LAN session..." : "Starting session...";
     String hints = Hints(keys);
     auto assetState = AssetState::Loading;
     bool minimized = false;
@@ -290,6 +293,8 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
     bool choosingGrab = false;
     int zoom = 0;
     using Clock = std::chrono::steady_clock;
+    Clock::time_point commandSubmittedAt;
+    bool pendingStatusVisible = false;
     auto animationEpoch = Clock::now();
     eastl::optional<std::uint64_t> animationDeadline;
     const auto smokeDeadline = Clock::now() + std::chrono::seconds(multiplayerSmoke ? 20 : 10);
@@ -306,7 +311,11 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
         if (session.TrySubmit(eastl::move(request)) != EnqueueResult::Accepted) {
             SetMessage("Session busy; try again."); dirty = true; return false;
         }
-        if (isCommand) { commandPending = true; commandRequest = nextId; }
+        if (isCommand) {
+            commandPending = true;
+            commandRequest = nextId;
+            commandSubmittedAt = Clock::now();
+        }
         ++nextId; return true;
     };
     const auto submit = [&](RequestKind kind, Command command = {}) {
@@ -324,7 +333,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
         if (modal.Active() == Screen::Lan && !snapshot.menuOpen) {
             modal.Closed(); frame.visible = false; SDL_StopTextInput(platform.window); return;
         }
-        if (submit(RequestKind::Resume)) { modal.BeginClose(); SetMessage("Resuming..."); SDL_StopTextInput(platform.window);
+        if (submit(RequestKind::Resume)) { modal.BeginClose(); message = "Resuming..."; SDL_StopTextInput(platform.window);
             inspectionId.reset(); inspectionNeeded = false;
             ++aiRevision; aiNeeded = false; aiValid = false; }
     };
@@ -353,7 +362,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
         if (choice.reason != ObjectUseReason::None) { SetMessage(InteractionReason(localization,choice.reason)); return; }
         Command command; command.kind = CommandKind::interact_action; command.interaction = choice.request;
         if (submit(RequestKind::ResumeAndCommand,eastl::move(command))) {
-            modal.Closed(); frame.visible = false; SetMessage("Awaiting admission...");
+            modal.Closed(); frame.visible = false; message = "Awaiting admission...";
         }
     };
     const auto openActions = [&] {
@@ -451,7 +460,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             if (submit(RequestKind::ResumeAndCommand, *command)) {
                 combatUi.CancelTarget(); combatHotkey.reset();
                 modal.Closed(); frame.visible = false; heldKey.Reset();
-                SetMessage("Awaiting combat action admission...");
+                message = "Awaiting combat action admission...";
             }
         }
     };
@@ -773,7 +782,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
         }
         if (choosingGrab) {
             if (*action == InputAction::Cancel || *action == InputAction::Grab) {
-                choosingGrab = false; SetMessage("Grab cancelled."); return;
+                choosingGrab = false; return;
             }
             auto command = GameplayCommand(*action, false);
             if (!command || command->kind != CommandKind::move || command->dy) { return; }
@@ -810,7 +819,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 itemAdvanced = *action == InputAction::AdvancedInventory;
                 itemUse = *action == InputAction::Use;
                 modal.BeginOpen(Screen::ItemInventory);
-                SetMessage(snapshot.mode == SessionMode::Local ? "Pausing..." : "Opening inventory (world remains live)...");
+                message = snapshot.mode == SessionMode::Local ? "Pausing..." : "Opening inventory (world remains live)...";
             }
             return;
         }
@@ -821,7 +830,6 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 submit(RequestKind::Command, command);
             } else {
                 choosingGrab = true;
-                SetMessage(localization.Text("grab.direction", "Grab where? Choose one of eight directions; Escape cancels."));
             }
             return;
         }
@@ -832,11 +840,11 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 : *action == InputAction::Interact ? Screen::Targets : *action == InputAction::Settings ? Screen::Options
                 : *action == InputAction::Crafting ? Screen::Crafting : *action == InputAction::Players ? Screen::Players : Screen::Debug;
             if (nextScreen == Screen::Crafting) { powerOpen = false; craftingSelection.reset(); selectedAction = 0; craftingFeedback.clear(); }
-            if (submit(RequestKind::Pause)) { modal.BeginOpen(nextScreen); SetMessage(snapshot.mode == SessionMode::Local ? "Pausing..." : "Opening menu (world remains live)..."); }
+            if (submit(RequestKind::Pause)) { modal.BeginOpen(nextScreen); message = snapshot.mode == SessionMode::Local ? "Pausing..." : "Opening menu (world remains live)..."; }
             return;
         }
         const auto command = GameplayCommand(*action,false);
-        if (command) { if (submit(RequestKind::Command,*command)) { SetMessage("Awaiting admission..."); } }
+        if (command) { if (submit(RequestKind::Command,*command)) { message = "Awaiting admission..."; } }
         else { SetMessage("This action is not available here."); }
     };
     const auto inputEpoch = Clock::now();
@@ -885,6 +893,8 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
         if (incoming.generation != snapshot.generation) { resetGeneration(incoming.generation); }
         const bool menuWasOpen = snapshot.menuOpen;
         const auto statusVersion = snapshot.statusVersion;
+        const auto previousStorageError = snapshot.storageError;
+        const bool storageErrorWasFromReply = snapshot.storageErrorFromReply;
         const bool viewChanged = incoming.view.revision != snapshot.view.revision;
         const auto previousY = snapshot.view.origin.y;
         const auto previousCharacter = snapshot.view.characterId;
@@ -937,8 +947,14 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 }
             }
         }
-        if (snapshot.statusVersion != statusVersion && !snapshot.status.empty()) { SetMessage(snapshot.status); }
-        if (snapshot.storageError) { SetMessage("World storage failed; see session state."); }
+        if (snapshot.statusVersion != statusVersion && !snapshot.status.empty()) {
+            if (snapshot.statusForHistory) { SetMessage(snapshot.status); }
+            else { message = snapshot.status; }
+        }
+        if (snapshot.storageError && !snapshot.storageErrorFromReply
+            && (snapshot.storageError != previousStorageError || storageErrorWasFromReply)) {
+            RecordStorageError(*snapshot.storageError);
+        }
     };
     const auto smokePress = [&](InputContext context, InputAction action) {
         for (const auto& binding : keys) {
@@ -985,7 +1001,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                         if (reply.networkError) { inspection.push_back(network::NetworkErrorMessage(*reply.networkError)); }
                         if (inspection.empty()) { inspection.push_back("Inspection unavailable"); }
                         inspectedCursor = cursor; inspectionValid = false; mapValid = false; ++mapIdentity.viewRevision;
-                        SetMessage(inspection.front());
+                        message = inspection.front();
                     }
                     inspectionId.reset();
                 }
@@ -1007,7 +1023,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             dirty = true;
             switch (reply.kind) {
             case ReplyKind::Started:
-                started = true; SetMessage("Session ready.");
+                started = true; message = "Session ready.";
                 if (!sessionOptions.savePath.empty()) {
                     Diagnostics diagnostics;
                     if (!store.Save(SettingsScope::World, &diagnostics)) {
@@ -1035,15 +1051,24 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                     lanRequest.reset();
                 }
                 if (saveRequest && reply.id == *saveRequest) {
-                    saveRequest.reset(); SetMessage(reply.kind == ReplyKind::ControlCompleted ? "World saved." : "World save failed.");
+                    saveRequest.reset();
+                    if (reply.kind == ReplyKind::ControlCompleted) { SetMessage("World saved."); }
+                    else if (!reply.storageError && reply.details.empty()) { SetMessage("World save failed."); }
                 }
-                for (const auto& detail : reply.details) { SetMessage(detail); }
+                if (reply.storageError) {
+                    String feedback = "World save failed (error=" + NumberText(static_cast<int>(*reply.storageError)) + ").";
+                    for (const auto& detail : reply.details) {
+                        if (!detail.empty()) { feedback += ' '; feedback += detail; }
+                    }
+                    SetMessage(eastl::move(feedback));
+                } else {
+                    for (const auto& detail : reply.details) { SetMessage(detail); }
+                }
                 if (reply.networkError) { SetMessage(network::NetworkErrorMessage(*reply.networkError)); }
                 if (reply.profileError) { SetMessage("LAN profile could not be read or saved (" + NumberText(static_cast<int>(*reply.profileError)) + ")."); }
-                if (reply.storageError) { SetMessage("World save failed (" + NumberText(static_cast<int>(*reply.storageError)) + ")."); }
                 break;
-            case ReplyKind::Admission: SetMessage(localization.ResultText(reply.result)); break;
-            case ReplyKind::Completed:
+            case ReplyKind::Admission: message = localization.ResultText(reply.result); break;
+            case ReplyKind::Completed: {
                 if (multiplayerCommandId && reply.id == *multiplayerCommandId) {
                     multiplayerCommandCompleted = reply.result.outcome == Outcome::waited && !reply.result.storageError;
                     smokeFailed |= !multiplayerCommandCompleted;
@@ -1052,10 +1077,13 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 if (itemRequest && reply.id == *itemRequest) {
                     itemRequest.reset(); itemUi.CommandFinished(reply.result); heldKey.Reset();
                 }
-                SetMessage(localization.ResultText(reply.result) + (reply.result.storageError ? " (world storage failed)" : ""));
+                auto feedback = localization.ResultText(reply.result);
+                if (ShouldRecordOutcome(reply.result.outcome)) { SetMessage(eastl::move(feedback)); }
+                else { message = eastl::move(feedback); }
                 if (craftingRequest && reply.id == *craftingRequest) {
                     craftingRequest.reset();
                     craftingFeedback = message;
+                    if (reply.result.storageError) { craftingFeedback += " (world storage failed)"; }
                     const auto outcome = reply.result.outcome;
                     if (outcome == Outcome::craft_started || outcome == Outcome::recycling_started
                         || outcome == Outcome::craft_resumed || outcome == Outcome::craft_paused || outcome == Outcome::craft_cancelled
@@ -1063,6 +1091,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                         modal.Closed(); frame.visible = false;
                     } else if (submit(RequestKind::Pause)) { modal.BeginOpen(Screen::Crafting); }
                 }
+                if (reply.result.storageError) { RecordStorageError(*reply.result.storageError); }
                 if (localSmoke) {
                     const Outcome expected = smokeStep == 1 || smokeStep == 14 ? Outcome::moved
                         : smokeStep == 2 ? Outcome::picked_up : smokeStep == 13 ? Outcome::toggled
@@ -1075,18 +1104,19 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                     }
                 }
                 smokeWaiting = false; break;
+            }
             case ReplyKind::MenuOpened:
             case ReplyKind::Paused:
                 if (!modalRequest || reply.id != *modalRequest) { break; }
                 modalRequest.reset();
                 modal.Paused(); initializeScreen = true;
-                SetMessage(reply.kind == ReplyKind::Paused ? "Local session paused." : "Menu open; world remains live.");
+                message = reply.kind == ReplyKind::Paused ? "Local session paused." : "Menu open; world remains live.";
                 smokeWaiting = false; break;
             case ReplyKind::Resumed:
                 if (!modalRequest || reply.id != *modalRequest) { break; }
                 modalRequest.reset();
                 modal.Closed(); frame.visible = false; inspectionValid = false; mapValid = false; prepareMap();
-                SetMessage(snapshot.mode == SessionMode::Local ? "Local session resumed." : "Menu closed.");
+                message = snapshot.mode == SessionMode::Local ? "Local session resumed." : "Menu closed.";
                 smokeWaiting = false; break;
             case ReplyKind::Inspected:
                 if (inspectionId && *inspectionId == reply.id) {
@@ -1107,7 +1137,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                             if (reply.networkError) { inspection.push_back(network::NetworkErrorMessage(*reply.networkError)); }
                             if (inspection.empty()) { inspection.push_back("Inspection unavailable"); }
                             inspectionValid = false; mapValid = false; ++mapIdentity.viewRevision;
-                            SetMessage(inspection.front());
+                            message = inspection.front();
                         }
                     }
                     inspectionId.reset();
@@ -1319,10 +1349,34 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 handleEvent(event);
             };
             smokeOpportunity = snapshot.view.opportunity;
-            if (smokeStep == 0) { smokeWaiting = submit(RequestKind::Command, *GameplayCommand(InputAction::East, false)); }
+            if (smokeStep == 0) {
+                const auto historySize = messageHistory.Entries().size();
+                smokePress(InputContext::Gameplay, InputAction::Grab);
+                if (!choosingGrab || messageHistory.Entries().size() != historySize) { smokeFailed = true; }
+                smokePress(InputContext::Gameplay, InputAction::Cancel);
+                if (choosingGrab || messageHistory.Entries().size() != historySize) { smokeFailed = true; }
+                smokePress(InputContext::Gameplay, InputAction::East);
+                smokeWaiting = commandPending;
+            }
             else if (smokeStep == 1) { smokeWaiting = submit(RequestKind::Command, *GameplayCommand(InputAction::PickUp, false)); }
-            else if (smokeStep == 2) { smokeWaiting = submit(RequestKind::Command, *GameplayCommand(InputAction::Wait, false)); }
-            else if (smokeStep == 3) { smokeWaiting = submit(RequestKind::Pause); }
+            else if (smokeStep == 2) {
+                smokePress(InputContext::Gameplay, InputAction::Wait);
+                smokeWaiting = commandPending;
+            }
+            else if (smokeStep == 3) {
+                const auto moved = localization.OutcomeText(Outcome::moved);
+                const auto waited = localization.OutcomeText(Outcome::waited);
+                const auto queued = localization.OutcomeText(Outcome::queued);
+                const auto pickedUp = localization.OutcomeText(Outcome::picked_up);
+                bool sawPickup = false;
+                for (const auto& entry : messageHistory.Entries()) {
+                    if (entry.text == moved || entry.text == waited || entry.text == queued
+                        || entry.text == "Awaiting admission...") { smokeFailed = true; }
+                    if (entry.text == pickedUp) { sawPickup = true; }
+                }
+                if (!sawPickup) { smokeFailed = true; }
+                smokeWaiting = submit(RequestKind::Pause);
+            }
             else if (smokeStep == 4) { smokeWaiting = submit(RequestKind::Resume); }
             else if (smokeStep == 5) { press(SDLK_X); smokeWaiting = modal.Pending(); }
             else if (smokeStep == 6) {
@@ -1656,6 +1710,11 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
         }
         const auto now = Clock::now();
         const auto elapsedMilliseconds = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(now - animationEpoch).count());
+        const bool showPending = commandPending && now - commandSubmittedAt >= pendingCommandStatusDelay;
+        if (showPending != pendingStatusVisible) {
+            pendingStatusVisible = showPending;
+            dirty = true;
+        }
         if (assetState == AssetState::Ready) { playback.RetireCompleted(assets.Definition(), elapsedMilliseconds); }
         if (animationDeadline && elapsedMilliseconds >= *animationDeadline) { dirty = true; }
         if (dirty && !minimized) {
@@ -1663,7 +1722,17 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             String display = snapshot.mode == SessionMode::Host ? "Host :" + UnsignedText(snapshot.hostPort)
                 : snapshot.mode == SessionMode::Guest ? String(ConnectionText(snapshot.connectionState)) : String("Local");
             if (snapshot.menuOpen) { display += snapshot.paused ? " | Paused" : " | Menu open; world live"; }
+            if (modal.Pending()) { display += " | Updating menu..."; }
+            if (showPending) {
+                display += " | ";
+                display += snapshot.view.commandQueued ? localization.Text("game.ui.queued", "Queued")
+                    : localization.Text("game.ui.awaiting", "Pending");
+            }
             display += '\n';
+            if (choosingGrab) {
+                display += localization.Text("grab.direction", "Grab where? Choose one of eight directions; Escape cancels.");
+                display += '\n';
+            }
             if (mapValid) {
                 const auto combat = CombatSummaryText(snapshot.view.combat);
                 const auto feedback = CombatFeedbackText(snapshot.view.combat);

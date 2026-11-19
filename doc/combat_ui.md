@@ -120,10 +120,11 @@ presentation. `Localization::OutcomeText` handles all expanded command outcomes;
 
 ### Event identity
 
-Frontend owners own message history and deduplication. Reformatting a snapshot
-must not append the same server event again; identical text is not identity, and
-two equal strikes in one tick must both survive. Tick plus vector index is not
-stable when the bounded server history evicts its prefix.
+Each frontend uses event serials to record a server event once across snapshots.
+Two equal strikes in one tick carry distinct serials and each contributes an
+occurrence to the displayed entry. Grouping happens after formatting and uses
+adjacent entries with identical text. The serial remains stable when the bounded
+server history evicts its prefix.
 
 `CombatEvent::serial` is monotonically increasing and nonzero within a published
 server/session stream, and is preserved across snapshots and transport. The server
@@ -134,6 +135,8 @@ stream, not on menu open or character replacement. On refresh, append events wit
 `CombatEventText`, and advance the cursor. A rolling-history gap may lose already-
 evicted events but must not duplicate retained ones. The pure formatter does not
 own the deduplication cursor; each frontend tracks its own received stream.
+Detailed strike events supply the history feedback for resolved attacks. See
+[message history](message_history.md) for the command outcome filter.
 
 ## Integration and checks
 

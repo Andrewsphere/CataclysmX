@@ -613,10 +613,13 @@ ftxui::Element GameplayUi::Render(WorldView view, const ContentCatalog& content,
     items_.Refresh(view, content, localization, keys);
     const auto t = [&](eastl::string_view key) { return localization.Text(key); };
     const auto on = [&](bool value) { return t(value ? "game.on" : "game.off"); };
-    const String state = t(!presentation.pending.empty() ? "game.ui.awaiting"
-        : view.commandQueued ? "game.ui.queued" : view.remainingTicks != 0 ? "game.ui.busy" : "game.ui.ready");
+    const bool hasPending = !presentation.pending.empty();
+    const bool showPending = hasPending && presentation.pendingAge >= pendingCommandStatusDelay;
+    const bool showQueued = !hasPending && view.commandQueued;
+    const String state = t(showPending ? "game.ui.awaiting"
+        : showQueued ? "game.ui.queued" : view.remainingTicks != 0 ? "game.ui.busy" : "game.ui.ready");
     auto stateField = StatusField(t("game.ui.action_state"), state);
-    if (!presentation.pending.empty() || view.commandQueued || view.remainingTicks != 0) {
+    if (showPending || showQueued || view.remainingTicks != 0) {
         stateField = stateField | ftxui::color(ftxui::Color::Yellow);
     }
     String position = localization.Format("game.ui.coordinates", {
@@ -650,7 +653,7 @@ ftxui::Element GameplayUi::Render(WorldView view, const ContentCatalog& content,
     const String compactPacing = localization.Format("game.ui.compact_pacing", {{"rate", UnsignedText(view.pacing.ticksPerSecond)},
         {"limit", on(view.pacing.rateLimited)}, {"idle", on(view.pacing.pauseWhenIdle)},
         {"speed", UnsignedText(view.speed)}, {"delay", UnsignedText(view.remainingTicks)}});
-    if (!presentation.pending.empty()) {
+    if (showPending) {
         const auto pending = localization.Format("game.ui.pending", {{"value", presentation.pending}});
         status.insert(status.begin() + 1, Paragraph(pending));
         compact += pending; compact += " | ";
@@ -718,9 +721,18 @@ ftxui::Element GameplayUi::Render(WorldView view, const ContentCatalog& content,
     }
     ftxui::Elements messages;
     if (presentation.history) {
-        for (const auto& entry : presentation.history->Entries()) { messages.push_back(Text(entry)); }
+        String line;
+        for (const auto& entry : presentation.history->Entries()) {
+            line.clear();
+            AppendMessageHistoryEntry(line, entry);
+            messages.push_back(Text(line));
+        }
     } else if (!presentation.message.empty()) { messages.push_back(Text(presentation.message)); }
     if (presentation.interacting) { messages.push_back(Text(t("game.interact_direction")) | ftxui::bold); }
+    if (presentation.choosingGrab) {
+        messages.push_back(Text(localization.Text("grab.direction",
+            "Grab where? Choose one of eight directions; Escape cancels.")) | ftxui::bold);
+    }
     if (modal_ == Modal::CombatTarget && pendingCommand_) {
         String prompt = pendingCommand_->ability.target.kind == AbilityTargetKind::Tile
             ? "Leap: move cursor up to 2 tiles on this level. " : "Sweep: choose one cardinal direction; preview covers 3 tiles. ";
