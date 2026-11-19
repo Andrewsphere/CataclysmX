@@ -241,15 +241,15 @@ changes across multiple passes.
 ### SDL artwork handoff
 
 Functional terminal presentation, shared menus and item text art are present.
-Dedicated map sprites remain `Ready for artwork` for `wiring_kit`,
-`portable_fuel_generator`, `generator_fuel_packet`, `generator`,
-`grid_battery_station` and `grid_scrap_press`; SDL uses existing fallback rendering.
-Suggested silhouettes: cable/tool pouch, squat handled engine, sealed fuel pouch,
-placed engine, battery with terminal leads, and upright compact press respectively.
+[Gen1 item sprites](item_sprites.md) cover `wiring_kit`, `portable_fuel_generator`
+and `generator_fuel_packet`. The placed `generator`, `grid_battery_station` and
+`grid_scrap_press` objects still use the generic object sprites. Suggested
+silhouettes for these objects: a placed engine, a battery with terminal leads,
+and an upright compact press, respectively.
 Generator running/stopped and press working/waiting/manual-stop states are available
-through inspection. Keep SDL artwork production on the designated workstation.
+through inspection.
 
-### Verification
+### Verification at the power-grid handoff
 
 - `cmake --build --preset win-msvc-debug`: passed. The initial stale configure
   cache selected MinGW link/archive tools for MSVC; a fresh configure with MSVC
