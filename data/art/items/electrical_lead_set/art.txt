@@ -1,0 +1,19 @@
+@text-art 1
+@color cable #71818A
+@color return #966A59
+@color shadow #46585D
+@color plug #A8ADB0
+@color contact #CFB66D
+@default cable
+---
+       ╭────────────────╮
+    ╭──┴────────────────┴─╮
+   ╱  <return>╭────────────────╮<cable>  │
+  │  <return>╱  <shadow>╭────────────╮<return>  │<cable>  │
+  │ <return>│   <shadow>╰────────────╯<return>  │<cable>  │
+   ╲ <return>╲________________╱<cable>  ╱
+    ╰───────────────╮   ╱
+  <plug>╔═══╗<cable>             │  │
+  <plug>║<contact>┆┆┆<plug>╠<cable>─────────────╯  ╰─<plug>╦══╗
+  <plug>╚═══╝                  ║<contact>┆┆<plug>║
+                         <plug>╚══╝

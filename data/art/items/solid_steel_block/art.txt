@@ -1,0 +1,18 @@
+@text-art 1
+@color face #8D969C
+@color top #C2C9CD
+@color edge #64737D
+@color side #48535C
+@color mark #C2B994
+@color shade #353E46
+@default face
+---
+<top>       ____________________
+<top>      /                  /<side>|
+<edge>     /__________________/ <side>|
+     |                  |<side> |
+     |<mark>    20     /      <face>|<side> |
+     |<edge>       __         <face>|<side> |
+     |                  |<side> /
+<edge>     |__________________|/
+<shade>       ░░░░░░░░░░░░░░░░

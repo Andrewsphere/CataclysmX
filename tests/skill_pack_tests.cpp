@@ -62,7 +62,8 @@ TEST_CASE("Town skill pack supplies progression and equivalent reading carriers"
     REQUIRE(swordId.value);
     const auto& sword = content.GetCraftingRecipe(swordId);
     REQUIRE(sword.skills.size() == 1);
-    CHECK(sword.skills[0] == SkillRequirement{fabrication, 2});
+    CHECK(sword.skills[0] == SkillRequirement{fabrication, 4});
+    CHECK(sword.knownByDefault);
 
     const auto primerId = content.FindBook("workshop_primer_text");
     const auto notesId = content.FindBook("salvage_notes_text");
@@ -132,14 +133,25 @@ TEST_CASE("Town starter recipes and recyclers offer ungated training", "[content
     for (const auto& entry : {eastl::pair<const char*, const char*>{"cut_up_cotton_tshirt", "tailoring"},
                               eastl::pair<const char*, const char*>{"cut_up_denim_jeans", "tailoring"},
                               eastl::pair<const char*, const char*>{"cut_steel_sheet", "fabrication"},
-                              eastl::pair<const char*, const char*>{"salvage_appliance_motor", "mechanics"},
-                              eastl::pair<const char*, const char*>{"salvage_water_pump", "mechanics"}}) {
+                              eastl::pair<const char*, const char*>{"salvage_appliance_motor", "mechanics"}}) {
         const auto id = content.FindRecyclingRecipe(entry.first);
         REQUIRE(id.value);
         const auto& recipe = content.GetRecyclingRecipe(id);
         CHECK(recipe.skills.empty());
         REQUIRE(recipe.training.size() == 1);
         CHECK(recipe.training[0] == SkillTraining{content.FindSkill(entry.second), 0, 100});
+    }
+    for (const auto& entry : {eastl::pair<const char*, const char*>{"salvage_water_pump", "mechanics"},
+                              eastl::pair<const char*, const char*>{"dismantle_computer_power_supply", "electronics"}}) {
+        const auto id = content.FindRecyclingRecipe(entry.first);
+        REQUIRE(id.value);
+        const auto& recipe = content.GetRecyclingRecipe(id);
+        const auto skill = content.FindSkill(entry.second);
+        REQUIRE(recipe.skills.size() == 1);
+        CHECK(recipe.skills[0] == SkillRequirement{skill, 1});
+        REQUIRE(recipe.training.size() == 1);
+        CHECK(recipe.training[0] == SkillTraining{skill, 1, 100});
+        CHECK(recipe.work == (eastl::string_view(entry.first) == "salvage_water_pump" ? 600u : 700u));
     }
 }
 }

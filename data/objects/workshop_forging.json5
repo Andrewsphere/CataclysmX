@@ -1,0 +1,14 @@
+{format_version:1, objects:[
+  {id:'crude_anvil',name:'crude anvil',behavior:'none',kind:'generic',
+   blocks_movement:true,movable:false,packing_item:'crude_anvil_kit',
+   tool_traits:[{id:'anvil',tier:1}]},
+  {id:'charcoal_forge',name:'charcoal forge',behavior:'forge',kind:'generic',
+   blocks_movement:true,movable:false,packing_item:'charcoal_forge_kit',
+   tool_traits:[{id:'forge_heat',tier:1}],
+   forge:{fuel_capacity:24000,ignition_cost:1000,fuels:[{item:'charcoal_charge',heat:6000}]}},
+  {id:'fabricated_anvil',name:'fabricated anvil',behavior:'none',kind:'generic',
+   blocks_movement:true,movable:false,packing_item:'fabricated_anvil_kit',
+   tool_traits:[{id:'anvil',tier:2}]},
+  {id:'workshop_anvil',name:'professional workshop anvil',behavior:'none',kind:'generic',
+   blocks_movement:true,movable:false,tool_traits:[{id:'anvil',tier:3}]},
+]}

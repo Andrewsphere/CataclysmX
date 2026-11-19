@@ -1,6 +1,6 @@
 # Workshop stations and fueled metalworking
 
-**Status: Accepted gameplay contract; W1 and W2 implemented and verified.** D2 of the
+**Status: Accepted gameplay contract; W1/W2 and W3A/W3B functionally verified.** D2 of the
 [urban workshop progression plan](urban_workshop_progression.md). The user accepted
 the proposed defaults and both progression branches. D1's
 [electrical accounting](power_design.md) is implemented.
@@ -17,7 +17,7 @@ scavenged hand tools + stock
 electrical salvage + hand tools
   -> assembled or found soldering iron + D1 supply
   -> electrical assemblies
-found welder + electrodes + D1 supply
+found welder + accessible protection + electrodes + D1 supply
   -> welded workshop equipment
 ```
 
@@ -38,10 +38,36 @@ is included here so D3 can design printers against it.
 | Cancellation | Keep actual reserved ingredients refundable; spent fuel/electricity stays spent | Extends current crafting semantics, including reserved solder/electrodes |
 | Older sword routes | Add the same workshop gates to both recipes producing `arming_sword` | Forge progression has value; existing cold-work machete/spear routes remain early options |
 | Recovery | Portable station equipment can be packed when idle, cold, and empty | Recovery preserves the original equipment item; fixtures can remain fixed |
+| Crafting protection | Ordinary accessible tool traits, including existing handheld-tool sharing; proper use is implicit | Acquiring job-appropriate protection matters; existing selection and paid-work rules apply |
 
 The runtime rules and matching workshop gates for both sword routes are accepted.
-Exact content quantities, skill levels, fuel tuning, and equipment identities need
-a bounded roster review before authoring.
+The [W3A/W3B implementation record](workshop_rosters.md) owns equipment identities,
+quantities, work/fuel tuning, acquisition and verification. The earlier
+[W3 proposal](workshop_content.md) is historical source material for revision
+against the accepted [shared crafting progression](crafting_progression.md). Its low
+station/sword skill gates are not accepted contract extensions.
+
+The [W3A/W3B roster](workshop_rosters.md) supplies useful practice
+products, suitable blade/tool stock, recovered-component electrical assembly and
+both welding/protection tiers. Its scope and learning revisions are authorized.
+
+The subsequent [progression discussion](crafting_progression.md#accepted-outline-metal-preparation-and-forging)
+accepts anvil tiers 1 (rail/block), 2 (fabricated) and 3 (professional), with first
+forge/tongs construction around Fabrication 2, smithing hammer/fabricated anvil
+around 3, and proper swords at 4. Both sword routes require anvil 2,
+hammering 2, metal holding 2, forge heat 1 and suitable blade stock. Ordinary
+charcoal forging remains sufficient. These are accepted authoring anchors;
+the implementation record lists their authored budgets and checks.
+
+The later progression discussion also accepts soldering/welding capability and
+equipment-construction bands, including an Electronics-3/Mechanics-2 makeshift
+welder. Welding additionally requires accessible protective glasses (tier 1) or a mask
+(tier 2), with requirements determined by the job. See
+[welding protection](crafting_progression.md#welding-protection) for the accepted
+ingredient/tier outline and ordinary tool-selection/paid-work semantics.
+Protection is an ordinary `tool_traits` requirement; nearby accessible equipment
+and normal tool sharing qualify. The user retired M-Worn's separate worn-only
+mechanics proposal in favor of this abstraction.
 
 ## 2. Inspected starting point
 
@@ -116,10 +142,10 @@ selection need not search every alternative combination after a supply refusal.
 
 | Trait | Tier 1 | Higher tier when a recipe demonstrates a need |
 | --- | --- | --- |
-| `hammering` (existing) | Ordinary hammer | Suitable heavy forming hammer |
-| `anvil` | Mounted solid steel block | Proper anvil |
+| `hammering` (existing) | Ordinary suitable hammer | Tier 2 smithing hammer |
+| `anvil` | Mounted rail/solid steel block | Tier 2 fabricated workshop anvil; tier 3 professional anvil |
 | `forge_heat` | Ready hand-blown forge | Higher-capability forge |
-| `metal_holding` | Suitable pliers for small/long stock | Forging tongs |
+| `metal_holding` | Suitable pliers for small/long stock | Tier 2 forging tongs |
 | `soldering` (existing) | Found or assembled soldering iron | Precision equipment |
 | `welding` | Basic arc welder | More capable welding equipment |
 | Metal cutting/drilling | Hacksaw/hand drill | Only add higher tiers with useful recipes |
@@ -246,7 +272,9 @@ economics.
 ## 6. Reachable content slice
 
 These are proposed roles/routes, not newly authored definitions or an approved
-complete roster.
+complete roster. The earlier [bounded W3 roster](workshop_content.md) supplies
+candidate IDs and recovery/operating examples, but its progression must be revised
+after the [broader framework](crafting_progression.md) is discussed.
 
 | Step | Concrete route and useful result |
 | --- | --- |
@@ -269,6 +297,10 @@ workshop gates to both. Review their skill discrepancy and revise the cold-work
 descriptions with that change. Keep useful lower-tier cold-work routes such as
 `make_salvaged_machete` and `make_steel_spear`. Audit every producer/recycler of a
 chosen gated output, including legacy manifests, before accepting reachability.
+The later accepted D3 direction deliberately allows curated printer routes to
+use Computers and machine/file/feedstock requirements instead of the manual
+Fabrication gates. Treat those as explicit alternative production routes in the
+audit, rather than imposing hand-forging requirements on printer operation.
 
 Use existing `loot_tools`, `loot_metal_stock`, `loot_hardware`,
 `loot_electrical_parts`, `loot_auto_repair` and workshop placement contexts.
@@ -334,6 +366,39 @@ D3 adds file eligibility, printer tiers, feedstock, and human setup/post-process
 requirements to this boundary. An ordinary known human recipe does not yet imply
 printer permission. D2 does not assume a generic multi-phase job framework:
 separate manual preparation recipes can feed a selectable autonomous recipe.
+
+#### Later progression requirements and queued extensions
+
+The user requested selected unattended process machines, specifically coal
+gasification and oxygen-free wood-gas production for adapted gasoline engines.
+See [the process-machine brief](crafting_progression.md#queued-design-selected-unattended-process-machines).
+Heat/fuel funding, gas handling, possible byproducts and optional repeat behavior
+need a separate design review against this single-output, grid-funded, single-job
+contract. W4 is a starting point, not evidence those extensions already work.
+Most crafting remains manual and tool-based.
+
+For D3, operating printers uses Computers rather than Fabrication. Simple plastic
+printing needs very little skill; more demanding/durable and advanced-material
+work uses appropriate Computers skill, machine, design and feedstock. Basic
+printers should be reasonably accessible as futuristic salvage; constructing one
+can still be difficult. Resolve setup/processing within those requirements and
+retain the no-passive-operator-XP boundary.
+
+Selected intricate printer recipes also require usable schematics distinct from
+the control software. D3 defines supplied/preloaded design coverage, acquisition
+and schematic eligibility alongside the job's other requirements. See
+[printer schematics](crafting_progression.md#schematics-for-intricate-prints).
+
+Selected sophisticated equipment across trades can also require compatible
+production software, including packages acquired by hacking factory systems.
+Software can be copy-protected, and broken machines can retain extractable
+software. Equipment operability and information recoverability need distinct
+design decisions; D3 and the hacking design own recovery/protection actions.
+See [production software](crafting_progression.md#accepted-direction-production-software).
+D3/W4 must coordinate software eligibility and access-loss semantics with job
+start/resume and paid work. This is a queued extension to the machine contract;
+software acquisition, deployment and compatibility still need implementation
+design.
 
 ## 8. Ownership, interfaces, persistence, and presentation
 
@@ -423,7 +488,7 @@ machine remains stopped, and restoration grants no initial fuel, charge or outpu
 | --- | --- | --- |
 | W1 Station foundation — verified | Object traits, provider selection, claims, placement/packing, saved/LAN inspection | Occupancy/recovery accepted. Thirteen focused tests cover tiers/reach, contention, atomic refusal, recovery, inactivity/death, save migration and LAN/UI. |
 | W2 Fueled manual work — verified | Forge state/actions, heat rates and atomic combined payment | Verified conservation, speed independence, failed mixed power/heat payment, partial fuel, pause/reignite, source loss, elapsed partitions, paid-work reassignment, disk/LAN and shared controls. |
-| W3 Playable metalworking | Small authored roster, bootstrap/found routes, welding result, legacy-output audit | Approve roster/sword gates. Load all affected packs, verify skill/knowledge reachability, recipe limits, recycler mass/energy bounds and actual acquisition. |
+| W3 Playable metalworking | [W3A/W3B implementation](workshop_rosters.md) follows [accepted progression](crafting_progression.md) and the [delivery plan](crafting_delivery_plan.md) | 11 + 11 new items, 8 existing-definition upgrades, 17 new crafting recipes and 5 objects. W3A uses W1/W2; W3B uses D1 and ordinary protection traits. See the roster for budgets, affected-save policy and current verification. |
 | W4 Selectable machines | Recipe selection, reserved originals/output space, cancel, D1 integration | Review D3 boundary. Test shared supply, capacity while stopped, no duplicate output, destruction, offscreen completion and disk/LAN round-trips. |
 
 Each implemented slice includes its player commands/status and relevant
@@ -492,6 +557,15 @@ git -c core.safecrlf=false diff --check
 - Focused coverage lives in `tests/forge_tests.cpp`, `tests/forge_content_tests.cpp`
   and the object, crafting, skill and workshop persistence/network suites.
 
-W3 is next: review the bounded roster/balance and use the item-authoring workflow,
-including stable-ID artwork briefs for external SDL production. W2 changes no
-shipped item roster or generation version. Review section 7 with D3 before W4.
+The [shared progression](crafting_progression.md) now records accepted skill,
+equipment and product bands. The [delivery direction](crafting_delivery_plan.md)
+is agreed. The [W3A/W3B implementation](workshop_rosters.md) records concrete
+budgets and compatibility policy. Repeated practice and incomplete later
+progression remain acceptable.
+
+W3's original low gates and blanket runtime assumptions are historical. Forging can
+use W1/W2; welding protection uses ordinary traits and handheld grid tools use D1.
+Powered placed manual equipment needs M-Bench's explicit grid funding through a
+separate bounded design/implementation. W3 verification is recorded with its roster.
+W2 changes no shipped item roster or generation version. Review section 7 with
+D3 before W4.

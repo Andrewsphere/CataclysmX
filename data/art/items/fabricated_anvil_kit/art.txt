@@ -1,0 +1,22 @@
+@text-art 1
+@color face #C3CDD1
+@color steel #8D9BA4
+@color side #4B5A65
+@color wood #A88558
+@color grain #75563D
+@color strap #68767D
+@default steel
+---
+<face>     _____________________
+<face>    /____________________/<side>|
+   /____   _____________|/
+<side>        \ |        |
+<side>         \|        |
+        __|________|__
+<wood>       /_____________/<grain>|
+<wood>       |<face> o         o<wood> |<grain>|
+<wood>       |<strap> ║<grain> \     /<strap> ║<wood> |<grain>|
+<wood>       |<strap> ║<grain>  \   /<strap>  ║<wood> |<grain>|
+<wood>       |<strap> ║<grain>   \ /<strap>   ║<wood> |<grain>|
+<wood>      /__<strap>║<wood>____<grain>X<wood>____<strap>║<wood>__|/
+<wood>     /___<strap>║<wood>___<grain>/ \<wood>__<strap>║<wood>___\

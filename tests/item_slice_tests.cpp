@@ -90,6 +90,23 @@ bool Placed(const ContentCatalog& content, ItemTypeId item) {
     return false;
 }
 
+bool StationPlaced(const ContentCatalog& content, ObjectTypeId object) {
+    const auto contains = [&](const PatternPopulation& population) {
+        for (const auto& furniture : population.furniture) {
+            if (furniture.type == object) { return true; }
+        }
+        return false;
+    };
+    for (std::uint32_t i = 1; i <= content.BuildingPatternCount(); ++i) {
+        const auto& pattern = content.GetBuildingPattern({i});
+        if (contains(pattern.population)) { return true; }
+        for (const auto& basement : pattern.basements) {
+            if (contains(basement.population)) { return true; }
+        }
+    }
+    return false;
+}
+
 bool Current(const ContentCatalog& content, ItemTypeId item) {
     return !content.GetItem(item).flags.Contains(content.FindFlag("obsolete"));
 }
@@ -106,7 +123,7 @@ TEST_CASE("Town slice publishes sixty complete current definitions and retires t
     CHECK_FALSE(flag.domains.Contains(FlagDomain::Terrain));
     CHECK_FALSE(flag.domains.Contains(FlagDomain::Object));
     CHECK_FALSE(flag.description.empty());
-    CHECK(content.ItemCount() == 181); // Previous 98, 80 expansion items, and 3 power items.
+    CHECK(content.ItemCount() == 203); // Previous 181 plus eleven forging and eleven electrical items.
     for (const char* name : {"wiring_kit", "portable_fuel_generator", "generator_fuel_packet"}) {
         CAPTURE(name);
         REQUIRE(content.FindItem(name).value);
@@ -204,6 +221,17 @@ TEST_CASE("Town slice acquisition reaches every new item and all current recipe 
                         tool |= provided.trait == required.trait && provided.tier >= required.tier;
                     }
                 }
+                for (std::uint32_t j = 1; j <= content.ObjectCount(); ++j) {
+                    const ObjectTypeId object{j};
+                    bool available = StationPlaced(content, object);
+                    for (std::uint32_t k = 1; k <= content.ItemCount(); ++k) {
+                        available |= reachable[k] && content.GetItem({k}).placedObject == object;
+                    }
+                    if (!available) { continue; }
+                    for (const auto& provided : content.GetObject(object).toolTraits) {
+                        tool |= provided.trait == required.trait && provided.tier >= required.tier;
+                    }
+                }
                 ready &= tool;
             }
             if (ready && Current(content, recipe.result.item)) {
@@ -215,6 +243,7 @@ TEST_CASE("Town slice acquisition reaches every new item and all current recipe 
     for (const char* name : sliceIds) { CAPTURE(name); CHECK(reachable[content.FindItem(name).value]); }
     CHECK(reachable[content.FindItem("wood_scrap").value]);
     CHECK(reachable[content.FindItem("arming_sword").value]);
+    CHECK(reachable[content.FindItem("charcoal_charge").value]);
     for (const char* name : {"cut_cloth_bandage", "cut_timber_scrap", "make_current_arming_sword", "make_coil_spear"}) {
         CAPTURE(name);
         const auto id = content.FindCraftingRecipe(name);
@@ -334,7 +363,7 @@ TEST_CASE("Current cloth timber and sword recipes consume exact counts and keep 
     const Route routes[] = {
         {"cut_cloth_bandage", "cloth_patch", 1, "cloth_bandage", 2},
         {"cut_timber_scrap", "timber_plank", 1, "wood_scrap", 10},
-        {"make_current_arming_sword", "steel_scrap", 14, "arming_sword", 1},
+        {"make_current_arming_sword", "spring_steel_bar", 1, "arming_sword", 1},
     };
     for (const auto& route : routes) {
         CAPTURE(route.recipe);
@@ -343,16 +372,30 @@ TEST_CASE("Current cloth timber and sword recipes consume exact counts and keep 
         for (unsigned i = 0; i < route.count + 1; ++i) { r.Add(route.material); }
         const bool sword = eastl::string_view(route.result) == "arming_sword";
         if (sword) {
-            REQUIRE(world.Learning().SetLevel(r.server.GetPlayer(), r.content.FindSkill("fabrication"), 3));
             r.Add("wood_scrap"); r.Add("wood_scrap"); r.Add("copper_wire");
+            CHECK(r.Start(route.recipe).outcome == CraftingOutcome::MissingSkills);
+            REQUIRE(world.Learning().SetLevel(r.server.GetPlayer(), r.content.FindSkill("fabrication"), 4));
         }
         CHECK(r.Start(route.recipe).outcome == CraftingOutcome::MissingTools);
         CHECK(r.Count(r.content.FindItem(route.material)) == route.count + 1);
         const auto saw = r.Add("hacksaw");
-        ItemHandle hammer{};
+        ItemHandle hammer{}, file{}, tongs{};
         if (sword) {
             CHECK(r.Start(route.recipe).outcome == CraftingOutcome::MissingTools);
-            hammer = r.Add("claw_hammer");
+            file = r.Add("metal_file");
+            hammer = r.Add("smithing_hammer");
+            tongs = r.Add("forging_tongs");
+            CHECK(r.Start(route.recipe).outcome == CraftingOutcome::MissingTools);
+            REQUIRE(world.SetTile({1, 0}, {r.content.FindTerrain("floor"), 0}));
+            REQUIRE(world.SetTile({0, 1}, {r.content.FindTerrain("floor"), 0}));
+            REQUIRE(world.CreateObject(r.content.FindObject("fabricated_anvil"), {1, 0}));
+            const auto forge = Take(world.CreateObject(r.content.FindObject("charcoal_forge"), {0, 1}));
+            CHECK(r.Start(route.recipe).outcome == CraftingOutcome::ColdForge);
+            for (int i = 0; i < 2; ++i) {
+                CHECK(Take(world.UseForge(r.server.GetPlayer(), forge, ForgeAction::LoadFuel, r.Add("charcoal_charge"))).outcome
+                    == StationActionOutcome::FuelLoaded);
+            }
+            REQUIRE(Take(world.UseForge(r.server.GetPlayer(), forge, ForgeAction::Ignite)).outcome == StationActionOutcome::Ignited);
         }
         const auto started = r.Start(route.recipe);
         REQUIRE(started.outcome == CraftingOutcome::Started);
@@ -361,7 +404,7 @@ TEST_CASE("Current cloth timber and sword recipes consume exact counts and keep 
         CHECK(r.Count(r.content.FindItem(route.result)) == route.output);
         REQUIRE(world.GetItem(saw));
         if (sword) {
-            REQUIRE(world.GetItem(hammer));
+            REQUIRE(world.GetItem(hammer)); REQUIRE(world.GetItem(file)); REQUIRE(world.GetItem(tongs));
             CHECK(r.Count(r.content.FindItem("wood_scrap")) == 0);
             CHECK(r.Count(r.content.FindItem("copper_wire")) == 0);
         }
@@ -410,6 +453,10 @@ TEST_CASE("Current recyclers preserve mass and produce usable current stock with
         SliceRig r;
         auto& world = r.server.GetWorld();
         const auto target = Take(world.CreateItem(recipe.target, ItemLocation::Carried(r.server.GetPlayer())));
+        if (eastl::string_view(name) == "salvage_water_pump") {
+            CHECK(Take(world.StartRecycling(r.server.GetPlayer(), target, recipeId)).outcome == CraftingOutcome::MissingSkills);
+            REQUIRE(world.Learning().SetLevel(r.server.GetPlayer(), content.FindSkill("mechanics"), 1));
+        }
         CHECK(Take(world.StartRecycling(r.server.GetPlayer(), target, recipeId)).outcome == CraftingOutcome::MissingTools);
         Vector<ItemHandle> tools;
         for (const auto& input : recipe.inputs) {

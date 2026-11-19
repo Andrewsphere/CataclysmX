@@ -1,0 +1,22 @@
+@text-art 1
+@color paper #B09B72
+@color fold #796C53
+@color top #CBB88E
+@color ink #4A4940
+@color coal #444C51
+@color dust #687075
+@default paper
+---
+<top>          ____________
+<fold>         /____________\
+        /|            |\
+       / |<ink>  CHARCOAL<paper>  | \
+      /  |            |  \
+     |   |<dust>   ▄█▄ ▄▄<paper>   |   |
+     |   |<coal>  ▐███▌██▌<paper>  |   |
+     |   |<dust>   ▀▀ ▀▀<paper>    |   |
+     |   |            |   |
+     |   |<ink>  ////<paper>      |   |
+     |   |            |   |
+<fold>     |___|____________|___|
+<fold>      \__________________/

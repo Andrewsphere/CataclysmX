@@ -1,5 +1,6 @@
 #include "content/content.h"
 #include "core/server.h"
+#include "skills/learning_system.h"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -82,7 +83,7 @@ TEST_CASE("Town item pilot loads five authored items with meaningful flag bounda
 
 TEST_CASE("Town item pilot crafting inputs and tools have authored loot placements", "[item-pilot][content][crafting]") {
     const auto content = PilotContent();
-    for (const char* name : {"claw_hammer", "hacksaw", "wood_plank", "scrap"}) {
+    for (const char* name : {"hacksaw", "metal_file", "wood_plank", "spring_steel_bar", "charcoal_charge"}) {
         CAPTURE(name);
         const auto type = content.FindItem(name); REQUIRE(type.value != 0);
         CHECK(HasPlacement(content, type));
@@ -115,7 +116,7 @@ TEST_CASE("Combat manuals shield and knuckles have reachable Town and FirstHouse
     }
 }
 
-TEST_CASE("Town item pilot crafts plank scraps into a salvaged sword through server commands", "[item-pilot][crafting][server][world]") {
+TEST_CASE("Town item pilot forges a salvaged sword through server commands", "[item-pilot][crafting][server][world]") {
     const auto content = PilotContent();
     // Use the small deterministic arena with the actual Town catalog. Loot
     // reachability is checked above, independently of a generated seed's luck.
@@ -146,10 +147,10 @@ TEST_CASE("Town item pilot crafts plank scraps into a salvaged sword through ser
         CHECK(world.GetActorRemainingTicks(player) == 0);
         REQUIRE(world.CheckInvariants());
     };
-    const auto refused = [&](const char* name) {
+    const auto refused = [&](const char* name, CraftingOutcome expected = CraftingOutcome::MissingTools) {
         const auto tick = server.GetTick();
         const auto result = craft(name);
-        CHECK(result.outcome == Outcome::crafting_refused); CHECK(result.craftingOutcome == CraftingOutcome::MissingTools);
+        CHECK(result.outcome == Outcome::crafting_refused); CHECK(result.craftingOutcome == expected);
         CHECK_FALSE(result.advanced); CHECK(result.cost == 0); CHECK(server.GetTick() == tick);
         CHECK(server.View(0).craftingJobs.empty());
     };
@@ -162,25 +163,33 @@ TEST_CASE("Town item pilot crafts plank scraps into a salvaged sword through ser
     finish();
     CHECK_FALSE(world.GetItem(plank)); CHECK(count("wood_scrap") == 10); REQUIRE(world.GetItem(saw));
 
-    Vector<ItemHandle> scrap;
-    for (unsigned i = 0; i < 15; ++i) { scrap.push_back(add("scrap")); }
+    const auto bar = add("spring_steel_bar");
     const auto firstWire = add("wire_bundle"); const auto secondWire = add("wire_bundle");
-    refused("make_salvaged_arming_sword"); // Cutting alone is insufficient.
-    CHECK(count("scrap") == 15); CHECK(count("wood_scrap") == 10); CHECK(count("wire_bundle") == 2);
-    const auto hammer = add("claw_hammer");
-    REQUIRE(world.SetTile({7, 7}, {content.FindTerrain("floor"), 0}));
-    REQUIRE(world.TransferItem(saw, ItemLocation::Ground({7, 7})));
-    refused("make_salvaged_arming_sword"); // Hammering alone is insufficient.
-    CHECK(count("scrap") == 15); CHECK(count("wood_scrap") == 10); CHECK(count("wire_bundle") == 2);
-    REQUIRE(world.TransferItem(saw, ItemLocation::Carried(player)));
+    refused("make_salvaged_arming_sword", CraftingOutcome::MissingSkills);
+    REQUIRE(world.Learning().SetLevel(player, content.FindSkill("fabrication"), 4));
+    refused("make_salvaged_arming_sword"); // The retained file is still missing.
+    const auto file = add("metal_file");
+    const auto hammer = add("smithing_hammer");
+    const auto tongs = add("forging_tongs");
+    refused("make_salvaged_arming_sword"); // Portable tools cannot replace stations.
+    REQUIRE(world.SetTile({1, 0}, {content.FindTerrain("floor"), 0}));
+    REQUIRE(world.SetTile({0, 1}, {content.FindTerrain("floor"), 0}));
+    REQUIRE(world.CreateObject(content.FindObject("fabricated_anvil"), {1, 0}));
+    const auto forge = world.CreateObject(content.FindObject("charcoal_forge"), {0, 1});
+    REQUIRE(forge);
+    refused("make_salvaged_arming_sword", CraftingOutcome::ColdForge);
+    for (int i = 0; i < 2; ++i) {
+        const auto loaded = world.UseForge(player, *forge, ForgeAction::LoadFuel, add("charcoal_charge"));
+        REQUIRE(loaded); REQUIRE(loaded->outcome == StationActionOutcome::FuelLoaded);
+    }
+    const auto ignited = world.UseForge(player, *forge, ForgeAction::Ignite);
+    REQUIRE(ignited); REQUIRE(ignited->outcome == StationActionOutcome::Ignited);
+    CHECK(count("spring_steel_bar") == 1); CHECK(count("wood_scrap") == 10); CHECK(count("wire_bundle") == 2);
     REQUIRE(craft("make_salvaged_arming_sword").outcome == Outcome::craft_started);
     finish();
-    CHECK(count("scrap") == 1); CHECK(count("wood_scrap") == 8); CHECK(count("wire_bundle") == 1);
-    unsigned remainingScrap = 0;
-    for (const auto handle : scrap) { if (world.GetItem(handle)) { ++remainingScrap; } }
-    CHECK(remainingScrap == 1);
+    CHECK_FALSE(world.GetItem(bar)); CHECK(count("wood_scrap") == 8); CHECK(count("wire_bundle") == 1);
     CHECK((world.GetItem(firstWire) != nullptr) != (world.GetItem(secondWire) != nullptr));
-    REQUIRE(world.GetItem(saw)); REQUIRE(world.GetItem(hammer));
+    REQUIRE(world.GetItem(saw)); REQUIRE(world.GetItem(file)); REQUIRE(world.GetItem(hammer)); REQUIRE(world.GetItem(tongs));
     CHECK(world.GetItem(saw)->location == ItemLocation::Carried(player));
     CHECK(world.GetItem(hammer)->location == ItemLocation::Carried(player));
     REQUIRE(count("arming_sword") == 1);

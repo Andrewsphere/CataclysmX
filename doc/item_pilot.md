@@ -5,6 +5,11 @@ preserves all five definitions and original recipes, adds current-material
 crafting alternatives, replaces the original saw/knife loot with current tools,
 and marks retained older material dependencies `obsolete`.
 
+**Sword progression superseded:** [W3A/W3B](workshop_rosters.md) preserves the
+sword and both recipe IDs but replaces the historical cold-scrap routes below.
+Both now use continuous suitable steel and require Fabrication 4, anvil 2,
+hammering 2, metal holding 2 and a fueled forge. The original stats/art remain.
+
 ## Scope and coverage
 
 Five-item target: **two new IDs**, **three existing-ID upgrades**, five large

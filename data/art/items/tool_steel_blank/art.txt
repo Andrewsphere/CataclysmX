@@ -1,0 +1,18 @@
+@text-art 1
+@color steel #778B97
+@color top #A3B2BA
+@color cut #C6CFD1
+@color side #455A68
+@color scale #596D77
+@color shade #34444E
+@default steel
+---
+<top>          ______________
+<top>        /              /<side>|
+<cut>      /______________/<side>  |
+<cut>      |              |<side>  |
+<cut>      |<scale>   ────<cut>       |<side>  |
+<cut>      |              |<side>  |
+<cut>      |              |<side> /
+<steel>      |______________|/
+<shade>        ░░░░░░░░░░░░

@@ -324,6 +324,8 @@ if(CATACLYSMX_BUILD_TESTS)
         tests/power_tests.cpp tests/power_content_tests.cpp tests/worldgen_power_tests.cpp
         tests/power_crafting_tests.cpp tests/power_save_tests.cpp
         tests/workshop_tests.cpp
+        tests/workshop_content_tests.cpp
+        tests/workshop_acquisition_tests.cpp
         tests/forge_tests.cpp
         tests/forge_content_tests.cpp
         tests/power_frontend_tests.cpp tests/power_network_tests.cpp

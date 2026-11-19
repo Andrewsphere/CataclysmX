@@ -390,7 +390,7 @@ TEST_CASE("SDL item pilot renders five authored assets at compact and wide sizes
     }
 }
 
-TEST_CASE("SDL item slice and expansion render through the item browser", "[item-slice][item-expansion][sdl][inventory][render]") {
+TEST_CASE("SDL item slice expansion and workshop render through the item browser", "[item-slice][item-expansion][workshop][w3][sdl][inventory][render]") {
     Diagnostics diagnostics;
     auto loaded = LoadContentPack(CATACLYSMX_CONTENT_PACK, &diagnostics);
     INFO(FormatDiagnostics(diagnostics).c_str()); REQUIRE(loaded);
@@ -399,7 +399,16 @@ TEST_CASE("SDL item slice and expansion render through the item browser", "[item
     Localization localization; REQUIRE(localization.Load(CATACLYSMX_LOC_DIRECTORY, "en"));
     const auto keys = DefaultKeymap();
     ItemBrowser browser; browser.Open(content, localization);
-    CHECK(browser.Frame().matches.size() == 179); // Authored definitions only; both generated containers are hidden.
+    CHECK(browser.Frame().matches.size() == content.ItemCount() - 2); // Both generated containers are hidden.
+    constexpr const char* workshopIds[] = {
+        "solid_steel_block", "refractory_brick", "charcoal_charge", "crude_anvil_kit",
+        "charcoal_forge_kit", "forging_tongs", "smithing_hammer", "fabricated_anvil_kit",
+        "spring_steel_bar", "tool_steel_blank", "wooden_workshop_crate", "sunglasses",
+        "improvised_welding_goggles", "welding_filter", "welding_mask",
+        "salvaged_welder_power_module", "electrical_lead_set", "makeshift_arc_welder",
+        "arc_welder", "welding_electrode_packet", "welded_workshop_rack_kit",
+        "workshop_battery_pack"
+    };
     for (const auto type : browser.Frame().matches) {
         CHECK(type != content.CorpseItem());
         CHECK_FALSE(content.GetItem(type).unfinishedCraft);
@@ -419,6 +428,7 @@ TEST_CASE("SDL item slice and expansion render through the item browser", "[item
         unsigned powerRendered = 0;
         unsigned combatListed = 0;
         unsigned expansionRendered = 0;
+        unsigned workshopRendered = 0;
         for (std::size_t index = 0; index < browser.Frame().matches.size(); ++index) {
             const auto type = browser.Frame().matches[index];
             const auto& item = content.GetItem(type);
@@ -441,6 +451,8 @@ TEST_CASE("SDL item slice and expansion render through the item browser", "[item
             }
             bool expansion = false;
             for (const char* id : expansionItemIds) { expansion |= item.id == id; }
+            bool workshop = false;
+            for (const char* id : workshopIds) { workshop |= item.id == id; }
             CAPTURE(item.id.c_str());
             browser.Frame().selected = index;
             browser.Handle({"e"}, keys, content, localization);
@@ -454,7 +466,9 @@ TEST_CASE("SDL item slice and expansion render through the item browser", "[item
             };
             draw();
             const auto top = SurfaceHash(display.surface);
-            if (const char* prefix = std::getenv(expansion ? "CATACLYSMX_ITEM_EXPANSION_PREVIEW" : "CATACLYSMX_ITEM_SLICE_PREVIEW")) {
+            const char* previewVariable = workshop ? "CATACLYSMX_WORKSHOP_PREVIEW"
+                : expansion ? "CATACLYSMX_ITEM_EXPANSION_PREVIEW" : "CATACLYSMX_ITEM_SLICE_PREVIEW";
+            if (const char* prefix = std::getenv(previewVariable)) {
                 const auto output = String(prefix) + "_" + item.id + "_" + NumberText(size.x) + ".png";
                 REQUIRE(SDL_SavePNG(display.surface, output.c_str()));
             }
@@ -463,13 +477,14 @@ TEST_CASE("SDL item slice and expansion render through the item browser", "[item
             frame.examination.art = &item.art;
             frame.examination.scroll = 9999; draw();
             CHECK(frame.examination.scroll >= 0); CHECK(frame.examination.scroll < 9999);
-            if (size.x == 480 && !expansion) { CHECK(frame.examination.scroll > 0); }
+            if (size.x == 480 && !expansion && !workshop) { CHECK(frame.examination.scroll > 0); }
             frame.examination.scroll = 0; draw();
             CHECK(SurfaceHash(display.surface) == top);
             browser.Handle({"Escape"}, keys, content, localization);
             // Render the new learning carriers too, while retaining the original
             // sixty-item slice coverage independently of the catalog additions.
             if (expansion) { ++expansionRendered; }
+            else if (workshop) { ++workshopRendered; }
             else if (item.id == "workshop_primer_print" || item.id == "salvage_notes_print"
                 || item.id == "workshop_ebook_reader") { ++learningRendered; }
             else if (item.id == "wiring_kit" || item.id == "portable_fuel_generator"
@@ -478,6 +493,7 @@ TEST_CASE("SDL item slice and expansion render through the item browser", "[item
         }
         CHECK(rendered == 60);
         CHECK(expansionRendered == 80);
+        CHECK(workshopRendered == 22);
         CHECK(learningRendered == 3);
         CHECK(powerRendered == 3);
         CHECK(combatListed == 6);

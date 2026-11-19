@@ -51,10 +51,12 @@
   {type:'loot_pool',id:'loot_workshop_bulk_ground',entries:[
     {item:'portable_fuel_generator',weight:2},
     {item:'plywood_panel',weight:4},{item:'metal_toolbox',weight:3},{item:'socket_wrench_set',weight:4},
+    {pool:'loot_forging_workshop_ground',weight:1},{pool:'loot_welding_workshop_ground',weight:1},
   ]},
   {type:'loot_pool',id:'loot_camping_bulk_ground',entries:[
     {item:'water_jerrycan',weight:3},{item:'sleeping_bag',weight:4},{item:'wool_blanket',weight:4},
     {item:'foam_sleeping_mat',weight:4},{item:'camping_tent',weight:3},
+    {pool:'loot_forging_camping_ground',weight:1},
   ]},
   {type:'loot_pool',id:'loot_outerwear_ground',entries:[
     {item:'hooded_sweatshirt',weight:5},{item:'winter_coat',weight:4},

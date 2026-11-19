@@ -1,0 +1,21 @@
+@text-art 1
+@color steel #8C9BA3
+@color edge #C0C8CD
+@color shadow #4E5D68
+@color scale #656A68
+@color pivot #B6A58B
+@color wear #A4ACAD
+@default steel
+---
+<edge>                       __
+<edge>                  ____/ /
+              ___/<wear> ____/
+          ___/ ___/
+      ___/<scale> ___/
+  ___/<scale> ___/
+<shadow> /  __/<pivot>o<wear>__
+<shadow> \_/  /<steel>   \____
+<shadow>     /____<steel>     \____
+<shadow>          \____<steel>     \____
+<shadow>               \____<edge>     \
+<shadow>                    \____/

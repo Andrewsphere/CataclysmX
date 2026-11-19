@@ -1,0 +1,22 @@
+@text-art 1
+@color steel #A2AFB1
+@color weld #C6C9B8
+@color shadow #60737B
+@color shelf #81969C
+@color bag #B9A27B
+@color bolt #D3C5A5
+@default steel
+---
+     ╔════════════════════╗
+     ║<shelf>╔══════════════════╗<steel>║
+     ║<shelf>║<shadow>╔════════════════╗<shelf>║<steel>║
+     ║<shelf>║<shadow>║                ║<shelf>║<steel>║
+     ╚<weld>╬╬<steel>════════════════<weld>╬╬<steel>╝
+      <shelf>╚<weld>╬<shelf>════════════════<weld>╬<shelf>╝
+       <shadow>╚════════════════╝
+    <shelf>╭────────────────────╮
+    │ <steel>──────────────────<shelf> │
+    ╰────────────────────╯
+       <bag>┌─────┐ <steel>══════════
+       <bag>│ <bolt>+ +<bag> │ <shadow>══════════
+       <bag>└─────┘

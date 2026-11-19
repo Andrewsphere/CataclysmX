@@ -13,8 +13,12 @@ In `data/crafting/slice.json5`, `cut_timber_scrap` is ungated level-0 Fabricatio
 training toward level 1. `make_coil_spear` requires Fabrication 1 and a reference
 or knowledge, and explicitly autolearns at Fabrication 2. Its independent,
 ungated `disassemble_coil_spear` recycler trains Fabrication at level 0 and
-teaches the spear recipe through disassembly. `make_current_arming_sword` requires
-Fabrication 2 and is known by default. Materials and tools still apply.
+teaches the spear recipe through disassembly. Both arming-sword producers require
+Fabrication 4, suitable bar stock, anvil 2, hammering 2, metal holding 2 and a
+fueled forge; both are known by default. The [workshop roster](workshop_rosters.md)
+supplies level-2/3 useful practice and Electronics-1/2 learning activities.
+Power-supply dismantling now requires/trains Electronics 1; water-pump dismantling
+requires/trains Mechanics 1. Their work and salvage outputs are preserved.
 
 `data/books/starter.json5` defines `workshop_primer_text` and
 `salvage_notes_text`; both reference `make_coil_spear` and have distinct study

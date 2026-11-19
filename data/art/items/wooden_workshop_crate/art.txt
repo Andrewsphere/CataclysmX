@@ -1,0 +1,20 @@
+@text-art 1
+@color wood #AE8A5D
+@color top #CFAB76
+@color side #796043
+@color brace #D0AC79
+@color label #C9BC98
+@color shade #423E36
+@default wood
+---
+<top>       ____________________
+<top>      /___________________/<side>|
+<top>     /___________________/<side> |
+     |<brace> ║               ║<wood> |<side> |
+     |<brace>═╬═══════════════╬═<wood>|<side> |
+     |<brace> ║<wood>  <label>┌─────────┐<wood>  <brace>║<wood> |<side> |
+     |<brace> ║<wood>  <label>│         │<wood>  <brace>║<wood> |<side> |
+     |<brace>═╬══<label>└─────────┘<brace>══╬═<wood>|<side> /
+     |<brace> ║               ║<wood> |<side>/
+<side>     |___________________|
+<shade>       ░░░░░░░░░░░░░░░░░

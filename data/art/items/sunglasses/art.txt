@@ -1,0 +1,13 @@
+@text-art 1
+@color frame #8D7763
+@color edge #B9A78C
+@color lens #586779
+@color glint #8197AB
+@default frame
+---
+     __                 __
+    /  \_______________/  \
+   /  <edge>╔════════╗ ╔════════╗
+  /___<edge>║<lens> ░░░░░░ <edge>╠═╣<lens> ░░░░░░ <edge>║
+      <edge>║<glint> ░░░░░░ <edge>║ ║<lens> ░░░░░░ <edge>║
+      <edge>╚════════╝ ╚════════╝

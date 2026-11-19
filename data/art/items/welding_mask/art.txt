@@ -1,0 +1,20 @@
+@text-art 1
+@color shell #8E664C
+@color edge #BA8962
+@color strap #796E5A
+@color rim #A5ADA2
+@color glass #344C42
+@color sheen #729482
+@default shell
+---
+         <strap>╭────────────╮
+      <edge>╭──┴────────────┴──╮
+     <edge>╱                    ╲
+    │   <rim>╔══════════════╗<shell>   │
+    │   <rim>║<sheen> ░░▒▒<glass>▓▓▓▓▓▓▓▓ <rim>║<shell>   │
+    │   <rim>║<sheen> ▒▒<glass>▓▓▓▓▓▓▓▓▓▓ <rim>║<shell>   │
+    │   <rim>╚══════════════╝<shell>   │
+    │                     │
+     ╲     <edge>─────────<shell>     ╱
+      ╲                 ╱
+       ╲_______________╱

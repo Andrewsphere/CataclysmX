@@ -1,0 +1,33 @@
+@text-art 1
+@color steel #A0AAB0
+@color top #CCD2D3
+@color side #61717B
+@color socket #444E55
+@color wood #B38D5D
+@color grain #80603F
+@default wood
+---
+<top>      ______________
+<steel>    /______________/<side>|
+<steel>   /              |<side> |
+<steel>  |               |<side> /
+<side>  |_______________|/
+<socket>        |██|
+<socket>        |██|
+        |  |
+        |<grain>//<wood>|
+        |  |
+        |<grain>//<wood>|
+        |  |
+        |<grain>//<wood>|
+        |  |
+        |<grain>//<wood>|
+        |  |
+        |<grain>//<wood>|
+        |  |
+        |<grain>//<wood>|
+        |  |
+        |<grain>//<wood>|
+        |  |
+        |<grain>//<wood>|
+        |__|

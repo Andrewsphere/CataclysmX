@@ -1,0 +1,16 @@
+@text-art 1
+@color sleeve #A49A7D
+@color paper #D0C5A6
+@color rim #727E73
+@color glass #334B40
+@color sheen #789682
+@default sleeve
+---
+      <paper>╱──────────────────╱<sleeve>│
+     <paper>╱__________________╱<sleeve> │
+     │ <rim>╔══════════════╗<sleeve> │ │
+     │ <rim>║<sheen> ░░▒▒▒▒<glass>▓▓▓▓▓ <rim>║<sleeve> │ │
+     │ <rim>║<sheen> ░▒▒▒▒<glass>▓▓▓▓▓▓ <rim>║<sleeve> │ │
+     │ <rim>║<sheen> ▒▒▒<glass>▓▓▓▓▓▓▓▓ <rim>║<sleeve> │ ╱
+     │ <rim>╚══════════════╝<sleeve> │╱
+     └──────────────────┘

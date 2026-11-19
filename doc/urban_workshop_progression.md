@@ -2,7 +2,7 @@
 
 ## Status and use
 
-**Coordinating plan; electricity implemented; workshop W1/W2 verified.** This document records the agreed
+**Coordinating plan; electricity implemented; W1/W2 verified; crafting delivery direction accepted.** This document records the agreed
 direction and organizes subsequent design, implementation, content, and validation
 passes. Implemented electricity contracts are in [power design](power_design.md)
 and [power commands and presentation](power_presentation.md).
@@ -28,8 +28,10 @@ recommendations are proposals for the design passes to resolve with the user.
 | Electricity | Charge-based supplies/loads, AABB-union grids, generated building mains, installed batteries, generator-only operation, timed machine slices, and machine-held residency with player/debug inspection. |
 | Catalog | Unify the earlier item slice and expansion into a coherent catalog and progression; authoring batches should not determine long-term source organization. |
 | Knowledge | Integrate books, manuals, and computer information sources into crafting and learning. |
+| Production software | Selected high-tier components across trades require software to control sophisticated equipment. Factory systems can be hacked to acquire it; protected software can require hacking to make a usable copy, and broken machines can retain recoverable software. Coordinate information/machine contracts with D3 and recovery/access actions with the hacking design. |
 | Workshop | Include functional soldering, welding, anvils, fueled forges, and external workshop power. Tools may be found or crafted; dependencies should create reachable progression. |
-| Fabrication | Include workshop 3D printers, with metal 3D printing as an endgame capability. |
+| Digital fabrication | Common scavenged basic 3D printers; simple plastic printing needs little Computers skill, stronger/advanced outputs need appropriate skill, equipment and material. Printer use requires Computers rather than Fabrication; constructing one can be difficult. Metal printing is an advanced capability. |
+| Process automation | Selected unattended input/output machines, including coal gasification and oxygen-free wood-gas production for adapted gasoline engines. Most crafting remains manual and tool-based. |
 | Setting | Futuristic construction and technology should be common, especially in cities. Support old cities and newer, more cyberpunk-like cities. |
 | Terrain | Add more than 18 purposeful terrain variants, including distinct colored concrete and old/new brick. Integrate them into generated places. |
 | Encounters | Increase interior zombie population roughly 5–7 times the current baseline and add population outdoors within cities. Large cities should usually require preparation; smaller settlements should be quieter. |
@@ -90,6 +92,19 @@ Relevant source interfaces include `src/content/crafting_definition.h`,
 Complete D1 first. D2 and D3 then establish compatible workshop and information
 contracts. D4 can proceed after D1 using the agreed acquisition requirements;
 D5 reconciles all designs before broad content work begins.
+
+**Current planning adjustment:** the reviewed skill/domain outlines in the
+[shared crafting framework](crafting_progression.md) are agreed. The
+[dependency and delivery plan](crafting_delivery_plan.md) separates the next
+mechanics/content slices, including W3A forging and W3B electrical/welding.
+W3B uses ordinary accessible/shared tool traits for crafting protection; M-Worn
+is retired. Powered placed manual equipment needs its own funding extension.
+W3A can use W1/W2. The user accepted this delivery direction and authorized the
+[W3A/W3B implementation](workshop_rosters.md), which owns concrete balance choices,
+acquisition and verification. Later content
+fills selected branches; immediate end-to-end completion or a winnable game is
+not required.
+This cross-domain plan informs D3–D5 without preempting their runtime contracts.
 
 Each design pass produces a decision-ready subsystem document under `/doc`, with:
 
@@ -163,8 +178,12 @@ station capabilities, one active manual job per station, ignition plus work-base
 forge fuel, refundable reserved ingredients with nonrefundable operating costs,
 and selectable autonomous jobs using D1 funding/residency. Both reconnecting
 progression branches and the matching gates for existing sword recipes are
-approved. W1 station foundations and W2 fueled manual work are implemented and verified; exact W3 roster/balance
-and the W4/D3 machine boundary still need their bounded reviews.
+approved. W1 station foundations and W2 fueled manual work are implemented and
+verified. The earlier [W3 roster/balance proposal](workshop_content.md) is historical
+source material for revision against the [agreed progression](crafting_progression.md)
+and [delivery plan](crafting_delivery_plan.md). W3A forging and W3B
+electrical/welding have different runtime prerequisites; the W4/D3 machine
+boundary still needs its bounded review.
 
 Decide:
 
@@ -199,10 +218,46 @@ useful metalworking recipe, and account for interruption; operate a found welder
 from external supply; demonstrate both a found-tool and crafted-tool route on the
 progression graph. Decide how recipe input/trait limits affect these examples.
 
+**Queued process-machine design:** draft selected unattended processing routes,
+starting with coal + water + heat to fuel gas and oxygen-free wood heating to
+wood gas, both usable by modestly adapted gasoline engines. Resolve heat funding,
+gas handling, byproducts and any repeat behavior against W4's machine contract.
+See [the process-machine brief](crafting_progression.md#queued-design-selected-unattended-process-machines).
+
 ### D3 — Digital information and additive manufacturing
 
 **Deliverable:** `doc/digital_fabrication_design.md`; consumes D1 and the D2 machine
 contract. D2/D3 may exchange drafts before either interface is accepted.
+
+**Accepted progression direction:** operating printers uses Computers rather than
+Fabrication. Simple plastic parts need very little skill; demanding/durable parts
+and advanced-material printing need appropriate skill, designs, feedstock and
+machines. Basic working printers should be reasonably easy to scavenge in this
+futuristic setting, while constructing one can require difficult mechanical and
+electrical work. These are deliberate alternative production routes to manual
+Fabrication. Setup and any processing of ready-to-use printed products must
+respect that skill boundary; assembly into a larger mechanism remains a separate
+task. See [printer progression](crafting_progression.md#accepted-printer-progression-direction-for-d3).
+
+**Accepted cross-domain addition:** selected sophisticated production equipment
+can require compatible production software, including software acquired by
+hacking factory systems. This applies across trades, including chemical
+processing, machining and electronics as well as printing. Copy protection can
+require hacking to make a usable copy; skilled recovery can extract surviving
+software from broken equipment. See
+[production software](crafting_progression.md#accepted-direction-production-software)
+for the accepted acquisition/package/use and recovery direction.
+
+**Accepted progression bands:** the shared framework records
+[Computers activity, printer-operation and equipment-construction bands](crafting_progression.md#accepted-outline-computers-and-digital-production).
+Prepared industrial printing can use a moderate operation skill while its
+equipment, software, design and feedstock remain advanced acquisition goals.
+Exact D3 runtime contracts still require their separate design.
+
+**Accepted schematic requirement:** selected intricate printer recipes require
+usable schematics in addition to compatible machine/control software. Simple
+supplied designs and recoverable intricate designs are the accepted acquisition
+outline; see [printer schematics](crafting_progression.md#schematics-for-intricate-prints).
 
 Decide:
 
@@ -216,8 +271,22 @@ Decide:
   power, time, accessibility, storage, and the role of the Computers skill. Select
   bounded gameplay actions and costs, including outcomes when power/access is lost.
 - Human-readable manuals/recipes versus machine-readable fabrication files.
-  Decide whether a design must be present at the printer, and how an acquired file
-  reaches it. Human memorization must have explicitly defined relevance here.
+  Define schematic eligibility for intricate recipes, supplied/preloaded designs
+  and how an acquired file reaches a compatible printer/controller. Specify where
+  required designs must be accessible during setup/start/resume. Human
+  memorization must have explicitly defined relevance here.
+- Production software versus product designs/process specifications, including
+  packages that contain both. Define machine compatibility, recovery/export,
+  local installation/configuration and meaningful Computers work.
+- Installed use versus permission to make a usable copy; terminal access,
+  copy-protection bypass and damaged-hardware recovery are separate actions.
+  Define readable controllers/storage in broken machines, needed interfaces,
+  portable package results and any source-changing outcomes. Coordinate actual
+  hardware work with Electronics and access/recovery work with Computers.
+- Software eligibility at job start/resume and during execution, including
+  loss of source access. Coordinate with W4's paid-work and reservation rules.
+  Found installed software and basic supplied printer software are accepted
+  acquisition routes alongside recovering specialized packages from factories.
 - Basic polymer and endgame metal printers: machine tiers, useful outputs,
   compatible feedstock, preparation/post-processing, setup work, autonomous print
   time, power demand, and interruption/recovery rules.
@@ -272,9 +341,12 @@ Decide:
   wilderness roads, exclusion of blocked/unsupported cells, and overlap with
   existing park/site markers. Ensure one actor per tile and stable generation.
 - Better large-city rewards: themed equipment quality, useful quantity, advanced
-  machines, technical information, and feedstock. Explain both where a reward is
-  generated and what risks lie on the route to it. Keep early bootstrap resources
-  obtainable before advanced equipment is required.
+  machines, technical information, production software and feedstock. Factory
+  terminals/industrial archives and broken equipment with recoverable controllers
+  should provide software acquisition targets for the future hacking design.
+  Explain both where a reward is generated and what
+  risks lie on the route to it. Keep early bootstrap resources obtainable before
+  advanced equipment is required.
 - Town starting position, quieter entry routes and city approaches, the curated
   FirstHouse scenario's population policy, and visibility of danger/reward cues.
 - New generation version, legacy behavior, debugging views, and performance
@@ -299,6 +371,11 @@ distributions and playthrough results belong to implementation validation.
 
 **Deliverable:** extend this plan with the accepted cross-system contract and
 rosters; link the accepted D1–D4 documents.
+
+The [crafting delivery plan](crafting_delivery_plan.md) supplies the initial
+cross-domain dependency map and bounded slice boundaries. This is planning input
+to D5; it does not claim the pending D3/D4 contracts or revised item rosters are
+complete. Early workshop slices can use their relevant accepted contracts.
 
 Reconcile:
 
@@ -338,7 +415,8 @@ bounded pass without inventing another subsystem's rules.
 
 These are work packages, not a requirement that one agent completes an entire
 package in one session. Split each into reviewed vertical slices in its design.
-No broad content enhancement starts while its prerequisite contracts are open.
+Each content slice follows its relevant accepted/implemented contracts. A bounded
+manual workshop slice need not wait for unrelated digital or city systems.
 
 | Pass | Depends on | Deliverable and completion criterion |
 | --- | --- | --- |
@@ -347,7 +425,7 @@ No broad content enhancement starts while its prerequisite contracts are open.
 | I3 Workshop and fueled forge | I2, D2 contract | Station capabilities, placement/access, fuel/heat, soldering/welding/forging work, and one reachable found/crafted-tool route. Verify interruption and reservation behavior. |
 | I4 Digital fabrication | I2/I3, D3 contract | Computer information access/transfer and polymer/metal printing paths with useful outputs. Verify information identity, file access, power/feedstock, output capacity, and unattended-work semantics. |
 | I5 City-generation foundation | I1, D4 contract and I2 interfaces | Settlement scale/era/district selection, infrastructure placement, outdoor population, and size-based population/reward selection. Verify generation and persistence before broad population tuning. |
-| I6 Integrated content | I2–I5 relevant capabilities verified, D5 roster | Manuals/digital sources, tools/machines, recipes, feedstock, terrain palettes, city layouts, loot and interior spawns. Deliver complete playable routes in bounded batches. |
+| I6 Integrated content | Relevant capabilities verified and selected roster accepted | Manuals/digital sources, tools/machines, recipes, feedstock, terrain palettes, city layouts, loot and interior spawns. Deliver functional bounded slices and explicitly record incomplete progression branches. |
 | I7 Balance and completion | I6 | Seeded end-to-end play, reachability and reward reviews, population measurement, performance checks, current usage docs, and explicit remaining artwork status. |
 | A1 External SDL artwork | Accepted IDs/visual brief; final integration follows stable content | Separate-workstation sprites/mappings and visual review. Functional content can be verified with terminal/glyph presentation before this pass. |
 
@@ -446,23 +524,37 @@ verification can finish while the external visual pass remains pending.
 | Pass | Status | Evidence / next action |
 | --- | --- | --- |
 | Coordinating plan | Draft | Accepted user goals and current interfaces recorded; subsystem decisions remain open. |
+| Shared crafting progression | Reviewed outlines accepted | [Framework](crafting_progression.md): reviewed trade/skill outlines through Medicine and Computers, software acquisition/recovery, and supplied/recovered intricate-print designs agreed. Exact rosters and subsystem runtime contracts follow their own passes. |
+| Crafting delivery sequence | Accepted direction | [Dependency/delivery plan](crafting_delivery_plan.md): W3A/W3B implementation authorized; later tracks retain their explicit dependencies and separate contract reviews. |
+| Crafting protection | Accepted | [Ordinary-trait rule](crafting_progression.md#welding-protection): accessible equipment and normal handheld sharing qualify; existing selection and paid-work behavior apply. M-Worn and its W3B mechanics dependency are retired. |
+| W3A/W3B rosters | Functionally verified | [Implementation](workshop_rosters.md): 22 new items, 8 definition upgrades, 17 new crafting recipes, 19 new recyclers and 5 objects. All 16 focused tests pass; SDL art and four frontend/LAN checks pass. Includes concrete budgets, acquisition evidence and affected unfinished-sword policy; pacing playtesting remains. |
 | D1 Power | Accepted | User reviewed geometry, connection, mains, accounting, residency and inspection rules; see [power design](power_design.md). |
-| D2 Workshop/fuel | Accepted | [Workshop design](workshop_design.md): fuel, occupancy, cancellation/recovery, both branches and sword gates approved. W1/W2 verified; W3 roster and W4/D3 coordination remain. |
-| D3 Digital fabrication | Pending | Coordinate general autonomous machine recipes and computer/file access with D2. |
+| D2 Workshop/fuel | Accepted | [Workshop design](workshop_design.md): W1/W2 verified and progression gates approved. W3 roster briefs use ordinary protection traits; powered-manual-station design pending. W4/D3 coordination remains. |
+| D3 Digital fabrication | Pending | Printer use/salvage, rough skill bands, cross-domain software acquisition and intricate-print schematics agreed. Detailed machine/file/software contracts remain. Coordinate jobs with D2/W4 and access/protection/recovery actions with the hacking design. |
 | D4 Cities | Pending | D1 infrastructure is available; draft remaining acquisition needs and city design. |
-| D5 Integration/roster | Pending | Reconcile accepted D1–D4. |
+| D5 Integration/roster | Pending | Initial crafting dependency/delivery map drafted; reconcile remaining D1–D4 contracts and select bounded rosters. |
 | I2 Power foundation | Verified (functional) | Debug suite: 1,317 passed, 2 skipped; SDL build and four executable/LAN checks passed. Dedicated sprites and two existing-artwork test failures are tracked in [power design](power_design.md#verification). |
-| I3 Workshop and fueled forge | In progress | W1/W2 verified: final focused selection 45/45; regression selection 321/322 with its stale protocol assertion corrected and passing the focused rerun; Debug/SDL builds and three SDL/headless integration checks pass. See [workshop evidence](workshop_design.md#current-evidence-and-handoff). W3 roster review is next. |
+| I3 Workshop and fueled forge | W3 content integrated | W1/W2 verification remains in [workshop evidence](workshop_design.md#current-evidence-and-handoff); W3's authored progression, budget and current validation are in its [implementation record](workshop_rosters.md). W4 remains separate. |
 | I1, I4–I7 | Pending | Broader implementation/content work follows the remaining design dependencies. |
-| A1 SDL artwork | Pending, external workstation | Prepare briefs after identities and visual coverage are selected. |
+| A1 SDL artwork | Ready for external workstation | W3 object briefs and map fallback policy are in [the roster](workshop_rosters.md#external-sdl-artwork-handoff--ready-for-artwork); canonical item text art is supplied. |
 
 Suggested next-pass brief:
 
-> Review the bounded W3 content roster and balance on the verified W1/W2 station
-> and fueled-work foundation, then author the reachable forging/welding routes and
-> matching legacy sword gates. Coordinate W4 selectable machine jobs with D3.
-> Reuse D1's grid/battery authority, paid work and residency rules; preserve the
-> early power slice during catalog reorganization.
+> Read `doc/crafting_progression.md` for accepted progression and
+> `doc/crafting_delivery_plan.md` for the accepted delivery direction.
+> Read `doc/workshop_rosters.md` for the W3A forging / W3B electrical-welding
+> implementation, concrete budgets, acquisition, save-upgrade policy and validation.
+> W3A uses W1/W2; W3B uses D1 and ordinary accessible/shared traits for protection.
+> Audit the four-trait budget including protection. Powered placed manual
+> providers additionally need M-Bench. Mechanics implementation and content
+> authoring follow their separate accepted designs/rosters.
+> Preserve forge/tongs 2, forming equipment 3 and proper sword 4, with useful
+> level-2/3 practice and both found/crafted equipment routes. The old W3 quantities,
+> gates and blanket runtime assumptions are historical, not implementation targets.
+> Coordinate W4 with D3-A/B before printing; protected recovery is a later D3-C
+> acquisition route. Schedule M-Skills before separate Cooking/Chemistry content.
+> Other feature tracks follow their consumers and own designs. Preserve D1 resource
+> authority, paid work and residency. A bounded pass may leave later gaps.
 
 After each accepted design or verified implementation pass, update this table,
 link its durable document, and record any cross-system decision that changes a

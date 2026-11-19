@@ -36,6 +36,7 @@
     r:{terrain:'floor_tile',object:'warehouse_crate',facing:'west',loot:[{pool:'loot_electronics',chance:10000,rolls:3,destination:'furniture'}]},
   },
   entrance:{x:2,z:11},
+  loot:[{x:10,z:3,y:0,pool:'loot_workshop_electrical_ground',chance:8000,rolls:3,destination:'ground'}],
   basements:[{
     id:'electrical_spares', weight:1,
     rows:[

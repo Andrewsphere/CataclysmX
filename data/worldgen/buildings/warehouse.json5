@@ -20,7 +20,7 @@
     '##########.######ww###',
   ],
   palette:{'#':'wall_metal', I:'wall_plaster', w:'window', '.':'floor_concrete', '+':'closed_door',
-    B:{terrain:'floor_concrete',loot:[{pool:'loot_workshop_bulk_ground',chance:7000,rolls:2,destination:'ground'}]},
+    B:{terrain:'floor_concrete',loot:[{pool:'loot_workshop_bulk_ground',chance:7000,rolls:2,destination:'ground'},{pool:'loot_forging_storage_ground',chance:4500,destination:'ground'}]},
     a:{terrain:'floor_concrete',object:'store_shelf',facing:'west',loot:[{pool:'loot_warehouse',rolls:4,destination:'furniture'}]},
     b:{terrain:'floor_concrete',object:'store_shelf',facing:'east',loot:[{pool:'loot_warehouse',rolls:3,destination:'furniture'}]},
     c:{terrain:'floor_concrete',object:'store_shelf',facing:'west'},

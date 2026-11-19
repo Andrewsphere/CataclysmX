@@ -1,0 +1,20 @@
+@text-art 1
+@color steel #9DA8AA
+@color shadow #59666C
+@color winding #AC7950
+@color core #72858C
+@color lug #CFAD6B
+@color cable #697876
+@default steel
+---
+       ╔════════════════╗
+   ╔═══╩════════════════╩══╗
+   ║ <shadow>┃┃┃┃┃┃ <core>╭──────────╮ <steel>║
+   ║ <shadow>┃┃┃┃┃┃ <core>│ <winding>▒▒▒▒▒▒▒▒ <core>│ <steel>║
+   ║ <shadow>┃┃┃┃┃┃ <core>│ <winding>▒▒▒▒▒▒▒▒ <core>│ <steel>║
+   ║ <shadow>┃┃┃┃┃┃ <core>╰──────────╯ <steel>║
+   ║  <lug>[██]   [██]  +  -  <steel>║
+   ╚══╤═══════╤════╤══╤══╝
+      <cable>│       │    ╰╮ ╰──╮
+      <cable>╰───────╯     │    │
+                   <lug>╧    ╧

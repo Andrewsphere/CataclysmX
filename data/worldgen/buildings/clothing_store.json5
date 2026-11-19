@@ -16,7 +16,7 @@
     'EEEEEEEWWW+WWWEE',
   ],
   palette:{E:'wall_brick', '#':'wall_plaster', W:'window', '.':'floor_wood', '+':'closed_door',
-    O:{terrain:'floor_wood',loot:[{pool:'loot_outerwear_ground',chance:8500,rolls:2,destination:'ground'}]},
+    O:{terrain:'floor_wood',loot:[{pool:'loot_outerwear_ground',chance:8500,rolls:2,destination:'ground'},{pool:'loot_sunglasses_ground',chance:7000,rolls:2,destination:'ground'}]},
     a:{terrain:'floor_wood',object:'warehouse_crate',facing:'south',loot:[{pool:'loot_clothing',chance:10000,rolls:3,destination:'furniture'}]},
     b:{terrain:'floor_wood',object:'metal_locker',facing:'south',loot:[{pool:'loot_clothing',chance:10000,rolls:3,destination:'furniture'}]},
     c:{terrain:'floor_wood',monsters:[{group:'monsters_shoppers',chance:3500}]},

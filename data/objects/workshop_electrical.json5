@@ -1,0 +1,4 @@
+{format_version:1, objects:[
+  {id:'welded_workshop_rack',name:'welded workshop rack',behavior:'none',
+   blocks_movement:true,capacity_volume_ml:120000,packing_item:'welded_workshop_rack_kit'},
+]}

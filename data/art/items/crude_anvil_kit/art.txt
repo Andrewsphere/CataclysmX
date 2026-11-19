@@ -1,0 +1,21 @@
+@text-art 1
+@color steel #9BA5AC
+@color top #CBD0D2
+@color side #56646D
+@color timber #AA855B
+@color grain #73583D
+@color brace #69737A
+@default timber
+---
+<top>       __________________
+<steel>      /________________/<side>|
+<steel>      |                |<side>|
+<side>      |________________|/
+      ╔════════════════╗
+      ║<brace>  ║        ║<timber>    ║
+      ║<steel>  o────────o<timber>    ║
+      ║<brace>  ║ <grain>\    /<brace> ║<timber>    ║
+      ║<brace>  ║ <grain> \  / <brace> ║<timber>    ║
+      ║<brace>  ║ <grain>  \/  <brace> ║<timber>    ║
+     ╔╝<brace>  ║ <grain>  /\  <brace> ║<timber>    ╚╗
+     ╚═══╝<grain>  /  \<timber>  ╚═════╝

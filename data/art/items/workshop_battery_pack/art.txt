@@ -1,0 +1,20 @@
+@text-art 1
+@color case #8C998E
+@color edge #B8C1AA
+@color shadow #5C7066
+@color cell #B39A65
+@color divider #79857D
+@color terminal #CEB273
+@color label #D5CDB1
+@default case
+---
+         <terminal>╔══╗    ╔══╗
+      <edge>╔══╩══╩════╩══╩══╗
+     <edge>╱________________╱<shadow>│
+     <case>│ <terminal>+            - <case>│<shadow>│
+     <case>│ <divider>┌──┬──┬──┬──┐<case> │<shadow>│
+     <case>│ <divider>│<cell>▒▒<divider>│<cell>▒▒<divider>│<cell>▒▒<divider>│<cell>▒▒<divider>│<case> │<shadow>│
+     <case>│ <divider>│<cell>▒▒<divider>│<cell>▒▒<divider>│<cell>▒▒<divider>│<cell>▒▒<divider>│<case> │<shadow>│
+     <case>│ <divider>└──┴──┴──┴──┘<case> │<shadow>│
+     <case>│    <label>RECHARGE    <case>│<shadow>╱
+     <edge>└────────────────┘

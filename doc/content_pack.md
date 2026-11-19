@@ -39,6 +39,13 @@ The manifests reference shared definition files; they do not duplicate those
 definitions within a loaded pack. See [urban content](urban_content.md) for the
 complete roster and scenario guide.
 
+Town and FirstHouse also share W3A/W3B's `workshop_forging.json5` and
+`workshop_electrical.json5` sources under `items/`, `crafting/`, `objects/` and
+`worldgen/loot/`: 22 new items, 17 new crafting recipes, 19 explicit recyclers and
+five objects. FirstHouse retains only the current sword producer; Town also loads
+its legacy-binding alternative. See [workshop rosters](workshop_rosters.md) for
+resource budgets, acquisition, and the unfinished-sword save-upgrade policy.
+
 The [80-item expansion](item_expansion.md) adds new definitions to the earlier
 catalog; it does not upgrade existing IDs. Town's 178-item total is the previous
 98 loaded definitions plus these 80, not a count of newly authored or necessarily

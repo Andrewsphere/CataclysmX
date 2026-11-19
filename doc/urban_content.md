@@ -183,10 +183,13 @@ rooms contain ordinary visitor supplies. Food, clothing, medical effects and
 ranged firearm use remain descriptive rather than implemented survival mechanics.
 Storage, charging, authored melee and cutting/crafting use their existing systems.
 
-Current recipes cut cloth bandages and wood scraps, shape the pilot sword from
-typed stock, and assemble a coil spear. Clothing, sheet steel, appliance motors
-and pumps have useful recycling returns. Original urban/pilot recipes remain as
-compatibility routes with explicitly obsolete dependency items. See
+Current recipes cut cloth bandages and wood scraps, forge the pilot sword from
+suitable continuous steel, and assemble a coil spear. W3A/W3B adds the
+[forging and electrical workshop ladder](workshop_rosters.md), fixed workshop
+anvil/forge stations, and specialist ground-stock loot. Clothing, sheet steel,
+appliance motors and pumps have useful recycling returns. Both sword IDs now
+require Fabrication 4 and the same workshop capabilities; other original
+urban/pilot recipes retain their explicitly obsolete dependency items. See
 [integration and acquisition](item_slice_integration.md),
 [urban resources](urban_resources.md) and [crafting content](crafting_content.md).
 

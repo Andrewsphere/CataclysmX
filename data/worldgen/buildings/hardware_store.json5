@@ -18,7 +18,7 @@
     'EEWWWEEWWWE+EEEE',
   ],
   palette:{E:'wall_concrete', '#':'wall_plaster', W:'window', '.':'floor_concrete', '+':'closed_door', '>':'stairs',
-    B:{terrain:'floor_concrete',loot:[{pool:'loot_workshop_bulk_ground',chance:8500,rolls:2,destination:'ground'}]},
+    B:{terrain:'floor_concrete',loot:[{pool:'loot_workshop_bulk_ground',chance:8500,rolls:2,destination:'ground'},{pool:'loot_forging_hardware_ground',chance:8500,rolls:3,destination:'ground'},{pool:'loot_welding_hardware_ground',chance:7000,rolls:2,destination:'ground'}]},
     a:{terrain:'floor_concrete',object:'industrial_workbench',facing:'south',loot:[{pool:'loot_tools',chance:10000,rolls:3,destination:'furniture'}]},
     b:{terrain:'floor_concrete',object:'warehouse_crate',facing:'south',loot:[{pool:'loot_hardware',chance:10000,rolls:3,destination:'furniture'}]},
     c:{terrain:'floor_concrete',object:'cellar_lamp'},

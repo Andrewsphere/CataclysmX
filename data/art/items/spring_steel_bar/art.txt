@@ -1,0 +1,20 @@
+@text-art 1
+@color steel #899BA5
+@color edge #C7D1D6
+@color side #506575
+@color scale #63777F
+@color cut #B7C1C6
+@color dark #3D505E
+@default steel
+---
+<edge>                       ___
+<edge>                    __/  /<side>|
+                 __/  __/<side> /
+              __/  __/<side> /<dark> /
+           __/  __/<side> /<dark> /
+        __/  __/<side> /<dark> /
+     __/  __/<side> /<dark> /
+  __/  __/<side> /<dark> /
+<cut> /  __/<side> /<dark> /
+<cut> |_/<scale>___/<dark> /
+<dark> |______/

@@ -1,0 +1,19 @@
+{format_version:1, definitions:[
+  // Ground-only component and equipment stock keeps furniture draw bounds independent.
+  {type:'loot_pool',id:'loot_welding_hardware_ground',entries:[
+    {item:'welding_filter',weight:3},{item:'welding_electrode_packet',weight:5},
+  ]},
+  {type:'loot_pool',id:'loot_welding_workshop_ground',entries:[
+    {item:'welding_filter',weight:3},{item:'welding_mask',weight:3},
+    {item:'welding_electrode_packet',weight:5},{item:'salvaged_welder_power_module',weight:3},
+    {item:'arc_welder',weight:2},{item:'workshop_battery_pack',weight:2},
+    {item:'electrical_lead_set',weight:4},
+  ]},
+  {type:'loot_pool',id:'loot_workshop_electrical_ground',entries:[
+    {item:'electrical_lead_set',weight:5},{item:'aa_rechargeable_battery',weight:5,count:{min:1,max:4}},
+    {item:'workshop_battery_pack',weight:2},
+  ]},
+  {type:'loot_pool',id:'loot_sunglasses_ground',entries:[
+    {item:'sunglasses',weight:1},
+  ]},
+]}

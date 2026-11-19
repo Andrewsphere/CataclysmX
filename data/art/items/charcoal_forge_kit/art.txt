@@ -1,0 +1,23 @@
+@text-art 1
+@color brick #AD9673
+@color rim #D0B997
+@color coal #3E474D
+@color steel #77858E
+@color timber #96764F
+@color leather #876148
+@color seam #B28D64
+@default brick
+---
+<rim>         __________________
+<rim>        /<coal>  ▄▄  ▄█▄  ▄▄<rim>   /<steel>|
+<rim>       /__<coal>▐██▌▐███▌▐██▌<rim>_/<steel> |
+       |____|____|____|_|<steel> /
+       |__|____|____|___|/
+<steel>       |   |         |  |
+<steel>       |   |         |  |
+<timber>   ____<steel>|___|         |__|
+<leather>  /    /   \<steel>====╗     |  |
+<seam> /____/_____\<steel>   ║     |  |
+<leather> \    \     /<steel>   ║     |  |
+<seam>  \____\___/<steel>    ╚═════╝  |
+<steel>       |__|         |___|

@@ -1,0 +1,16 @@
+@text-art 1
+@color strap #8B7964
+@color tape #A7A69C
+@color rim #66716C
+@color glass #344B42
+@color glint #6E8270
+@default tape
+---
+    <strap>╭────────────────────╮
+  ╭─┴────────────────────┴─╮
+  │ <rim>╔════════╗  ╔════════╗<tape> │
+  ╞═<rim>╣<glass>▒▒▓▓▒▒▓▓<rim>╠══╣<glass>▓▓▒▒▓▓▒▒<rim>╠<tape>═╡
+  │ <rim>║<glint>▓▓▒▒▓▓▒▒<rim>║  ║<glass>▒▒▓▓▒▒▓▓<rim>║<tape> │
+  │ <rim>╚════════╝  ╚════════╝<tape> │
+  ╰─────╲          ╱───────╯
+         <strap>╲________╱

@@ -1,0 +1,19 @@
+@text-art 1
+@color clay #C7B18C
+@color top #DED0B2
+@color side #907F65
+@color grain #A8977C
+@color stamp #7C7262
+@color shade #45423C
+@default clay
+---
+<top>        __________________
+<top>      /<grain> .    .     .    <top>/ <side>|
+<top>    /________________/   <side>|
+    |                |<grain> .<side> |
+    |  <stamp>┌──────────┐<clay>  |<side>   |
+    |  <stamp>│ FIRECLAY │<clay>  |<grain> .<side> |
+    |  <stamp>└──────────┘<clay>  |<side>  /
+    |<grain> .    .     .<clay>   |<side> /
+<side>    |________________|/
+<shade>      ░░░░░░░░░░░░░░

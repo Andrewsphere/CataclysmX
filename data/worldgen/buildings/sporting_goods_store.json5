@@ -17,7 +17,7 @@
     'EEWWWEEE+EEEWWWEEE',
   ],
   palette:{E:'wall_concrete', '#':'wall_plaster', W:'window', '.':'floor_concrete', '+':'closed_door',
-    B:{terrain:'floor_concrete',loot:[{pool:'loot_camping_bulk_ground',chance:9000,rolls:2,destination:'ground'}]},
+    B:{terrain:'floor_concrete',loot:[{pool:'loot_camping_bulk_ground',chance:9000,rolls:2,destination:'ground'},{pool:'loot_forging_camping_ground',chance:6000,destination:'ground'},{pool:'loot_sunglasses_ground',chance:6500,rolls:2,destination:'ground'}]},
     O:{terrain:'floor_concrete',loot:[{pool:'loot_outerwear_ground',chance:6500,destination:'ground'}]},
     a:{terrain:'floor_concrete',object:'warehouse_crate',facing:'south',loot:[{pool:'loot_outdoors',chance:10000,rolls:3,destination:'furniture'}]},
     b:{terrain:'floor_concrete',object:'display_rack',facing:'east',loot:[{pool:'loot_outdoors',chance:10000,rolls:3,destination:'furniture'}]},

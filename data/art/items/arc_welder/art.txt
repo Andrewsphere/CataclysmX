@@ -1,0 +1,23 @@
+@text-art 1
+@color paint #7391A1
+@color edge #B1C1C3
+@color shadow #485D6B
+@color dial #C3C3AE
+@color label #D3D2BB
+@color cable #7E8179
+@color contact #C2A368
+@default paint
+---
+          <cable>╔══════════╗
+      <edge>╔═══╩══════════╩═══╗
+     <edge>╱__________________╱<shadow>│
+     <paint>│  <label>ARC   <dial>╭────╮    <paint>│<shadow>│
+     <paint>│  <label>┌──┐  <dial>│ /  │    <paint>│<shadow>│
+     <paint>│  <label>└──┘  <dial>╰────╯    <paint>│<shadow>│
+     <paint>│ <shadow>════  ════  ════ <paint>│<shadow>│
+     <paint>│  <contact>+            -  <paint>│<shadow>╱
+     <edge>└──╥────────────╥──┘
+    <cable>╭───╯            ╰──╮
+    <cable>│ ╭──────────────╮  │
+    <cable>╰─╯ <contact>╔══╗<cable>         ╰──╯
+        <contact>╚══╩═════

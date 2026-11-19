@@ -5,11 +5,13 @@
   {type:'recipe', id:'cut_timber_scrap', name:'Cut timber into wood scraps',
    inputs:[{item:'timber_plank',count:1}], tool_traits:[{id:'house_cutting',tier:1}],
    result:{item:'wood_scrap',count:10}, work:200, training:[{skill:'fabrication',level:0}]},
-  // 2000 g input; the original pilot route remains separately supported.
-  {type:'recipe', id:'make_current_arming_sword', name:'Shape a steel-scrap arming sword',
-   inputs:[{item:'steel_scrap',count:14},{item:'wood_scrap',count:2},{item:'copper_wire',count:1}],
-   tool_traits:[{id:'hammering',tier:1},{id:'house_cutting',tier:1}],
-   result:{item:'arming_sword',count:1}, work:6000, skills:[{skill:'fabrication',level:2}]},
+   // Continuous suitable blade stock; the legacy binding route has the same workshop gates.
+   {type:'recipe', id:'make_current_arming_sword', name:'Forge a copper-bound arming sword',
+    inputs:[{item:'spring_steel_bar',count:1},{item:'wood_scrap',count:2},{item:'copper_wire',count:1},
+            {item:'hacksaw',count:1,retained:true},{item:'metal_file',count:1,retained:true}],
+    tool_traits:[{id:'anvil',tier:2},{id:'hammering',tier:2},{id:'metal_holding',tier:2},{id:'forge_heat',tier:1}],
+    heat_per_work:10000, result:{item:'arming_sword',count:1}, work:6000,
+    skills:[{skill:'fabrication',level:4}], knowledge:{known_by_default:true}},
   // 2600 g consumed -> 2400 g product. The saw and pliers are retained tools.
   {type:'recipe', id:'make_coil_spear', name:'Bind a coil spear',
    inputs:[{item:'timber_plank',count:1},{item:'steel_scrap',count:1},
@@ -37,5 +39,6 @@
    returns:[{item:'steel_scrap',count:20},{item:'copper_wire',count:4}], work:800, training:[{skill:'mechanics',level:0}]},
   {type:'recycling_recipe', id:'salvage_water_pump', name:'Strip a water pump',
    target:'water_pump', inputs:[{item:'adjustable_wrench',count:1,retained:true}],
-   returns:[{item:'steel_scrap',count:12},{item:'copper_wire',count:2}], work:600, training:[{skill:'mechanics',level:0}]},
+    returns:[{item:'steel_scrap',count:12},{item:'copper_wire',count:2}], work:600,
+    skills:[{skill:'mechanics',level:1}], training:[{skill:'mechanics',level:1}]},
 ]}

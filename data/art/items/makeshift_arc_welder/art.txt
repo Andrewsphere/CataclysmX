@@ -1,0 +1,23 @@
+@text-art 1
+@color steel #A3ABAA
+@color seam #7C8C8E
+@color shadow #526269
+@color fan #85979D
+@color dial #C9BE9F
+@color cable #8D7860
+@color contact #C7A065
+@default steel
+---
+        <cable>╔═══──────═══╗
+     <seam>╭──╨────────────╨──╮
+    <steel>╱__________________╱<shadow>│
+    <steel>│ <contact>+  <fan>╭────╮  <dial>┌───┐ <steel>│<shadow>│
+    <steel>│    <fan>│ ╳  │  <dial>│ / │ <steel>│<shadow>│
+    <steel>│ <contact>-  <fan>╰────╯  <dial>└───┘ <steel>│<shadow>│
+    <steel>│ <seam>───────────────── <steel>│<shadow>│
+    <steel>│ <shadow>┃┃┃┃┃┃┃┃┃┃  <contact>[██] <steel>│<shadow>╱
+    <steel>└──╥────────────╥───┘
+       <cable>║            ╰────╮
+   <cable>╭───╯                │
+   <cable>╰──────────────<contact>╦══╗  ╧
+                  <contact>╚══╝
