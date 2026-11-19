@@ -3,6 +3,7 @@
 #include "content/object_definition.h"
 #include "core/data_object.h"
 #include "core/world_result.h"
+#include "objects/workshop_types.h"
 
 #include <EASTL/optional.h>
 #include <EASTL/unique_ptr.h>
@@ -59,6 +60,7 @@ struct ObjectStateView {
     std::uint64_t generatorOutputRemaining = 0;
     Tick generatorIntervalStart = 0;
     bool generatorIntervalInitialized = false;
+    ForgeState forge;
 };
 
 // Callback-scoped mutation services. World implements the atomic transactions
@@ -96,6 +98,8 @@ public:
     virtual WorldResult<void> PrepareGeneratorInterval(Tick now);
     virtual WorldResult<void> SpendGeneratorEnergy(std::uint64_t energy);
     virtual WorldResult<void> FundGridWork(Tick ticks);
+    // Only forge behavior accepts this state. World preflights complete transactions.
+    virtual WorldResult<void> SetForgeState(ForgeState state);
 };
 
 // The immutable definition must outlive the returned behavior.

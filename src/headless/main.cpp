@@ -301,11 +301,24 @@ bool Execute(eastl::unique_ptr<Server>& ownedServer, eastl::string_view line, bo
                 static_cast<unsigned long long>(station.id), server.GetWorld().GetContent().GetObject(station.type).name.c_str(),
                 station.position.x, station.position.z, station.position.y, station.enabled, station.broken,
                 static_cast<unsigned long long>(station.worker), StationActionMessage(station.packing));
+            const auto& definition = server.GetWorld().GetContent().GetObject(station.type);
+            if (definition.behavior == ObjectBehaviorKind::Forge) {
+                std::printf("forge=%llu state=%s fuel=%llu/%llu ignition=%llu\n", static_cast<unsigned long long>(station.id),
+                    station.forge.ready ? "Ready" : "Cold", static_cast<unsigned long long>(station.forge.fuel),
+                    static_cast<unsigned long long>(definition.forge.fuelCapacity), static_cast<unsigned long long>(definition.forge.ignitionCost));
+            }
         }
         return true;
     }
     Command command;
-    if (name == "wire-grid" && count == 7) {
+    if (name == "load-forge" && count == 3) {
+        command.kind = CommandKind::load_forge;
+        if (!Number(words[1], command.target) || !command.target || !Number(words[2], command.item) || !command.item) return false;
+    } else if ((name == "ignite-forge" || name == "extinguish-forge" || name == "discard-forge-fuel") && count == 2) {
+        command.kind = name == "ignite-forge" ? CommandKind::ignite_forge
+            : name == "extinguish-forge" ? CommandKind::extinguish_forge : CommandKind::discard_forge_fuel;
+        if (!Number(words[1], command.target) || !command.target) return false;
+    } else if (name == "wire-grid" && count == 7) {
         command.kind = CommandKind::wire_grid;
         if (!Number(words[1], command.item) || !Number(words[2], command.powerBounds.min.x)
             || !Number(words[3], command.powerBounds.min.z) || !Number(words[4], command.powerBounds.max.x)
@@ -509,6 +522,7 @@ int main(int argc, char** argv) {
         } else {
             std::fputs("Usage: cataclysmx_headless [--content path] [--user-dir path] [--world-dir path] [--save path | --load path] [--script | --host | --join address[:port] | --discover] [--port n] [--discovery-port n] [--discovery-address address] [--name name] [--profile path] [--new-character] [--run-for ms] [--command 'move e'] | --probe | --fail-log\nMovement: move n/s/e/w, move down or move < (downstairs), move up or move > (upstairs).\nCombat: attack [persistentId], style balanced|aggressive|defensive.\n", stderr);
             std::fputs("Content: --content <single definition file> | --content-pack <manifest>. New game: --scenario demo|first-house|town|zombie-showcase (default town) --seed <uint32>.\nGrab (local --script): grab n/ne/e/se/s/sw/w/nw, move in any of those directions, ungrab.\nCrafting (local --script): recipes, crafting, craft ID, recycle ITEM_ID, resume-craft JOB_ID, pause-craft JOB_ID, cancel-craft JOB_ID.\nLearning (local --script): skills, study BOOK_ID, pause-study.\nCombat (local --script): combat, styles, style ID, hold ITEM_ID left|right [two], releasehand left|right, regrip left|right one|two, wear ITEM_ID, remove ITEM_ID, abilities, use ability ID [self|tile X Z|north|east|south|west], study-art BOOK ART, pause-art, new-character.\n", stderr);
+            std::fputs("Workshop (local --script and LAN --command): stations, place-station ITEM X Z Y, pack-station OBJECT, load-forge OBJECT ITEM, ignite-forge OBJECT, extinguish-forge OBJECT, discard-forge-fuel OBJECT.\n", stderr);
             return 2;
         }
     }

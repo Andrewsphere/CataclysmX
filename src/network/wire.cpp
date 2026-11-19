@@ -8,8 +8,10 @@ namespace cataclysmx::network::wire {
 namespace {
 inline constexpr std::size_t combatEventWireSize = 133;
 bool ValidStationResult(const CommandResult& v) {
-    if (v.stationOutcome > StationActionOutcome::FixedFixture) return false;
-    const bool success = v.stationOutcome == StationActionOutcome::Placed || v.stationOutcome == StationActionOutcome::Packed;
+    if (v.stationOutcome > StationActionOutcome::HasFuel) return false;
+    const bool success = v.stationOutcome == StationActionOutcome::Placed || v.stationOutcome == StationActionOutcome::Packed
+        || v.stationOutcome == StationActionOutcome::FuelLoaded || v.stationOutcome == StationActionOutcome::Ignited
+        || v.stationOutcome == StationActionOutcome::Extinguished || v.stationOutcome == StationActionOutcome::FuelDiscarded;
     if (v.outcome == Outcome::station_changed) return success && v.advanced && v.cost;
     if (v.outcome == Outcome::station_refused) return !success && !v.advanced && !v.cost;
     return v.stationOutcome == StationActionOutcome::Unavailable;
@@ -23,7 +25,9 @@ bool ValidStations(const WorldView& view) {
             || std::abs(std::int64_t{station.position.x} - view.player_position.x) > 8
             || std::abs(std::int64_t{station.position.z} - view.player_position.z) > 8
             || ((!station.enabled || station.broken) && station.worker)
-            || station.packing > StationActionOutcome::FixedFixture || station.packing == StationActionOutcome::Placed) return false;
+            || station.packing > StationActionOutcome::HasFuel || station.packing == StationActionOutcome::Placed
+            || (station.packing >= StationActionOutcome::FuelLoaded && station.packing <= StationActionOutcome::FuelDiscarded)
+            || (station.forge.ready && !station.forge.fuel)) return false;
         previous = station.id;
     }
     return true;
@@ -612,7 +616,7 @@ bool ValidCraftingJobs(const Vector<CraftingEntry>& jobs) {
     if (jobs.size() > maxItemEntries) return false;
     PersistentId last = 0;
     for (const auto& job : jobs) {
-        if (job.id <= last || job.kind > CraftingKind::Recycle || job.status > CraftingStatus::StationBusy
+        if (job.id <= last || job.kind > CraftingKind::Recycle || job.status > CraftingStatus::InsufficientFuel
             || !job.totalWork || job.completedWork >= job.totalWork
             || (job.kind == CraftingKind::Craft
                 ? !job.craftingRecipe.value || job.recyclingRecipe.value
@@ -630,7 +634,7 @@ bool ValidCraftingJobs(const Vector<CraftingEntry>& jobs) {
     return true;
 }
 bool ValidCraftingResult(const CommandResult& result) {
-    if (result.craftingOutcome > CraftingOutcome::StationBusy) return false;
+    if (result.craftingOutcome > CraftingOutcome::InsufficientFuel) return false;
     switch (result.outcome) {
     case Outcome::grabbed: case Outcome::released: case Outcome::nothing_to_grab:
     case Outcome::grab_lost: case Outcome::grab_blocked:
@@ -842,6 +846,9 @@ bool ValidItemDefinitions(const WorldView& view, const ContentCatalog& content) 
         const auto* definition = content.TryGetObject(station.type);
         if (!definition || (definition->toolTraits.Empty() && !definition->packingItem.value)
             || (!definition->packingItem.value && station.packing == StationActionOutcome::Packed)) return false;
+        if (definition->behavior == ObjectBehaviorKind::Forge) {
+            if (station.forge.fuel > definition->forge.fuelCapacity) return false;
+        } else if (station.forge != ForgeState{}) return false;
     }
     for (const auto& job : view.craftingJobs) {
         if (job.kind == CraftingKind::Craft) {
@@ -1054,6 +1061,7 @@ bool Writer::View(const WorldView& v, bool inspection) {
         U64(station.id); U32(station.type.value);
         I32(station.position.x); I32(station.position.z); I32(station.position.y);
         U8(station.enabled); U8(station.broken); U64(station.worker); U8(static_cast<std::uint8_t>(station.packing));
+        U64(station.forge.fuel); U8(station.forge.ready);
     }
     return bytes.size() <= maxPacket;
 }
@@ -1072,7 +1080,7 @@ bool Reader::Text(String& v, std::size_t limit) {
 bool Reader::CommandValue(Command& v) {
     std::uint8_t kind, style, interactionKind, objectAction;
     v = {};
-    if (bytes.size() > maxPacket || !U8(kind) || kind > static_cast<std::uint8_t>(CommandKind::pack_station) ||
+    if (bytes.size() > maxPacket || !U8(kind) || kind > static_cast<std::uint8_t>(CommandKind::discard_forge_fuel) ||
         !I32(v.dx) || !I32(v.dz) || !U64(v.item) || !U32(v.waitCost) ||
         !U16(v.capability.value) || v.capability.value > maxItemCapabilities ||
         !Text(v.itemAction, maxItemActionName) || !U64(v.otherItem) || !I32(v.dy) ||
@@ -1115,7 +1123,7 @@ bool Reader::Result(PlayerCommandResult& v) {
     std::uint8_t itemOutcome, craftingOutcome;
     if (!U8(itemOutcome) || itemOutcome > static_cast<std::uint8_t>(ItemUseOutcome::Refused) ||
         !ReadReason(*this, v.result.itemReason) ||
-        !U8(craftingOutcome) || craftingOutcome > static_cast<std::uint8_t>(CraftingOutcome::StationBusy)
+        !U8(craftingOutcome) || craftingOutcome > static_cast<std::uint8_t>(CraftingOutcome::InsufficientFuel)
         || !Text(v.result.objectName, 255)) return false;
     v.result.itemOutcome = static_cast<ItemUseOutcome>(itemOutcome);
     v.result.craftingOutcome = static_cast<CraftingOutcome>(craftingOutcome);
@@ -1129,7 +1137,7 @@ bool Reader::Result(PlayerCommandResult& v) {
     v.result.studyOutcome = static_cast<StudyOutcome>(studyOutcome);
     if (!ReadEnum(*this, v.result.combatReason, CombatRefusal::InvalidDefinition)) return false;
     if (!ReadEnum(*this, v.result.powerOutcome, PowerActionOutcome::NoNewCoverage)) return false;
-    if (!ReadEnum(*this, v.result.stationOutcome, StationActionOutcome::FixedFixture)) return false;
+    if (!ReadEnum(*this, v.result.stationOutcome, StationActionOutcome::HasFuel)) return false;
     return ValidStationResult(v.result) && ValidPowerResult(v.result) && ValidCraftingResult(v.result) && ValidInventoryResult(v.result) && ValidStudyResult(v.result);
 }
 bool Reader::View(WorldView& v, bool inspection) {
@@ -1258,7 +1266,8 @@ bool Reader::View(WorldView& v, bool inspection) {
         StationView station;
         if (!U64(station.id) || !U32(station.type.value) || !I32(station.position.x) || !I32(station.position.z)
             || !I32(station.position.y) || !ReadBool(*this, station.enabled) || !ReadBool(*this, station.broken)
-            || !U64(station.worker) || !ReadEnum(*this, station.packing, StationActionOutcome::FixedFixture)) return false;
+            || !U64(station.worker) || !ReadEnum(*this, station.packing, StationActionOutcome::HasFuel)
+            || !U64(station.forge.fuel) || !ReadBool(*this, station.forge.ready)) return false;
         v.stations.push_back(station);
     }
     return ValidStations(v) && ValidPowerView(v);
@@ -1320,7 +1329,9 @@ bool ValidDetails(const PlayerInspection& value) {
     if ((d.actor && (!visible || d.actor != c.actor || !d.speed)) ||
         (!d.actor && (d.speed || d.combat != CombatView{})) || !ValidCombatView(d.combat) || d.combat.feedback != CombatView{}.feedback ||
         (d.object && (!visible || d.object != c.object || d.objectKind == ObjectKind::None || d.objectKind > ObjectKind::Lamp)) ||
-        (!d.object && (d.objectType.value || d.objectKind != ObjectKind::None || d.enabled || d.broken || d.machine)) ||
+         (!d.object && (d.objectType.value || d.objectKind != ObjectKind::None || d.enabled || d.broken || d.machine
+             || d.forge != ForgeState{})) ||
+         (d.forge.ready && !d.forge.fuel) || (d.machine && d.forge != ForgeState{}) ||
         (!d.machine && (d.energy || d.energyCapacity || d.hasJob || d.running || d.remainingWork || d.gridPowered
             || d.runRequested || d.fundedTicks || d.generatorOutputRemaining || d.generatorIntervalStart || d.generatorIntervalInitialized)) ||
         d.energy > d.energyCapacity || (!d.hasJob && d.remainingWork)
@@ -1385,6 +1396,7 @@ bool Writer::Inspection(const PlayerInspection& value) {
             U8(d.gridPowered); U8(d.runRequested); U64(d.fundedTicks); U64(d.generatorOutputRemaining);
             U64(d.generatorIntervalStart); U8(d.generatorIntervalInitialized);
         }
+        U64(d.forge.fuel); U8(d.forge.ready);
     }
     U16(static_cast<std::uint16_t>(d.items.size()));
     for (const auto& item : d.items) { U64(item.item); U32(item.type.value); U8(static_cast<std::uint8_t>(item.depth)); U8(item.stored); }
@@ -1412,6 +1424,7 @@ bool Reader::Inspection(PlayerInspection& value) {
                 || !U64(d.generatorOutputRemaining) || !U64(d.generatorIntervalStart)
                 || !ReadBool(*this, d.generatorIntervalInitialized)) return false;
         }
+        if (!U64(d.forge.fuel) || !ReadBool(*this, d.forge.ready)) return false;
     }
     std::uint16_t count;
     if (!U16(count) || count > maxInspectionItems) return false;
@@ -1431,7 +1444,16 @@ bool ValidInspectionDefinitions(const PlayerInspection& value, const ContentCata
     if (value.status != InspectionStatus::Complete) return true;
     if (!ValidItemDefinitions(value.view, content) || !ValidTerrainDefinitions(value.view, content) ||
         !ValidMonsterDefinitions(value.view, content) || !ValidObjectDefinitions(value.view, content)
-        || value.details.objectType.value > content.ObjectCount()) return false;
+         || value.details.objectType.value > content.ObjectCount()
+         || (value.details.forge.ready && !value.details.forge.fuel)
+         || (!value.details.object && value.details.forge != ForgeState{})) return false;
+    if (value.details.object) {
+        const auto* definition = content.TryGetObject(value.details.objectType);
+        if (!definition) return false;
+        if (definition->behavior == ObjectBehaviorKind::Forge) {
+            if (value.details.machine || value.details.forge.fuel > definition->forge.fuelCapacity) return false;
+        } else if (value.details.forge != ForgeState{}) return false;
+    }
     const auto& combat = value.details.combat;
     if ((combat.styleId.value && !content.TryGetCombatStyle(combat.styleId))
         || (combat.feedback.result.moveId.value && !content.TryGetCombatMove(combat.feedback.result.moveId))) return false;

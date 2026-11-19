@@ -19,7 +19,8 @@ enum class CommandKind {
     craft, recycle, resume_craft, pause_craft, cancel_craft, grab, release_grab,
     wield_item, transfer_item, study_book, pause_study,
     equipment, select_combat_style, use_ability, study_art, pause_art_study, new_character,
-    wire_grid, place_power_object, place_station, pack_station
+    wire_grid, place_power_object, place_station, pack_station,
+    load_forge, ignite_forge, extinguish_forge, discard_forge_fuel
 };
 struct Command {
     CommandKind kind = CommandKind::wait;

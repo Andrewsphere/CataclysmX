@@ -268,10 +268,49 @@ DataObject LegacyPayload(const CraftingJobState& state) {
     const auto current = WriteCraftingState(state);
     DataObject legacy;
     for (std::size_t i = 0; i < current.Size(); ++i) {
-        if (current.Name(i) != "contributions" && current.Name(i) != "stations") { legacy.Set(current.Name(i), current.At(i)); }
+        if (current.Name(i) != "contributions" && current.Name(i) != "stations"
+            && current.Name(i) != "heat_remainder") { legacy.Set(current.Name(i), current.At(i)); }
     }
     legacy.SetUnsigned("version", 1);
     return legacy;
+}
+
+TEST_CASE("Crafting heat remainder is bounded independent debt with strict legacy migration", "[crafting][forge][save]") {
+    CraftingJobState state;
+    state.recipeName = "make"; state.totalWork = 7;
+    state.heatRemainder = craftingHeatDenominator - 1;
+    state.energyRemainder = 17;
+    const auto payload = WriteCraftingState(state);
+    const auto restored = Take(ReadCraftingState(payload));
+    CHECK(restored.heatRemainder == state.heatRemainder);
+    CHECK(restored.energyRemainder == 17);
+    for (unsigned version : {1u, 2u, 3u}) {
+        DataObject legacy;
+        for (std::size_t i = 0; i < payload.Size(); ++i) {
+            const auto& name = payload.Name(i);
+            if (name == "heat_remainder" || (version < 3 && name == "stations")
+                || (version < 2 && name == "contributions")) { continue; }
+            legacy.Set(name, payload.At(i));
+        }
+        legacy.SetUnsigned("version", version);
+        const auto old = Take(ReadCraftingState(legacy));
+        CHECK(old.heatRemainder == 0);
+        CHECK(old.energyRemainder == 17);
+        legacy.SetUnsigned("heat_remainder", 0);
+        CHECK_FALSE(ReadCraftingState(legacy));
+    }
+    for (auto status : {CraftingStatus::ColdForge, CraftingStatus::InsufficientFuel}) {
+        state.status = status;
+        CHECK(Take(ReadCraftingState(WriteCraftingState(state))).status == status);
+    }
+    auto invalid = payload;
+    invalid.SetUnsigned("heat_remainder", craftingHeatDenominator);
+    CHECK_FALSE(ReadCraftingState(invalid));
+    invalid.SetUnsigned("heat_remainder", UINT64_MAX);
+    CHECK_FALSE(ReadCraftingState(invalid));
+    invalid = payload;
+    invalid.SetUnsigned("version", 3);
+    CHECK_FALSE(ReadCraftingState(invalid));
 }
 
 TEST_CASE("Crafting contribution persistence accepts legacy work and rejects malformed credit", "[skills][crafting][save]") {
@@ -279,7 +318,7 @@ TEST_CASE("Crafting contribution persistence accepts legacy work and rejects mal
     state.recipeName = "make"; state.totalWork = 7; state.work = 3 * ratioScale;
     state.contributions.push_back({2, ratioScale}); state.contributions.push_back({5, 2 * ratioScale});
     const auto valid = WriteCraftingState(state);
-    CHECK(*valid.GetUnsigned("version") == 3);
+    CHECK(*valid.GetUnsigned("version") == 4);
     REQUIRE(ReadCraftingState(valid));
     const auto legacy = Take(ReadCraftingState(LegacyPayload(state)));
     CHECK(legacy.work == state.work); CHECK(legacy.contributions.empty());
@@ -302,7 +341,7 @@ TEST_CASE("Crafting contribution persistence accepts legacy work and rejects mal
     SECTION("strict version two status bound") {
         bad = DataObject{};
         for (std::size_t i = 0; i < valid.Size(); ++i) {
-            if (valid.Name(i) != "stations") { bad.Set(valid.Name(i), valid.At(i)); }
+            if (valid.Name(i) != "stations" && valid.Name(i) != "heat_remainder") { bad.Set(valid.Name(i), valid.At(i)); }
         }
         bad.SetUnsigned("version", 2); bad.SetUnsigned("status", 8);
     }

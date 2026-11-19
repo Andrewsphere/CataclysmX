@@ -75,6 +75,7 @@ struct CraftingRecipeDefinition {
     SmallVector<SkillRequirement, 1> autolearnSkills;
     std::uint16_t craftsToLearn = 2;
     std::uint16_t disassembliesToLearn = 3;
+    std::uint32_t heatPerWork = 0; // ratioScale heat units per base work; requires forge_heat.
 };
 
 struct RecyclingRecipeDefinition {
@@ -88,6 +89,7 @@ struct RecyclingRecipeDefinition {
     SmallVector<SkillRequirement, 1> skills;
     SmallVector<SkillTraining, 1> training;
     SmallVector<CraftingRecipeId, 1> teachesRecipes;
+    std::uint32_t heatPerWork = 0;
 };
 
 struct ToolTraitDefinition {

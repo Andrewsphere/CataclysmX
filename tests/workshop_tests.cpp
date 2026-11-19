@@ -350,9 +350,10 @@ TEST_CASE("Workshop legacy saves retain paid work without inventing claims", "[w
     r.Step(30);
     REQUIRE(r.world.CreateSave(file.path.c_str(), {}));
     Sql(file.path, R"(UPDATE chunks SET payload=json_remove(payload,
-      '$.objects[0].equipment','$.actors[0].inventory[0].state.crafting_job.stations')
+      '$.objects[0].equipment','$.actors[0].inventory[0].state.crafting_job.stations',
+      '$.actors[0].inventory[0].state.crafting_job.heat_remainder')
       WHERE json_array_length(json_extract(payload,'$.objects'))>0;
-      UPDATE chunks SET payload=replace(payload,'"version":3,"kind"','"version":2,"kind"');
+      UPDATE chunks SET payload=replace(payload,'"version":4,"kind"','"version":2,"kind"');
       UPDATE metadata SET format_version=15;)");
     SaveDatabase db(r.content);
     const auto snapshot = Take(db.Open(file.path.c_str()));
@@ -376,7 +377,9 @@ TEST_CASE("Workshop job payload validates bindings and migrates version two", "[
     CHECK(Take(ReadCraftingState(payload)).stations == state.stations);
     auto legacy = DataObject{};
     for (std::size_t i = 0; i < payload.Size(); ++i) {
-        if (payload.Name(i) != "stations") { legacy.Set(payload.Name(i), payload.At(i)); }
+        if (payload.Name(i) != "stations" && payload.Name(i) != "heat_remainder") {
+            legacy.Set(payload.Name(i), payload.At(i));
+        }
     }
     legacy.SetUnsigned("version", 2);
     CHECK(Take(ReadCraftingState(legacy)).stations.Empty());

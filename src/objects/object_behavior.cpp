@@ -8,6 +8,80 @@
 namespace cataclysmx {
 namespace {
 
+StateResult<ForgeState> ReadForgeState(const ObjectDefinition& definition, const DataObject& input,
+    Diagnostics* diagnostics) {
+    StateReader reader(input, diagnostics);
+    if (!ValidObjectDefinition(definition)) {
+        return reader.Invalid("definition", "invalid object definition");
+    }
+    const auto version = reader.GetUnsignedOrError("version");
+    ForgeState state;
+    state.fuel = reader.GetUnsignedOrError("fuel");
+    state.ready = reader.GetBooleanOrError("ready");
+    if (const auto result = reader.Result(); !result) { return eastl::unexpected(result.error()); }
+    if (version != 1) {
+        return reader.Invalid("version", "unsupported forge state version", StateError::UnsupportedVersion);
+    }
+    for (std::size_t i = 0; i < input.Size(); ++i) {
+        const auto& name = input.Name(i);
+        if (name != "version" && name != "fuel" && name != "ready") {
+            return reader.Invalid({name.data(), name.size()}, "unknown forge state field");
+        }
+    }
+    if (state.fuel > definition.forge.fuelCapacity || (state.ready && state.fuel == 0)) {
+        return reader.Invalid("fuel", "invalid forge fuel or readiness");
+    }
+    return state;
+}
+
+ObjectUseResult MutationFailure(WorldError error, ObjectUseReason fallback);
+
+class ForgeBehavior final : public ObjectBehavior {
+public:
+    ForgeBehavior(const ObjectDefinition& definition, ForgeState state)
+        : definition_(definition), state_(state) {}
+    eastl::optional<Tick> NextEventIn() const override { return eastl::nullopt; }
+    void Elapse(Tick) override {}
+    void ProcessEvent(ObjectMutationContext&) override {}
+    void QueryActions(const ObjectReadContext& context, ActorHandle actor, Vector<ObjectActionInfo>& output) const override {
+        if (definition_.capacityVolumeMl) {
+            output.push_back({ObjectAction::Collect, context.CheckCollect(actor)});
+        }
+    }
+    ObjectUseResult Use(ObjectMutationContext& context, ActorHandle actor, ObjectAction action) override {
+        if (action != ObjectAction::Collect || !definition_.capacityVolumeMl) { return {}; }
+        const auto collected = context.CollectContents(actor);
+        if (!collected) { return MutationFailure(collected.error(), ObjectUseReason::NoContents); }
+        return {ObjectUseOutcome::Succeeded, 100, ObjectUseReason::None};
+    }
+    DataObject SaveState() const override {
+        DataObject result;
+        result.SetUnsigned("version", 1);
+        result.SetUnsigned("fuel", state_.fuel);
+        result.SetBoolean("ready", state_.ready);
+        return result;
+    }
+    ObjectStateView Describe() const override {
+        ObjectStateView result;
+        result.behavior = ObjectBehaviorKind::Forge;
+        result.forge = state_;
+        return result;
+    }
+    WorldResult<void> SetEnergy(std::uint64_t) override {
+        return eastl::unexpected(WorldError::invalid_request);
+    }
+    WorldResult<void> SetForgeState(ForgeState state) override {
+        if (state.fuel > definition_.forge.fuelCapacity || (state.ready && state.fuel == 0)) {
+            return eastl::unexpected(WorldError::invalid_request);
+        }
+        state_ = state;
+        return {};
+    }
+private:
+    const ObjectDefinition& definition_;
+    ForgeState state_;
+};
+
 struct MachineState {
     std::uint64_t energy = 0;
     bool hasJob = false;
@@ -372,6 +446,10 @@ private:
 
 ObjectBehavior::~ObjectBehavior() = default;
 
+WorldResult<void> ObjectBehavior::SetForgeState(ForgeState) {
+    return eastl::unexpected(WorldError::invalid_request);
+}
+
 WorldResult<void> ObjectBehavior::PrepareGeneratorInterval(Tick) {
     return eastl::unexpected(WorldError::invalid_request);
 }
@@ -384,6 +462,11 @@ WorldResult<void> ObjectBehavior::FundGridWork(Tick) {
 
 StateResult<void> ValidateObjectBehaviorState(const ObjectDefinition& definition, const DataObject& state,
     Diagnostics* diagnostics) {
+    if (definition.behavior == ObjectBehaviorKind::Forge) {
+        const auto parsed = ReadForgeState(definition, state, diagnostics);
+        if (!parsed) { return eastl::unexpected(parsed.error()); }
+        return {};
+    }
     const auto parsed = ReadState(definition, state, diagnostics);
     if (!parsed) { return eastl::unexpected(parsed.error()); }
     return {};
@@ -391,6 +474,18 @@ StateResult<void> ValidateObjectBehaviorState(const ObjectDefinition& definition
 
 StateResult<eastl::unique_ptr<ObjectBehavior>> MakeObjectBehavior(const ObjectDefinition& definition,
     const DataObject* state, Diagnostics* diagnostics) {
+    if (definition.behavior == ObjectBehaviorKind::Forge) {
+        if (!ValidObjectDefinition(definition)) {
+            return cataclysmx::InvalidState(diagnostics, {}, "definition", "invalid object definition");
+        }
+        ForgeState parsed;
+        if (state) {
+            const auto saved = ReadForgeState(definition, *state, diagnostics);
+            if (!saved) { return eastl::unexpected(saved.error()); }
+            parsed = *saved;
+        }
+        return eastl::unique_ptr<ObjectBehavior>(new ForgeBehavior(definition, parsed));
+    }
     MachineState parsed;
     if (state) {
         const auto saved = ReadState(definition, *state, diagnostics);

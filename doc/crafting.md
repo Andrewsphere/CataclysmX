@@ -3,7 +3,7 @@
 `World` owns crafting mutations. `StartCrafting(actor, recipe)` and
 `StartRecycling(actor, target, recipe)` return `WorldResult<CraftingResult>`.
 Invalid handles/IDs/settings are errors; missing ingredients, missing tools,
-insufficient energy, unavailable actors and disabled recipes are ordinary typed
+insufficient energy/fuel, cold forges, unavailable actors and disabled recipes are ordinary typed
 `CraftingOutcome` values. `Started` means reservation and first funding committed.
 Start refusal moves nothing, creates nothing and spends nothing.
 
@@ -15,7 +15,7 @@ missing reference are distinct outcomes. Checks also apply on resume. See
 `ResumeCrafting`, `PauseCrafting` and `CancelCrafting` operate on the unfinished
 item handle. An actor can work on one job; a job has at most one worker. Different
 jobs can use the same tool. Pause finishes its paid slice. Cancellation discards
-all work, including pending work, without refunding tool energy. Actual reserved
+all work, including pending work, without refunding tool energy or forge heat. Actual reserved
 items return to the cancelling actor, falling back to ground when too heavy.
 Skill XP earned from completed slices remains; cancellation awards no recipe
 memorization. Completion divides recipe-learning credit among recorded workers,
@@ -78,6 +78,20 @@ Grid-powered slices stop at the next power-system slice boundary; other crafting
 keeps its usual timing. A paid slice survives disconnection, while a subsequent
 shortage pauses the job until explicitly resumed.
 
+Recipes requiring `forge_heat` select one Ready forge for that requirement.
+Cold providers are skipped; no ready provider yields `ColdForge`, while a
+selected forge unable to fund the complete next slice yields `InsufficientFuel`.
+Forge work slices are at most 100 elapsed ticks, also bounded by the grid boundary
+when powered tools are selected. Claims, heat, local stores and aggregated grid
+demand all pass preflight before any payment or ingredient reservation commits.
+The job owns a separate `heatRemainder` with denominator 100000000. Heat is charged
+against funded base work, so worker speed changes elapsed time without changing
+the completed recipe's fuel cost. Even a zero-whole-unit heat payment requires
+positive fuel in a Ready forge. Exhaustion makes it Cold.
+Paid work survives extinguishing, exhaustion, destruction and worker loss; the
+next unpaid slice rechecks providers. Cancellation refunds original ingredients,
+including solder/electrodes, but never refunds operating heat or electricity.
+
 Work is fixed-point in 1/10000 base-work units. Slice timing also retains its
 integer-division residue; a speed change rescales that sub-fixed-point residue
 with integer flooring. Energy rates use `ratioScale` (10000 is one energy per
@@ -125,7 +139,9 @@ unfinished definitions only. Recipe stable
 names resolve to current numeric IDs during loading. Snapshot validation checks
 recipe/work consistency, bounded residues and timers, exact reserved child counts,
 leaf ownership, and duplicate worker claims within an archive.
-Job payload version 3 adds active `stations` bindings; versions 1/2 load with none.
+Job payload version 4 adds independent `heat_remainder`; versions 1–3 load it as
+zero without changing prepaid work. Both heat and energy remainders are strictly
+less than 100000000. Version 3 added active `stations` bindings; versions 1/2 load with none.
 Version 2 introduced worker contributions; version 1 migrates prior work
 as unattributed. It stores scalar `energy_remainder`, strictly
 less than 100000000. Active statuses require a worker; pause status and flag must

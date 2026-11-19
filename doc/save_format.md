@@ -372,6 +372,15 @@ with an empty list and retain their paid work. Database validation rejects dupli
 claims and claims without durable station objects. Unloading releases claims before
 archive capture; a live checkpoint preserves active bindings.
 
+W2 keeps envelope 16 and writes manual-job payload **4**, adding unsigned
+`heat_remainder` strictly below 100000000, independently of electrical debt.
+Versions 1–3 migrate with zero heat debt and retain already paid work.
+Forge objects use their own strict version-1 behavior payload containing
+`fuel` and `ready`. Fuel must fit authored capacity, and Ready requires positive
+fuel. There is no initial fuel restoration or inactive-time catch-up.
+Cold/exhausted forges may still be bound to an already funded manual slice;
+the next slice rechecks readiness. See [forge ownership](objects_api.md#fueled-manual-forges).
+
 ### Combat state
 
 The actor `combat` field is an owned version-1 `DataObject`. Its exact fields are

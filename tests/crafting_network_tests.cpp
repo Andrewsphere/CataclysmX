@@ -116,6 +116,27 @@ TEST_CASE("Only unfinished wrappers permit dynamic dimensions and hidden storage
     CHECK_FALSE(wire::ValidItemDefinitions(view, content));
 }
 
+TEST_CASE("Cold forge and fuel shortage statuses survive LAN roundtrips", "[crafting][forge][network][codec]") {
+    const auto content = Catalog();
+    for (const auto status : {CraftingStatus::ColdForge, CraftingStatus::InsufficientFuel}) {
+        auto view = JobView(content);
+        auto& job = view.craftingJobs.front();
+        job.status = status; job.worker = 0; job.pauseRequested = false; job.fundedTicksRemaining = 0;
+        wire::Writer writer; REQUIRE(writer.View(view));
+        wire::Reader reader{{writer.bytes.data(), writer.bytes.size()}};
+        WorldView decoded; REQUIRE(reader.View(decoded)); CHECK(reader.Done());
+        CHECK(decoded.craftingJobs.front().status == status);
+    }
+    for (const auto outcome : {CraftingOutcome::ColdForge, CraftingOutcome::InsufficientFuel}) {
+        PlayerCommandResult receipt{1, 2, 3, {Outcome::crafting_refused}};
+        receipt.result.craftingOutcome = outcome;
+        wire::Writer writer; REQUIRE(writer.Result(receipt));
+        wire::Reader reader{{writer.bytes.data(), writer.bytes.size()}};
+        PlayerCommandResult decoded; REQUIRE(reader.Result(decoded)); CHECK(reader.Done());
+        CHECK(decoded.result.craftingOutcome == outcome);
+    }
+}
+
 TEST_CASE("Content fingerprints include compiled crafting semantics", "[crafting][network]") {
     const auto original = Catalog(); const auto fingerprint = ContentFingerprint(original);
     String modified = CraftingData;

@@ -1881,7 +1881,8 @@ SaveResult<void> ValidateDatabase(const ContentCatalog& content, sqlite3* db,
                 case ObjectBehaviorKind::CraftingMachine:
                     if (definition->machine.gridPowered) { kind = PowerDeviceKind::Machine; }
                     break;
-                case ObjectBehaviorKind::None: break;
+                case ObjectBehaviorKind::None:
+                case ObjectBehaviorKind::Forge: break;
                 }
             }
             if (indexed != kind.has_value()) {

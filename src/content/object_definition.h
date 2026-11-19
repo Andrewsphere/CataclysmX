@@ -9,7 +9,7 @@
 
 namespace cataclysmx {
 
-enum class ObjectBehaviorKind { None, CraftingMachine, Generator, GridBattery };
+enum class ObjectBehaviorKind { None, CraftingMachine, Generator, GridBattery, Forge };
 
 struct CraftingMachineDefinition {
     ItemTypeId input{};
@@ -31,6 +31,19 @@ struct GeneratorDefinition {
     bool operator==(const GeneratorDefinition&) const = default;
 };
 
+struct ForgeFuelDefinition {
+    ItemTypeId item{};
+    std::uint64_t heat = 0; // Whole-item yield, never electrical energy.
+    bool operator==(const ForgeFuelDefinition&) const = default;
+};
+struct ForgeDefinition {
+    std::uint64_t fuelCapacity = 0;
+    std::uint64_t ignitionCost = 0;
+    // Immutable content list; most object definitions have no fuels.
+    Vector<ForgeFuelDefinition> fuels;
+    bool operator==(const ForgeDefinition&) const = default;
+};
+
 struct ObjectDefinition {
     String id;
     String name;
@@ -48,6 +61,7 @@ struct ObjectDefinition {
     GeneratorDefinition generator;
     StaticList<TraitRequirement, maxRecipeTraits> toolTraits;
     ItemTypeId packingItem{}; // Protected original equipment; zero denotes a fixed fixture.
+    ForgeDefinition forge;
     bool operator==(const ObjectDefinition&) const = default;
 };
 

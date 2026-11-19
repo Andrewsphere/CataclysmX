@@ -25,6 +25,8 @@ private:
     bool placing_ = false;
     Vector<PersistentId> kits_;
     Vector<PersistentId> equipmentItems_;
+    PersistentId fuel_ = 0;
+    Vector<PersistentId> fuelItems_;
 };
 
 struct PowerDebugSnapshot {

@@ -1,4 +1,4 @@
-# Typed objects, crafting machines, and power behaviors
+# Typed objects, crafting machines, power, and forges
 
 ## Content
 
@@ -73,7 +73,7 @@ the suspended legacy `updateDeadline`, and leave `type` zero and `behavior_` nul
 `World`, a friend, installs or invokes its private owned behavior.
 
 `ObjectDefinition` is a value with a closed `ObjectBehaviorKind` and typed
-`CraftingMachineDefinition` / `GeneratorDefinition` configurations. The enum
+`CraftingMachineDefinition` / `GeneratorDefinition` / `ForgeDefinition` configurations. The enum
 appends `Generator` and `GridBattery`, preserving the values of `None` and
 `CraftingMachine`. `MakeObjectBehavior(definition, state,
 diagnostics)` uses explicit dispatch to create at most one behavior; `None`
@@ -96,6 +96,7 @@ be moved, replaced, or structurally mutated while objects exist.
 | `PrepareGeneratorInterval(Tick now)` | Claims the remaining allowance in an absolute 100-tick generator interval; never burns fuel. |
 | `SpendGeneratorEnergy(uint64_t)` | Atomically subtracts generator fuel and allowance; rejects insufficient fuel/allowance or absent intent. |
 | `FundGridWork(Tick)` | Grants prepaid grid-machine work; requires an intended job, no outstanding paid ticks, and a positive amount no greater than remaining work. |
+| `SetForgeState(ForgeState)` | Forge-only mutation after World's transaction preflight; checks capacity and positive fuel when Ready. |
 
 The three power methods default to `WorldError::invalid_request` for unrelated
 behaviors. World owns access and scheduling; power-system integration invokes
@@ -203,6 +204,61 @@ it may exceed the fuel currently available.
 storage capacity and both behavior configs. Its original installed battery
 child is the sole authority for electrical charge; no behavior-local charge is
 created or persisted.
+
+## Fueled manual forges
+
+W2 adds `behavior:'forge'`, optional portable backing via `packing_item`, and
+ordinary object `tool_traits` (at most four). Every forge must supply `forge_heat`;
+items and other behavior kinds cannot supply it.
+
+```json5
+{id:'example_forge', name:'Example forge', behavior:'forge',
+ tool_traits:[{id:'forge_heat',tier:1}],
+ forge:{fuel_capacity:24000, ignition_cost:1000,
+        fuels:[{item:'example_charcoal',heat:6000}]}}
+```
+
+These are schema examples, not W3 roster identities. `fuel_capacity` is a positive
+integer at most UINT64_MAX/2; `ignition_cost` is positive and smaller than capacity.
+`fuels` is a nonempty list of distinct ordinary item IDs with positive whole-item
+`heat` yields no greater than capacity. Unfinished crafts and portable-station
+backing types cannot be fuels. Unknown fields and behavior/config mismatches fail
+loading. Recipes/recyclers declare their heat rate as described in
+[crafting content](crafting_content.md).
+
+`World::QueryForgeAction(actor, forge, action, fuel={})` returns a typed
+`StationActionOutcome` without mutation. `UseForge` uses identical preflight and
+returns `WorldResult<StationActionResult>` with an **unscheduled** base cost:
+
+| `ForgeAction` | Effect | Cost |
+| --- | --- | --- |
+| `LoadFuel` | Consume the specified whole carried, unreserved leaf item only if its entire yield fits; preserve readiness | 100 |
+| `Ignite` | Require fuel strictly greater than ignition cost, debit that cost, set Ready | 400 |
+| `Extinguish` | Set Cold, retaining fuel | 100 |
+| `DiscardFuel` | Discard remaining fuel from a Cold forge | 100 |
+
+Only `LoadFuel` accepts an item handle. Actor readiness, same-layer adjacent
+passable-path access, enabled and unbroken state are rechecked at execution.
+Refusals cost nothing. Invalid handles/action shapes are typed world errors.
+Another actor may load or extinguish a claimed forge; funded work remains
+purchased, while future funding rechecks heat. Packing requires no claim, empty
+public storage, Cold state and zero fuel. Destruction drops backing/public items
+once and loses remaining fuel. Explicit-capacity forge bins support ordinary
+inventory transfers and Collect without exposing protected backing equipment.
+
+Only forge instances allocate the small behavior-owned `ForgeState {fuel, ready}`.
+Heat never shares electrical stores. Fuel definitions use an immutable `Vector`
+rather than imposing an arbitrary fuel-type limit or embedding inline entries in
+every non-forge definition. World owns the complete action/payment transactions;
+one forge-specific behavior setter avoids adding a second job owner or scheduler.
+`DescribeObjectState().forge` and `StationView::forge` are owned snapshots.
+
+New/generated forges start empty and Cold. They have no events, idle burn, power
+device index or offscreen hold. Disabling/breaking them prevents new work; enabling
+does not add fuel. Persistence uses a strict behavior payload
+`{version: unsigned 1, fuel: unsigned uint64, ready: bool}`. Every field is
+required; fuel must fit capacity and Ready requires positive fuel. Loading and
+chunk inactivity preserve exactly this state without catch-up.
 
 ## Saved state format and safe defaults
 

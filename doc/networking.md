@@ -1,9 +1,13 @@
 # LAN networking API
 
-## Current protocol 24
+## Current protocol 25
 
-The current protocol constant is `0x43584e18`. Peers need matching builds and
-content. Protocol 24 adds `place_station` (item ID and position), `pack_station`
+The current protocol constant is `0x43584e19`. Peers need matching builds and
+content. Protocol 25 adds explicit forge load/ignite/extinguish/discard commands,
+fuel/readiness on station and tile-inspection snapshots, and typed heat refusals.
+Forge settings, fuel identities/yields and recipe heat costs participate in content
+fingerprints. See [forge controls](power_presentation.md#fueled-workshop-controls).
+Protocol 24 added `place_station` (item ID and position), `pack_station`
 (target object ID), typed station outcomes, nearby station inspection and sorted
 active station IDs on crafting jobs. Views carry at most 289 nearby stations
 (radius 8); each has persistent identity, content type, position, enabled/broken

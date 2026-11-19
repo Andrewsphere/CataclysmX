@@ -348,6 +348,8 @@ bool ValidCommandShape(const Command& command) {
     // Transport and local submissions share this admission policy; catalog,
     // ownership and ability-grant authority are checked at execution.
     const auto kind = command.kind;
+    const bool forge = kind == CommandKind::load_forge || kind == CommandKind::ignite_forge
+        || kind == CommandKind::extinguish_forge || kind == CommandKind::discard_forge_fuel;
     if (kind != CommandKind::wire_grid && command.powerBounds != PowerBounds{}) { return false; }
     if (kind != CommandKind::place_power_object && kind != CommandKind::place_station && command.position != TileCoord{}) { return false; }
     const bool direction = kind == CommandKind::move || kind == CommandKind::interact
@@ -355,14 +357,14 @@ bool ValidCommandShape(const Command& command) {
     const bool item = kind == CommandKind::pick_up || kind == CommandKind::drop
         || kind == CommandKind::use_item || kind == CommandKind::store_item
         || kind == CommandKind::wield_item || kind == CommandKind::transfer_item
-        || kind == CommandKind::wire_grid || kind == CommandKind::place_power_object || kind == CommandKind::place_station
+        || kind == CommandKind::wire_grid || kind == CommandKind::place_power_object || kind == CommandKind::place_station || kind == CommandKind::load_forge
         || (kind >= CommandKind::recycle && kind <= CommandKind::cancel_craft);
     if ((!direction && (command.dx || command.dz || command.dy))
         || (!item && command.item)
         || (kind != CommandKind::wait && command.waitCost != ticks_per_turn)
         || (kind != CommandKind::use_item && (command.capability.value || !command.itemAction.empty()))
         || (kind != CommandKind::use_item && kind != CommandKind::store_item && kind != CommandKind::place_power_object && command.otherItem)
-        || (kind != CommandKind::attack && kind != CommandKind::pack_station && command.target)
+        || (kind != CommandKind::attack && kind != CommandKind::pack_station && !forge && command.target)
         || (kind != CommandKind::combat_style && command.style != CombatStyle::Balanced)
         || (kind != CommandKind::interact_action && command.interaction != InteractionRequest{})
         || (kind != CommandKind::craft && command.recipe.value)
@@ -437,6 +439,7 @@ bool ValidCommandShape(const Command& command) {
     }
     if (kind == CommandKind::place_station) { return command.item != 0 && ValidPosition(command.position); }
     if (kind == CommandKind::pack_station) { return command.target != 0; }
+    if (forge) { return command.target != 0 && (kind != CommandKind::load_forge || command.item != 0); }
     if (command.kind == CommandKind::wield_item || command.kind == CommandKind::transfer_item) {
         return command.dx == 0 && command.dz == 0 && command.dy == 0 && command.waitCost == ticks_per_turn
             && command.capability.value == 0 && command.itemAction.empty() && command.otherItem == 0
@@ -595,6 +598,8 @@ String CommandResultMessage(const CommandResult& result) {
         case CraftingOutcome::MissingSkills: return "You lack the required skill levels.";
         case CraftingOutcome::MissingRecipeReference: return "You need an accessible reference for that recipe.";
         case CraftingOutcome::StationBusy: return "A required workshop station is in use.";
+        case CraftingOutcome::ColdForge: return "A required forge is cold.";
+        case CraftingOutcome::InsufficientFuel: return "The forge has insufficient fuel.";
         default: return OutcomeMessage(result.outcome);
         }
     }
@@ -872,8 +877,27 @@ CommandResult Server::Execute(ActorHandle handle, PlayerSlot& slot, Command comm
         return command;
     };
     Outcome outcome = Outcome::invalid_command;
+    StationActionOutcome stationOutcome = StationActionOutcome::Unavailable;
     std::uint32_t baseCost = command.kind == CommandKind::wait ? command.waitCost : ticks_per_turn;
     switch (command.kind) {
+    case CommandKind::load_forge:
+    case CommandKind::ignite_forge:
+    case CommandKind::extinguish_forge:
+    case CommandKind::discard_forge_fuel: {
+        const ForgeAction operation = command.kind == CommandKind::load_forge ? ForgeAction::LoadFuel
+            : command.kind == CommandKind::ignite_forge ? ForgeAction::Ignite
+            : command.kind == CommandKind::extinguish_forge ? ForgeAction::Extinguish : ForgeAction::DiscardFuel;
+        const auto action = world_.UseForge(handle, world_.FindObject(command.target), operation, world_.FindItem(command.item));
+        if (!action) { return failed(Outcome::invalid_command); }
+        if (action->outcome != StationActionOutcome::FuelLoaded && action->outcome != StationActionOutcome::Ignited
+            && action->outcome != StationActionOutcome::Extinguished && action->outcome != StationActionOutcome::FuelDiscarded) {
+            auto result = failed(Outcome::station_refused);
+            result.stationOutcome = action->outcome; return result;
+        }
+        stationOutcome = action->outcome;
+        baseCost = static_cast<std::uint32_t>(action->cost); outcome = Outcome::station_changed;
+        break;
+    }
     case CommandKind::wire_grid:
     case CommandKind::place_power_object: {
         const auto power = command.kind == CommandKind::wire_grid
@@ -899,6 +923,7 @@ CommandResult Server::Execute(ActorHandle handle, PlayerSlot& slot, Command comm
             result.stationOutcome = action->outcome; return result;
         }
         baseCost = static_cast<std::uint32_t>(action->cost); outcome = Outcome::station_changed;
+        stationOutcome = action->outcome;
         break;
     }
     case CommandKind::grab: {
@@ -1200,7 +1225,7 @@ CommandResult Server::Execute(ActorHandle handle, PlayerSlot& slot, Command comm
     result.cost = cost;
     if (outcome == Outcome::power_changed) { result.powerOutcome = PowerActionOutcome::Succeeded; }
     if (outcome == Outcome::station_changed) {
-        result.stationOutcome = command.kind == CommandKind::place_station ? StationActionOutcome::Placed : StationActionOutcome::Packed;
+        result.stationOutcome = stationOutcome;
     }
     return result;
 }

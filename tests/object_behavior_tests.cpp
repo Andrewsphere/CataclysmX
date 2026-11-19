@@ -24,6 +24,63 @@ DataObject State(std::uint64_t energy, bool hasJob, bool running, Tick remaining
     return state;
 }
 
+ObjectDefinition ForgeDefinitionForTest() {
+    ObjectDefinition definition;
+    definition.id = "forge"; definition.name = "Forge";
+    definition.behavior = ObjectBehaviorKind::Forge;
+    REQUIRE(definition.toolTraits.PushBack({{1}, 1}));
+    definition.forge.fuelCapacity = 24000;
+    definition.forge.ignitionCost = 1000;
+    definition.forge.fuels.push_back({{1}, 6000});
+    return definition;
+}
+
+TEST_CASE("Forge state remains cold and empty until explicitly funded and never burns while idle", "[object-behavior][forge]") {
+    const auto definition = ForgeDefinitionForTest();
+    auto created = MakeObjectBehavior(definition);
+    REQUIRE(created);
+    auto& behavior = **created;
+    CHECK(behavior.Describe().behavior == ObjectBehaviorKind::Forge);
+    CHECK(behavior.Describe().forge == ForgeState{});
+    CHECK(behavior.Describe().energy == 0);
+    CHECK_FALSE(behavior.NextEventIn());
+    REQUIRE(behavior.SetForgeState({12000, true}));
+    behavior.Elapse(std::numeric_limits<Tick>::max());
+    CHECK(behavior.Describe().forge == ForgeState{12000, true});
+    CHECK_FALSE(behavior.NextEventIn());
+    CHECK_FALSE(behavior.SetEnergy(1));
+    CHECK_FALSE(behavior.SetForgeState({24001, false}));
+    CHECK_FALSE(behavior.SetForgeState({0, true}));
+    CHECK(behavior.Describe().forge == ForgeState{12000, true});
+    const auto saved = behavior.SaveState();
+    CHECK(saved.Size() == 3);
+    REQUIRE(ValidateObjectBehaviorState(definition, saved));
+    auto restored = MakeObjectBehavior(definition, &saved);
+    REQUIRE(restored);
+    CHECK((*restored)->Describe().forge == ForgeState{12000, true});
+    REQUIRE(behavior.SetForgeState({12000, false}));
+    CHECK(behavior.Describe().forge == ForgeState{12000, false});
+    const auto machine = MakeObjectBehavior(Definition());
+    REQUIRE(machine);
+    CHECK_FALSE((*machine)->SetForgeState({1, false}));
+}
+
+TEST_CASE("Forge persistence rejects malformed state without creating initial fuel", "[object-behavior][forge][save]") {
+    const auto definition = ForgeDefinitionForTest();
+    const auto created = MakeObjectBehavior(definition);
+    REQUIRE(created);
+    auto state = (*created)->SaveState();
+    SECTION("unsupported version") { state.SetUnsigned("version", 2); }
+    SECTION("unknown field") { state.SetUnsigned("energy", 0); }
+    SECTION("capacity exceeded") { state.SetUnsigned("fuel", 24001); }
+    SECTION("empty ready forge") { state.SetBoolean("ready", true); }
+    SECTION("wrong fuel type") { state.SetSigned("fuel", 1); }
+    SECTION("wrong ready type") { state.SetUnsigned("ready", 1); }
+    SECTION("missing fields") { state = DataObject{}; }
+    CHECK_FALSE(ValidateObjectBehaviorState(definition, state));
+    CHECK_FALSE(MakeObjectBehavior(definition, &state));
+}
+
 TEST_CASE("New typed objects have full energy and no scheduled job", "[object-behavior]") {
     const auto definition = Definition();
     auto created = MakeObjectBehavior(definition);

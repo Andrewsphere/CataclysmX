@@ -261,7 +261,8 @@ bool World::CanAccessStorage(ActorHandle handle, const ItemStorage& storage) con
         const auto object = FindObject(storage.id);
         const auto* value = GetObject(object);
         const auto* definition = value ? GetContent().TryGetObject(value->type) : nullptr;
-        return definition && definition->behavior == ObjectBehaviorKind::None
+        return definition && (definition->behavior == ObjectBehaviorKind::None
+                || definition->behavior == ObjectBehaviorKind::Forge)
             && CanPlayerSee(handle, value->position) && CanAccessObjectStorage(handle, object);
     }
     case ItemStorageKind::Container: {

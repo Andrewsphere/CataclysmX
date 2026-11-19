@@ -1,6 +1,6 @@
 # Workshop stations and fueled metalworking
 
-**Status: Accepted gameplay contract; W1 implemented and verified.** D2 of the
+**Status: Accepted gameplay contract; W1 and W2 implemented and verified.** D2 of the
 [urban workshop progression plan](urban_workshop_progression.md). The user accepted
 the proposed defaults and both progression branches. D1's
 [electrical accounting](power_design.md) is implemented.
@@ -360,7 +360,31 @@ separate manual preparation recipes can feed a selectable autonomous recipe.
   fields. Older supported save envelopes and job payloads retain paid work with
   empty station bindings. No generation-version change is part of W1.
 
-Remaining W2–W4 interfaces follow the accepted gameplay rules:
+### W2 runtime interfaces
+
+- `ForgeDefinition` contains capacity, ignition cost and an immutable typed fuel
+  list. Crafting and recycling definitions accept `heat_per_work`; it is positive
+  exactly when `forge_heat` is required. Only forges supply that trait.
+- `World::UseForge` and its read-only `QueryForgeAction` use the closed
+  `ForgeAction` set: LoadFuel, Ignite, Extinguish, DiscardFuel. They reuse
+  `StationActionResult` and return unscheduled base costs. World's transactions
+  own whole-item consumption; forge behavior owns only `{fuel, ready}`.
+- No per-object job or scheduler is added. An immutable `Vector` of fuel entries
+  avoids a speculative content bound and inline storage paid by non-forge
+  definitions. Only forge instances allocate forge behavior state.
+- Manual jobs fund at most 100 elapsed ticks of forge service, preflighting heat,
+  local stores, aggregated grid supply and claims before mutation. The independent
+  heat remainder travels with the unfinished item.
+- Job payload **4**, strict forge payload **1**, and LAN protocol **25** preserve
+  heat debt, readiness, fuel and paid work. Save envelope remains **16**: both
+  payloads already reside in versioned opaque state fields. Older jobs load with
+  zero heat debt; no generation-version or shipped roster change is part of W2.
+- [Forge schema/API](objects_api.md#fueled-manual-forges) and
+  [player controls](power_presentation.md#fueled-workshop-controls) document usage.
+  Both local and LAN commands are available through shared terminal/SDL controls
+  and headless input.
+
+Cross-system contracts retained for W3–W4:
 
 - Content: optional object traits, typed forge fuel/settings, recipe heat cost,
   portable-station backing mapping, and explicit machine-recipe definitions.
@@ -398,7 +422,7 @@ machine remains stopped, and restoration grants no initial fuel, charge or outpu
 | Slice | Scope | Gate / focused evidence |
 | --- | --- | --- |
 | W1 Station foundation — verified | Object traits, provider selection, claims, placement/packing, saved/LAN inspection | Occupancy/recovery accepted. Thirteen focused tests cover tiers/reach, contention, atomic refusal, recovery, inactivity/death, save migration and LAN/UI. |
-| W2 Fueled manual work — next | Forge state/actions, heat rates and atomic combined payment | Fuel/cancellation accepted. Test integer conservation, speed independence, failed mixed power/heat payment, partial fuel, pause/reignite, source loss and elapsed partition equivalence. |
+| W2 Fueled manual work — verified | Forge state/actions, heat rates and atomic combined payment | Verified conservation, speed independence, failed mixed power/heat payment, partial fuel, pause/reignite, source loss, elapsed partitions, paid-work reassignment, disk/LAN and shared controls. |
 | W3 Playable metalworking | Small authored roster, bootstrap/found routes, welding result, legacy-output audit | Approve roster/sword gates. Load all affected packs, verify skill/knowledge reachability, recipe limits, recycler mass/energy bounds and actual acquisition. |
 | W4 Selectable machines | Recipe selection, reserved originals/output space, cancel, D1 integration | Review D3 boundary. Test shared supply, capacity while stopped, no duplicate output, destruction, offscreen completion and disk/LAN round-trips. |
 
@@ -426,7 +450,7 @@ W1 is complete, including content validation, runtime ownership/claims, server a
 headless commands, shared terminal/SDL controls, persistence and LAN codecs.
 `tests/workshop_tests.cpp` contains the focused acceptance cases.
 
-Verification:
+W1 verification (prior pass):
 
 - `cmake --build --preset win-msvc-debug`: passed.
 - Debug CTest selection covering crafting, power, saves, objects, inventory,
@@ -440,6 +464,34 @@ Verification:
 - `ctest --preset win-msvc-sdl -R "^sdl_frontend_smoke$"`: **1/1 passed**.
 - Tracked diff and new-file whitespace checks: clean.
 
-W2 can now build on the verified station provider/payment boundary. W3 still needs
-the bounded roster/balance review and item-authoring workflow, with stable-ID
-artwork briefs for external SDL production. Review section 7 with D3 before W4.
+W2 is complete: forge schema/validation, actions, atomic manual funding,
+independent heat debt, cold/empty recovery rules, persistence, shared terminal/SDL
+and headless controls, and LAN state/command validation. Astra's read-only review
+found no correctness blockers in ownership, conservation, interruption or transport.
+
+W2 verification commands:
+
+```powershell
+./scripts/build.ps1 -Preset win-msvc-debug -SkipTests
+./scripts/build.ps1 -Preset win-msvc-sdl -SkipTests
+./scripts/test.ps1 -Preset win-msvc-debug -R '([Ff]orge|Crafting payload four|Station |Portable stations|Workshop |Failed station|Crafting state|Current protocol preserves)'
+./scripts/test.ps1 -Preset win-msvc-debug -CTestArgs @('-R', '([Cc]raft|[Rr]ecycl|[Pp]ower|[Ss]ave|[Nn]etwork|LAN|[Oo]bject|[Ii]nventory|[Cc]ontent|[Ss]torage|[Cc]ommand)', '-E', '([Ff]orge|Crafting payload four|Station |Portable stations|Workshop |Failed station|Crafting state|_roundtrip|smoke)')
+./scripts/test.ps1 -Preset win-msvc-sdl -R '^(sdl_frontend_smoke|sdl_lan_roundtrip|headless_lan_roundtrip)$'
+git -c core.safecrlf=false diff --check
+```
+
+- Both Debug and SDL builds passed, including terminal/headless and SDL frontend.
+- Final focused selection: **45/45 passed**. The initial run's server fixture
+  incorrectly assumed the demo had tool traits; it now loads a real `forge_heat`
+  definition. Exhausted-forge save and paid-work reassignment coverage was added.
+- Regression selection: **321/322 passed** on its broad run. The sole failure was
+  an old protocol-23 assertion; updated to protocol 25, it passed in the final
+  focused run. No production-code changes were needed after these runs.
+- SDL frontend smoke, SDL LAN and headless LAN: **3/3 passed**.
+- Tracked diff and new-test-file whitespace checks: clean.
+- Focused coverage lives in `tests/forge_tests.cpp`, `tests/forge_content_tests.cpp`
+  and the object, crafting, skill and workshop persistence/network suites.
+
+W3 is next: review the bounded roster/balance and use the item-authoring workflow,
+including stable-ID artwork briefs for external SDL production. W2 changes no
+shipped item roster or generation version. Review section 7 with D3 before W4.

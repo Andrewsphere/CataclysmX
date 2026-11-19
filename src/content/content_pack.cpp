@@ -88,6 +88,55 @@ DataObject WriteGrip(const GripDefinition& value) {
     out.SetSigned("rating_bonus100", value.ratingBonus100);
     return out;
 }
+DataObject WriteRecipeInputs(const StaticList<RecipeInput, maxRecipeInputs>& inputs, const ContentCatalog& catalog) {
+    DataObject out = DataObject::List();
+    for (const auto& input : inputs) {
+        DataObject entry;
+        entry.SetString("item", catalog.GetItem(input.Item()).id);
+        entry.SetUnsigned("count", input.Count());
+        entry.SetBoolean("retained", input.Retained());
+        entry.SetBoolean("recoverable", !input.NoRecovery());
+        out.Append(eastl::move(entry));
+    }
+    return out;
+}
+DataObject WriteRecipeTraits(const StaticList<TraitRequirement, maxRecipeTraits>& traits, const ContentCatalog& catalog) {
+    DataObject out = DataObject::List();
+    for (const auto& trait : traits) {
+        DataObject entry;
+        entry.SetString("id", catalog.GetToolTrait(trait.trait).id);
+        entry.SetUnsigned("tier", trait.tier);
+        out.Append(eastl::move(entry));
+    }
+    return out;
+}
+DataObject WriteRecipeOutput(const ItemOutput& output, const ContentCatalog& catalog) {
+    DataObject out;
+    out.SetString("item", catalog.GetItem(output.item).id);
+    out.SetUnsigned("count", output.count);
+    return out;
+}
+DataObject WriteRecipeSkills(eastl::span<const SkillRequirement> skills, const ContentCatalog& catalog) {
+    DataObject out = DataObject::List();
+    for (const auto& skill : skills) {
+        DataObject entry;
+        entry.SetString("skill", catalog.GetSkill(skill.skill).id);
+        entry.SetUnsigned("level", skill.level);
+        out.Append(eastl::move(entry));
+    }
+    return out;
+}
+DataObject WriteRecipeTraining(eastl::span<const SkillTraining> training, const ContentCatalog& catalog) {
+    DataObject out = DataObject::List();
+    for (const auto& skill : training) {
+        DataObject entry;
+        entry.SetString("skill", catalog.GetSkill(skill.skill).id);
+        entry.SetUnsigned("level", skill.level);
+        entry.SetUnsigned("xp_per_work", skill.xpPerWork);
+        out.Append(eastl::move(entry));
+    }
+    return out;
+}
 }
 
 DataObject WriteCombatContent(const ContentCatalog& catalog) {
@@ -266,6 +315,22 @@ DataObject WriteCombatContent(const ContentCatalog& catalog) {
             entry.Set("generator", eastl::move(generator));
             break;
         }
+        case ObjectBehaviorKind::Forge: {
+            entry.SetString("behavior", "forge");
+            DataObject forge;
+            forge.SetUnsigned("fuel_capacity", object.forge.fuelCapacity);
+            forge.SetUnsigned("ignition_cost", object.forge.ignitionCost);
+            DataObject fuels = DataObject::List();
+            for (const auto& fuel : object.forge.fuels) {
+                DataObject value;
+                value.SetString("item", catalog.GetItem(fuel.item).id);
+                value.SetUnsigned("heat", fuel.heat);
+                fuels.Append(eastl::move(value));
+            }
+            forge.Set("fuels", eastl::move(fuels));
+            entry.Set("forge", eastl::move(forge));
+            break;
+        }
         case ObjectBehaviorKind::CraftingMachine: {
             entry.SetString("behavior", "crafting_machine");
             DataObject machine;
@@ -284,6 +349,57 @@ DataObject WriteCombatContent(const ContentCatalog& catalog) {
         objects.Append(eastl::move(entry));
     }
     out.Set("objects", eastl::move(objects));
+    DataObject recipes = DataObject::List();
+    for (std::uint32_t i = 1; i <= catalog.CraftingRecipeCount(); ++i) {
+        const auto& recipe = catalog.GetCraftingRecipe({i});
+        DataObject entry;
+        entry.SetString("type", "recipe");
+        entry.SetString("id", recipe.id);
+        entry.SetString("name", recipe.name);
+        entry.SetBoolean("crafting_enabled", recipe.enabled);
+        entry.Set("inputs", WriteRecipeInputs(recipe.inputs, catalog));
+        entry.Set("tool_traits", WriteRecipeTraits(recipe.toolTraits, catalog));
+        entry.Set("result", WriteRecipeOutput(recipe.result, catalog));
+        entry.SetUnsigned("work", recipe.work);
+        if (recipe.heatPerWork) { entry.SetUnsigned("heat_per_work", recipe.heatPerWork); }
+        entry.Set("skills", WriteRecipeSkills({recipe.skills.data(), recipe.skills.size()}, catalog));
+        entry.Set("training", WriteRecipeTraining({recipe.training.data(), recipe.training.size()}, catalog));
+        DataObject knowledge;
+        knowledge.SetBoolean("known_by_default", recipe.knownByDefault);
+        if (recipe.autolearn) {
+            knowledge.Set("autolearn", WriteRecipeSkills({recipe.autolearnSkills.data(), recipe.autolearnSkills.size()}, catalog));
+        }
+        knowledge.SetUnsigned("crafts_to_learn", recipe.craftsToLearn);
+        knowledge.SetUnsigned("disassemblies_to_learn", recipe.disassembliesToLearn);
+        entry.Set("knowledge", eastl::move(knowledge));
+        recipes.Append(eastl::move(entry));
+    }
+    out.Set("recipes", eastl::move(recipes));
+    DataObject recyclers = DataObject::List();
+    for (std::uint32_t i = 1; i <= catalog.RecyclingRecipeCount(); ++i) {
+        const auto& recipe = catalog.GetRecyclingRecipe({i});
+        DataObject entry;
+        entry.SetString("type", "recycling_recipe");
+        entry.SetString("id", recipe.id);
+        entry.SetString("name", recipe.name);
+        entry.SetString("target", catalog.GetItem(recipe.target).id);
+        entry.Set("inputs", WriteRecipeInputs(recipe.inputs, catalog));
+        entry.Set("tool_traits", WriteRecipeTraits(recipe.toolTraits, catalog));
+        DataObject returns = DataObject::List();
+        for (const auto& output : recipe.returns) { returns.Append(WriteRecipeOutput(output, catalog)); }
+        entry.Set("returns", eastl::move(returns));
+        entry.SetUnsigned("work", recipe.work);
+        if (recipe.heatPerWork) { entry.SetUnsigned("heat_per_work", recipe.heatPerWork); }
+        entry.Set("skills", WriteRecipeSkills({recipe.skills.data(), recipe.skills.size()}, catalog));
+        entry.Set("training", WriteRecipeTraining({recipe.training.data(), recipe.training.size()}, catalog));
+        DataObject teaches = DataObject::List();
+        for (const auto taught : recipe.teachesRecipes) {
+            teaches.Append(DataObject::Text(catalog.GetCraftingRecipe(taught).id));
+        }
+        entry.Set("teaches_recipes", eastl::move(teaches));
+        recyclers.Append(eastl::move(entry));
+    }
+    out.Set("recycling_recipes", eastl::move(recyclers));
     DataObject books = DataObject::List();
     for (std::uint32_t i = 1; i <= catalog.BookCount(); ++i) {
         const auto& book = catalog.GetBook({i}); DataObject entry; entry.SetString("id", book.id);

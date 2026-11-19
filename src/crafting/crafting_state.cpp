@@ -8,7 +8,7 @@ bool ValidCraftingSettings(CraftingSettings settings) {
 }
 DataObject WriteCraftingState(const CraftingJobState& s) {
     DataObject out;
-    out.SetUnsigned("version", 3);
+    out.SetUnsigned("version", 4);
     out.SetUnsigned("kind", static_cast<unsigned>(s.kind));
     out.SetString("recipe", s.recipeName);
     out.SetUnsigned("status", static_cast<unsigned>(s.status));
@@ -24,6 +24,7 @@ DataObject WriteCraftingState(const CraftingJobState& s) {
     out.SetUnsigned("timing_remainder", s.timingRemainder);
     out.SetBoolean("pause", s.pauseRequested);
     out.SetUnsigned("energy_remainder", s.energyRemainder);
+    out.SetUnsigned("heat_remainder", s.heatRemainder);
     auto contributions = DataObject::List();
     for (const auto& contribution : s.contributions) {
         DataObject entry;
@@ -42,7 +43,7 @@ StateResult<CraftingJobState> ReadCraftingState(const DataObject& in) {
     if (in.Type() != DataType::Object) { return invalid(); }
     const auto version = in.GetUnsigned("version");
     if (!version) { return invalid(); }
-    if (*version < 1 || *version > 3) { return eastl::unexpected(StateError::UnsupportedVersion); }
+    if (*version < 1 || *version > 4) { return eastl::unexpected(StateError::UnsupportedVersion); }
     if (in.Size() != 15 + *version) { return invalid(); }
     const auto kind = in.GetUnsigned("kind"), status = in.GetUnsigned("status");
     const auto radius = in.GetUnsigned("radius"), slice = in.GetUnsigned("slice");
@@ -54,7 +55,8 @@ StateResult<CraftingJobState> ReadCraftingState(const DataObject& in) {
     const auto recipe = in.GetString("recipe");
     const auto pause = in.GetBoolean("pause");
     const auto energy = in.GetUnsigned("energy_remainder");
-    if (!kind || *kind > 1 || !status || *status > (*version == 1 ? 5u : *version == 2 ? 7u : 8u) || !radius || *radius > 8
+    if (!kind || *kind > 1 || !status || *status > (*version == 1 ? 5u : *version == 2 ? 7u : *version == 3 ? 8u
+            : static_cast<unsigned>(CraftingStatus::InsufficientFuel)) || !radius || *radius > 8
         || !slice || *slice == 0 || *slice > 1000 || !worker || !total || !*total || *total > UINT32_MAX
         || !work || !pending || !remaining || *remaining > 1000 || !speed || !*speed || *speed > UINT32_MAX
         || !remainder || *remainder >= *speed || !recipe || recipe->empty() || !pause
@@ -75,6 +77,11 @@ StateResult<CraftingJobState> ReadCraftingState(const DataObject& in) {
     s.timingSpeed = static_cast<std::uint32_t>(*speed); s.timingRemainder = static_cast<std::uint32_t>(*remainder);
     s.pauseRequested = *pause;
     s.energyRemainder = *energy;
+    if (*version >= 4) {
+        const auto heat = in.GetUnsigned("heat_remainder");
+        if (!heat || *heat >= craftingHeatDenominator) { return invalid(); }
+        s.heatRemainder = *heat;
+    }
     if (*version >= 2) {
         const auto entries = in.Get("contributions", DataType::List);
         if (!entries) { return invalid(); }

@@ -294,6 +294,16 @@ std::uint64_t ContentFingerprint(const ContentCatalog& content) {
             case ObjectBehaviorKind::GridBattery:
                 HashNumber(hash, 1); // Grid battery registration/state version.
                 break;
+            case ObjectBehaviorKind::Forge:
+                HashNumber(hash, 1); // Manual forge implementation/state version.
+                HashNumber(hash, object.forge.fuelCapacity);
+                HashNumber(hash, object.forge.ignitionCost);
+                HashNumber(hash, object.forge.fuels.size());
+                for (const auto& fuel : object.forge.fuels) {
+                    HashString(hash, content.GetItem(fuel.item).id);
+                    HashNumber(hash, fuel.heat);
+                }
+                break;
             }
         }
     }
@@ -309,6 +319,7 @@ std::uint64_t ContentFingerprint(const ContentCatalog& content) {
         HashInputs(hash, recipe.inputs); HashTraits(hash, recipe.toolTraits);
         HashNumber(hash, recipe.result.item.value); HashNumber(hash, recipe.result.count);
         HashNumber(hash, recipe.work); HashNumber(hash, recipe.enabled);
+        HashNumber(hash, recipe.heatPerWork);
         HashRequirements(hash, {recipe.skills.data(), recipe.skills.size()});
         HashTraining(hash, {recipe.training.data(), recipe.training.size()});
         HashNumber(hash, recipe.knownByDefault); HashNumber(hash, recipe.autolearn);
@@ -325,6 +336,7 @@ std::uint64_t ContentFingerprint(const ContentCatalog& content) {
             HashNumber(hash, output.item.value); HashNumber(hash, output.count);
         }
         HashNumber(hash, recipe.work);
+        HashNumber(hash, recipe.heatPerWork);
         HashRequirements(hash, {recipe.skills.data(), recipe.skills.size()});
         HashTraining(hash, {recipe.training.data(), recipe.training.size()});
         HashNumber(hash, recipe.teachesRecipes.size());

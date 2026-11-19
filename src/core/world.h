@@ -244,6 +244,12 @@ public:
     StationActionOutcome QueryPackStation(ActorHandle actor, ObjectHandle station) const;
     PersistentId StationWorker(ObjectHandle station) const;
     void CollectStations(ActorHandle actor, Vector<StationView>& output) const;
+    // Forge actions consume whole fuel items and return an unscheduled base cost.
+    // Only LoadFuel accepts an item. Read-only query shares execution preflight.
+    StationActionOutcome QueryForgeAction(ActorHandle actor, ObjectHandle forge,
+        ForgeAction action, ItemHandle fuel = {}) const;
+    WorldResult<StationActionResult> UseForge(ActorHandle actor, ObjectHandle forge,
+        ForgeAction action, ItemHandle fuel = {});
     // Completion credit reaches a living contributor even while its chunk is archived.
     void LearnRecipe(PersistentId actor, CraftingRecipeId recipe, std::uint64_t points);
     const Item* GetItem(ItemHandle handle) const;
@@ -413,6 +419,7 @@ private:
     friend class CombatSystem;
     WorldResult<ObjectHandle> CreateTypedObject(ObjectTypeId type, TileCoord position, bool enabled, ItemHandle equipment);
     friend class CraftingSystem;
+    WorldResult<void> SpendForgeHeat(ObjectHandle forge, std::uint64_t heat);
     friend class LearningSystem;
     friend class PowerSystem;
     void PowerChanged();

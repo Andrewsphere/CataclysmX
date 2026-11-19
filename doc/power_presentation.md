@@ -63,3 +63,31 @@ implementation versions. Material/object references hash their stable names.
 Tile inspection additionally transports the object's grid funding/run request
 and generator interval/output state. These fields describe present object
 operation and do not include future mains cutoff timing.
+
+## Fueled workshop controls
+
+The shared terminal/SDL Power workshop also controls placed forges without a
+multimeter. Move the cursor onto a forge; `f` cycles accepted carried fuel, `l`
+loads the selected whole item, `i` ignites, `x` extinguishes, and `c` discards Cold
+fuel. `p` / Enter place its packing item and `r` recovers a cold, empty, idle
+station. The view shows readiness, fuel/capacity, ignition cost, accepted yields
+and packing refusals. Tile inspection also shows current forge fuel/readiness.
+
+Both local and LAN headless interfaces accept:
+
+```text
+stations
+load-forge <object-id> <item-id>
+ignite-forge <object-id>
+extinguish-forge <object-id>
+discard-forge-fuel <object-id>
+```
+
+Forge commands use `Command::target` for the object; only `load_forge` also uses
+`item`. All other fields retain their canonical defaults. Server authority calls
+`World::UseForge`, schedules successful returned costs, and reports
+`station_changed` / `station_refused` with `stationOutcome`.
+Protocol **25** carries forge commands, station/inspection state and heat funding
+refusals. Definition-aware validation checks fuel capacity and provider kind;
+fingerprints include forge fuel identities/yields, ignition/capacity and recipe
+heat rates.

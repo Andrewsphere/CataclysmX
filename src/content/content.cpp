@@ -624,11 +624,11 @@ bool ParseRecycling(yyjson_val* object, PendingRecycling& pending, bool generate
     const auto& context = pending.context;
     auto& definition = pending.definition;
     if (generated) {
-        if (!CheckObject(object, {"id", "work", "efficiency", "inputs", "tool_traits", "skills", "training", "teaches_recipes"}, context)
+        if (!CheckObject(object, {"id", "work", "efficiency", "inputs", "tool_traits", "heat_per_work", "skills", "training", "teaches_recipes"}, context)
             || !ReadBoundedInteger(yyjson_obj_get(object, "efficiency"), 0, ratioScale,
                                    pending.efficiency, context.Child("efficiency"))) { return false; }
     } else {
-        if (!CheckObject(object, {"type", "id", "name", "target", "inputs", "tool_traits", "returns", "work", "skills", "training", "teaches_recipes"}, context)
+        if (!CheckObject(object, {"type", "id", "name", "target", "inputs", "tool_traits", "heat_per_work", "returns", "work", "skills", "training", "teaches_recipes"}, context)
             || !ReadId(yyjson_obj_get(object, "target"), pending.target, context.Child("target"))) { return false; }
         auto* returns = yyjson_obj_get(object, "returns");
         if (!yyjson_is_arr(returns) || yyjson_arr_size(returns) > maxRecipeInputs) {
@@ -650,6 +650,9 @@ bool ParseRecycling(yyjson_val* object, PendingRecycling& pending, bool generate
         pending.hasTeachesRecipes = true;
         if (!ParseUniqueIds(teaches, pending.teachesRecipes, context.Child("teaches_recipes"))) { return false; }
     }
+    if (auto* heat = yyjson_obj_get(object, "heat_per_work")) {
+        if (!ReadBoundedInteger(heat, 1, UINT32_MAX, definition.heatPerWork, context.Child("heat_per_work"))) { return false; }
+    }
     return ReadId(yyjson_obj_get(object, "id"), definition.id, context.Child("id"))
         && ParseRecipeName(object, definition.name, definition.id, context)
         && ReadBoundedInteger(yyjson_obj_get(object, "work"), 1, UINT32_MAX, definition.work, context.Child("work"))
@@ -662,13 +665,16 @@ bool ParseRecycling(yyjson_val* object, PendingRecycling& pending, bool generate
 bool ParseCrafting(yyjson_val* object, PendingCrafting& pending) {
     auto& definition = pending.definition;
     const auto& context = pending.context;
-    if (!CheckObject(object, {"type", "id", "name", "crafting_enabled", "inputs", "tool_traits", "result", "work", "recycling", "skills", "training", "knowledge"}, context)
+    if (!CheckObject(object, {"type", "id", "name", "crafting_enabled", "inputs", "tool_traits", "heat_per_work", "result", "work", "recycling", "skills", "training", "knowledge"}, context)
         || !ReadId(yyjson_obj_get(object, "id"), definition.id, context.Child("id"))
         || !ParseRecipeName(object, definition.name, definition.id, context)
         || !ReadBoundedInteger(yyjson_obj_get(object, "work"), 1, UINT32_MAX, definition.work, context.Child("work"))
         || !ParseInputs(yyjson_obj_get(object, "inputs"), pending.inputs, context.Child("inputs"), true)
         || !ParseTraits(yyjson_obj_get(object, "tool_traits"), pending.traits, context.Child("tool_traits"))
         || !ParseOutput(yyjson_obj_get(object, "result"), pending.result, context.Child("result"))) { return false; }
+    if (auto* heat = yyjson_obj_get(object, "heat_per_work")) {
+        if (!ReadBoundedInteger(heat, 1, UINT32_MAX, definition.heatPerWork, context.Child("heat_per_work"))) { return false; }
+    }
     if (!ParseSkillEntries(yyjson_obj_get(object, "skills"), pending.skills, context.Child("skills"), false, 1)
         || !ParseSkillEntries(yyjson_obj_get(object, "training"), pending.training, context.Child("training"), true, 0)) { return false; }
     if (auto* knowledge = yyjson_obj_get(object, "knowledge")) {
@@ -796,6 +802,11 @@ struct PendingObject {
     String fuelItem;
     String packingItem;
     SmallVector<PendingTrait, 1> traits;
+    struct ForgeFuel {
+        String item;
+        std::uint64_t heat = 0;
+    };
+    Vector<ForgeFuel> forgeFuels;
     std::size_t inputOrder = 0;
     Context context;
 };
@@ -837,7 +848,7 @@ bool ParseAiProfile(yyjson_val* object, PendingAiProfile& pending) {
 bool ParseObject(yyjson_val* object, PendingObject& pending) {
     const auto& context = pending.context;
     auto& definition = pending.definition;
-    if (!CheckObject(object, {"id", "name", "behavior", "machine", "generator", "capacity_volume_ml", "kind",
+    if (!CheckObject(object, {"id", "name", "behavior", "machine", "generator", "forge", "capacity_volume_ml", "kind",
                               "blocks_movement", "blocks_sight", "movable", "move_cost", "light", "tool_traits", "packing_item"}, context)
         || !ReadId(yyjson_obj_get(object, "id"), definition.id, context.Child("id"))
         || !ReadString(yyjson_obj_get(object, "name"), definition.name, context.Child("name"))
@@ -886,6 +897,56 @@ bool ParseObject(yyjson_val* object, PendingObject& pending) {
     }
     if (behaviorName != "crafting_machine" && yyjson_obj_get(object, "machine")) {
         return context.Child("machine").Fail("machine config requires crafting_machine behavior");
+    }
+    if (behaviorName != "forge" && yyjson_obj_get(object, "forge")) {
+        return context.Child("forge").Fail("forge config requires forge behavior");
+    }
+    bool hasForgeHeat = false;
+    for (const auto& trait : pending.traits) { hasForgeHeat |= trait.id == "forge_heat"; }
+    if (hasForgeHeat != (behaviorName == "forge")) {
+        return context.Child("tool_traits").Fail("forge_heat must be supplied by every forge and only by forges");
+    }
+    if (behaviorName == "forge") {
+        definition.behavior = ObjectBehaviorKind::Forge;
+        auto* forge = yyjson_obj_get(object, "forge");
+        const auto child = context.Child("forge");
+        auto& config = definition.forge;
+        if (!CheckObject(forge, {"fuel_capacity", "ignition_cost", "fuels"}, child)) { return false; }
+        auto* capacity = yyjson_obj_get(forge, "fuel_capacity");
+        if (!yyjson_is_uint(capacity) || yyjson_get_uint(capacity) == 0
+            || yyjson_get_uint(capacity) > UINT64_MAX / 2) {
+            return child.Child("fuel_capacity").Fail("expected capacity in 1..UINT64_MAX / 2");
+        }
+        config.fuelCapacity = yyjson_get_uint(capacity);
+        auto* ignition = yyjson_obj_get(forge, "ignition_cost");
+        if (!yyjson_is_uint(ignition) || yyjson_get_uint(ignition) == 0
+            || yyjson_get_uint(ignition) >= config.fuelCapacity) {
+            return child.Child("ignition_cost").Fail("expected positive ignition cost below fuel capacity");
+        }
+        config.ignitionCost = yyjson_get_uint(ignition);
+        auto* fuels = yyjson_obj_get(forge, "fuels");
+        if (!yyjson_is_arr(fuels) || !yyjson_arr_size(fuels)) {
+            return child.Child("fuels").Fail("expected a nonempty fuel entry array");
+        }
+        std::size_t index, count;
+        yyjson_val* value;
+        yyjson_arr_foreach(fuels, index, count, value) {
+            const auto fuelContext = ArrayElement(child.Child("fuels"), index);
+            PendingObject::ForgeFuel fuel;
+            if (!CheckObject(value, {"item", "heat"}, fuelContext)
+                || !ReadId(yyjson_obj_get(value, "item"), fuel.item, fuelContext.Child("item"))) { return false; }
+            auto* heat = yyjson_obj_get(value, "heat");
+            if (!yyjson_is_uint(heat) || yyjson_get_uint(heat) == 0
+                || yyjson_get_uint(heat) > config.fuelCapacity) {
+                return fuelContext.Child("heat").Fail("expected positive fuel yield no greater than capacity");
+            }
+            fuel.heat = yyjson_get_uint(heat);
+            for (const auto& previous : pending.forgeFuels) {
+                if (previous.item == fuel.item) { return fuelContext.Child("item").Fail("duplicate forge fuel item"); }
+            }
+            pending.forgeFuels.push_back(eastl::move(fuel));
+        }
+        return true;
     }
     if (behaviorName == "grid_battery") {
         definition.behavior = ObjectBehaviorKind::GridBattery;
@@ -2460,6 +2521,16 @@ bool ResolveBook(PendingBook& pending, const ContentCatalog& catalog) {
     return true;
 }
 
+bool ValidRecipeHeat(const StaticList<TraitRequirement, maxRecipeTraits>& traits, std::uint32_t heatPerWork,
+                     const ContentCatalog& catalog, const Context& context) {
+    bool requiresHeat = false;
+    for (const auto& trait : traits) {
+        requiresHeat |= catalog.GetToolTrait(trait.trait).id == "forge_heat";
+    }
+    return requiresHeat == (heatPerWork > 0)
+        || context.Child("heat_per_work").Fail("positive heat_per_work is required if and only if forge_heat is required");
+}
+
 bool ResolveCrafting(PendingCrafting& pending, const ContentCatalog& catalog) {
     auto& definition = pending.definition;
     definition.result.count = pending.result.count;
@@ -2479,6 +2550,7 @@ bool ResolveCrafting(PendingCrafting& pending, const ContentCatalog& catalog) {
     }
     return ResolveInputs(pending.inputs, definition.inputs, catalog, pending.context.Child("inputs"))
         && ResolveTraits(pending.traits, definition.toolTraits, catalog, pending.context.Child("tool_traits"))
+        && ValidRecipeHeat(definition.toolTraits, definition.heatPerWork, catalog, pending.context)
         && ResolveItem(pending.result.item, definition.result.item, catalog, pending.context.Child("result").Child("item"));
 }
 
@@ -2509,6 +2581,7 @@ bool ResolveRecycling(PendingRecycling& pending, const ContentCatalog& catalog) 
             if (!definition.returns.PushBack({item, output.count})) { std::abort(); }
         }
     }
+    if (!ValidRecipeHeat(definition.toolTraits, definition.heatPerWork, catalog, pending.context)) { return false; }
     if (pending.hasTeachesRecipes) {
         for (std::size_t i = 0; i < pending.teachesRecipes.size(); ++i) {
             const auto recipe = catalog.FindCraftingRecipe(View(pending.teachesRecipes[i]));
@@ -3387,6 +3460,12 @@ ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sourc
         if (!ResolveTraits(item.traits, item.definition.toolTraits, catalog, item.context.Child("tool_traits"))) {
             return eastl::unexpected(ContentError::InvalidData);
         }
+        for (const auto& trait : item.definition.toolTraits) {
+            if (catalog.GetToolTrait(trait.trait).id == "forge_heat") {
+                item.context.Child("tool_traits").Fail("items cannot supply forge_heat");
+                return eastl::unexpected(ContentError::InvalidData);
+            }
+        }
         catalog.items_.push_back(eastl::move(item.definition));
     }
     catalog.corpseItem_ = catalog.FindItem("combat_corpse");
@@ -3457,6 +3536,19 @@ ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sourc
                 return eastl::unexpected(ContentError::InvalidData);
             }
         }
+        if (object.definition.behavior == ObjectBehaviorKind::Forge) {
+            for (std::size_t i = 0; i < object.forgeFuels.size(); ++i) {
+                const auto& fuel = object.forgeFuels[i];
+                const auto item = catalog.FindItem(View(fuel.item));
+                const auto* definition = catalog.TryGetItem(item);
+                if (!definition || definition->unfinishedCraft) {
+                    ArrayElement(object.context.Child("forge").Child("fuels"), i).Child("item")
+                        .Fail("expected an ordinary consumable fuel item");
+                    return eastl::unexpected(ContentError::InvalidData);
+                }
+                object.definition.forge.fuels.push_back({item, fuel.heat});
+            }
+        }
         if (object.definition.behavior == ObjectBehaviorKind::CraftingMachine) {
             object.definition.machine.input = catalog.FindItem(View(object.input));
             object.definition.machine.output = catalog.FindItem(View(object.output));
@@ -3512,6 +3604,18 @@ ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sourc
         if (packing.value && catalog.GetItem(packing).placedObject.value != i + 1) {
             objects[i].context.Child("packing_item").Fail("packing item must place this same object");
             return eastl::unexpected(ContentError::InvalidData);
+        }
+    }
+    for (std::size_t i = 0; i < catalog.objects_.size(); ++i) {
+        const auto& forge = catalog.objects_[i].forge;
+        for (std::size_t j = 0; j < forge.fuels.size(); ++j) {
+            for (const auto& object : catalog.objects_) {
+                if (object.packingItem == forge.fuels[j].item) {
+                    ArrayElement(objects[i].context.Child("forge").Child("fuels"), j).Child("item")
+                        .Fail("portable station backing items cannot be forge fuels");
+                    return eastl::unexpected(ContentError::InvalidData);
+                }
+            }
         }
     }
     catalog.definitions_.reserve(pending.size());

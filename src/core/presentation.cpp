@@ -74,7 +74,10 @@ bool CaptureTileInspection(const World& world, const WorldView& view, TileCoord 
         output.object = object->id; output.objectType = object->type;
         output.objectKind = object->kind;
         output.enabled = object->enabled; output.broken = object->broken;
-        if (const auto state = world.DescribeObjectState(objectHandle); state && state->behavior != ObjectBehaviorKind::None) {
+        const auto state = world.DescribeObjectState(objectHandle);
+        if (state && state->behavior == ObjectBehaviorKind::Forge) {
+            output.forge = state->forge;
+        } else if (state && state->behavior != ObjectBehaviorKind::None) {
             output.machine = true; output.energy = state->energy; output.energyCapacity = state->energyCapacity;
             output.hasJob = state->hasJob; output.running = state->running; output.remainingWork = state->remainingWork;
             output.gridPowered = state->gridPowered; output.runRequested = state->runRequested;

@@ -50,7 +50,8 @@ void QueryInteractions(const World& world, ActorHandle handle, TileCoord positio
     for (const auto& action : actions) {
         const auto* definition = world.GetContent().TryGetObject(object->type);
         const bool storage = definition && definition->capacityVolumeMl
-            && definition->behavior == ObjectBehaviorKind::None && action.action == ObjectAction::Collect;
+            && (definition->behavior == ObjectBehaviorKind::None || definition->behavior == ObjectBehaviorKind::Forge)
+            && action.action == ObjectAction::Collect;
         output.push_back({{position, object->id, {}, InteractionKind::Object, action.action}, name,
             storage ? "Take contents" : ObjectActionLabel(action.action), action.reason});
     }

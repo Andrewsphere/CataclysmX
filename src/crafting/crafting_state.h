@@ -9,6 +9,7 @@ class ContentCatalog;
 // Work is stored in 1/10000 base-work units. Energy debt belongs to the job,
 // not requirement slots or tool identities, so reassignment cannot erase it.
 inline constexpr std::uint64_t craftingEnergyDenominator = 100000000;
+inline constexpr std::uint64_t craftingHeatDenominator = 100000000;
 struct CraftingContribution {
     PersistentId worker = 0;
     std::uint64_t work = 0;
@@ -34,6 +35,7 @@ struct CraftingJobState {
     std::uint32_t timingRemainder = 0;
     // Strictly less than craftingEnergyDenominator, including persisted states.
     std::uint64_t energyRemainder = 0;
+    std::uint64_t heatRemainder = 0; // Independent, job-owned fractional heat debt.
     bool pauseRequested = false;
     StaticList<PersistentId, maxRecipeTraits> stations; // Active claims, sorted persistent object IDs.
 };

@@ -7,7 +7,7 @@ namespace cataclysmx {
     void PowerWorkshop::Open(const WorldView& view) {
         cursor_ = view.player_position; player_ = view.playerId;
         width_ = view.powerSettings.maxWiringWidth; depth_ = view.powerSettings.maxWiringDepth;
-        kit_ = 0; equipment_ = 0; placing_ = false;
+        kit_ = 0; equipment_ = 0; fuel_ = 0; placing_ = false;
     }
     eastl::optional<Command> PowerWorkshop::Handle(const KeyChord& key, const WorldView& view, const ContentCatalog& content) {
         if (player_ != view.playerId) { Open(view); return {}; }
@@ -22,6 +22,21 @@ namespace cataclysmx {
         else if (key.key == "D") depth_ = (depth_ + view.powerSettings.maxWiringDepth - 2) % view.powerSettings.maxWiringDepth + 1;
         else if (key.key == "Tab") Cycle(kits_, kit_);
         else if (key.key == "g") Cycle(equipmentItems_, equipment_);
+        else if (key.key == "f") Cycle(fuelItems_, fuel_);
+        else if (key.key == "l" || key.key == "i" || key.key == "x" || key.key == "c") {
+            for (const auto& station : view.stations) {
+                const auto* definition = content.TryGetObject(station.type);
+                if (station.position != cursor_ || !definition || definition->behavior != ObjectBehaviorKind::Forge) continue;
+                Command command; command.target = station.id;
+                command.kind = key.key == "l" ? CommandKind::load_forge : key.key == "i" ? CommandKind::ignite_forge
+                    : key.key == "x" ? CommandKind::extinguish_forge : CommandKind::discard_forge_fuel;
+                if (command.kind == CommandKind::load_forge) {
+                    if (!fuel_ || eastl::find(fuelItems_.begin(), fuelItems_.end(), fuel_) == fuelItems_.end()) return {};
+                    command.item = fuel_;
+                }
+                return command;
+            }
+        }
         else if (key.key == "p") placing_ = !placing_;
         else if (key.key == "Home") cursor_ = view.player_position;
         else if (key.key == "r") {
@@ -61,9 +76,11 @@ namespace cataclysmx {
         lines.push_back("Power workshop | Enter: install | p: wire/place | r: pack station at cursor | Escape: back");
         lines.push_back("Arrows: region origin / destination | Home: player | w/W: width +/- | d/D: depth +/-");
         lines.push_back("Tab: reusable wiring kit | g: carried equipment/station | PgUp/PgDn: scroll");
+        lines.push_back("Forge at cursor: f: cycle carried fuel | l: load whole selected item | i: ignite | x: extinguish | c: discard cold fuel");
         lines.push_back(String(placing_ ? "Place at " : "Wire inclusive rectangle from ") + NumberText(cursor_.x) + "," + NumberText(cursor_.z)
             + " Y=" + NumberText(view.player_position.y) + " | " + NumberText(width_) + " x " + NumberText(depth_));
         lines.push_back("Kit: " + Name(view, content, kit_) + " | Equipment: " + Name(view, content, equipment_));
+        lines.push_back("Selected forge fuel: " + Name(view, content, fuel_));
         for (const auto& item : view.inventory) {
             if (item.id != kit_) continue;
             const auto& kit = content.GetItem(item.type);
@@ -81,6 +98,16 @@ namespace cataclysmx {
                 + NumberText(station.position.x) + "," + NumberText(station.position.z);
             line += station.broken ? " [broken]" : !station.enabled ? " [disabled]" : station.worker ? " [in use]" : " [available]";
             if (station.worker) line += " worker #" + UnsignedText(station.worker);
+            if (definition->behavior == ObjectBehaviorKind::Forge) {
+                line += String(" | ") + (station.forge.ready ? "Ready" : "Cold") + " | fuel "
+                    + UnsignedText(station.forge.fuel) + "/" + UnsignedText(definition->forge.fuelCapacity)
+                    + " | ignition " + UnsignedText(definition->forge.ignitionCost);
+                if (station.position == cursor_) {
+                    for (const auto& fuel : definition->forge.fuels) {
+                        lines.push_back("Accepted fuel: " + content.GetItem(fuel.item).name + " | whole-item heat " + UnsignedText(fuel.heat));
+                    }
+                }
+            }
             for (const auto& trait : definition->toolTraits) {
                 line += " | " + content.GetToolTrait(trait.trait).name + " " + UnsignedText(trait.tier);
             }
@@ -114,17 +141,37 @@ namespace cataclysmx {
         selected = items.empty() ? 0 : found == items.end() || found + 1 == items.end() ? items.front() : *(found + 1);
     }
     void PowerWorkshop::Refresh(const WorldView& view, const ContentCatalog& content) {
-        kits_.clear(); equipmentItems_.clear();
+        kits_.clear(); equipmentItems_.clear(); fuelItems_.clear();
         for (const auto& item : view.inventory) {
             if (item.installation.value) continue;
             const auto& definition = content.GetItem(item.type);
             if (definition.wiringMaterial.value) kits_.push_back(item.id);
             if (definition.placedObject.value) equipmentItems_.push_back(item.id);
+            if (item.contained_items) continue;
+            bool installedAncestor = false;
+            PersistentId parent = item.parent;
+            while (parent) {
+                const auto ancestor = eastl::find_if(view.inventory.begin(), view.inventory.end(),
+                    [parent](const auto& entry) { return entry.id == parent; });
+                if (ancestor == view.inventory.end()) break;
+                if (ancestor->installation.value) { installedAncestor = true; break; }
+                parent = ancestor->parent;
+            }
+            if (installedAncestor) continue;
+            for (const auto& station : view.stations) {
+                const auto* forge = content.TryGetObject(station.type);
+                if (station.position != cursor_ || !forge || forge->behavior != ObjectBehaviorKind::Forge) continue;
+                for (const auto& fuel : forge->forge.fuels) {
+                    if (fuel.item == item.type) { fuelItems_.push_back(item.id); break; }
+                }
+                break;
+            }
         }
         // Preserve a vanished selection until the user explicitly cycles it;
         // refreshing a live LAN view must not retarget an Enter press.
         if (!kit_ && !kits_.empty()) kit_ = kits_.front();
         if (!equipment_ && !equipmentItems_.empty()) equipment_ = equipmentItems_.front();
+        if (!fuel_ && !fuelItems_.empty()) fuel_ = fuelItems_.front();
         width_ = eastl::clamp(width_, 1, view.powerSettings.maxWiringWidth);
         depth_ = eastl::clamp(depth_, 1, view.powerSettings.maxWiringDepth);
         ClampCursor(view);

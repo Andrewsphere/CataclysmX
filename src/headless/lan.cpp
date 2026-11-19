@@ -44,6 +44,24 @@ bool ParseCombatCommand(const std::string& text, const ContentCatalog& content, 
     }
     if (!count) { return false; }
     const auto name = words[0];
+    if (name == "load-forge" && count == 3) {
+        command.kind = CommandKind::load_forge;
+        return Number(words[1], command.target) && command.target && Number(words[2], command.item) && command.item;
+    }
+    if ((name == "ignite-forge" || name == "extinguish-forge" || name == "discard-forge-fuel") && count == 2) {
+        command.kind = name == "ignite-forge" ? CommandKind::ignite_forge
+            : name == "extinguish-forge" ? CommandKind::extinguish_forge : CommandKind::discard_forge_fuel;
+        return Number(words[1], command.target) && command.target;
+    }
+    if (name == "pack-station" && count == 2) {
+        command.kind = CommandKind::pack_station;
+        return Number(words[1], command.target) && command.target;
+    }
+    if (name == "place-station" && count == 5) {
+        command.kind = CommandKind::place_station;
+        return Number(words[1], command.item) && command.item && Number(words[2], command.position.x)
+            && Number(words[3], command.position.z) && Number(words[4], command.position.y);
+    }
     if (name == "new-character" && count == 1) { command.kind = CommandKind::new_character; return true; }
     if (name == "pause-art" && count == 1) { command.kind = CommandKind::pause_art_study; return true; }
     if (name == "style" && count == 2 && words[1] != "balanced" && words[1] != "aggressive" && words[1] != "defensive") {
@@ -118,6 +136,21 @@ bool BindAbility(Command& command, const WorldView& view, const ContentCatalog& 
     return true;
 }
 void PrintCombat(const WorldView& view, const ContentCatalog& content, eastl::string_view inspection) {
+    if (inspection == "stations") {
+        for (const auto& station : view.stations) {
+            const auto& definition = content.GetObject(station.type);
+            std::printf("station=%llu name=%s position=%d,%d,%d enabled=%d broken=%d worker=%llu packing=%s\n",
+                static_cast<unsigned long long>(station.id), definition.name.c_str(),
+                station.position.x, station.position.z, station.position.y, station.enabled, station.broken,
+                static_cast<unsigned long long>(station.worker), StationActionMessage(station.packing));
+            if (definition.behavior == ObjectBehaviorKind::Forge) {
+                std::printf("forge=%llu state=%s fuel=%llu/%llu ignition=%llu\n", static_cast<unsigned long long>(station.id),
+                    station.forge.ready ? "Ready" : "Cold", static_cast<unsigned long long>(station.forge.fuel),
+                    static_cast<unsigned long long>(definition.forge.fuelCapacity), static_cast<unsigned long long>(definition.forge.ignitionCost));
+            }
+        }
+        return;
+    }
     if (inspection == "combat") { std::puts(CombatDetailsText(content, view).c_str()); }
     Vector<CombatMenuEntry> rows;
     CollectCombatMenu(content, view, rows);
@@ -188,7 +221,7 @@ int RunLan(Server& server, const ContentCatalog& content, const LanOptions& opti
     struct PlannedCommand { Command command; String inspection; };
     Vector<PlannedCommand> commands;
     for (const auto& text : options.commands) {
-        if (text == "combat" || text == "styles" || text == "abilities") { commands.push_back({{}, text.c_str()}); continue; }
+        if (text == "combat" || text == "styles" || text == "abilities" || text == "stations") { commands.push_back({{}, text.c_str()}); continue; }
         Command command;
         if (!ParseCommand(text, content, command)) { std::fprintf(stderr, "Invalid LAN command: %s\n", text.c_str()); return 2; }
         commands.push_back({command, {}});

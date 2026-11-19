@@ -83,6 +83,15 @@ distinct input item types are allowed, **including retained tools**. An item typ
 cannot occur twice, even with different flags. `tool_traits` defaults to empty
 and uses the same four-entry, distinct-ID, tier-1–255 schema as items.
 
+`forge_heat` is a reserved provider role: only placed `behavior:'forge'` objects
+may supply that trait, never items or passive stations. A recipe or recycler
+requiring it must also declare `heat_per_work`, an integer 1–UINT32_MAX.
+The rate uses `ratioScale`: 10000 buys one heat unit per base work.
+Omitting the rate means zero heat; a rate without the trait is invalid.
+Generated recyclers retain independent trait/rate requirements, just as they
+retain independent work and skill requirements.
+See [forge content and actions](objects_api.md#fueled-manual-forges).
+
 `result` requires `item` and `count`. Output counts are initially restricted to
 1–255, despite the runtime output field being uint32, to bound atomic products.
 `work` is an integer 1–UINT32_MAX in base-work units. Every referenced item must

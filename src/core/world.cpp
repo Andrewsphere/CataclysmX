@@ -157,7 +157,8 @@ eastl::optional<PowerDeviceKind> PowerRole(const ObjectDefinition* definition) {
     case ObjectBehaviorKind::CraftingMachine:
         if (definition->machine.gridPowered) { return PowerDeviceKind::Machine; }
         break;
-    case ObjectBehaviorKind::None: break;
+    case ObjectBehaviorKind::None:
+    case ObjectBehaviorKind::Forge: break;
     }
     return eastl::nullopt;
 }
@@ -2488,9 +2489,22 @@ const char* StationActionMessage(StationActionOutcome outcome) {
     case StationActionOutcome::InvalidEquipment: return "Carry the station's empty packing item";
     case StationActionOutcome::StationBusy: return "Workshop station is in use";
     case StationActionOutcome::NotEmpty: return "Empty the station before packing it";
-    case StationActionOutcome::Broken: return "Broken stations cannot be packed";
+    case StationActionOutcome::Broken: return "Workshop station is broken";
     case StationActionOutcome::FixedFixture: return "This station is a fixed fixture";
     case StationActionOutcome::Unavailable: return "Workshop action is unavailable";
+    case StationActionOutcome::FuelLoaded: return "Forge fuel loaded";
+    case StationActionOutcome::Ignited: return "Forge ignited";
+    case StationActionOutcome::Extinguished: return "Forge extinguished";
+    case StationActionOutcome::FuelDiscarded: return "Cold forge fuel discarded";
+    case StationActionOutcome::ColdForge: return "Ignite the forge first";
+    case StationActionOutcome::InsufficientFuel: return "Insufficient forge fuel";
+    case StationActionOutcome::NoCapacity: return "The whole fuel charge must fit";
+    case StationActionOutcome::InvalidFuel: return "Carry an accepted, unreserved fuel item";
+    case StationActionOutcome::Disabled: return "Enable the forge first";
+    case StationActionOutcome::AlreadyReady: return "Forge is already ready";
+    case StationActionOutcome::AlreadyCold: return "Forge is already cold";
+    case StationActionOutcome::MustExtinguish: return "Extinguish the forge first";
+    case StationActionOutcome::HasFuel: return "Discard the cold forge fuel before packing";
     }
     return "Invalid workshop action";
 }
@@ -2535,6 +2549,11 @@ StationActionOutcome World::QueryPackStation(ActorHandle actorHandle, ObjectHand
     if (!definition || !definition->packingItem.value) { return StationActionOutcome::FixedFixture; }
     if (object->broken) { return StationActionOutcome::Broken; }
     if (StationWorker(handle)) { return StationActionOutcome::StationBusy; }
+    if (definition->behavior == ObjectBehaviorKind::Forge) {
+        const auto state = DescribeObjectState(handle)->forge;
+        if (state.ready) { return StationActionOutcome::MustExtinguish; }
+        if (state.fuel) { return StationActionOutcome::HasFuel; }
+    }
     const auto* equipment = GetItem(object->equipment);
     if (!equipment || equipment->type != definition->packingItem || !equipment->contents.empty()
         || equipment->location != ItemLocation::Stored(handle)) { return StationActionOutcome::InvalidEquipment; }
@@ -2572,9 +2591,107 @@ void World::CollectStations(ActorHandle actorHandle, Vector<StationView>& output
         if (!definition || (definition->toolTraits.Empty() && !definition->packingItem.value)
             || !CanReachStation(*this, actor->position, handle, radius)) { continue; }
         output.push_back({object->id, object->type, object->position, object->enabled, object->broken,
-            StationWorker(handle), QueryPackStation(actorHandle, handle)});
+            StationWorker(handle), QueryPackStation(actorHandle, handle),
+            DescribeObjectState(handle)->forge});
     } }
     eastl::sort(output.begin(), output.end(), [](const StationView& a, const StationView& b) { return a.id < b.id; });
+}
+
+StationActionOutcome World::QueryForgeAction(ActorHandle actorHandle, ObjectHandle handle,
+    ForgeAction action, ItemHandle fuel) const {
+    const auto* actor = GetActor(actorHandle);
+    const auto* object = GetObject(handle);
+    const auto* definition = object ? impl_->content.TryGetObject(object->type) : nullptr;
+    const Tick cost = action == ForgeAction::Ignite ? 400 : 100;
+    if (!actor || !object || !definition || definition->behavior != ObjectBehaviorKind::Forge
+        || action > ForgeAction::DiscardFuel || (action != ForgeAction::LoadFuel && fuel.value)
+        || !IsActorAlive(actorHandle) || actor->parked || !IsActive(actor->position)
+        || actor->actionDeadline.Remaining(impl_->tick) || actor->combat.action.kind != ActorActionKind::None
+        || impl_->craftingSystem.Busy(actorHandle) || impl_->learningSystem.Busy(actorHandle)
+        || ActionTicks(cost, actor->speed) > UINT64_MAX - impl_->tick) { return StationActionOutcome::Unavailable; }
+    if (!CanReachStation(*this, actor->position, handle, 1)) { return StationActionOutcome::OutOfReach; }
+    if (object->broken) { return StationActionOutcome::Broken; }
+    if (!object->enabled) { return StationActionOutcome::Disabled; }
+    const auto state = DescribeObjectState(handle)->forge;
+    switch (action) {
+    case ForgeAction::LoadFuel: {
+        const auto* item = GetItem(fuel);
+        if (!item || !CarriedPowerItem(*this, actorHandle, fuel) || !item->contents.empty()) {
+            return StationActionOutcome::InvalidFuel;
+        }
+        for (const auto& entry : definition->forge.fuels) {
+            if (entry.item != item->type) { continue; }
+            return entry.heat <= definition->forge.fuelCapacity - state.fuel
+                ? StationActionOutcome::FuelLoaded : StationActionOutcome::NoCapacity;
+        }
+        return StationActionOutcome::InvalidFuel;
+    }
+    case ForgeAction::Ignite:
+        if (state.ready) { return StationActionOutcome::AlreadyReady; }
+        return state.fuel > definition->forge.ignitionCost
+            ? StationActionOutcome::Ignited : StationActionOutcome::InsufficientFuel;
+    case ForgeAction::Extinguish:
+        return state.ready ? StationActionOutcome::Extinguished : StationActionOutcome::AlreadyCold;
+    case ForgeAction::DiscardFuel:
+        if (state.ready) { return StationActionOutcome::MustExtinguish; }
+        return state.fuel ? StationActionOutcome::FuelDiscarded : StationActionOutcome::AlreadyCold;
+    }
+    return StationActionOutcome::Unavailable;
+}
+
+WorldResult<StationActionResult> World::UseForge(ActorHandle actor, ObjectHandle handle,
+    ForgeAction action, ItemHandle fuel) {
+    const auto* object = GetObject(handle);
+    if (!GetActor(actor) || !object || (fuel.value && !GetItem(fuel))) {
+        return eastl::unexpected(WorldError::invalid_handle);
+    }
+    const auto* definition = impl_->content.TryGetObject(object->type);
+    if (!definition || definition->behavior != ObjectBehaviorKind::Forge
+        || action > ForgeAction::DiscardFuel || (action != ForgeAction::LoadFuel && fuel.value)) {
+        return eastl::unexpected(WorldError::invalid_request);
+    }
+    const auto outcome = QueryForgeAction(actor, handle, action, fuel);
+    if (outcome != StationActionOutcome::FuelLoaded && outcome != StationActionOutcome::Ignited
+        && outcome != StationActionOutcome::Extinguished && outcome != StationActionOutcome::FuelDiscarded) {
+        return StationActionResult{outcome};
+    }
+    auto state = DescribeObjectState(handle)->forge;
+    Impl::GravityBatch batch(*this); BeginCraftingMutation();
+    switch (action) {
+    case ForgeAction::LoadFuel: {
+        const auto type = GetItem(fuel)->type;
+        for (const auto& entry : definition->forge.fuels) {
+            if (entry.item == type) { state.fuel += entry.heat; break; }
+        }
+        Require(DestroyItem(fuel).has_value());
+        break;
+    }
+    case ForgeAction::Ignite:
+        state.fuel -= definition->forge.ignitionCost; state.ready = true; break;
+    case ForgeAction::Extinguish: state.ready = false; break;
+    case ForgeAction::DiscardFuel: state.fuel = 0; break;
+    }
+    // Fuel destruction can mutate item storage; reacquire the object by handle.
+    Require(Live(impl_->objects, handle)->behavior_->SetForgeState(state).has_value());
+    impl_->MarkDirty(ChunkOf(GetObject(handle)->position), false);
+    EndCraftingMutation();
+    return StationActionResult{outcome, action == ForgeAction::Ignite ? Tick{400} : Tick{100}};
+}
+
+WorldResult<void> World::SpendForgeHeat(ObjectHandle handle, std::uint64_t heat) {
+    auto* object = Live(impl_->objects, handle);
+    if (!object) { return eastl::unexpected(WorldError::invalid_handle); }
+    const auto* definition = impl_->content.TryGetObject(object->type);
+    if (!definition || definition->behavior != ObjectBehaviorKind::Forge || !object->enabled || object->broken) {
+        return eastl::unexpected(WorldError::invalid_request);
+    }
+    auto state = object->behavior_->Describe().forge;
+    if (!state.ready || !state.fuel || heat > state.fuel) { return eastl::unexpected(WorldError::invalid_request); }
+    state.fuel -= heat;
+    if (!state.fuel) { state.ready = false; }
+    Require(object->behavior_->SetForgeState(state).has_value());
+    impl_->MarkDirty(ChunkOf(object->position), false);
+    return {};
 }
 
 bool World::CanInspectPower(ActorHandle actorHandle) const {

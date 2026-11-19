@@ -88,6 +88,11 @@ void DescribeTile(const ContentCatalog& content, const WorldView& view, TileCoor
         output.push_back(details.objectType.value ? content.GetObject(details.objectType).name : String(ObjectName(details.objectKind)));
         output.push_back(details.enabled ? "Enabled" : "Disabled");
         if (details.broken) { output.push_back("Broken"); }
+        const auto* definition = content.TryGetObject(details.objectType);
+        if (definition && definition->behavior == ObjectBehaviorKind::Forge) {
+            output.push_back(String(details.forge.ready ? "Ready" : "Cold") + " | Fuel "
+                + UnsignedText(details.forge.fuel) + "/" + UnsignedText(definition->forge.fuelCapacity));
+        }
         if (details.machine) {
             String energy = "Energy "; energy += UnsignedText(details.energy); energy += "/"; energy += UnsignedText(details.energyCapacity);
             output.push_back(eastl::move(energy));

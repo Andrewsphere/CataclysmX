@@ -17,6 +17,8 @@ const char* Status(CraftingStatus status) {
     case CraftingStatus::MissingSkills: return "missing skills";
     case CraftingStatus::MissingRecipeReference: return "missing recipe reference";
     case CraftingStatus::StationBusy: return "station in use";
+    case CraftingStatus::ColdForge: return "forge cold";
+    case CraftingStatus::InsufficientFuel: return "insufficient forge fuel";
     }
     return "unknown";
 }

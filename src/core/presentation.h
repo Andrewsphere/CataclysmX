@@ -43,6 +43,7 @@ struct TileInspection {
     std::uint64_t generatorOutputRemaining = 0;
     Tick generatorIntervalStart = 0;
     bool generatorIntervalInitialized = false;
+    ForgeState forge;
     Vector<InspectionItem> items; // Preorder, stored roots at depth 1; ground roots at 0.
 };
 enum class InspectionStatus : std::uint8_t { Complete, TooLarge, Unavailable, Disconnected };

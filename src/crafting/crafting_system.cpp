@@ -25,6 +25,8 @@ CraftingStatus RefusalStatus(CraftingOutcome outcome) {
     case CraftingOutcome::MissingTools: return CraftingStatus::MissingTools;
     case CraftingOutcome::StationBusy: return CraftingStatus::StationBusy;
     case CraftingOutcome::InsufficientEnergy: return CraftingStatus::InsufficientEnergy;
+    case CraftingOutcome::ColdForge: return CraftingStatus::ColdForge;
+    case CraftingOutcome::InsufficientFuel: return CraftingStatus::InsufficientFuel;
     default: std::abort();
     }
 }
@@ -257,12 +259,15 @@ CraftingOutcome CraftingSystem::Select(const CraftingJobState& state, bool input
         : content.GetRecyclingRecipe(state.recyclingRecipe).inputs;
     const auto& traits = state.kind == CraftingKind::Craft ? content.GetCraftingRecipe(state.craftingRecipe).toolTraits
         : content.GetRecyclingRecipe(state.recyclingRecipe).toolTraits;
+    const auto forgeTrait = content.FindToolTrait("forge_heat");
     if (target.value) { consumed_.push_back(target); }
     // Reserve exact retained tools before selecting consumables; selections are disjoint.
     for (int pass = 0; pass < 2; ++pass) {
         if (pass == 1) {
             for (std::size_t i = 0; i < traits.Size(); ++i) {
+                const bool needsHeat = traits[i].trait == forgeTrait;
                 for (auto handle : candidates_) {
+                    if (needsHeat) { break; } // Heat is a placed-forge service, never a carried item trait.
                     if (Has(consumed_, handle)) { continue; }
                     const auto* item = world_.GetItem(handle);
                     const auto& definition = content.GetItem(item->type);
@@ -291,7 +296,7 @@ CraftingOutcome CraftingSystem::Select(const CraftingJobState& state, bool input
                     if (leaves < needed) { continue; }
                     tools[i].item = handle; break;
                 }
-                bool claimed = false;
+                bool claimed = false, cold = false;
                 for (auto handle : stations_) {
                     const auto* object = world_.GetObject(handle);
                     if (tools[i].item.value && world_.GetItem(tools[i].item)->id < object->id) { break; }
@@ -301,11 +306,17 @@ CraftingOutcome CraftingSystem::Select(const CraftingJobState& state, bool input
                         matches |= trait.trait == traits[i].trait && trait.tier >= traits[i].tier;
                     }
                     if (!matches) { continue; }
+                    if (needsHeat) {
+                        const auto heat = world_.DescribeObjectState(handle);
+                        if (!heat || heat->behavior != ObjectBehaviorKind::Forge) { continue; }
+                        if (!heat->forge.ready || !heat->forge.fuel) { cold = true; continue; }
+                    }
                     if (StationWorker(object->id, &state)) { claimed = true; continue; }
                     tools[i] = {{}, handle}; break;
                 }
                 if (!tools[i].item.value && !tools[i].object.value) {
-                    return claimed ? CraftingOutcome::StationBusy : CraftingOutcome::MissingTools;
+                    return claimed ? CraftingOutcome::StationBusy
+                        : cold ? CraftingOutcome::ColdForge : CraftingOutcome::MissingTools;
                 }
             }
         }
@@ -331,6 +342,21 @@ CraftingOutcome CraftingSystem::Fund(ActorHandle handle, CraftingJobState& state
     const eastl::array<ToolProvider, maxRecipeTraits>& tools, bool commit) {
     const auto* actor = world_.GetActor(handle);
     const auto speed = actor->speed;
+    const auto actorId = actor->id;
+    const auto position = actor->position;
+    const auto& content = world_.GetContent();
+    const auto heatRate = state.kind == CraftingKind::Craft ? content.GetCraftingRecipe(state.craftingRecipe).heatPerWork
+        : content.GetRecyclingRecipe(state.recyclingRecipe).heatPerWork;
+    ObjectHandle forge{};
+    if (heatRate) {
+        const auto& traits = state.kind == CraftingKind::Craft ? content.GetCraftingRecipe(state.craftingRecipe).toolTraits
+            : content.GetRecyclingRecipe(state.recyclingRecipe).toolTraits;
+        const auto forgeTrait = content.FindToolTrait("forge_heat");
+        for (std::size_t i = 0; i < traits.Size(); ++i) {
+            if (traits[i].trait == forgeTrait) { forge = tools[i].object; break; }
+        }
+        Require(forge.value != 0);
+    }
     // Convert the sub-fixed-point timing residue when speed changes. The durable
     // fixed-point work itself is never rounded or discarded at a slice boundary.
     const auto residue = std::uint64_t{state.timingRemainder} * speed / state.timingSpeed;
@@ -359,15 +385,27 @@ CraftingOutcome CraftingSystem::Fund(ActorHandle handle, CraftingJobState& state
         gridPowered |= definition.craftingGridPower && definition.craftingEnergyPerWork != 0;
     }
     Tick duration = state.settings.maxSliceTicks;
+    if (heatRate) { duration = eastl::min<Tick>(duration, 100); }
     if (gridPowered) {
         duration = eastl::min(duration, world_.Power().SliceLimit(world_.GetTick()));
-        if (!duration || !world_.Power().GridAt(actor->position)) { return CraftingOutcome::InsufficientEnergy; }
+        if (!duration || !world_.Power().GridAt(position)) { return CraftingOutcome::InsufficientEnergy; }
     }
     const auto left = std::uint64_t{state.totalWork} * ratioScale - state.work;
     auto work = (duration * workPerTickNumerator + residue) / speed;
     if (work >= left) {
         duration = (left * speed - residue + workPerTickNumerator - 1) / workPerTickNumerator;
         duration = eastl::max<Tick>(1, duration); work = left;
+    }
+    std::uint64_t heat = 0, heatRemainder = state.heatRemainder;
+    if (heatRate) {
+        const auto view = world_.DescribeObjectState(forge);
+        if (!view || view->behavior != ObjectBehaviorKind::Forge || !view->forge.ready || !view->forge.fuel) {
+            return CraftingOutcome::ColdForge;
+        }
+        const auto numerator = work * heatRate + heatRemainder;
+        heat = numerator / craftingHeatDenominator;
+        heatRemainder = numerator % craftingHeatDenominator;
+        if (heat > view->forge.fuel) { return CraftingOutcome::InsufficientFuel; }
     }
     gridDemands_.clear();
     auto remainder = state.energyRemainder;
@@ -377,7 +415,7 @@ CraftingOutcome CraftingSystem::Fund(ActorHandle handle, CraftingJobState& state
         const auto numerator = work * definition.craftingEnergyPerWork + remainder;
         const auto charge = numerator / craftingEnergyDenominator;
         if (definition.craftingGridPower) {
-            gridDemands_.push_back({actor->position, charge});
+            gridDemands_.push_back({position, charge});
         } else {
             const auto energy = world_.GetItemEnergy(payment.item, definition.craftingPower);
             if (!energy || charge > energy->energy) { return CraftingOutcome::InsufficientEnergy; }
@@ -392,14 +430,16 @@ CraftingOutcome CraftingSystem::Fund(ActorHandle handle, CraftingJobState& state
     }
     if (!commit) { return CraftingOutcome::Started; }
     if (gridPowered) { Require(world_.Power().TrySupply(demands) == PowerOutcome::Supplied); }
+    if (heatRate) { Require(world_.SpendForgeHeat(forge, heat).has_value()); }
     for (const auto& payment : charges_) {
         if (payment.power.value) { Require(world_.SetItemEnergy(payment.item, payment.power, payment.energyAfter).has_value()); }
     }
     state.energyRemainder = remainder;
+    state.heatRemainder = heatRemainder;
     state.stations = stations;
     state.pendingWork = work; state.remaining = duration;
     state.timingRemainder = static_cast<std::uint32_t>((duration * workPerTickNumerator + residue) % speed);
-    state.timingSpeed = speed; state.worker = actor->id; state.status = CraftingStatus::Working;
+    state.timingSpeed = speed; state.worker = actorId; state.status = CraftingStatus::Working;
     auto* mutableActor = world_.MutableActor(handle);
     mutableActor->actionDeadline.Set(world_.GetTick(), duration);
     Require(mutableActor->turns != UINT64_MAX); ++mutableActor->turns;

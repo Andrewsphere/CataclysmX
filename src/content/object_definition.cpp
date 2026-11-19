@@ -10,12 +10,29 @@ bool ValidObjectDefinition(const ObjectDefinition& definition) {
         || definition.moveCost == 0 || definition.moveCost > 1000000
         || !ValidLightEmission(definition.light)) { return false; }
     if ((!definition.toolTraits.Empty() || definition.packingItem.value)
-        && definition.behavior != ObjectBehaviorKind::None) { return false; }
+        && definition.behavior != ObjectBehaviorKind::None
+        && definition.behavior != ObjectBehaviorKind::Forge) { return false; }
     std::uint8_t previous = 0;
     for (const auto& trait : definition.toolTraits) {
         if (trait.trait.value <= previous || !trait.tier) { return false; }
         previous = trait.trait.value;
     }
+    if (definition.behavior == ObjectBehaviorKind::Forge) {
+        const auto& forge = definition.forge;
+        if (definition.generator != GeneratorDefinition{} || definition.machine != CraftingMachineDefinition{}
+            || definition.toolTraits.Empty() || forge.fuels.empty()
+            || forge.fuelCapacity == 0 || forge.fuelCapacity > std::numeric_limits<std::uint64_t>::max() / 2
+            || forge.ignitionCost == 0 || forge.ignitionCost >= forge.fuelCapacity) { return false; }
+        for (std::size_t i = 0; i < forge.fuels.size(); ++i) {
+            const auto& fuel = forge.fuels[i];
+            if (!fuel.item.value || !fuel.heat || fuel.heat > forge.fuelCapacity) { return false; }
+            for (std::size_t j = 0; j < i; ++j) {
+                if (forge.fuels[j].item == fuel.item) { return false; }
+            }
+        }
+        return true;
+    }
+    if (definition.forge != ForgeDefinition{}) { return false; }
     if (definition.behavior == ObjectBehaviorKind::Generator) {
         const auto& generator = definition.generator;
         return definition.machine == CraftingMachineDefinition{}
