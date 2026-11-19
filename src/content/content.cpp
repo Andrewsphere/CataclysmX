@@ -849,7 +849,7 @@ bool ParseObject(yyjson_val* object, PendingObject& pending) {
     const auto& context = pending.context;
     auto& definition = pending.definition;
     if (!CheckObject(object, {"id", "name", "behavior", "machine", "generator", "forge", "capacity_volume_ml", "kind",
-                              "blocks_movement", "blocks_sight", "movable", "move_cost", "light", "tool_traits", "packing_item"}, context)
+                              "blocks_movement", "blocks_sight", "movable", "move_cost", "light", "tool_traits", "packing_item", "crafting_power"}, context)
         || !ReadId(yyjson_obj_get(object, "id"), definition.id, context.Child("id"))
         || !ReadString(yyjson_obj_get(object, "name"), definition.name, context.Child("name"))
         || !ParseTraits(yyjson_obj_get(object, "tool_traits"), pending.traits, context.Child("tool_traits"))) { return false; }
@@ -892,6 +892,18 @@ bool ParseObject(yyjson_val* object, PendingObject& pending) {
     auto* behavior = yyjson_obj_get(object, "behavior");
     if (!yyjson_is_str(behavior)) { return context.Child("behavior").Fail("expected a behavior kind string"); }
     const auto behaviorName = JsonString(behavior);
+    if (auto* power = yyjson_obj_get(object, "crafting_power")) {
+        const auto child = context.Child("crafting_power");
+        String store;
+        if (!CheckObject(power, {"store", "energy_per_work"}, child)
+            || !ReadId(yyjson_obj_get(power, "store"), store, child.Child("store"))
+            || !ReadBoundedInteger(yyjson_obj_get(power, "energy_per_work"), 1, UINT32_MAX,
+                                   definition.craftingEnergyPerWork, child.Child("energy_per_work"))) { return false; }
+        if (store != "grid") { return child.Child("store").Fail("object crafting power must use grid"); }
+        if (behaviorName != "none" || pending.traits.empty()) {
+            return child.Fail("object crafting power requires behavior none and nonempty tool traits");
+        }
+    }
     if (behaviorName != "generator" && yyjson_obj_get(object, "generator")) {
         return context.Child("generator").Fail("generator config requires generator behavior");
     }

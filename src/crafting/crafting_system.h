@@ -12,6 +12,7 @@ class CraftingSystem {
 public:
     explicit CraftingSystem(World& world);
     CraftingSettings Settings() const;
+    unsigned ConsumerRadius(PersistentId worker) const;
     WorldResult<void> SetSettings(CraftingSettings settings);
     WorldResult<CraftingResult> Start(ActorHandle actor, CraftingRecipeId recipe);
     WorldResult<CraftingResult> Recycle(ActorHandle actor, ItemHandle target, RecyclingRecipeId recipe);

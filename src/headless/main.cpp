@@ -297,11 +297,13 @@ bool Execute(eastl::unique_ptr<Server>& ownedServer, eastl::string_view line, bo
     if (name == "stations" && count == 1) {
         const auto view = server.View();
         for (const auto& station : view.stations) {
-            std::printf("station=%llu name=%s position=%d,%d,%d enabled=%d broken=%d worker=%llu packing=%s\n",
-                static_cast<unsigned long long>(station.id), server.GetWorld().GetContent().GetObject(station.type).name.c_str(),
-                station.position.x, station.position.z, station.position.y, station.enabled, station.broken,
-                static_cast<unsigned long long>(station.worker), StationActionMessage(station.packing));
             const auto& definition = server.GetWorld().GetContent().GetObject(station.type);
+            std::printf("station=%llu name=%s position=%d,%d,%d enabled=%d broken=%d worker=%llu packing=%s state=%s\n",
+                static_cast<unsigned long long>(station.id), definition.name.c_str(),
+                station.position.x, station.position.z, station.position.y, station.enabled, station.broken,
+                static_cast<unsigned long long>(station.worker), StationActionMessage(station.packing),
+                StationAvailabilityText(station, definition));
+            if (definition.craftingEnergyPerWork) std::puts(StationPowerText(view, station, definition).c_str());
             if (definition.behavior == ObjectBehaviorKind::Forge) {
                 std::printf("forge=%llu state=%s fuel=%llu/%llu ignition=%llu\n", static_cast<unsigned long long>(station.id),
                     station.forge.ready ? "Ready" : "Cold", static_cast<unsigned long long>(station.forge.fuel),

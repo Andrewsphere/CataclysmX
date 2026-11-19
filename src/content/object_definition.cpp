@@ -12,6 +12,8 @@ bool ValidObjectDefinition(const ObjectDefinition& definition) {
     if ((!definition.toolTraits.Empty() || definition.packingItem.value)
         && definition.behavior != ObjectBehaviorKind::None
         && definition.behavior != ObjectBehaviorKind::Forge) { return false; }
+    if (definition.craftingEnergyPerWork
+        && (definition.behavior != ObjectBehaviorKind::None || definition.toolTraits.Empty())) { return false; }
     std::uint8_t previous = 0;
     for (const auto& trait : definition.toolTraits) {
         if (trait.trait.value <= previous || !trait.tier) { return false; }

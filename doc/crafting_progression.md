@@ -702,7 +702,8 @@ need the vehicle design. Advanced electrical/software vehicle systems retain
 their respective skill and component requirements.
 
 Implementation boundary: passive station capabilities can express some future
-recipe gates, but powered manual machines need explicit funding support. A
+recipe gates; [M-Bench](powered_manual_stations_design.md) supplies explicit
+station-local grid funding for powered manual providers. A
 file-controlled unattended machine belongs to the W4/D3 job/file contracts.
 Generic machinery repair and vehicle service are not currently implied by a
 crafting tool trait.

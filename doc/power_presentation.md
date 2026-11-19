@@ -59,6 +59,8 @@ and tiles-per-material, placed-object identity and grid-meter eligibility. Objec
 fingerprints also cover grid-machine mode, generator fuel identity/capacity,
 energy per fuel and output per tick, and the generator/grid-battery behavior
 implementation versions. Material/object references hash their stable names.
+Powered manual stations additionally fingerprint `craftingEnergyPerWork`,
+including zero for passive definitions.
 
 Tile inspection additionally transports the object's grid funding/run request
 and generator interval/output state. These fields describe present object
@@ -91,3 +93,22 @@ Protocol **25** carries forge commands, station/inspection state and heat fundin
 refusals. Definition-aware validation checks fuel capacity and provider kind;
 fingerprints include forge fuel identities/yields, ignition/capacity and recipe
 heat rates.
+
+## Powered manual stations
+
+Station rows show the authored rate as `rate/10000 energy/base work` and the
+connection rule **grid at station**. Enabled unclaimed powered stations are
+labelled **idle**; this does not imply available supply. With a carried meter,
+rows identify coverage using the station tile's existing view cell. Out-of-view
+or other-layer tiles are labelled outside view, never inferred from the worker.
+The aggregate inspection is explicitly labelled **Worker's current grid**.
+
+`StationAvailabilityText` and `StationPowerText` in `client/power_view.h` serve
+shared terminal/SDL workshop rows and both local/LAN headless `stations` output.
+They take catalog definitions and owned snapshots only; no new transported field
+or protocol version is needed. Meter eligibility continues to gate dynamic
+coverage, while authored rates are public catalog data.
+
+The ordinary crafting start/resume/pause/cancel commands apply. Missing station
+coverage or insufficient grid supply returns `InsufficientEnergy`; tool,
+occupancy and forge refusals keep their existing meanings.

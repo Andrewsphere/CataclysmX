@@ -4,6 +4,7 @@
 #include "combat/combat_system.h"
 #include "client/power_view.h"
 #include "network/wire.h"
+#include "power/power_system.h"
 #include "content_fixture.h"
 #include <catch2/catch_test_macros.hpp>
 #include <chrono>
@@ -46,12 +47,23 @@ ContentCatalog WorkshopContent(const String& text = WorkshopSource()) {
     Diagnostics diagnostics; auto loaded = LoadContent({&source, 1}, &diagnostics);
     INFO(FormatDiagnostics(diagnostics).c_str()); REQUIRE(loaded); return eastl::move(*loaded);
 }
+String PoweredWorkshopSource() {
+    auto text = WorkshopSource();
+    text.insert(text.find("packing_item:'kit'"), "crafting_power:{store:'grid',energy_per_work:10000},");
+    text.insert(text.find("placed_object:'anvil_station'"), "crafting_power:{store:'power',energy_per_work:10000},");
+    text.insert(text.find("{type:'item',id:'part'"), R"(
+      {type:'item',id:'battery',name:'Battery',mass_g:1,volume_ml:1,placed_object:'battery_box',
+       capabilities:[{type:'energy_store',id:'cell',capacity_energy:1000,initial_energy:1000,rechargeable:true,battery_class:'cell'}]},
+    )");
+    text.insert(text.find("{id:'anvil_station'"), "{id:'battery_box',name:'Battery box',behavior:'grid_battery'},");
+    return text;
+}
 struct Rig {
-    ContentCatalog content = WorkshopContent();
+    ContentCatalog content;
     World world{content};
     LoadRequest request{};
     ActorHandle actor{}, other{};
-    Rig() {
+    explicit Rig(const String& text = WorkshopSource()) : content(WorkshopContent(text)) {
         request = Take(world.RequestChunks({{0, 0}, 0}, LoadMode::active)); REQUIRE(world.ReconcileChunks());
         for (int z = 0; z < 8; ++z) for (int x = 0; x < 8; ++x) {
             REQUIRE(world.SetTile({x, z}, {content.FindTerrain("floor")}));
@@ -67,6 +79,22 @@ struct Rig {
         return Take(world.StartCrafting(worker, content.FindCraftingRecipe(recipe)));
     }
     void Step(Tick ticks) { world.ElapseTicks(ticks); world.ProcessCraftingEvents(); }
+    ItemHandle Supply(std::uint32_t energy = 1000) {
+        Take(world.Power().ExtendBounds({{3, 2}, {3, 3}}));
+        const auto box = Station("battery_box", {3, 3});
+        const auto battery = Add("battery", ItemLocation::Stored(box));
+        const auto store = FindItemCapability(content.GetItem(world.GetItem(battery)->type), "cell");
+        REQUIRE(world.SetItemEnergy(battery, store, energy)); world.Power().SyncObject(box);
+        return battery;
+    }
+    std::uint32_t Energy(ItemHandle item, const char* name = "cell") const {
+        return world.GetItemEnergy(item, FindItemCapability(content.GetItem(world.GetItem(item)->type), name))->energy;
+    }
+    CraftingJobState Job(ItemHandle item) const {
+        const auto state = world.CaptureItemState(item);
+        const auto* payload = state.Find("crafting_job"); REQUIRE(payload);
+        return Take(ReadCraftingState(*payload));
+    }
 };
 struct SaveFile {
     std::filesystem::path directory = std::filesystem::temp_directory_path()
@@ -458,5 +486,122 @@ TEST_CASE("Workshop shared controls server commands and LAN views round trip", "
     CHECK(server.Send(*pack).stationOutcome == StationActionOutcome::Packed);
     CHECK(world.GetItem(kit)->location == ItemLocation::Carried(actor));
     REQUIRE(world.CheckInvariants());
+}
+
+TEST_CASE("Powered portable stations retain occupancy and never debit their backing tool", "[workshop][crafting][power]") {
+    Rig r(PoweredWorkshopSource()); const auto station = r.Station();
+    const auto kit = r.world.GetObject(station)->equipment;
+    const auto battery = r.Supply();
+    const auto job = r.Start(r.actor); REQUIRE(job.outcome == CraftingOutcome::Started);
+    CHECK(r.Energy(battery) == 900); CHECK(r.Energy(kit, "power") == 80);
+    CHECK(r.Start(r.other).outcome == CraftingOutcome::StationBusy);
+    CHECK(r.world.QueryPackStation(r.actor, station) == StationActionOutcome::Unavailable);
+    CHECK(r.world.QueryPackStation(r.other, station) == StationActionOutcome::StationBusy);
+    REQUIRE(Take(r.world.PauseCrafting(r.actor, job.unfinished)).outcome == CraftingOutcome::PauseRequested);
+    r.Step(99); CHECK(r.world.StationWorker(station) != 0);
+    r.Step(1); CHECK(r.world.StationWorker(station) == 0);
+    CHECK(r.Energy(battery) == 900);
+    REQUIRE(Take(r.world.PackStation(r.actor, station)).outcome == StationActionOutcome::Packed);
+    CHECK(r.world.GetItem(kit)->location == ItemLocation::Carried(r.actor));
+    CHECK(r.Energy(kit, "power") == 80);
+    CHECK(Take(r.world.ResumeCrafting(r.actor, job.unfinished)).outcome == CraftingOutcome::MissingTools);
+    REQUIRE(r.world.CheckInvariants());
+}
+
+TEST_CASE("Powered station paid work survives worker loss without repaying or reclaiming", "[workshop][crafting][power]") {
+    Rig r(PoweredWorkshopSource()); const auto station = r.Station(); const auto battery = r.Supply();
+    const auto job = r.Start(r.actor); REQUIRE(job.outcome == CraftingOutcome::Started);
+    r.Step(30);
+    r.world.Combat().Damage(r.actor, {}, BodyPart::Torso, {DamageType::Blunt, 10000});
+    r.world.FinalizeActorDeaths();
+    CHECK(r.world.StationWorker(station) == 0); CHECK(r.Energy(battery) == 900);
+    CHECK(r.world.InspectCrafting(job.unfinished)->fundedTicksRemaining == 70);
+    REQUIRE(r.world.TransferItem(job.unfinished, ItemLocation::Carried(r.other)));
+    REQUIRE(Take(r.world.ResumeCrafting(r.other, job.unfinished)).outcome == CraftingOutcome::Resumed);
+    CHECK(r.world.StationWorker(station) == 0); CHECK(r.Energy(battery) == 900);
+    REQUIRE(Take(r.world.PauseCrafting(r.other, job.unfinished)).outcome == CraftingOutcome::PauseRequested);
+    r.Step(70);
+    CHECK(r.world.InspectCrafting(job.unfinished)->completedWork == 100);
+    CHECK(r.Energy(battery) == 900);
+    REQUIRE(Take(r.world.ResumeCrafting(r.other, job.unfinished)).outcome == CraftingOutcome::Resumed);
+    CHECK(r.Energy(battery) == 800);
+    CHECK(r.world.StationWorker(station) == r.world.GetActor(r.other)->id);
+    REQUIRE(r.world.CheckInvariants());
+}
+
+TEST_CASE("Powered station fractional debt survives pause speed change replacement and disk", "[workshop][crafting][power][save]") {
+    SaveFile file; Rig r(PoweredWorkshopSource()); const auto station = r.Station(); const auto battery = r.Supply(1);
+    REQUIRE(r.world.SetCraftingSettings({1, 1})); REQUIRE(r.world.SetActorSpeed(r.actor, 200));
+    const auto job = r.Start(r.actor); REQUIRE(job.outcome == CraftingOutcome::Started);
+    REQUIRE(Take(r.world.PauseCrafting(r.actor, job.unfinished)).outcome == CraftingOutcome::PauseRequested);
+    r.Step(1);
+    CHECK(r.Job(job.unfinished).energyRemainder == 50000000); CHECK(r.Energy(battery) == 1);
+    const auto actorId = r.world.GetActor(r.actor)->id, jobId = r.world.GetItem(job.unfinished)->id;
+    const auto batteryId = r.world.GetItem(battery)->id;
+    REQUIRE(r.world.DestroyObject(station)); r.Station();
+    REQUIRE(r.world.CreateSave(file.path.c_str(), {}));
+    World restored(r.content); Take(restored.LoadSave(file.path.c_str()));
+    Take(restored.RequestChunks({{0, 0}, 0}, LoadMode::active)); REQUIRE(restored.ReconcileChunks());
+    const auto worker = restored.FindActor(actorId);
+    const auto unfinished = restored.FindItem(jobId);
+    CHECK(restored.InspectCrafting(unfinished)->status == CraftingStatus::Paused);
+    REQUIRE(restored.SetCraftingSettings({1, 1})); REQUIRE(restored.SetActorSpeed(worker, 100));
+    REQUIRE(Take(restored.ResumeCrafting(worker, unfinished)).outcome == CraftingOutcome::Resumed);
+    const auto cell = FindItemCapability(r.content.GetItem(r.content.FindItem("battery")), "cell");
+    CHECK(restored.GetItemEnergy(restored.FindItem(batteryId), cell)->energy == 0);
+    const auto state = restored.CaptureItemState(unfinished);
+    CHECK(Take(ReadCraftingState(*state.Find("crafting_job"))).energyRemainder == 50000000);
+    // The next failed preflight cannot discard this carried half-unit balance.
+    restored.ElapseTicks(1); restored.ProcessCraftingEvents();
+    CHECK(restored.InspectCrafting(unfinished)->status == CraftingStatus::InsufficientEnergy);
+    const auto failed = restored.CaptureItemState(unfinished);
+    CHECK(Take(ReadCraftingState(*failed.Find("crafting_job"))).energyRemainder == 50000000);
+    REQUIRE(restored.CheckInvariants());
+}
+
+TEST_CASE("A fixture powered soldering station completes existing connector production", "[workshop][crafting][power]") {
+    Diagnostics diagnostics;
+    auto loaded = LoadContentPack(CATACLYSMX_CONTENT_PACK, &diagnostics);
+    INFO(FormatDiagnostics(diagnostics).c_str()); REQUIRE(loaded);
+    auto content = eastl::move(*loaded);
+    const auto type = content.FindObject("scrap_press");
+    auto& definition = const_cast<ObjectDefinition&>(content.GetObject(type));
+    definition.behavior = ObjectBehaviorKind::None; definition.machine = {};
+    definition.toolTraits = {};
+    REQUIRE(definition.toolTraits.PushBack({content.FindToolTrait("soldering"), 1}));
+    definition.craftingEnergyPerWork = 10000;
+    REQUIRE(ValidObjectDefinition(definition));
+    World world(content);
+    Take(world.RequestChunks({{0, 0}, 0}, LoadMode::active)); REQUIRE(world.ReconcileChunks());
+    for (int z = 1; z <= 4; ++z) for (int x = 1; x <= 4; ++x) {
+        const TileCoord position{x, z};
+        if (const auto object = world.ObjectAt(position); object.value) { REQUIRE(world.DestroyObject(object)); }
+        if (const auto actor = world.ActorAt(position); actor.value) { REQUIRE(world.DestroyActor(actor)); }
+        REQUIRE(world.SetTile(position, {content.FindTerrain("floor")}));
+    }
+    const auto actor = Take(world.CreateActor({2, 2}, true));
+    const auto station = Take(world.CreateObject(type, {3, 2}));
+    Take(world.Power().ExtendBounds({{3, 2}, {3, 3}}));
+    const auto box = Take(world.CreateObject(content.FindObject("grid_battery_station"), {3, 3}));
+    const auto battery = Take(world.CreateItem(content.FindItem("workshop_battery_pack"), ItemLocation::Stored(box)));
+    const auto power = FindItemCapability(content.GetItem(content.FindItem("workshop_battery_pack")), "power");
+    REQUIRE(world.SetItemEnergy(battery, power, 100)); world.Power().SyncObject(box);
+    Take(world.CreateItem(content.FindItem("copper_wire"), ItemLocation::Carried(actor)));
+    Take(world.CreateItem(content.FindItem("solder_wire"), ItemLocation::Carried(actor)));
+    const auto job = Take(world.StartCrafting(actor, content.FindCraftingRecipe("solder_electrical_connectors")));
+    REQUIRE(job.outcome == CraftingOutcome::Started); CHECK(world.GetItemEnergy(battery, power)->energy == 0);
+    world.ElapseTicks(100); world.ProcessCraftingEvents();
+    CHECK(world.InspectCrafting(job.unfinished)->completedWork == 100);
+    CHECK(world.InspectCrafting(job.unfinished)->status == CraftingStatus::InsufficientEnergy);
+    CHECK(world.StationWorker(station) == 0);
+    REQUIRE(world.SetItemEnergy(battery, power, 100));
+    REQUIRE(Take(world.ResumeCrafting(actor, job.unfinished)).outcome == CraftingOutcome::Resumed);
+    world.ElapseTicks(100); world.ProcessCraftingEvents();
+    CHECK_FALSE(world.GetItem(job.unfinished)); CHECK(world.GetItemEnergy(battery, power)->energy == 0);
+    unsigned connectors = 0;
+    for (auto item : world.GetActor(actor)->inventory) {
+        connectors += world.GetItem(item)->type == content.FindItem("electrical_connector");
+    }
+    CHECK(connectors == 10); REQUIRE(world.CheckInvariants());
 }
 }

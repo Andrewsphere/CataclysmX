@@ -64,6 +64,33 @@ player storage; legacy generic and machine internal contents remain supported.
 capacity. Behavior-none storage supports `Collect` through the usual carry checks.
 Crafting can also access reachable storage as described in [crafting](crafting.md).
 
+### Powered manual station definitions
+
+Behavior-`none` objects with at least one ordinary tool trait may declare:
+
+```json5
+{id:'example_soldering_bench', name:'Powered soldering bench', behavior:'none',
+ tool_traits:[{id:'soldering',tier:1}],
+ crafting_power:{store:'grid',energy_per_work:10000}}
+```
+
+`crafting_power` requires exactly `store:'grid'` and an integer `energy_per_work`
+in `[1,UINT32_MAX]`; 10000 means one electrical unit per base work. Local stores,
+zero/fractional/negative rates, unknown/duplicate fields, empty traits and other
+behaviors are rejected. The existing four-trait limit and packing/storage
+validation still apply. Both fixed fixtures and packing-backed stations qualify.
+
+`ObjectDefinition::craftingEnergyPerWork` stores the resolved rate; zero is the
+passive default when the property is absent. A scalar is sufficient because the
+only supply kind is the grid at the station tile. No instance store, behavior
+allocation, job owner or scheduler is added. All traits on one selected station
+share one payment per slice. The unfinished manual job owns the electrical
+remainder and paid work. See [crafting funding](crafting.md#selection-and-funding).
+
+Canonical content export preserves this property and catalog fingerprints
+include its rate, including the passive default. Object/job save payloads and
+network view payloads retain their existing versions.
+
 ## Ownership and API shape
 
 `objects/interactive_object.h` defines the concrete, move-only

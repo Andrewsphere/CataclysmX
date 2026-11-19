@@ -565,7 +565,7 @@ progression remain acceptable.
 
 W3's original low gates and blanket runtime assumptions are historical. Forging can
 use W1/W2; welding protection uses ordinary traits and handheld grid tools use D1.
-Powered placed manual equipment needs M-Bench's explicit grid funding through a
-separate bounded design/implementation. W3 verification is recorded with its roster.
+Powered placed manual equipment uses [M-Bench](powered_manual_stations_design.md)'s
+station-local grid funding through the existing manual job. W3 verification is recorded with its roster.
 W2 changes no shipped item roster or generation version. Review section 7 with
 D3 before W4.

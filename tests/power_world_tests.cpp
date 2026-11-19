@@ -27,6 +27,8 @@ ContentCatalog PowerWorldContent(bool buildings = false) {
       {id:'generator',name:'Generator',behavior:'generator',generator:{fuel_item:'fuel',fuel_capacity:10000,
         energy_per_fuel:1000,output_per_tick:1}},
       {id:'battery_box',name:'Battery box',behavior:'grid_battery'},
+      {id:'bench',name:'Bench',behavior:'none',tool_traits:[{id:'cut',tier:1}],
+        crafting_power:{store:'grid',energy_per_work:10000}},
       {id:'machine',name:'Machine',behavior:'crafting_machine',machine:{input:'material',input_count:1,
         output:'product',output_count:1,duration_ticks:300,energy_capacity:0,energy_per_tick:1,grid_powered:true}}
     ],definitions:[
@@ -36,6 +38,9 @@ ContentCatalog PowerWorldContent(bool buildings = false) {
       {type:'item',id:'fuel',name:'Fuel',mass_g:1,volume_ml:1},
       {type:'item',id:'material',name:'Material',mass_g:1,volume_ml:1},
       {type:'item',id:'product',name:'Product',mass_g:1,volume_ml:1},
+      {type:'tool_trait',id:'cut',name:'Cut'},
+      {type:'recipe',id:'cut_product',inputs:[],tool_traits:[{id:'cut',tier:1}],
+        result:{item:'product',count:1},work:300},
       {type:'item',id:'copper_wire',name:'Copper wire',mass_g:1,volume_ml:1},
       {type:'item',id:'powered_gadget',name:'Gadget',mass_g:1,volume_ml:1,capabilities:[
         {type:'energy_store',id:'cell',capacity_energy:1000,initial_energy:500,rechargeable:true}]},
@@ -609,7 +614,8 @@ TEST_CASE("Restored player source dependencies are ready in one reconcile and re
         LoadColumn(initial, 0, LoadMode::active, LoadReason::Player); LoadColumn(initial, 2);
         ClearFloor(initial, {{8, 8}, {9, 8}}); ClearFloor(initial, {{40, 8}, {41, 8}});
         const auto player = Take(initial.CreateActor({8, 8}, true)); playerId = initial.GetActor(player)->id;
-        for (int x : {8, 24, 40}) { Take(initial.Power().ExtendBounds({{x, 8}, {x + 15, 8}})); }
+        for (int x : {9, 25, 41}) { Take(initial.Power().ExtendBounds({{x, 8}, {x + 15, 8}})); }
+        Take(initial.Power().ExtendBounds({{40, 8}, {41, 8}}));
         const auto box = Take(initial.CreateObject(content.FindObject("battery_box"), {40, 8}));
         const auto item = Take(initial.CreateItem(content.FindItem("battery"), ItemLocation::Stored(box)));
         batteryId = initial.GetItem(item)->id;
@@ -625,7 +631,8 @@ TEST_CASE("Restored player source dependencies are ready in one reconcile and re
     REQUIRE(restored.GetItem(restored.FindItem(batteryId)));
     CHECK(restored.IsActive({40, 8}));
     CHECK_FALSE(restored.GetChunk({1, 0})); // Electrical coverage is not blanket residency.
-    const PowerDemand draw{{8, 8}, 1};
+    CHECK_FALSE(restored.Power().GridAt({8, 8})); // Reach, not worker coverage, loads this source.
+    const PowerDemand draw{{9, 8}, 1};
     CHECK(restored.Power().CanSupply({&draw, 1}) == PowerOutcome::Supplied);
     CHECK(ColumnDebug(restored, {2, 0}).playerActiveRequests == 1);
     REQUIRE(restored.SetActorParked(player, true)); REQUIRE(restored.ReconcileChunks());
@@ -634,6 +641,170 @@ TEST_CASE("Restored player source dependencies are ready in one reconcile and re
     CHECK(restored.IsActive({40, 8}));
     CHECK(restored.Power().CanSupply({&draw, 1}) == PowerOutcome::Supplied);
     CHECK(restored.CheckInvariants());
+}
+
+TEST_CASE("A first manual bench start across wiring boundaries finds archived supply", "[power][world][residency][crafting]") {
+    PowerWorldRig rig;
+    const auto source = LoadColumn(rig.world, 2);
+    ClearFloor(rig.world, {{40, 8}, {40, 8}});
+    for (int x : {14, 30}) { Take(rig.world.Power().ExtendBounds({{x, 8}, {x + 15, 8}})); }
+    const auto bench = Take(rig.world.CreateObject(rig.content.FindObject("bench"), {14, 8}));
+    const auto box = Take(rig.world.CreateObject(rig.content.FindObject("battery_box"), {40, 8}));
+    const auto battery = Take(rig.world.CreateItem(rig.content.FindItem("battery"), ItemLocation::Stored(box)));
+    const auto batteryId = rig.world.GetItem(battery)->id;
+    REQUIRE(rig.world.SetItemEnergy(battery, rig.Store(), 500));
+    REQUIRE(rig.world.ReleaseRequest(source)); REQUIRE(rig.world.ReconcileChunks());
+    CHECK_FALSE(rig.world.GetChunk({2, 0}));
+    REQUIRE(rig.world.MoveActor(rig.actor, {13, 8}));
+    REQUIRE(rig.world.ReconcileChunks());
+    CHECK_FALSE(rig.world.Power().GridAt({13, 8}));
+    REQUIRE(rig.world.IsActive({40, 8}));
+    CHECK(ColumnDebug(rig.world, {2, 0}).machineOwners == 0);
+    const auto started = Take(rig.world.StartCrafting(rig.actor, rig.content.FindCraftingRecipe("cut_product")));
+    REQUIRE(started.outcome == CraftingOutcome::Started);
+    CHECK(rig.world.StationWorker(bench) == rig.world.GetActor(rig.actor)->id);
+    CHECK(rig.world.GetItemEnergy(rig.world.FindItem(batteryId), rig.Store())->energy == 400);
+    REQUIRE(rig.world.SetActorParked(rig.actor, true)); REQUIRE(rig.world.ReconcileChunks());
+    CHECK_FALSE(rig.world.GetChunk({2, 0})); // No autonomous hold from the bench or paid job.
+    CHECK(rig.world.CheckInvariants());
+}
+
+TEST_CASE("Continuing manual jobs retain their snapshotted source radius live and on activation", "[power][world][residency][crafting][save]") {
+    SaveDirectory files;
+    PowerWorldRig rig;
+    const auto source = LoadColumn(rig.world, 2);
+    ClearFloor(rig.world, {{40, 8}, {40, 8}});
+    for (int x : {11, 27}) { Take(rig.world.Power().ExtendBounds({{x, 8}, {x + 15, 8}})); }
+    Take(rig.world.CreateObject(rig.content.FindObject("bench"), {11, 8}));
+    const auto box = Take(rig.world.CreateObject(rig.content.FindObject("battery_box"), {40, 8}));
+    const auto battery = Take(rig.world.CreateItem(rig.content.FindItem("battery"), ItemLocation::Stored(box)));
+    REQUIRE(rig.world.SetItemEnergy(battery, rig.Store(), 500));
+    REQUIRE(rig.world.ReleaseRequest(source)); REQUIRE(rig.world.ReconcileChunks());
+    REQUIRE_FALSE(rig.world.GetChunk({2, 0}));
+    REQUIRE(rig.world.SetCraftingSettings({3, 100})); REQUIRE(rig.world.ReconcileChunks());
+    const auto job = Take(rig.world.StartCrafting(rig.actor, rig.content.FindCraftingRecipe("cut_product")));
+    REQUIRE(job.outcome == CraftingOutcome::Started);
+    const auto playerId = rig.world.GetActor(rig.actor)->id;
+    REQUIRE(rig.world.SetCraftingSettings({0, 100})); REQUIRE(rig.world.ReconcileChunks());
+    CHECK(rig.world.IsActive({40, 8}));
+    SECTION("live assignment release drops the wider area") {
+        REQUIRE(Take(rig.world.CancelCrafting(rig.actor, job.unfinished)).outcome == CraftingOutcome::Cancelled);
+        REQUIRE(rig.world.ReconcileChunks());
+        CHECK_FALSE(rig.world.GetChunk({2, 0}));
+    }
+    SECTION("incoming assignment expands preflight before first activation") {
+        SessionState session; session.player = playerId; session.playerPosition = {8, 8};
+        REQUIRE(rig.world.CreateSave(files.database.c_str(), session));
+        World restored(rig.content); Take(restored.LoadSave(files.database.c_str()));
+        REQUIRE(restored.SetCraftingSettings({0, 100}));
+        SECTION("valid source archive") {
+            LoadColumn(restored, 0, LoadMode::active, LoadReason::Player);
+            CHECK(restored.IsActive({40, 8}));
+            CHECK(ColumnDebug(restored, {2, 0}).playerActiveRequests == 1);
+        }
+        SECTION("corrupt source archive is discovered before restoring the worker") {
+            struct RawConnection { sqlite3* value = nullptr; ~RawConnection() { sqlite3_close(value); } } raw;
+            REQUIRE(sqlite3_open(files.database.c_str(), &raw.value) == SQLITE_OK);
+            REQUIRE(sqlite3_exec(raw.value,
+                "UPDATE chunks SET payload=json_set(payload,'$.objects',json('[]')) WHERE x=2 AND z=0 AND y=0",
+                nullptr, nullptr, nullptr) == SQLITE_OK);
+            const auto revision = restored.GetRevision();
+            Take(restored.RequestChunks({{0, 0}, 0}, LoadMode::active, LoadReason::Player));
+            const auto result = restored.ReconcileChunks();
+            REQUIRE_FALSE(result); CHECK(result.error() == SaveError::InvalidData);
+            CHECK(restored.LoadedChunks().empty());
+            CHECK_FALSE(restored.FindActor(playerId).value);
+            CHECK(restored.GetRevision() == revision);
+        }
+        CHECK(restored.CheckInvariants());
+    }
+    CHECK(rig.world.CheckInvariants());
+}
+
+TEST_CASE("Corrupt crafting-area source archives refuse activation before publishing the player", "[power][world][residency][save]") {
+    SaveDirectory files;
+    auto content = PowerWorldContent();
+    PersistentId playerId = 0;
+    {
+        World initial(content);
+        LoadColumn(initial, 0); LoadColumn(initial, 2);
+        ClearFloor(initial, {{8, 8}, {8, 8}}); ClearFloor(initial, {{40, 8}, {40, 8}});
+        const auto player = Take(initial.CreateActor({8, 8}, true)); playerId = initial.GetActor(player)->id;
+        for (int x : {9, 25}) { Take(initial.Power().ExtendBounds({{x, 8}, {x + 15, 8}})); }
+        Take(initial.CreateObject(content.FindObject("battery_box"), {40, 8}));
+        SessionState session; session.player = playerId; session.playerPosition = {8, 8};
+        REQUIRE(initial.CreateSave(files.database.c_str(), session));
+    }
+    World restored(content); Take(restored.LoadSave(files.database.c_str()));
+    LoadColumn(restored, 4);
+    struct RawConnection { sqlite3* value = nullptr; ~RawConnection() { sqlite3_close(value); } } raw;
+    REQUIRE(sqlite3_open(files.database.c_str(), &raw.value) == SQLITE_OK);
+    REQUIRE(sqlite3_exec(raw.value,
+        "UPDATE chunks SET payload=json_set(payload,'$.objects',json('[]')) WHERE x=2 AND z=0 AND y=0",
+        nullptr, nullptr, nullptr) == SQLITE_OK);
+    const auto power = restored.Power().Capture();
+    const auto revision = restored.GetRevision();
+    const auto count = restored.LoadedChunks().size();
+    Take(restored.RequestChunks({{0, 0}, 0}, LoadMode::active, LoadReason::Player));
+    const auto result = restored.ReconcileChunks();
+    REQUIRE_FALSE(result); CHECK(result.error() == SaveError::InvalidData);
+    CHECK_FALSE(restored.FindActor(playerId).value);
+    CHECK_FALSE(restored.GetChunk({0, 0})); CHECK_FALSE(restored.GetChunk({2, 0}));
+    CHECK(restored.GetChunk({4, 0}));
+    CHECK(restored.LoadedChunks().size() == count);
+    CHECK(restored.GetRevision() == revision); CHECK(restored.Power().Capture() == power);
+    CHECK(restored.CheckInvariants());
+}
+
+TEST_CASE("Planned generated coverage preflights adjacent-area source dependencies", "[power][world][residency][worldgen][save]") {
+    SaveDirectory files;
+    auto content = PowerWorldContent(true);
+    World initial(content);
+    const auto plan = GenerateRegionPlan(content, initial.GetSeed(), {1, 1}, initial.GetGenerationVersion());
+    TileCoord playerPosition{}, sourcePosition{};
+    bool found = false;
+    for (const auto& building : plan.buildings) {
+        const auto coverage = DescribeBuildingPower(content.GetBuildingPattern(building.pattern),
+            building.bounds, building.basementVariant);
+        if (!coverage) { continue; }
+        const TileCoord candidate{coverage->bounds.min.x - 1, coverage->bounds.min.z};
+        const auto near = ChunkOf(candidate);
+        const auto first = ChunkOf(coverage->bounds.min);
+        const auto far = ChunkOf(coverage->bounds.max);
+        if (near.x != first.x || near.z != first.z || (near.x == far.x && near.z == far.z)) { continue; }
+        playerPosition = candidate;
+        sourcePosition = {coverage->bounds.max.x, coverage->bounds.max.z};
+        found = true; break;
+    }
+    REQUIRE(found);
+    const auto home = ChunkOf(playerPosition);
+    const auto remote = ChunkOf(sourcePosition);
+    Take(initial.RequestChunks({home, 0}, LoadMode::active, LoadReason::Player));
+    Take(initial.RequestChunks({remote, 0}, LoadMode::active));
+    REQUIRE(initial.ReconcileChunks());
+    ClearFloor(initial, {playerPosition, playerPosition}); ClearFloor(initial, {sourcePosition, sourcePosition});
+    const auto player = Take(initial.CreateActor(playerPosition, true));
+    const auto playerId = initial.GetActor(player)->id;
+    Take(initial.CreateObject(content.FindObject("battery_box"), sourcePosition));
+    // Simulate an indexed source predating this building's first registration.
+    // Sources outside electrical coverage are valid; no station index is needed.
+    auto power = initial.Power().Capture(); power.grids.clear(); power.generatedBindings.clear();
+    REQUIRE(initial.Power().Restore(power, initial.GetTick()));
+    SessionState session; session.player = playerId; session.playerPosition = playerPosition;
+    REQUIRE(initial.CreateSave(files.database.c_str(), session));
+    World restored(content); Take(restored.LoadSave(files.database.c_str()));
+    struct RawConnection { sqlite3* value = nullptr; ~RawConnection() { sqlite3_close(value); } } raw;
+    REQUIRE(sqlite3_open(files.database.c_str(), &raw.value) == SQLITE_OK);
+    const auto mutation = "UPDATE chunks SET payload=json_set(payload,'$.objects',json('[]')) WHERE x="
+        + std::to_string(remote.x) + " AND z=" + std::to_string(remote.z) + " AND y=0";
+    REQUIRE(sqlite3_exec(raw.value, mutation.c_str(), nullptr, nullptr, nullptr) == SQLITE_OK);
+    const auto before = restored.Power().Capture();
+    const auto revision = restored.GetRevision();
+    Take(restored.RequestChunks({home, 0}, LoadMode::active, LoadReason::Player));
+    const auto result = restored.ReconcileChunks();
+    REQUIRE_FALSE(result); CHECK(result.error() == SaveError::InvalidData);
+    CHECK(restored.LoadedChunks().empty()); CHECK_FALSE(restored.FindActor(playerId).value);
+    CHECK(restored.Power().Capture() == before); CHECK(restored.GetRevision() == revision);
 }
 
 TEST_CASE("An arbitrary powered item inside furniture is not an installed grid battery", "[power][world][accounting]") {

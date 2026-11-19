@@ -613,7 +613,13 @@ public:
     Vector<ColumnCoord> workshopDemand;
     Vector<ColumnCoord> playerPowerDemand;
     Vector<ColumnCoord> powerDemandScratch;
-    Vector<TileCoord> powerPlayerScratch;
+    static PowerBounds ConsumerArea(TileCoord position, int radius) {
+        return {{eastl::max(-world_coordinate_limit, position.x - radius),
+                    eastl::max(-world_coordinate_limit, position.z - radius), position.y},
+                {eastl::min(world_coordinate_limit, position.x + radius),
+                    eastl::min(world_coordinate_limit, position.z + radius), position.y}};
+    }
+    Vector<PowerBounds> powerPlayerScratch;
     void RefreshPowerDemand() {
         powerSystem.CollectWorkshopDemand(powerDemandScratch);
         if (workshopDemand != powerDemandScratch) {
@@ -623,10 +629,10 @@ public:
         powerPlayerScratch.clear();
         for (const auto& actor : actors) {
             if (actor.player && !actor.parked && actor.combat.life == ActorLifeState::Alive) {
-                powerPlayerScratch.push_back(actor.position);
+                powerPlayerScratch.push_back(ConsumerArea(actor.position, craftingSystem.ConsumerRadius(actor.id)));
             }
         }
-        powerSystem.CollectPlayerDemand(powerPlayerScratch, powerDemandScratch);
+        powerSystem.CollectConsumerDemand(powerPlayerScratch, powerDemandScratch);
         if (playerPowerDemand != powerDemandScratch) {
             playerPowerDemand.swap(powerDemandScratch);
             demandDirty = true;
@@ -2052,7 +2058,9 @@ SaveResult<void> World::ReconcileChunksPass(Diagnostics* diagnostics) {
     };
     // Include source dependencies of players about to be restored before the
     // mutation boundary, so bad source archives cannot fail a later live pass.
-    Vector<TileCoord> stagedConsumers;
+    Vector<PowerBounds> stagedConsumers;
+    struct IncomingConsumer { PersistentId worker; TileCoord position; std::size_t area; };
+    Vector<IncomingConsumer> incomingConsumers;
     Vector<ColumnCoord> stagedSources;
     for (;;) {
         if (impl_->database) {
@@ -2075,9 +2083,16 @@ SaveResult<void> World::ReconcileChunksPass(Diagnostics* diagnostics) {
             }
         }
         if (auto result = stageBuildings(); !result) { return result; }
-        stagedConsumers.assign(impl_->powerPlayerScratch.begin(), impl_->powerPlayerScratch.end());
+        stagedConsumers.clear();
+        incomingConsumers.clear();
+        for (const auto& actor : impl_->actors) {
+            if (!actor.player || actor.parked || actor.combat.life != ActorLifeState::Alive) { continue; }
+            incomingConsumers.push_back({actor.id, actor.position, stagedConsumers.size()});
+            stagedConsumers.push_back(Impl::ConsumerArea(actor.position,
+                impl_->craftingSystem.ConsumerRadius(actor.id)));
+        }
         for (const auto& device : impl_->powerSystem.Devices()) {
-            if (device.workshopHold) { stagedConsumers.push_back(device.position); }
+            if (device.workshopHold) { stagedConsumers.push_back({device.position, device.position}); }
         }
         for (const auto& entry : demand) {
             if (impl_->columns_.contains(entry.first)) { continue; }
@@ -2088,16 +2103,46 @@ SaveResult<void> World::ReconcileChunksPass(Diagnostics* diagnostics) {
                     if (!actor.player || actor.parked) { continue; }
                     const auto combat = ReadCombatState(actor.combat, impl_->content, diagnostics);
                     if (!combat) { return eastl::unexpected(SaveError::InvalidData); }
-                    if (combat->life == ActorLifeState::Alive) { stagedConsumers.push_back(actor.position); }
+                    if (combat->life == ActorLifeState::Alive) {
+                        incomingConsumers.push_back({actor.id, actor.position, stagedConsumers.size()});
+                        stagedConsumers.push_back(Impl::ConsumerArea(actor.position,
+                            impl_->craftingSystem.ConsumerRadius(actor.id)));
+                    }
                 }
             }
         }
-        impl_->powerSystem.CollectPlayerDemand(stagedConsumers, stagedSources);
+        // Incoming jobs are not attached yet. Include their snapshotted reach
+        // before any player, activity flag or generated coverage is published.
+        for (const auto& entry : demand) {
+            if (impl_->columns_.contains(entry.first)) { continue; }
+            for (int y = world_min_y; y <= world_max_y; ++y) {
+                const auto* saved = incomingArchive({entry.first.x, entry.first.z, y});
+                if (!saved) { continue; }
+                for (const auto& item : saved->items) {
+                    if (!impl_->content.GetItem(item.type).unfinishedCraft) { continue; }
+                    const auto* payload = item.state.Find("crafting_job");
+                    if (!payload) { return SaveFailure(SaveError::InvalidData, "Missing incoming crafting job", diagnostics); }
+                    const auto job = ReadCraftingState(*payload);
+                    if (!job) { return SaveFailure(SaveError::InvalidData, "Invalid incoming crafting job", diagnostics); }
+                    if (!job->worker) { continue; }
+                    for (const auto& consumer : incomingConsumers) {
+                        if (consumer.worker != job->worker) { continue; }
+                        const auto area = Impl::ConsumerArea(consumer.position, job->settings.nearbyRadius);
+                        auto& current = stagedConsumers[consumer.area];
+                        current.min.x = eastl::min(current.min.x, area.min.x);
+                        current.min.z = eastl::min(current.min.z, area.min.z);
+                        current.max.x = eastl::max(current.max.x, area.max.x);
+                        current.max.z = eastl::max(current.max.z, area.max.z);
+                    }
+                }
+            }
+        }
+        impl_->powerSystem.CollectConsumerDemand(stagedConsumers, stagedSources);
         // Planned generated coverage can connect an incoming player to indexed
         // sources even before that building's first global registration commits.
         for (const auto& building : buildings) {
-            if (eastl::none_of(stagedConsumers.begin(), stagedConsumers.end(), [&](TileCoord position) {
-                    return PowerContains(building.bounds, position);
+            if (eastl::none_of(stagedConsumers.begin(), stagedConsumers.end(), [&](PowerBounds area) {
+                    return PowerOverlaps(building.bounds, area);
                 })) { continue; }
             for (const auto& device : impl_->powerSystem.Devices()) {
                 if (device.kind == PowerDeviceKind::Machine || !PowerContains(building.bounds, device.position)) { continue; }

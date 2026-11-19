@@ -436,16 +436,16 @@ WorldResult<void> PowerSystem::Restore(const SavedPowerState& state, Tick now) {
     Invalidate();
     return {};
 }
-void PowerSystem::CollectPlayerDemand(eastl::span<const TileCoord> players, Vector<ColumnCoord>& output) const {
+void PowerSystem::CollectConsumerDemand(eastl::span<const PowerBounds> areas, Vector<ColumnCoord>& output) const {
     output.clear();
     for (const auto& device : state_.devices) {
         if (device.kind == PowerDeviceKind::Machine) { continue; }
         const auto grid = GridAt(device.position);
         if (!grid) { continue; }
-        bool needed = false;
-        for (auto player : players) {
-            if (GridAt(player) == grid) { needed = true; break; }
-        }
+        const auto* coverage = Grid(*grid);
+        const bool needed = eastl::any_of(coverage->regions.begin(), coverage->regions.end(), [&](PowerBounds region) {
+            return eastl::any_of(areas.begin(), areas.end(), [&](PowerBounds area) { return PowerOverlaps(region, area); });
+        });
         if (!needed) { continue; }
         const auto chunk = ChunkOf(device.position);
         const ColumnCoord column{chunk.x, chunk.z};

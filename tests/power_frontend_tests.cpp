@@ -1,4 +1,5 @@
 #include "client/power_view.h"
+#include "network/wire.h"
 #include "power/power_system.h"
 #include <catch2/catch_test_macros.hpp>
 #include <EASTL/utility.h>
@@ -81,6 +82,68 @@ TEST_CASE("Power workshop can submit small rectangular wiring and exact carried 
     const auto narrow = workshop.Handle({"Enter"}, view, content); REQUIRE(narrow);
     CHECK(narrow->powerBounds.max.x == narrow->powerBounds.min.x);
     CHECK(narrow->powerBounds.max.z - narrow->powerBounds.min.z + 1 == maxPowerWiringExtent);
+}
+
+TEST_CASE("Powered manual station presentation uses catalog rates and snapshot coverage", "[power][workshop][ui][network]") {
+    constexpr const char* text = R"({
+        format_version:1,
+        definitions:[{type:'tool_trait',id:'soldering',name:'Soldering'}],
+        objects:[{id:'bench',name:'Powered soldering bench',behavior:'none',
+            tool_traits:[{id:'soldering',tier:1}],
+            crafting_power:{store:'grid',energy_per_work:12500}}]
+    })";
+    const ContentSource source{"powered-presentation", text};
+    Diagnostics diagnostics; auto loaded = LoadContent({&source, 1}, &diagnostics);
+    INFO(FormatDiagnostics(diagnostics).c_str()); REQUIRE(loaded);
+    const auto& content = *loaded;
+    const auto& definition = content.GetObject(content.FindObject("bench"));
+    Server server(PowerContent());
+    auto view = server.View(1);
+    view.stations.clear();
+    StationView station;
+    station.id = 999; station.type = content.FindObject("bench");
+    station.position = {view.player_position.x + 1, view.player_position.z, view.player_position.y};
+    station.enabled = true; station.packing = StationActionOutcome::FixedFixture;
+    view.stations.push_back(station);
+    CHECK(String(StationAvailabilityText(station, definition)) == "idle");
+    const auto withoutMeter = StationPowerText(view, station, definition);
+    CHECK(withoutMeter.find("12500/10000 energy/base work | grid at station") != String::npos);
+    CHECK(withoutMeter.find("meter required") != String::npos);
+
+    view.currentPower.emplace();
+    view.currentPower->grid = PowerGridId{11};
+    view.cells[4].powerGridId = 11;
+    view.cells[5].powerGridId = 22;
+    const auto original = StationPowerText(view, station, definition);
+    CHECK(original.find("station grid: 22") != String::npos);
+    PowerWorkshop workshop; workshop.Open(view);
+    Vector<String> lines; workshop.Describe(view, content, lines);
+    bool stationShown = false, workerGridShown = false;
+    for (const auto& line : lines) {
+        stationShown |= line.find("[idle] | " + original) != String::npos;
+        workerGridShown |= line.find("Worker's current grid: 11") != String::npos;
+    }
+    CHECK(stationShown); CHECK(workerGridShown);
+
+    namespace wire = cataclysmx::network::wire;
+    wire::Writer writer; REQUIRE(writer.View(view));
+    WorldView decoded; wire::Reader reader{{writer.bytes.data(), writer.bytes.size()}};
+    REQUIRE(reader.View(decoded)); REQUIRE(reader.Done());
+    REQUIRE(decoded.stations.size() == 1);
+    CHECK(StationPowerText(decoded, decoded.stations.front(), definition) == original);
+    view.cells[5].powerGridId = 0;
+    CHECK(StationPowerText(view, station, definition).find("station grid: unwired") != String::npos);
+    view.origin.y += 1;
+    CHECK(StationPowerText(view, station, definition).find("outside view") != String::npos);
+    view.origin.y -= 1; view.origin.x += 10;
+    CHECK(StationPowerText(view, station, definition).find("outside view") != String::npos);
+
+    station.worker = 42;
+    CHECK(String(StationAvailabilityText(station, definition)) == "in use");
+    station.worker = 0; station.enabled = false;
+    CHECK(String(StationAvailabilityText(station, definition)) == "disabled");
+    station.broken = true;
+    CHECK(String(StationAvailabilityText(station, definition)) == "broken");
 }
 
 TEST_CASE("Power debug snapshots own geometry and chunk demand counters", "[power][debug]") {

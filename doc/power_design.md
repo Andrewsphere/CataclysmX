@@ -145,10 +145,13 @@ pump remains responsible for ordinary completion callbacks and NPC actions.
 At the maximum representable tick no future interval can be scheduled.
 
 Crafting caps grid-powered slices using `SliceLimit(now)` before calculating work
-and costs. Aggregate all corded tool demands at the actor's current position,
-validate ordinary item payments, then commit without intervening structural
-mutations. Existing item energy accounting still serves non-corded tools. Backpack
-batteries do not join a grid. A craft rechecks position and tools for each slice.
+and costs. Corded items draw at the actor's current position; powered manual
+stations draw at their own positions. Aggregate every grid demand, validate local
+item energy, station claims and forge heat, then commit without intervening
+structural mutations. Check coverage for every endpoint even when its rounded
+charge is zero. Existing item energy accounting still serves non-corded tools.
+Backpack batteries do not join a grid. A craft rechecks positions and providers
+for each new slice; paid work survives disconnection.
 
 ## Save/load and remote activity
 
@@ -176,18 +179,30 @@ enable resynchronizes it. There is **no arbitrary hold cap or timeout**. Generat
 columns and idle machines need not be retained. A held generator also retains
 batteries for autonomous surplus charging.
 
-Held corded tools also need source residency without an autonomous machine hold.
-`CollectPlayerDemand(span<const TileCoord> players, Vector<ColumnCoord>& output)`
-returns sorted unique source columns on the supplied players' grids, using the
-persistent equipment index. World supplies only living, unparked player positions,
-combines these columns with player active demand, compares the requested set on
-each reconciliation, and attributes it to `playerActiveRequests` in DEBUG. No
-empty topology columns or machine-only columns are added. The index deliberately
-does not need runtime handles: unloaded sources must be loaded to inspect charge
-and enabled/broken state. Consequently idle/disabled registered source columns
-may be retained while a player occupies their grid, but cannot actually supply
-power unless enabled, unbroken and active. Moving away releases these player
-dependencies independently of workshop holds.
+Corded tools and reachable powered manual stations also need source residency
+without an autonomous machine hold.
+`CollectConsumerDemand(span<const PowerBounds> areas, Vector<ColumnCoord>& output)`
+clears and fills reusable sorted unique source columns from the persistent
+equipment index for every grid intersecting an area. Intersection uses the actual
+region union, preserving holes. Point consumers can pass degenerate bounds.
+The query neither loads nor pays equipment and knows nothing about crafting.
+
+World supplies an inclusive same-layer square per living, unparked player:
+radius `max(current crafting radius, assigned continuing job's saved radius)`,
+bounded by the existing 0..8 setting. It combines source columns with player
+active demand and attributes them to `playerActiveRequests` in DEBUG. Both live
+reconciliation and staged activation preflight include these areas, incoming
+job snapshots and planned generated coverage before activating chunks. A corrupt
+remote source therefore refuses activation before mutation.
+
+This deliberately conservative square does not test paths or require a selected
+bench: sources must be ready before the first funding attempt. Empty wiring
+columns add no requests. The index needs no runtime handles; unloaded sources
+must be loaded to inspect charge and enabled/broken state. Idle/disabled source
+columns may be retained but only active, enabled, unbroken equipment can supply.
+Moving away or parking releases player dependencies independently of workshop
+holds. A manual bench alone retains no column and performs no offscreen work;
+nonplayer crafting callers remain responsible for residency.
 
 Persistence must cross-validate the global device index against archived typed
 objects before accepting a save: ID/position/role, enabled/broken state, run intent,

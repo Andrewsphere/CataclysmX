@@ -127,7 +127,7 @@ void StripV9ChunkFields(RawDatabase& raw) {
     StripV14Fields(raw);
     raw.Exec("UPDATE chunks SET payload=json_set(payload,"
         "'$.actors',json((SELECT json_group_array(json_remove(value,'$.controller','$.combat','$.wielded_item','$.learning')) FROM json_each(chunks.payload,'$.actors'))),"
-        "'$.objects',json((SELECT json_group_array(json_remove(value,'$.type','$.state')) FROM json_each(chunks.payload,'$.objects'))))");
+        "'$.objects',json((SELECT json_group_array(json_remove(value,'$.type','$.state','$.equipment')) FROM json_each(chunks.payload,'$.objects'))))");
 }
 
 void PopulateV7(const char* path) {
@@ -969,7 +969,9 @@ TEST_CASE("Opening genuine v7 preserves square residency until the first committ
         originalMemory = raw.Text("SELECT payload FROM player_memories");
     }
     SaveDatabase database(TestContent());
-    auto loaded = database.Open(file.path.c_str());
+    Diagnostics diagnostics;
+    auto loaded = database.Open(file.path.c_str(), &diagnostics);
+    INFO(FormatDiagnostics(diagnostics).c_str());
     REQUIRE(loaded);
     CHECK_FALSE(loaded->session.circleResidency);
     CHECK(loaded->session.activeRadius == 0);

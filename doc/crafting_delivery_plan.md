@@ -21,8 +21,8 @@ below identify proposed follow-on slices, not new implemented subsystems.
 - D1 electricity and W1/W2 placed stations/fueled manual work have prior verified
   implementations; evidence remains in their subsystem documents.
 - Ordinary traits, item-powered crafting, skill/knowledge gates, retained inputs
-  and recycling already support substantial manual content. Passive placed traits
-  do not automatically fund electrically powered station work.
+  and recycling already support substantial manual content. M-Bench now funds
+  selected powered placed traits from their station-local grids.
 - Crafting protection uses ordinary accessible tool traits, including existing
   handheld-tool sharing. Correct use during the job is implicit; this is supported
   by existing selection and paid-work mechanics.
@@ -88,7 +88,7 @@ focused verification. API shapes and version numbers belong to its design.
 
 | Slice | Bounded scope | Dependency / completion example |
 | --- | --- | --- |
-| **M-Bench: powered manual stations** | Explicit electrical costs for selected placed manual providers; select funding grid/rate ownership and atomically combine station, handheld and heat costs | Builds on D1/W1/W2. A chosen powered bench pays for useful manual work, including outage, resume and mixed-supply cases |
+| **M-Bench: powered manual stations** | [Implemented contract](powered_manual_stations_design.md): station-local grid costs, provider-owned rates, atomic station/handheld/heat payment and crafting-area source residency | Builds on D1/W1/W2; useful connector production demonstrated with a powered fixture. Shipped station content is selected separately |
 | **M-Skills: split and ceiling** | Per-skill maximum, Cooking/Chemistry split, validation/presentation and deliberate migration of existing progress/references | Required before content uses the separate skill identities. Cooking stops at 5; other default ceilings remain 10; preserve the shared learning model |
 | **W4: selectable grid machines** | Implement the existing single-job reservation, output-capacity, paid-slice and recovery contract after a bounded D3 interface review | Reuses D1 ownership/residency. Demonstrate one selectable input/output conversion, interruption and offscreen completion before extending process types |
 
@@ -213,7 +213,7 @@ Resolve decisions with the first pass that consumes them:
 | --- | --- |
 | Selected provider upgrades, practice products, learning gates and knowledge policy | Authorized in [W3A/W3B](workshop_rosters.md); broader C-Hand distinctions stay with later consumers |
 | Concrete recipe quantities, work/fuel/XP budgets, loot weights and affected-save policy | Authored in W3A/W3B; pacing remains subject to playtesting |
-| Placed electrical-provider funding grid, rate and mixed payment | M-Bench design |
+| Placed electrical-provider funding grid, rate and mixed payment | Implemented in [M-Bench](powered_manual_stations_design.md) |
 | Combined-skill migration and capped learning/content validation | M-Skills design |
 | File/package/schematic storage, compatibility and job access semantics | D3-A/B and W4 interface review |
 | Source access, protection and damaged-hardware recovery outcomes | D3-C/hacking design |

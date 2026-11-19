@@ -2,6 +2,7 @@
 #include "client/lan_profile.h"
 #include "client/text.h"
 #include "client/combat_menu.h"
+#include "client/power_view.h"
 #include "network/network.h"
 
 #include <charconv>
@@ -139,10 +140,12 @@ void PrintCombat(const WorldView& view, const ContentCatalog& content, eastl::st
     if (inspection == "stations") {
         for (const auto& station : view.stations) {
             const auto& definition = content.GetObject(station.type);
-            std::printf("station=%llu name=%s position=%d,%d,%d enabled=%d broken=%d worker=%llu packing=%s\n",
+            std::printf("station=%llu name=%s position=%d,%d,%d enabled=%d broken=%d worker=%llu packing=%s state=%s\n",
                 static_cast<unsigned long long>(station.id), definition.name.c_str(),
                 station.position.x, station.position.z, station.position.y, station.enabled, station.broken,
-                static_cast<unsigned long long>(station.worker), StationActionMessage(station.packing));
+                static_cast<unsigned long long>(station.worker), StationActionMessage(station.packing),
+                StationAvailabilityText(station, definition));
+            if (definition.craftingEnergyPerWork) std::puts(StationPowerText(view, station, definition).c_str());
             if (definition.behavior == ObjectBehaviorKind::Forge) {
                 std::printf("forge=%llu state=%s fuel=%llu/%llu ignition=%llu\n", static_cast<unsigned long long>(station.id),
                     station.forge.ready ? "Ready" : "Cold", static_cast<unsigned long long>(station.forge.fuel),

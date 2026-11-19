@@ -1,12 +1,13 @@
 # M-Bench: powered manual stations
 
-**Status: Proposed gameplay and implementation design; review pending.**
+**Status: Implemented and functionally verified after W3A/W3B.**
 This standalone follow-up builds on [manual crafting](crafting.md),
 [D1 power](power_design.md), [W1/W2 workshops](workshop_design.md) and the
-[delivery plan](crafting_delivery_plan.md). W3A/W3B implementation is a separate,
-concurrent pass. This document defines the next mechanics slice.
+[delivery plan](crafting_delivery_plan.md). This document records the mechanics
+contract; [crafting](crafting.md), [object APIs](objects_api.md) and
+[power](power_design.md) describe the integrated runtime interfaces.
 
-## 1. Recommended contract
+## 1. Contract
 
 A powered bench supplies ordinary crafting traits while a character works.
 Its electricity is another cost of the character's existing manual job.
@@ -35,7 +36,7 @@ belong to a later content review under the accepted Electronics-3 assembly ancho
 
 ## 2. Content and data shape
 
-Propose the existing item spelling for an optional **object** property:
+Use the existing item spelling for an optional **object** property:
 
 ```json5
 {
@@ -50,8 +51,8 @@ Propose the existing item spelling for an optional **object** property:
 }
 ```
 
-This is proposed schema, not content currently supported by the object loader.
-The example ID and rate are illustrative, not a new W3 roster commitment.
+The object loader supports this schema. The example ID and rate are illustrative,
+not a new W3 roster commitment.
 
 Validation:
 
@@ -66,7 +67,7 @@ Validation:
 - Fixed fixtures and W1 packing-backed stations both qualify. Existing packing
   mapping, protected backing item and storage-capacity validation still apply.
 
-Recommended typed addition:
+Typed definition field:
 
 ```cpp
 // In the immutable ObjectDefinition:
@@ -224,7 +225,7 @@ when a reachable bench lies on a different grid whose battery/generator is in an
 unloaded column. Source residency must be ready **before the first funding
 attempt**, not only after a successful station claim.
 
-Recommend a conservative, bounded extension of the existing player-source rule:
+Use a conservative, bounded extension of the existing player-source rule:
 
 1. For each living, unparked player, form an inclusive same-layer square centered
    on the player. Its radius is the larger of the current crafting radius and
@@ -244,7 +245,7 @@ the exact normal checks. The small bounded geometry avoids a new persistent benc
 index or archive-time station/path discovery solely to find source dependencies.
 Empty wiring regions add no column requests; only registered sources do.
 
-Recommended power query:
+Power query:
 
 ```cpp
 void PowerSystem::CollectConsumerDemand(
@@ -300,15 +301,14 @@ zero-rate providers. Old paid work remains paid; any subsequent slice uses the
 loaded catalog's provider rates. Content-upgrade policy still applies to recipe
 input/work changes independently of this mechanics extension.
 
-Assign version changes against the integrated baseline after W3A/W3B lands.
-An additive content property needs loader/fingerprint updates; this proposal does
-not by itself demand a crafting-job, world-generation or network payload bump.
-If implementation adds transported inspection fields, it must deliberately
-version and validate that actual wire change.
+The integrated W3A/W3B baseline needs loader, canonical export and fingerprint
+updates only. Crafting-job, world-generation and network payload versions are
+unchanged. Presentation combines shared catalog rates with existing snapshots;
+it adds no transported inspection fields.
 
-## 8. Implementation handoff and focused evidence
+## 8. Implementation and focused evidence
 
-Likely touchpoints for a later implementation pass:
+Implementation touchpoints:
 
 - Object parsing, `ObjectDefinition`, validation and content fingerprint.
 - `CraftingSystem::Fund`: unique station charges, endpoint coverage, slice limits
@@ -332,17 +332,25 @@ Focused behavioral acceptance cases:
 | Shared presentation | Same rate/connection explanation and refusal behavior in shared UI/headless paths; LAN views remain snapshot-only |
 | Useful operation | A placed powered soldering provider completes existing connector production with observed power debit and outage/resume |
 
-Read-only design references included `crafting_system.cpp`, `crafting_state.h`,
-`object_definition.h`, `power_system.cpp`, World's live/staged power-demand paths,
-and existing power-crafting/workshop tests. No implementation verification is
-claimed by this design.
+The implementation uses station-local grid connections, atomic multi-grid jobs,
+one provider-owned rate, the shared job electrical remainder and conservative
+crafting-area source residency. The useful soldering demonstration uses a test
+fixture with the existing connector recipe. A shipped powered-station roster and
+its acquisition/construction budgets remain a separate content selection.
 
-### Decisions to review
+### Verification
 
-1. **Station-local grid connection**, including atomic multi-grid jobs.
-2. **One provider-owned rate** and the existing shared electrical remainder.
-3. **Conservative crafting-area source residency** to support first use across
-   wiring boundaries without a new station index.
-
-After these choices are accepted, implement M-Bench as its own mechanics pass and
-select its first authored powered station/consumer separately.
+- `win-msvc-debug` and `win-msvc-sdl` builds succeeded.
+- **406 distinct Debug checks passed**, across the 400-test power/crafting,
+  workshop, residency, save/load and network selection, two additional
+  geometry/generated-coverage cases, and focused correction/migration reruns.
+  Two new test setup/expectation mistakes were corrected. The legacy v7 fixture
+  now strips the newer object `equipment` field before testing strict migration.
+- `win-msvc-sdl`: **3/3 passed** (`sdl_frontend_smoke`,
+  `sdl_town_default_smoke`, `sdl_lan_roundtrip`). Debug checks also include
+  headless LAN and terminal render.
+- The soldering fixture completed the existing connector recipe with 200 energy
+  debited, an intervening outage, explicit resume, and ten connectors produced.
+- Focused new coverage is in `power_content_tests.cpp`, `power_crafting_tests.cpp`,
+  `power_tests.cpp`, `power_world_tests.cpp`, `power_frontend_tests.cpp` and
+  `workshop_tests.cpp`. Whitespace checks passed.

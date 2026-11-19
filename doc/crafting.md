@@ -72,11 +72,21 @@ tools pay sequentially and deterministically.
 Tools declaring `crafting_power: {store: 'grid', energy_per_work: ...}` draw from
 the grid at the worker's position, regardless of whether the selected tool is
 carried or otherwise reachable. All distinct grid-tool charges for a slice are
-preflighted together with local stores before any payment. A grid must cover the
-worker even when fractional accounting makes this slice's whole-unit charge zero.
+preflighted together with local stores, selected stations and forge heat before
+any payment. Placed manual providers declaring the same `crafting_power` property
+draw from the grid at **the station's tile**. An unwired worker can use a wired
+bench; a wired worker cannot power an unwired bench. A grid must cover each
+selected grid-powered endpoint even when its whole-unit charge rounds to zero.
 Grid-powered slices stop at the next power-system slice boundary; other crafting
 keeps its usual timing. A paid slice survives disconnection, while a subsequent
 shortage pauses the job until explicitly resumed.
+
+Each distinct selected station is claimed and billed once, even when it supplies
+multiple traits. Nearby unselected stations and protected packing items are not
+billed. All grid demands, including several stations on different grids, share
+one atomic preflight/commit with local energy, heat and ingredient reservation.
+A shortage acquires no new claims, spends nothing and preserves fractional
+balances. An idle powered bench consumes nothing and has no autonomous hold.
 
 Recipes requiring `forge_heat` select one Ready forge for that requirement.
 Cold providers are skipped; no ready provider yields `ColdForge`, while a
@@ -96,12 +106,14 @@ Work is fixed-point in 1/10000 base-work units. Slice timing also retains its
 integer-division residue; a speed change rescales that sub-fixed-point residue
 with integer flooring. Energy rates use `ratioScale` (10000 is one energy per
 base work). One durable job-owned balance, with denominator 100000000, carries
-fractional energy through distinct powered tools in persistent-ID order. Each tool
+fractional energy through distinct powered item tools in persistent-ID order,
+then distinct selected stations in persistent object-ID order. Each provider
 contributes its rate times the funded work, pays the whole units reached at that
 point, and leaves the fractional balance for the next tool/slice. Thus total billed
 energy is the floor of cumulative tool costs, independently of slicing. Integer
 rounding can charge a previous tool's carried fraction to a later tool. This is a
-job accounting policy, not a transfer of stored energy between tools. Separate jobs
+job accounting policy, including across station grids, not a transfer of stored
+energy between providers. Separate jobs
 sharing a tool retain separate balances and still fund in job-ID order.
 
 The balance is independent of tool identities and requirement slots: replacement,
@@ -115,6 +127,14 @@ actor speed means faster work, matching `ActionTicks`; final slices are shortene
 Defaults are radius 1 and 100 ticks. Defaults are administrative runtime policy,
 not session persistence. Jobs snapshot these settings on start/resume and persist
 them, so changing defaults does not change an already funded or continuing job.
+Living, unparked players request registered power sources for every grid
+intersecting their same-layer crafting square. The radius is the larger of the
+current setting and the assigned continuing job's snapshot. This makes remote
+sources ready for the first bench funding attempt across a wiring boundary;
+ordinary reach checks still apply. See [power source residency](power_design.md#save-load-and-remote-activity).
+`CraftingSystem::ConsumerRadius(workerId)` supplies that maximum from the existing
+assigned-job registry, including assignments with no remaining paid ticks.
+World owns consumer-area geometry; PowerSystem only intersects those areas.
 
 ## Scheduling and persistence
 

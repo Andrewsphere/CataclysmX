@@ -1,8 +1,32 @@
 #include "client/power_view.h"
+#include "core/ratio.h"
 #include "power/power_system.h"
 #include <EASTL/algorithm.h>
 
 namespace cataclysmx {
+
+    const char* StationAvailabilityText(const StationView& station, const ObjectDefinition& definition) {
+        if (station.broken) return "broken";
+        if (!station.enabled) return "disabled";
+        if (station.worker) return "in use";
+        return definition.craftingEnergyPerWork ? "idle" : "available";
+    }
+
+    String StationPowerText(const WorldView& view, const StationView& station, const ObjectDefinition& definition) {
+        if (!definition.craftingEnergyPerWork) return {};
+        String text = "Power: " + UnsignedText(definition.craftingEnergyPerWork) + "/" + UnsignedText(ratioScale)
+            + " energy/base work | grid at station";
+        if (!view.currentPower) return text + " | station grid: meter required";
+        const auto x = std::int64_t{station.position.x} - view.origin.x;
+        const auto z = std::int64_t{station.position.z} - view.origin.z;
+        if (station.position.y != view.origin.y || x < 0 || z < 0 || x >= view.width || z >= view.height) {
+            return text + " | station grid: outside view";
+        }
+        const auto index = static_cast<std::size_t>(z * view.width + x);
+        if (index >= view.cells.size()) return text + " | station grid: outside view";
+        const auto grid = view.cells[index].powerGridId;
+        return text + " | station grid: " + (grid ? UnsignedText(grid) : String("unwired"));
+    }
 
     void PowerWorkshop::Open(const WorldView& view) {
         cursor_ = view.player_position; player_ = view.playerId;
@@ -96,8 +120,9 @@ namespace cataclysmx {
             if (!definition) continue;
             String line = definition->name + " #" + UnsignedText(station.id) + " at "
                 + NumberText(station.position.x) + "," + NumberText(station.position.z);
-            line += station.broken ? " [broken]" : !station.enabled ? " [disabled]" : station.worker ? " [in use]" : " [available]";
+            line += String(" [") + StationAvailabilityText(station, *definition) + "]";
             if (station.worker) line += " worker #" + UnsignedText(station.worker);
+            if (definition->craftingEnergyPerWork) line += " | " + StationPowerText(view, station, *definition);
             if (definition->behavior == ObjectBehaviorKind::Forge) {
                 line += String(" | ") + (station.forge.ready ? "Ready" : "Cold") + " | fuel "
                     + UnsignedText(station.forge.fuel) + "/" + UnsignedText(definition->forge.fuelCapacity)
@@ -116,7 +141,7 @@ namespace cataclysmx {
         }
         if (!view.currentPower) { lines.push_back("Carry a grid multimeter to inspect power and coverage."); return; }
         const auto& p = *view.currentPower;
-        lines.push_back("Current grid: " + UnsignedText(p.grid ? p.grid->value : 0) + " | Mains: " + String(p.mainsAvailable ? "available" : "unavailable"));
+        lines.push_back("Worker's current grid: " + UnsignedText(p.grid ? p.grid->value : 0) + " | Mains: " + String(p.mainsAvailable ? "available" : "unavailable"));
         lines.push_back("Battery energy " + UnsignedText(p.batteryEnergy) + "/" + UnsignedText(p.batteryCapacity)
             + " | Generator output " + UnsignedText(p.generatorOutputAvailable));
         lines.push_back("Batteries " + NumberText(p.batteries) + " | Running generators " + NumberText(p.runningGenerators)

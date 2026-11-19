@@ -38,9 +38,9 @@ public:
     eastl::optional<SavedPowerDevice> FindDevice(PersistentId id) const;
     eastl::span<const SavedPowerDevice> Devices() const;
     WorldResult<void> Restore(const SavedPowerState& state, Tick now);
-    // Caller supplies only living, unparked players. Sorted unique source columns;
-    // works from the persistent index even when equipment is not materialized.
-    void CollectPlayerDemand(eastl::span<const TileCoord> players, Vector<ColumnCoord>& output) const;
+    // Exact region-union intersection. Clears/fills reusable sorted unique source
+    // columns from the persistent index, including unmaterialized equipment.
+    void CollectConsumerDemand(eastl::span<const PowerBounds> areas, Vector<ColumnCoord>& output) const;
     void CollectWorkshopDemand(Vector<ColumnCoord>& output) const;
     void CollectWorkshopDebug(Vector<PowerColumnDebug>& output) const;
     void Inspect(TileCoord position, PowerInspection& output) const;

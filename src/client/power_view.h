@@ -5,6 +5,11 @@
 
 namespace cataclysmx {
 
+const char* StationAvailabilityText(const StationView& station, const ObjectDefinition& definition);
+// Catalog rate and meter-gated station coverage from the snapshot only.
+// Passive stations return an empty string.
+String StationPowerText(const WorldView& view, const StationView& station, const ObjectDefinition& definition);
+
 // Value-only workshop state; the same commands work locally and over LAN.
 class PowerWorkshop {
 public:

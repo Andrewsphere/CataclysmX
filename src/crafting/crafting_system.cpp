@@ -85,6 +85,14 @@ bool Nearby(const World& world, TileCoord from, TileCoord to, unsigned radius) {
 
 CraftingSystem::CraftingSystem(World& world) : world_(world) {}
 CraftingSettings CraftingSystem::Settings() const { return settings_; }
+unsigned CraftingSystem::ConsumerRadius(PersistentId worker) const {
+    unsigned radius = settings_.nearbyRadius;
+    for (auto item : assigned_) {
+        const auto* state = State(item);
+        if (state && state->worker == worker) { radius = eastl::max<unsigned>(radius, state->settings.nearbyRadius); }
+    }
+    return radius;
+}
 WorldResult<void> CraftingSystem::SetSettings(CraftingSettings settings) {
     if (!ValidCraftingSettings(settings)) { return eastl::unexpected(WorldError::invalid_request); }
     settings_ = settings; return {};
@@ -382,13 +390,23 @@ CraftingOutcome CraftingSystem::Fund(ActorHandle handle, CraftingJobState& state
     bool gridPowered = false;
     for (const auto& payment : charges_) {
         const auto& definition = world_.GetContent().GetItem(world_.GetItem(payment.item)->type);
-        gridPowered |= definition.craftingGridPower && definition.craftingEnergyPerWork != 0;
+        if (definition.craftingGridPower && definition.craftingEnergyPerWork) {
+            gridPowered = true;
+            if (!world_.Power().GridAt(position)) { return CraftingOutcome::InsufficientEnergy; }
+        }
+    }
+    for (auto id : stations) {
+        const auto* station = world_.GetObject(world_.FindObject(id));
+        if (!content.GetObject(station->type).craftingEnergyPerWork) { continue; }
+        gridPowered = true;
+        // Zero whole-unit charges still require coverage at this provider.
+        if (!world_.Power().GridAt(station->position)) { return CraftingOutcome::InsufficientEnergy; }
     }
     Tick duration = state.settings.maxSliceTicks;
     if (heatRate) { duration = eastl::min<Tick>(duration, 100); }
     if (gridPowered) {
         duration = eastl::min(duration, world_.Power().SliceLimit(world_.GetTick()));
-        if (!duration || !world_.Power().GridAt(position)) { return CraftingOutcome::InsufficientEnergy; }
+        if (!duration) { return CraftingOutcome::InsufficientEnergy; }
     }
     const auto left = std::uint64_t{state.totalWork} * ratioScale - state.work;
     auto work = (duration * workPerTickNumerator + residue) / speed;
@@ -422,6 +440,16 @@ CraftingOutcome CraftingSystem::Fund(ActorHandle handle, CraftingJobState& state
             payment.power = definition.craftingPower;
             payment.energyAfter = energy->energy - static_cast<std::uint32_t>(charge);
         }
+        remainder = numerator % craftingEnergyDenominator;
+    }
+    // Continue the item-ID-ordered electrical balance in object-ID order.
+    // The selected station list is already unique, including multitrait benches.
+    for (auto id : stations) {
+        const auto* station = world_.GetObject(world_.FindObject(id));
+        const auto rate = content.GetObject(station->type).craftingEnergyPerWork;
+        if (!rate) { continue; }
+        const auto numerator = work * rate + remainder;
+        gridDemands_.push_back({station->position, numerator / craftingEnergyDenominator});
         remainder = numerator % craftingEnergyDenominator;
     }
     const eastl::span<const PowerDemand> demands{gridDemands_.data(), gridDemands_.size()};

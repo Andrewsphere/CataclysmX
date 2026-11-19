@@ -285,6 +285,12 @@ DataObject WriteCombatContent(const ContentCatalog& catalog) {
             traits.Append(eastl::move(value));
         }
         entry.Set("tool_traits", eastl::move(traits));
+        if (object.craftingEnergyPerWork) {
+            DataObject power;
+            power.SetString("store", "grid");
+            power.SetUnsigned("energy_per_work", object.craftingEnergyPerWork);
+            entry.Set("crafting_power", eastl::move(power));
+        }
         if (object.packingItem.value) { entry.SetString("packing_item", catalog.GetItem(object.packingItem).id); }
         if (object.capacityVolumeMl) { entry.SetUnsigned("capacity_volume_ml", *object.capacityVolumeMl); }
         switch (object.kind) {

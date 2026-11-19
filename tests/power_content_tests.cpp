@@ -12,7 +12,8 @@ ContentResult<ContentCatalog> LoadPower(eastl::string_view fields,
     eastl::string_view objects = {}, Diagnostics* diagnostics = nullptr) {
     String text = "{format_version:1,definitions:[{type:'item',id:'part',name:'Part',mass_g:1,volume_ml:1";
     if (!fields.empty()) { text += ','; text.append(fields.data(), fields.size()); }
-    text += "},{type:'item',id:'copper_wire',name:'Copper wire',mass_g:200,volume_ml:200}],objects:[";
+    text += "},{type:'item',id:'copper_wire',name:'Copper wire',mass_g:200,volume_ml:200},"
+        "{type:'tool_trait',id:'soldering',name:'Soldering'}],objects:[";
     text.append(objects.data() ? objects.data() : "", objects.size());
     text += "]}";
     const ContentSource source{"power.json5", {text.data(), text.size()}};
@@ -123,6 +124,103 @@ TEST_CASE("Power object schema rejects mismatched configs and invalid fuel refer
         CHECK_FALSE(LoadPower({}, object, &diagnostics).has_value());
         CHECK_FALSE(diagnostics.Empty());
     }
+}
+
+TEST_CASE("Powered manual station schema validates rates traits and behaviors", "[content][power-content]") {
+    constexpr auto passive = "{id:'bench',name:'Bench',behavior:'none',tool_traits:[{id:'soldering',tier:1}]}";
+    const auto baseline = LoadPower({}, passive);
+    REQUIRE(baseline);
+    CHECK(baseline->GetObject(baseline->FindObject("bench")).craftingEnergyPerWork == 0);
+    for (const auto rate : {"1", "10000", "4294967295"}) {
+        String object = "{id:'bench',name:'Bench',behavior:'none',tool_traits:[{id:'soldering',tier:1}],crafting_power:{store:'grid',energy_per_work:";
+        object += rate;
+        object += "}}";
+        const auto loaded = LoadPower({}, object);
+        REQUIRE(loaded);
+        CHECK(ValidObjectDefinition(loaded->GetObject(loaded->FindObject("bench"))));
+        CHECK(network::ContentFingerprint(*baseline) != network::ContentFingerprint(*loaded));
+    }
+    for (const auto power : {"null", "'grid'", "{}", "{store:'grid'}", "{energy_per_work:1}",
+                             "{store:'battery',energy_per_work:1}", "{store:'grid',energy_per_work:0}",
+                             "{store:'grid',energy_per_work:-1}", "{store:'grid',energy_per_work:1.5}",
+                             "{store:'grid',energy_per_work:4294967296}", "{store:'grid',energy_per_work:true}",
+                             "{store:'grid',energy_per_work:1,extra:1}",
+                             "{store:'grid',store:'grid',energy_per_work:1}",
+                             "{store:'grid',energy_per_work:1,energy_per_work:2}"}) {
+        INFO(power);
+        String object = "{id:'bench',name:'Bench',behavior:'none',tool_traits:[{id:'soldering',tier:1}],crafting_power:";
+        object += power;
+        object += '}';
+        Diagnostics diagnostics;
+        CHECK_FALSE(LoadPower({}, object, &diagnostics));
+        CHECK_FALSE(diagnostics.Empty());
+    }
+    for (const auto object : {
+        "{id:'bench',name:'Bench',behavior:'none',crafting_power:{store:'grid',energy_per_work:1}}",
+        "{id:'bench',name:'Bench',behavior:'none',tool_traits:[],crafting_power:{store:'grid',energy_per_work:1}}",
+        "{id:'bench',name:'Bench',behavior:'grid_battery',crafting_power:{store:'grid',energy_per_work:1}}",
+        "{id:'bench',name:'Bench',behavior:'generator',crafting_power:{store:'grid',energy_per_work:1}}",
+        "{id:'bench',name:'Bench',behavior:'crafting_machine',crafting_power:{store:'grid',energy_per_work:1}}",
+        "{id:'bench',name:'Bench',behavior:'forge',crafting_power:{store:'grid',energy_per_work:1}}"}) {
+        INFO(object);
+        CHECK_FALSE(LoadPower({}, object));
+    }
+    auto invalid = baseline->GetObject(baseline->FindObject("bench"));
+    invalid.craftingEnergyPerWork = 1;
+    CHECK(ValidObjectDefinition(invalid));
+    invalid.behavior = ObjectBehaviorKind::Forge;
+    CHECK_FALSE(ValidObjectDefinition(invalid));
+    invalid.behavior = ObjectBehaviorKind::None;
+    invalid.toolTraits = {};
+    CHECK_FALSE(ValidObjectDefinition(invalid));
+}
+
+TEST_CASE("Powered stations preserve the four trait limit", "[content][power-content]") {
+    constexpr ContentSource four{"four.json5", R"({format_version:1,definitions:[
+        {type:'tool_trait',id:'a',name:'A'},{type:'tool_trait',id:'b',name:'B'},
+        {type:'tool_trait',id:'c',name:'C'},{type:'tool_trait',id:'d',name:'D'},
+        {type:'tool_trait',id:'e',name:'E'}
+    ],objects:[{id:'bench',name:'Bench',behavior:'none',crafting_power:{store:'grid',energy_per_work:1},
+        tool_traits:[{id:'a',tier:1},{id:'b',tier:1},{id:'c',tier:1},{id:'d',tier:1}]}]})"};
+    constexpr ContentSource five{"five.json5", R"({format_version:1,definitions:[
+        {type:'tool_trait',id:'a',name:'A'},{type:'tool_trait',id:'b',name:'B'},
+        {type:'tool_trait',id:'c',name:'C'},{type:'tool_trait',id:'d',name:'D'},
+        {type:'tool_trait',id:'e',name:'E'}
+    ],objects:[{id:'bench',name:'Bench',behavior:'none',crafting_power:{store:'grid',energy_per_work:1},
+        tool_traits:[{id:'a',tier:1},{id:'b',tier:1},{id:'c',tier:1},{id:'d',tier:1},{id:'e',tier:1}]}]})"};
+    CHECK(LoadContent({&four, 1}));
+    CHECK_FALSE(LoadContent({&five, 1}));
+}
+
+TEST_CASE("Powered packing stations export and reload their grid rate", "[content][power-content][content-pack]") {
+    constexpr ContentSource source{"bench.json5", R"({format_version:1,definitions:[
+        {type:'tool_trait',id:'soldering',name:'Soldering'},
+        {type:'item',id:'kit',name:'Kit',mass_g:1,volume_ml:1,placed_object:'bench'}
+    ],objects:[{id:'bench',name:'Bench',behavior:'none',packing_item:'kit',capacity_volume_ml:1,
+        tool_traits:[{id:'soldering',tier:1}],crafting_power:{store:'grid',energy_per_work:4294967295}}]})"};
+    const auto loaded = LoadContent({&source, 1});
+    REQUIRE(loaded);
+    const auto canonical = WriteCombatContent(*loaded);
+    const auto* objects = canonical.Find("objects");
+    REQUIRE(objects);
+    const auto* power = objects->At(0).Find("crafting_power");
+    REQUIRE(power);
+    CHECK(power->GetString("store") == eastl::string_view("grid"));
+    CHECK(power->GetUnsigned("energy_per_work") == UINT32_MAX);
+    DataObject document;
+    document.SetUnsigned("format_version", 1);
+    document.Set("objects", *objects);
+    const auto encoded = EncodeDataObject(document);
+    const ContentSource exported{"exported.json", {encoded.data(), encoded.size()}};
+    constexpr ContentSource definitions{"definitions.json5", R"({format_version:1,definitions:[
+        {type:'tool_trait',id:'soldering',name:'Soldering'},
+        {type:'item',id:'kit',name:'Kit',mass_g:1,volume_ml:1,placed_object:'bench'}
+    ]})"};
+    const ContentSource sources[] = {exported, definitions};
+    const auto roundTrip = LoadContent({sources, 2});
+    REQUIRE(roundTrip);
+    CHECK(roundTrip->GetObject(roundTrip->FindObject("bench")) == loaded->GetObject(loaded->FindObject("bench")));
+    CHECK(network::ContentFingerprint(*roundTrip) == network::ContentFingerprint(*loaded));
 }
 
 TEST_CASE("Power schema participates in item equality and content fingerprint", "[content][power-content][fingerprint]") {

@@ -60,6 +60,7 @@ struct ObjectDefinition {
     LightEmission light{}; // Initial emission, gated by the object's enabled state.
     GeneratorDefinition generator;
     StaticList<TraitRequirement, maxRecipeTraits> toolTraits;
+    std::uint32_t craftingEnergyPerWork = 0; // ratioScale energy per base work; zero is passive.
     ItemTypeId packingItem{}; // Protected original equipment; zero denotes a fixed fixture.
     ForgeDefinition forge;
     bool operator==(const ObjectDefinition&) const = default;

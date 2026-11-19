@@ -315,13 +315,40 @@ TEST_CASE("Player grid dependencies include unloaded source columns without any 
     REQUIRE(power.Restore(saved, 0));
     Vector<ColumnCoord> columns;
     power.CollectWorkshopDemand(columns); CHECK(columns.empty());
-    const TileCoord players[] = {{0, 0}, {1, 0, 2}, {500, 500}};
-    power.CollectPlayerDemand(players, columns);
+    const PowerBounds areas[] = {{{0, 0}, {0, 0}}, {{1, 0, 2}, {1, 0, 2}}, {{500, 500}, {500, 500}}};
+    power.CollectConsumerDemand(areas, columns);
     REQUIRE(columns.size() == 2);
     CHECK(columns[0] == ColumnCoord{-2, 0});
     CHECK(columns[1] == ColumnCoord{2, 0});
-    power.CollectPlayerDemand({}, columns); CHECK(columns.empty());
+    power.CollectConsumerDemand({}, columns); CHECK(columns.empty());
     CHECK(power.Capture() == saved);
+}
+
+TEST_CASE("Consumer areas intersect exact grid unions including inclusive edges and layers", "[power][residency][geometry]") {
+    auto content = GeometryContent(); World world(content); PowerSystem power(world, 42);
+    Take(power.ExtendBounds({{0, 0}, {15, 0}}));
+    Take(power.ExtendBounds({{0, 1}, {0, 15}})); // L-shaped union, not its bounding box.
+    Take(power.RegisterBuilding({20, 0}, {{20, 0, 1}, {40, 15, 1}}));
+    auto saved = power.Capture();
+    saved.devices.push_back({100, {0, 0}, PowerDeviceKind::Battery, false});
+    saved.devices.push_back({101, {0, 1}, PowerDeviceKind::Generator, false});
+    saved.devices.push_back({102, {33, 0, 1}, PowerDeviceKind::Battery, false});
+    saved.devices.push_back({103, {14, 0}, PowerDeviceKind::Machine, false});
+    REQUIRE(power.Restore(saved, 0));
+    Vector<ColumnCoord> columns{{99, 99}};
+    const PowerBounds hole{{1, 1}, {15, 15}};
+    power.CollectConsumerDemand({&hole, 1}, columns); CHECK(columns.empty());
+    const PowerBounds wrongLayer{{1, 1, -1}, {15, 15, -1}};
+    power.CollectConsumerDemand({&wrongLayer, 1}, columns); CHECK(columns.empty());
+    const PowerBounds areas[] = {
+        {{15, 0}, {16, 1}}, // Last covered tile counts.
+        {{0, 15}, {0, 15}}, // Duplicate source columns are deduplicated.
+        {{40, 15, 1}, {40, 15, 1}}
+    };
+    power.CollectConsumerDemand(areas, columns);
+    REQUIRE(columns.size() == 2);
+    CHECK(columns[0] == ColumnCoord{0, 0}); CHECK(columns[1] == ColumnCoord{2, 0});
+    CHECK(power.Capture() == saved); // Query neither funds nor activates anything.
 }
 
 TEST_CASE("Disabled and broken equipment releases holds while preserving run intent", "[power][residency]") {
