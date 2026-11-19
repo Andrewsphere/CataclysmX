@@ -141,13 +141,21 @@ TEST_CASE("SDL combat history drains serials once across snapshots and character
     CombatEvent event; event.serial = 1; event.kind = CombatEventKind::ActionCommitted;
     view.combatEvents.push_back(event);
     event.serial = 2; event.kind = CombatEventKind::TrainingSuppressed; view.combatEvents.push_back(event);
-    event.serial = 3; event.kind = CombatEventKind::ActorDied; view.combatEvents.push_back(event);
-    cursor.Drain(TestContent(), view, 1, messages); REQUIRE(messages.size() == 2);
+    event.serial = 3; event.kind = CombatEventKind::Strike;
+    event.strike.attacker = 1; event.strike.target = 2; event.strike.outcome = StrikeOutcome::Miss;
+    view.combatEvents.push_back(event);
+    event.serial = 4; view.combatEvents.push_back(event);
+    cursor.Drain(TestContent(), view, 1, messages); REQUIRE(messages.size() == 3);
     for (const auto& message : messages) { history.Add({message.data(), message.size()}); }
-    CHECK(history.Entries()[0].find("no combat XP") != String::npos);
+    REQUIRE(history.Entries().size() == 2);
+    CHECK(history.Entries()[0].text.find("no combat XP") != String::npos);
+    CHECK(history.Entries().back().text.find("#1 -> #2 strike: miss") != String::npos);
+    CHECK(history.Entries().back().count == 2);
     cursor.Drain(TestContent(), view, 1, messages); CHECK(messages.empty());
+    for (const auto& message : messages) { history.Add({message.data(), message.size()}); }
+    CHECK(history.Entries().back().count == 2);
     view.characterId = 50;
-    event.serial = 4; event.kind = CombatEventKind::ArtStudyCompleted; event.learnedArt = false;
+    event.serial = 5; event.kind = CombatEventKind::ArtStudyCompleted; event.learnedArt = false;
     view.combatEvents.push_back(event);
     cursor.Drain(TestContent(), view, 1, messages); REQUIRE(messages.size() == 1);
     CHECK(messages.front().find("failed attempt") != String::npos);

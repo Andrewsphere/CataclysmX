@@ -12,6 +12,7 @@
 
 #include <functional>
 #include <atomic>
+#include <chrono>
 #include <memory>
 
 namespace cataclysmx {
@@ -32,7 +33,9 @@ struct GameplayPresentation {
     String message;
     const MessageHistory* history = nullptr;
     String pending;
+    std::chrono::steady_clock::duration pendingAge{};
     bool interacting = false;
+    bool choosingGrab = false;
     bool enhancedKeyboard = false;
     // Display preference only; never limits authoritative perception or LAN snapshots.
     int viewRadius = 64;

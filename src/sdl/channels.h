@@ -72,6 +72,8 @@ struct SessionSnapshot {
     Settings runtimeSettings;
     Vector<MapItemVisual> mapItems;
     eastl::optional<SaveError> storageError;
+    // The matching reply also carries this error, even if the snapshot arrives first.
+    bool storageErrorFromReply = false;
     SessionMode mode = SessionMode::Local;
     network::ConnectionState connectionState = network::ConnectionState::Disconnected;
     PlayerInputContext input;
@@ -82,6 +84,7 @@ struct SessionSnapshot {
     Vector<network::DiscoveredSession> sessions;
     std::uint64_t statusVersion = 0;
     String status;
+    bool statusForHistory = true;
     eastl::optional<network::NetworkError> networkError;
     eastl::optional<client::ProfileError> profileError;
 };

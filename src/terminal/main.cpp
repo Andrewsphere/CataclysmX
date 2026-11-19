@@ -159,6 +159,15 @@ int main(int argc, char** argv) {
         messageHistory.SetCapacity(settings.Effective().messageHistorySize);
         messageHistory.Add({message.data(), message.size()});
     };
+    const auto RecordResult = [&](const CommandResult& result) {
+        auto feedback = Frontend(localization.ResultText(result));
+        if (ShouldRecordOutcome(result.outcome)) { SetMessage(std::move(feedback)); }
+        else { message = std::move(feedback); }
+    };
+    const auto RecordStorageError = [&](std::string text, SaveError error) {
+        SetMessage(std::move(text) + " (error=" + std::to_string(static_cast<int>(error)) + ")");
+        std::fprintf(stderr, "%s\n", message.c_str());
+    };
     SetMessage(Frontend(GameplayWelcome(localization, settings.Keys())));
     if (auto loaded = profile.Load(profilePath.c_str()); !loaded) {
         profileUsable = false;
@@ -188,7 +197,7 @@ int main(int argc, char** argv) {
         persistedToken = 0;
         connectedAddress = address;
         connectedPort = remotePort;
-        SetMessage("Connecting to " + endpoint + "...");
+        message = "Connecting to " + endpoint + "...";
     };
     if (openLan) {
         cataclysmx::network::HostSettings hostSettings;
@@ -217,6 +226,7 @@ int main(int argc, char** argv) {
     char editing = 0;
     std::string editText, directAddress = joinAddress;
     std::string pending;
+    std::chrono::steady_clock::time_point commandSubmittedAt;
     std::uint64_t pendingSequence = 0;
     std::uint64_t discoveryElapsed = 0;
     bool settingsOpen = false;
@@ -234,7 +244,7 @@ int main(int argc, char** argv) {
     auto SubmitCommand = [&](Command command) {
         if (guest.GetState() == cataclysmx::network::ConnectionState::Connecting
             || guest.GetState() == cataclysmx::network::ConnectionState::Joining) {
-            SetMessage("Waiting for admission."); return false;
+            message = "Waiting for admission."; return false;
         }
         bool accepted = false;
         const std::string actionDescription = [&] {
@@ -266,12 +276,22 @@ int main(int argc, char** argv) {
         }();
         if (guest.GetState() == cataclysmx::network::ConnectionState::Active) {
             const auto submitted = guest.Submit(command);
-            if (submitted) { accepted = true; pendingSequence = *submitted; pending = actionDescription + " #" + std::to_string(*submitted); SetMessage("Sent; awaiting server receipt."); }
+            if (submitted) {
+                accepted = true; pendingSequence = *submitted;
+                pending = actionDescription + " #" + std::to_string(*submitted);
+                commandSubmittedAt = std::chrono::steady_clock::now();
+                message = "Sent; awaiting server receipt.";
+            }
             else { SetMessage(std::string("Input rejected: ") + cataclysmx::network::NetworkErrorMessage(submitted.error())); }
         } else if (host.IsOpen()) {
             const auto submitted = host.QueueLocal(command);
             if (submitted == 0) { SetMessage("Local input buffer is full."); }
-            else { accepted = true; pendingSequence = submitted; pending = actionDescription + " #" + std::to_string(submitted); SetMessage("Action pending."); }
+            else {
+                accepted = true; pendingSequence = submitted;
+                pending = actionDescription + " #" + std::to_string(submitted);
+                commandSubmittedAt = std::chrono::steady_clock::now();
+                message = "Action pending.";
+            }
         } else {
             const auto result = server.Send(command);
             gameplayUi.ItemCommandFinished(result);
@@ -279,11 +299,10 @@ int main(int argc, char** argv) {
                 || result.outcome == Outcome::craft_cancelled || result.outcome == Outcome::study_started
                 || result.outcome == Outcome::study_paused || result.outcome == Outcome::art_study_started
                 || result.outcome == Outcome::art_study_paused || result.outcome == Outcome::character_created;
-            SetMessage(Frontend(localization.ResultText(result)));
+            RecordResult(result);
             if (result.storageError) {
-                SetMessage(Frontend(localization.Text(result.advanced ? "game.autosave_failed" : "game.load_failed"))
-                    + " (error=" + std::to_string(static_cast<int>(*result.storageError)) + ")");
-                std::fprintf(stderr, "%s\n", message.c_str());
+                RecordStorageError(Frontend(localization.Text(result.advanced ? "game.autosave_failed" : "game.load_failed")),
+                    *result.storageError);
             }
         }
         if (accepted) { interacting = false; }
@@ -306,7 +325,9 @@ int main(int argc, char** argv) {
         messageHistory.SetCapacity(settings.Effective().messageHistorySize);
         presentation.history = &messageHistory;
         presentation.message = message.c_str(); presentation.pending = pending.c_str();
-        presentation.interacting = interacting; presentation.enhancedKeyboard = keyboard.Enhanced();
+        if (!pending.empty()) { presentation.pendingAge = std::chrono::steady_clock::now() - commandSubmittedAt; }
+        presentation.interacting = interacting; presentation.choosingGrab = choosingGrab;
+        presentation.enhancedKeyboard = keyboard.Enhanced();
         if (lanOpen) {
             ftxui::Elements rows;
             rows.push_back(ftxui::paragraph(Frontend(localization.Text("game.ui.lan_controls"))));
@@ -377,7 +398,7 @@ int main(int argc, char** argv) {
                     std::fprintf(stderr, "%s\n", message.c_str());
                     profileFailed = true;
                     guest.Disconnect();
-                } else { profile = eastl::move(updated); SetMessage("Reconnect identity saved; joining..."); }
+                } else { profile = eastl::move(updated); message = "Reconnect identity saved; joining..."; }
             }
         }
         if (guest.GetState() == cataclysmx::network::ConnectionState::Active) {
@@ -394,7 +415,10 @@ int main(int argc, char** argv) {
             pending.clear();
         }
         for (const auto& result : guest.TakeResults()) {
-            SetMessage("Receipt #" + std::to_string(result.sequence) + ": " + Frontend(localization.ResultText(result.result)));
+            RecordResult(result.result);
+            if (result.result.storageError) {
+                RecordStorageError("World storage failed", *result.result.storageError);
+            }
             if (result.sequence == pendingSequence && result.result.outcome != cataclysmx::Outcome::queued) {
                 gameplayUi.ItemCommandFinished(result.result); pending.clear();
             }
@@ -406,15 +430,17 @@ int main(int argc, char** argv) {
                 const auto update = host.Pump(delta);
                 for (const auto& result : update.commandResults) {
                     if (result.player == server.GetHostPlayerId()) {
-                        SetMessage(Frontend(localization.ResultText(result.result)));
+                        RecordResult(result.result);
+                        if (result.result.storageError && result.result.storageError != update.storageError) {
+                            RecordStorageError("World storage failed", *result.result.storageError);
+                        }
                         if (result.sequence == pendingSequence && result.result.outcome != cataclysmx::Outcome::queued) {
                             gameplayUi.ItemCommandFinished(result.result); pending.clear();
                         }
                     }
                 }
                 if (update.storageError) {
-                    SetMessage("Autosave/world load failed (error=" + std::to_string(static_cast<int>(*update.storageError)) + ")");
-                    std::fprintf(stderr, "%s\n", message.c_str());
+                    RecordStorageError("Autosave/world load failed", *update.storageError);
                 }
                 if (update.networkError) {
                     SetMessage(std::string("LAN transport: ") + cataclysmx::network::NetworkErrorMessage(*update.networkError));
@@ -469,8 +495,9 @@ int main(int argc, char** argv) {
             interacting = false; lastUpdate = now;
             settingsMenu = CreateSettingsMenu(settings, localization, server, keyboard, localizationDirectory.c_str(), [&] {
                 settingsOpen = false; lastUpdate = std::chrono::steady_clock::now();
-                SetMessage(Frontend(localization.Text(settings.Dirty(SettingsScope::Global) || settings.Dirty(SettingsScope::World)
-                    ? "settings.unsaved" : "settings.title")));
+                if (settings.Dirty(SettingsScope::Global) || settings.Dirty(SettingsScope::World)) {
+                    SetMessage(Frontend(localization.Text("settings.unsaved")));
+                }
             });
             settingsOpen = true; return true;
         }
@@ -551,7 +578,6 @@ int main(int argc, char** argv) {
                 Command command; command.kind = CommandKind::release_grab; SubmitCommand(command);
             } else {
                 choosingGrab = true;
-                SetMessage(Frontend(localization.Text("grab.direction", "Grab where? Choose one of eight directions; Escape cancels.")));
             }
             return true;
         }

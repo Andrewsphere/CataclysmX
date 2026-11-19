@@ -252,22 +252,26 @@ TEST_CASE("Terminal combat serial cursor deduplicates snapshots suppresses commi
     CombatFixture f; MessageHistory history;
     CombatEvent event; event.serial = 1; event.kind = CombatEventKind::ActionCommitted;
     f.view.combatEvents.push_back(event);
-    event.serial = 2; event.kind = CombatEventKind::ActorDied; event.actor = 30;
+    event.serial = 2; event.kind = CombatEventKind::Strike; event.actor = 30;
+    event.strike.attacker = 30; event.strike.target = 15; event.strike.outcome = StrikeOutcome::Miss;
     f.view.combatEvents.push_back(event);
+    event.serial = 3; f.view.combatEvents.push_back(event);
     f.ui.RecordCombatEvents(f.view, CombatContent(), history);
     REQUIRE(history.Entries().size() == 1);
-    CHECK(history.Entries().front() == CombatEventText(event, CombatContent()));
+    CHECK(history.Entries().front().text == CombatEventText(event, CombatContent()));
+    CHECK(history.Entries().front().count == 2);
     ++f.view.revision;
     f.ui.RecordCombatEvents(f.view, CombatContent(), history); CHECK(history.Entries().size() == 1);
-    event.serial = 3; event.actor = 31; f.view.combatEvents.push_back(event);
+    CHECK(history.Entries().front().count == 2);
+    event.serial = 4; event.actor = 31; event.strike.attacker = 31; f.view.combatEvents.push_back(event);
     ++f.view.characterId;
     f.ui.RecordCombatEvents(f.view, CombatContent(), history); CHECK(history.Entries().size() == 1);
-    event.serial = 4; event.actor = 32; f.view.combatEvents.push_back(event);
+    event.serial = 5; event.actor = 32; event.strike.attacker = 32; f.view.combatEvents.push_back(event);
     f.ui.RecordCombatEvents(f.view, CombatContent(), history); REQUIRE(history.Entries().size() == 2);
-    f.ui.ResetItems(); f.view.combatEvents.clear(); event.serial = 1; event.actor = 40;
+    f.ui.ResetItems(); f.view.combatEvents.clear(); event.serial = 1; event.actor = 40; event.strike.attacker = 40;
     f.view.combatEvents.push_back(event);
     f.ui.RecordCombatEvents(f.view, CombatContent(), history); REQUIRE(history.Entries().size() == 3);
-    CHECK(history.Entries().back() == CombatEventText(event, CombatContent()));
+    CHECK(history.Entries().back().text == CombatEventText(event, CombatContent()));
 }
 
 }

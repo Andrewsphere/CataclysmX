@@ -6,33 +6,48 @@ follow the active bindings. All gameplay and menu interaction uses the keyboard.
 
 Set **Message history size** in Settings → Interface, or add
 `message_history_size: 10` to the `settings` object in `settings.json5`.
-The default is 10 messages and the supported range is 1–100. Global and world
+The default is 10 entries and the supported range is 1–100. Global and world
 overrides use the existing settings inheritance and persistence rules.
 
-History is frontend session state. Each posted message is appended, including
-identical consecutive outcomes and multiple replies in one update. Empty
-messages are ignored. Reducing the capacity immediately drops the oldest
-entries; increasing it preserves the remaining entries. History is not saved
-with the world and does not affect simulation or gameplay timing.
+History is frontend session state. Consecutive messages with identical rendered
+text share an entry, shown with a count from the second occurrence onward, for
+example `The way is blocked. ×3`. Empty and filtered messages leave the latest
+group open. Another logged message starts a new group. The capacity counts
+groups. Reducing it drops the oldest entries immediately, and increasing it
+preserves the remaining entries. History has no effect on simulation timing or
+world saves.
+
+Both frontends record meaningful outcomes and actionable failures. Successful
+movement, waiting, queue acknowledgements, and routine startup and menu
+progress stay out of history. Detailed strike events report resolved attacks.
+Windups and combat refusals can have their own entries. Pending actions,
+connection progress, and direction prompts are shown with the relevant live UI.
+For commands submitted by the frontend, the HUD waits 200 ms before showing
+pending or queued feedback. The shared `pendingCommandStatusDelay` applies only
+to presentation.
 
 Messages appear oldest first, with the newest at the bottom. Small windows
 clip older rows while retaining the newest. The terminal reserves at most
-half the gameplay height for history and displays one row per message;
-long messages are clipped horizontally. Interaction direction prompts appear
-after history without replacing it. SDL wraps text within its status panel
-and clips overflow from the top.
+half the gameplay height for history and displays one row per entry, clipping
+long messages horizontally. Interaction and grab direction prompts appear after
+history while active. SDL wraps history in its status panel and clips overflow
+from the top. The SDL grab prompt appears in live status while active.
 
-`MessageHistory` in `client/message_history.h` owns `SmallVector<String, 10>`:
-the default history fits inline, and larger configured histories spill.
-`Add` records an event, `SetCapacity` applies a validated setting, and `Entries`
-returns `eastl::span<const String>` in chronological order. Callers must not
-retain the span or element references across mutations. The small bounded collection keeps
-ownership explicit and avoids allocating a copied list during rendering.
+`MessageHistory` in `client/message_history.h` owns a
+`SmallVector<MessageHistoryEntry, 10>` so the default entry storage fits inline.
+`Add` records an occurrence, `SetCapacity` applies a validated setting, and
+`Entries` borrows an `eastl::span<const MessageHistoryEntry>` in chronological
+order. Use the borrowed entries before the next mutation. Each entry stores text
+and a count so comparisons use the original text. `AppendMessageHistoryEntry`
+adds each formatted entry to a caller-owned buffer and gives both renderers the
+same suffix. `ShouldRecordOutcome` filters typed
+command outcomes before history insertion, so suppression is independent of
+translation. Callers handle storage failures separately from the outcome.
 
 The terminal borrows history through `GameplayPresentation::history`.
 SDL borrows history, key bindings, and localization through `GameplayHud`,
-the final optional `DrawFrame` argument. Both top bars only render labels;
-keyboard input follows the normal action routing.
+an optional `DrawFrame` argument. Both top bars render labels and route keyboard
+input through the ordinary action handlers.
 
 SDL packs the labels into one compact line and omits lower-priority entries
 when needed. Its HUD and contextual windows are described in [SDL UI](sdl_ui.md).
