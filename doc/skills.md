@@ -10,11 +10,13 @@ These are defaults to tune, not a guarantee of shipped activities at every tier.
 The main and FirstHouse packs ship 18 skills: nine noncombat and nine combat
 skills (Melee, Unarmed, Knives, Swords, Clubs & Hammers, Axes, Polearms, Shields
 and Dodge). The starter fabrication chain includes ungated
-level-0 work toward Fabrication 1, a level-1 coil spear recipe available by
-manual or autolearn at level 2, and a level-2 sword recipe. Ungated spear
+level-0 work toward Fabrication 1 (including the tool-free scrap screwdriver),
+a level-1 coil spear recipe available by manual or autolearn at level 2,
+and the workshop sword routes at Fabrication 4. Ungated spear
 disassembly also contributes spear recipe-learning credit. Two distinct manuals
 reference the spear; a reader carries the same information identity as one print
-edition. FirstHouse exposes the manuals through debug spawning. See
+edition. Ordinary generated reading supplies and charged digital carriers offer
+these references; copies share their once-per-character learning identity. See
 [shipped content](skills_content.md#shipped-starter-content) for IDs and details.
 
 ## Progression

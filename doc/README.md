@@ -153,6 +153,10 @@ the API pages document current contracts:
 - [Urban workshop progression plan](urban_workshop_progression.md): implemented grid
   power, fueled workshops, computer information, 3D printing, old/futuristic cities,
   population and reward progression, and coordinated design/implementation passes.
+- [Workshop integration measurements](workshop_integration.md): screwdriver
+  bootstrap, generation probe/report usage, 33-seed acquisition results and stock
+  tuning; [progression audit](workshop_progression_audit.md) for prerequisite,
+  learning, transport and operating budgets.
 - [Digital fabrication design](digital_fabrication_design.md): accepted transferable
   information, persistent machine libraries, job capture and commissioned-batch
   completion learning; first home-printer scope and deferred hacking/extraction.

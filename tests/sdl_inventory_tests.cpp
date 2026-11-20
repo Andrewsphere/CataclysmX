@@ -441,6 +441,7 @@ TEST_CASE("SDL item slice expansion workshop and digital devices render through 
         unsigned workshopRendered = 0;
         unsigned renewableRendered = 0;
         unsigned digitalRendered = 0;
+        unsigned bootstrapRendered = 0;
         for (std::size_t index = 0; index < browser.Frame().matches.size(); ++index) {
             const auto type = browser.Frame().matches[index];
             const auto& item = content.GetItem(type);
@@ -469,8 +470,9 @@ TEST_CASE("SDL item slice expansion workshop and digital devices render through 
             for (const char* id : renewableIds) { renewable |= item.id == id; }
             bool digital = false;
             for (const char* id : digitalIds) { digital |= item.id == id; }
+            const bool bootstrap = item.id == "makeshift_screwdriver";
             CAPTURE(item.id.c_str());
-            if (renewable || digital) { REQUIRE_FALSE(item.art.lines.empty()); }
+            if (renewable || digital || bootstrap) { REQUIRE_FALSE(item.art.lines.empty()); }
             browser.Frame().selected = index;
             browser.Handle({"e"}, keys, content, localization);
             REQUIRE(browser.Frame().screen == ItemBrowserScreen::Examine);
@@ -483,7 +485,8 @@ TEST_CASE("SDL item slice expansion workshop and digital devices render through 
             };
             draw();
             const auto top = SurfaceHash(display.surface);
-            const char* previewVariable = digital ? "CATACLYSMX_DIGITAL_PREVIEW"
+            const char* previewVariable = bootstrap ? "CATACLYSMX_BOOTSTRAP_PREVIEW"
+                : digital ? "CATACLYSMX_DIGITAL_PREVIEW"
                 : renewable ? "CATACLYSMX_RENEWABLE_PREVIEW"
                 : workshop ? "CATACLYSMX_WORKSHOP_PREVIEW"
                 : expansion ? "CATACLYSMX_ITEM_EXPANSION_PREVIEW" : "CATACLYSMX_ITEM_SLICE_PREVIEW";
@@ -496,7 +499,7 @@ TEST_CASE("SDL item slice expansion workshop and digital devices render through 
             frame.examination.art = &item.art;
             frame.examination.scroll = 9999; draw();
             CHECK(frame.examination.scroll >= 0); CHECK(frame.examination.scroll < 9999);
-            if (size.x == 480 && !expansion && !workshop && !renewable && !digital) { CHECK(frame.examination.scroll > 0); }
+            if (size.x == 480 && !expansion && !workshop && !renewable && !digital && !bootstrap) { CHECK(frame.examination.scroll > 0); }
             frame.examination.scroll = 0; draw();
             CHECK(SurfaceHash(display.surface) == top);
             browser.Handle({"Escape"}, keys, content, localization);
@@ -506,6 +509,7 @@ TEST_CASE("SDL item slice expansion workshop and digital devices render through 
             else if (workshop) { ++workshopRendered; }
             else if (renewable) { ++renewableRendered; }
             else if (digital) { ++digitalRendered; }
+            else if (bootstrap) { ++bootstrapRendered; }
             else if (item.id == "workshop_primer_print" || item.id == "salvage_notes_print"
                 || item.id == "workshop_ebook_reader") { ++learningRendered; }
             else if (item.id == "wiring_kit" || item.id == "portable_fuel_generator"
@@ -517,6 +521,7 @@ TEST_CASE("SDL item slice expansion workshop and digital devices render through 
         CHECK(workshopRendered == 22);
         CHECK(renewableRendered == 9);
         CHECK(digitalRendered == 10);
+        CHECK(bootstrapRendered == 1);
         CHECK(learningRendered == 3);
         CHECK(powerRendered == 3);
         CHECK(combatListed == 6);

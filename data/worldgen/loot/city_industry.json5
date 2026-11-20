@@ -46,15 +46,17 @@
   ]},
   // Heavy equipment and long/bulk stock are deliberately ground-only.
   {type:'loot_pool',id:'loot_city_foundry_stock_ground',entries:[
-    {item:'solid_steel_block',weight:6},{item:'spring_steel_bar',weight:5},
+    {item:'solid_steel_block',weight:6},{item:'spring_steel_bar',weight:5,count:{min:2,max:3}},
     {item:'tool_steel_blank',weight:5,count:{min:1,max:2}},
-    {item:'charcoal_charge',weight:5},{item:'refractory_brick',weight:4,count:{min:1,max:4}},
+    {item:'charcoal_charge',weight:5,count:{min:3,max:6}},
+    {item:'refractory_brick',weight:4,count:{min:4,max:8}},
     {item:'smithing_hammer',weight:3},{item:'forging_tongs',weight:4},
     {item:'steel_sheet',weight:4},{item:'copper_sheet',weight:3},
   ]},
   {type:'loot_pool',id:'loot_city_fabrication_stock_ground',entries:[
     {item:'steel_sheet',weight:5},{item:'aluminum_sheet',weight:5},
-    {item:'steel_rod',weight:5},{item:'steel_pipe',weight:4},
+    {item:'steel_rod',weight:5,count:{min:4,max:8}},
+    {item:'steel_pipe',weight:4,count:{min:4,max:8}},
     {item:'tool_steel_blank',weight:4},{item:'appliance_electric_motor',weight:4},
     {item:'water_pump',weight:3},{item:'arc_welder',weight:2},
     {item:'welding_electrode_packet',weight:4},{item:'electrical_lead_set',weight:4},

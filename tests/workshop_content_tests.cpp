@@ -312,6 +312,116 @@ TEST_CASE("W3 shared roster loads in Town and FirstHouse with useful learning an
     }
 }
 
+TEST_CASE("Makeshift screwdriver is a default-known level zero scrap bootstrap",
+    "[workshop][content][screwdriving]") {
+    Rig r;
+    const auto tool = r.content.FindItem("makeshift_screwdriver");
+    const auto scrap = r.content.FindItem("steel_scrap");
+    REQUIRE(tool.value != 0); REQUIRE(scrap.value != 0);
+    const auto& definition = r.content.GetItem(tool);
+    CHECK(definition.massGrams == 90);
+    CHECK(r.content.GetItem(scrap).massGrams == 100);
+    CHECK(Recycler(r.content, tool).value == 0);
+    CHECK(Tier(r.content, definition.toolTraits, "screwdriving") == 1);
+    const auto& recipe = Recipe(r.content, "make_makeshift_screwdriver");
+    CHECK(recipe.enabled); CHECK(recipe.knownByDefault);
+    CHECK(recipe.skills.empty()); CHECK(recipe.toolTraits.Empty());
+    REQUIRE(recipe.inputs.Size() == 1);
+    CHECK(recipe.inputs[0].Item() == scrap);
+    CHECK(recipe.inputs[0].Count() == 1); CHECK_FALSE(recipe.inputs[0].Retained());
+    CHECK(recipe.result.item == tool); CHECK(recipe.result.count == 1); CHECK(recipe.work == 1000);
+    CheckLearning(r.content, recipe, "fabrication", 0);
+    REQUIRE(r.Level("fabrication") == 0);
+    r.Add(scrap);
+    const auto crafted = r.Craft("make_makeshift_screwdriver");
+    REQUIRE(r.world.GetItem(crafted)); CHECK(r.Count(scrap) == 0);
+    const auto target = r.Add("cooling_fan");
+    const auto recycler = r.content.FindRecyclingRecipe("dismantle_cooling_fan");
+    REQUIRE(recycler.value != 0);
+    const auto started = Take(r.world.StartRecycling(r.actor, target, recycler));
+    REQUIRE(started.outcome == CraftingOutcome::Started);
+    r.Finish(started.unfinished);
+    CHECK_FALSE(r.world.GetItem(target));
+    CHECK(r.Find("tiny_electric_motor").value != 0);
+    CHECK(r.world.GetItem(crafted));
+}
+
+TEST_CASE("Ordinary screwdriving salvage accepts either provider and keeps other requirements",
+    "[workshop][content][screwdriving]") {
+    struct Expected { const char* name; const char* retained; const char* skill; };
+    constexpr Expected recipes[] = {
+        {"salvage_retractable_utility_knife", nullptr, nullptr},
+        {"salvage_hand_drill", "adjustable_wrench", nullptr},
+        {"salvage_multimeter", "combination_pliers", nullptr},
+        {"dismantle_toy_robot", "combination_pliers", nullptr},
+        {"dismantle_cooling_fan", nullptr, nullptr},
+        {"dismantle_computer_power_supply", "combination_pliers", "electronics"},
+        {"dismantle_toaster", "combination_pliers", nullptr},
+        {"dismantle_desk_radio", "combination_pliers", nullptr},
+        {"dismantle_workshop_battery_pack", nullptr, nullptr},
+        {"dismantle_makeshift_arc_welder", "combination_pliers", nullptr},
+        {"dismantle_arc_welder", "combination_pliers", nullptr},
+        {"dismantle_welding_mask", nullptr, nullptr},
+        {"dismantle_home_polymer_printer", "combination_pliers", "electronics"}
+    };
+    for (const auto& expected : recipes) {
+        for (const auto provider : {"makeshift_screwdriver", "flathead_screwdriver"}) {
+            INFO("recycler=" << expected.name << " provider=" << provider);
+            Rig r;
+            const auto id = r.content.FindRecyclingRecipe(expected.name); REQUIRE(id.value != 0);
+            const auto& recipe = r.content.GetRecyclingRecipe(id);
+            CHECK(Tier(r.content, recipe.toolTraits, "screwdriving") == 1);
+            CHECK(recipe.toolTraits.Size() <= 4);
+            REQUIRE(recipe.inputs.Size() == (expected.retained ? 1 : 0));
+            if (expected.retained) {
+                CHECK(recipe.inputs[0].Item() == r.content.FindItem(expected.retained));
+                CHECK(recipe.inputs[0].Count() == 1);
+                CHECK(recipe.inputs[0].Retained());
+            }
+            REQUIRE(recipe.skills.size() == (expected.skill ? 1 : 0));
+            if (expected.skill) {
+                CHECK(recipe.skills[0].skill == r.content.FindSkill(expected.skill));
+                CHECK(recipe.skills[0].level == 1);
+            }
+            for (const auto& input : recipe.inputs) {
+                CHECK(input.Item() != r.content.FindItem("flathead_screwdriver"));
+                for (unsigned i = 0; i < input.Count(); ++i) { r.Add(input.Item()); }
+            }
+            for (const auto& skill : recipe.skills) {
+                REQUIRE(r.world.Learning().SetLevel(r.actor, skill.skill, skill.level));
+            }
+            const auto target = r.Add(recipe.target);
+            CHECK(Take(r.world.StartRecycling(r.actor, target, id)).outcome == CraftingOutcome::MissingTools);
+            const auto screwdriver = r.Add(provider);
+            const auto started = Take(r.world.StartRecycling(r.actor, target, id));
+            REQUIRE(started.outcome == CraftingOutcome::Started);
+            r.Finish(started.unfinished);
+            CHECK_FALSE(r.world.GetItem(target)); CHECK(r.world.GetItem(screwdriver));
+        }
+    }
+}
+
+TEST_CASE("Screwdriver salvage still enforces retained tools and skills",
+    "[workshop][content][screwdriving]") {
+    for (const char* name : {"salvage_hand_drill", "dismantle_toy_robot"}) {
+        INFO("recycler=" << name);
+        Rig r;
+        const auto id = r.content.FindRecyclingRecipe(name);
+        REQUIRE(id.value != 0);
+        const auto target = r.Add(r.content.GetRecyclingRecipe(id).target);
+        r.Add("makeshift_screwdriver");
+        CHECK(Take(r.world.StartRecycling(r.actor, target, id)).outcome == CraftingOutcome::MissingTools);
+    }
+    Rig r;
+    const auto id = r.content.FindRecyclingRecipe("dismantle_computer_power_supply");
+    REQUIRE(id.value != 0);
+    const auto target = r.Add(r.content.GetRecyclingRecipe(id).target);
+    r.Add("makeshift_screwdriver");
+    r.Add("combination_pliers");
+    REQUIRE(r.Level("electronics") == 0);
+    CHECK(Take(r.world.StartRecycling(r.actor, target, id)).outcome == CraftingOutcome::MissingSkills);
+}
+
 TEST_CASE("W3 every sword producer requires learned F4 continuous steel and all four forging gates",
     "[workshop][content][w3]") {
     const auto& content = WorkshopContent();

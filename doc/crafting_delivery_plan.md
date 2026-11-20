@@ -244,6 +244,16 @@ with the previous catalog before upgrading, or starting a new world.
 
 ## 7. Remaining decisions and recommended order
 
+**Pass 5 is implemented and measured:** [workshop integration](workshop_integration.md)
+ships the basic screwdriver fallback, thirteen trait-compatible recyclers and
+measured ground-stock tuning. The 33-seed panel covers 388 settlements and 15,441
+sites; [explicit progression bills](workshop_progression_audit.md) distinguish
+one-off construction from the substantially larger repeated-output learning
+schedules. Final Debug integration checks passed 41/41, with SDL/LAN/art checks
+also recorded. The user chose generation/measurement instead of agent
+playthroughs and a fresh-world compatibility policy. Human pacing and expedition
+acceptance remain open before broader progression/hacking.
+
 **Pass 4 is implemented and functionally verified:** I5 and city-specific I6 ship together
 under [the updated city contract](city_identity_design.md#pass-4-implementation-agreement).
 Replace legacy generation without backward-compatibility guarantees; require new

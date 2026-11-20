@@ -1,0 +1,11 @@
+@text-art 1
+@color edge #7A858D
+@color steel #AAB3B5
+@color shine #D0D5D2
+@color grip #788184
+@default steel
+---
+ <edge>╭────────╮
+ <edge>│<grip>╲╲╲╲╲╲╲╲<edge>├───────────────╮
+ <edge>│<shine>────────<edge>┤<steel>═══════════════<shine>│
+ <edge>╰────────╯───────────────╯

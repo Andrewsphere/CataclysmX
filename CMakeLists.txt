@@ -210,6 +210,13 @@ target_compile_definitions(cataclysmx_city_probe PRIVATE
 target_link_libraries(cataclysmx_city_probe PRIVATE cataclysmx_engine)
 cataclysmx_no_exceptions(cataclysmx_city_probe)
 
+# Pure generation/acquisition measurements; deliberately no tooling tests.
+add_executable(cataclysmx_workshop_probe EXCLUDE_FROM_ALL tools/workshop_probe.cpp)
+target_compile_definitions(cataclysmx_workshop_probe PRIVATE
+    CATACLYSMX_CONTENT_PACK="${CMAKE_CURRENT_SOURCE_DIR}/data/content.json5")
+target_link_libraries(cataclysmx_workshop_probe PRIVATE cataclysmx_engine)
+cataclysmx_no_exceptions(cataclysmx_workshop_probe)
+
 # Production combat/scheduler experiments, deliberately outside automated tooling tests.
 add_executable(cataclysmx_combat_experiment EXCLUDE_FROM_ALL tools/combat_experiment.cpp)
 target_compile_definitions(cataclysmx_combat_experiment PRIVATE

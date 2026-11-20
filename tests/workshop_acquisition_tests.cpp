@@ -28,6 +28,17 @@ std::uint32_t PoolMaximum(const ContentCatalog& content, LootPoolId pool, unsign
     return maximum;
 }
 
+bool PoolContainsPool(const ContentCatalog& content, LootPoolId pool, LootPoolId target, unsigned depth = 0) {
+    REQUIRE(depth < maxLootDepth);
+    if (pool == target) { return true; }
+    for (const auto& entry : content.GetLootPool(pool).entries) {
+        if (entry.kind == LootEntryKind::Pool && PoolContainsPool(content, entry.pool, target, depth + 1)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool PopulationContains(const ContentCatalog& content, const PatternPopulation& population, ItemTypeId item) {
     for (const auto& marker : population.loot) {
         if (marker.chance && marker.rolls && marker.destination == LootDestination::Ground
@@ -65,8 +76,18 @@ TEST_CASE("Workshop acquisition sources are placed and ground bounded", "[conten
     INFO(FormatDiagnostics(diagnostics).c_str());
     REQUIRE(loaded);
     const auto& content = *loaded;
-    for (const char* name : {"loot_forging_hardware_ground","loot_forging_workshop_ground",
-             "loot_forging_auto_ground","loot_forging_camping_ground","loot_forging_storage_ground",
+    constexpr const char* bulkPools[] = {
+        "loot_forging_hardware_ground", "loot_forging_workshop_ground",
+        "loot_forging_auto_ground", "loot_forging_camping_ground",
+        "loot_city_foundry_stock_ground", "loot_city_fabrication_stock_ground"
+    };
+    for (const char* name : bulkPools) {
+        INFO("pool=" << name);
+        const auto pool = content.FindLootPool(name);
+        REQUIRE(pool.value);
+        CHECK(PoolMaximum(content, pool) <= 8);
+    }
+    for (const char* name : {"loot_forging_storage_ground",
              "loot_welding_hardware_ground","loot_welding_workshop_ground",
              "loot_workshop_electrical_ground","loot_sunglasses_ground"}) {
         INFO("pool=" << name);
@@ -74,10 +95,44 @@ TEST_CASE("Workshop acquisition sources are placed and ground bounded", "[conten
         REQUIRE(pool.value);
         CHECK(PoolMaximum(content, pool) <= 4);
     }
+    struct BulkCount { const char* pool; const char* item; unsigned min; unsigned max; };
+    constexpr BulkCount counts[] = {
+        {"loot_forging_hardware_ground","charcoal_charge",3,6},
+        {"loot_forging_hardware_ground","refractory_brick",4,8},
+        {"loot_forging_hardware_ground","steel_pipe",4,8},
+        {"loot_forging_workshop_ground","charcoal_charge",3,6},
+        {"loot_forging_workshop_ground","refractory_brick",4,8},
+        {"loot_forging_workshop_ground","steel_pipe",4,8},
+        {"loot_forging_workshop_ground","steel_rod",4,8},
+        {"loot_forging_workshop_ground","spring_steel_bar",2,3},
+        {"loot_forging_auto_ground","spring_steel_bar",2,3},
+        {"loot_forging_camping_ground","charcoal_charge",3,6},
+        {"loot_city_foundry_stock_ground","charcoal_charge",3,6},
+        {"loot_city_foundry_stock_ground","refractory_brick",4,8},
+        {"loot_city_foundry_stock_ground","spring_steel_bar",2,3},
+        {"loot_city_fabrication_stock_ground","steel_pipe",4,8},
+        {"loot_city_fabrication_stock_ground","steel_rod",4,8},
+    };
+    for (const auto& expected : counts) {
+        INFO("pool=" << expected.pool << " item=" << expected.item);
+        const auto pool = content.FindLootPool(expected.pool);
+        const auto item = content.FindItem(expected.item);
+        REQUIRE(pool.value); REQUIRE(item.value);
+        bool found = false;
+        for (const auto& entry : content.GetLootPool(pool).entries) {
+            if (entry.kind != LootEntryKind::Item || entry.item != item) { continue; }
+            CHECK_FALSE(found);
+            found = true;
+            CHECK(entry.count.min == expected.min);
+            CHECK(entry.count.max == expected.max);
+        }
+        CHECK(found);
+    }
     struct Route { const char* site; const char* item; };
     constexpr Route routes[] = {
         {"hardware_store","solid_steel_block"},{"hardware_store","refractory_brick"},
         {"hardware_store","charcoal_charge"},{"sporting_goods_store","charcoal_charge"},
+        {"hardware_store","steel_pipe"},{"workshop","steel_pipe"},{"workshop","steel_rod"},
         {"workshop","solid_steel_block"},{"workshop","refractory_brick"},{"workshop","charcoal_charge"},
         {"workshop","crude_anvil_kit"},{"workshop","fabricated_anvil_kit"},
         {"workshop","forging_tongs"},{"workshop","smithing_hammer"},
@@ -103,7 +158,21 @@ TEST_CASE("Workshop acquisition sources are placed and ground bounded", "[conten
         INFO("FirstHouse item=" << item);
         CHECK(SiteContains(*house, "furnished_house", item));
     }
-    // New child pools never enter a furniture destination, including through shared pools.
+    // Population markers include all layers; inspect every basement variant too.
+    for (std::uint32_t i = 1; i <= content.BuildingPatternCount(); ++i) {
+        const auto& pattern = content.GetBuildingPattern(BuildingPatternId{i});
+        const auto check = [&](const PatternPopulation& population) {
+            for (const auto& marker : population.loot) {
+                if (marker.destination != LootDestination::Furniture) { continue; }
+                for (const char* name : bulkPools) {
+                    INFO("site=" << pattern.id.c_str() << " bulk pool=" << name);
+                    CHECK_FALSE(PoolContainsPool(content, marker.pool, content.FindLootPool(name)));
+                }
+            }
+        };
+        check(pattern.population);
+        for (const auto& basement : pattern.basements) { check(basement.population); }
+    }
     for (const char* site : {"furnished_house","hardware_store","workshop","auto_repair",
              "electronics_store","clothing_store","sporting_goods_store","warehouse"}) {
         const auto& pattern = content.GetBuildingPattern(content.FindBuildingPattern(site));

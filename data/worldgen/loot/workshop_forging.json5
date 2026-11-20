@@ -1,22 +1,28 @@
 {format_version:1, definitions:[
   // Ground only: stock and equipment volumes are not bounded by furniture capacity.
   {type:'loot_pool',id:'loot_forging_hardware_ground',entries:[
-    {item:'solid_steel_block',weight:3},{item:'refractory_brick',weight:5,count:{min:1,max:4}},
-    {item:'charcoal_charge',weight:4},
+    {item:'solid_steel_block',weight:3},{item:'refractory_brick',weight:5,count:{min:4,max:8}},
+    {item:'charcoal_charge',weight:4,count:{min:3,max:6}},
+    {item:'steel_pipe',weight:4,count:{min:4,max:8}},
   ]},
   {type:'loot_pool',id:'loot_forging_workshop_ground',entries:[
-    {item:'solid_steel_block',weight:3},{item:'refractory_brick',weight:4,count:{min:1,max:4}},
-    {item:'charcoal_charge',weight:4},{item:'spring_steel_bar',weight:5},
+    {item:'solid_steel_block',weight:3},{item:'refractory_brick',weight:4,count:{min:4,max:8}},
+    {item:'charcoal_charge',weight:4,count:{min:3,max:6}},
+    {item:'spring_steel_bar',weight:5,count:{min:2,max:3}},
     {item:'tool_steel_blank',weight:4,count:{min:1,max:2}},
-    {item:'forging_tongs',weight:3},{item:'smithing_hammer',weight:2},
+    // Preserve recovered-tool chances alongside the new pipe/rod bundles.
+    {item:'forging_tongs',weight:4},{item:'smithing_hammer',weight:3},
     {item:'crude_anvil_kit',weight:1},{item:'fabricated_anvil_kit',weight:1},
     {item:'wooden_workshop_crate',weight:2},
+    {item:'steel_pipe',weight:4,count:{min:4,max:8}},
+    {item:'steel_rod',weight:4,count:{min:4,max:8}},
   ]},
   {type:'loot_pool',id:'loot_forging_auto_ground',entries:[
-    {item:'spring_steel_bar',weight:5},{item:'tool_steel_blank',weight:2,count:{min:1,max:2}},
+    {item:'spring_steel_bar',weight:5,count:{min:2,max:3}},
+    {item:'tool_steel_blank',weight:2,count:{min:1,max:2}},
   ]},
   {type:'loot_pool',id:'loot_forging_camping_ground',entries:[
-    {item:'charcoal_charge',weight:1},
+    {item:'charcoal_charge',weight:1,count:{min:3,max:6}},
   ]},
   {type:'loot_pool',id:'loot_forging_storage_ground',entries:[
     {item:'wooden_workshop_crate',weight:1},
