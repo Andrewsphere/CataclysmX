@@ -1,6 +1,7 @@
 #include "client/worldgen_debug.h"
 #include "client/localization.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 
@@ -305,6 +306,132 @@ Vector<String> WorldgenDebugDetails(const ContentCatalog& content,
         plan.settlements.size(), plan.buildings.size(), plan.serviceAlleys.size(), plan.urbanMonsters.size());
     lines.push_back(String(buffer));
     return lines;
+}
+
+void WorldgenDebugPreview::Reset() {
+    *this = WorldgenDebugPreview{};
+}
+
+const RegionPlan& WorldgenDebugPreview::Plan(RegionCoord region) {
+    for (const auto& plan : plans_) {
+        if (plan.region == region) { return plan; }
+    }
+    plans_.push_back(GenerateRegionPlan(*content_, seed_, region));
+    ++work_.regions;
+    return plans_.back();
+}
+
+void WorldgenDebugPreview::Select(const ContentCatalog& content, std::uint64_t seed,
+    TileCoord selection, WorldgenDebugLayer layer, int scale, const Localization* localization) {
+    Require(scale >= 1 && scale <= 16 && (scale & (scale - 1)) == 0);
+    (void)WorldgenDebugLayerName(layer);
+    Require(selection.x >= -world_coordinate_limit && selection.x <= world_coordinate_limit
+        && selection.z >= -world_coordinate_limit && selection.z <= world_coordinate_limit);
+    selection.y = 0;
+    if (content_ != &content || seed_ != seed) {
+        Reset();
+        content_ = &content;
+        seed_ = seed;
+    }
+    layer_ = layer;
+    scale_ = scale;
+    if (selection_ != selection || localization_ != localization) {
+        details_ = WorldgenDebugDetails(content, Plan(RegionOf(selection)), selection, localization);
+        ++work_.details;
+        selection_ = selection;
+        localization_ = localization;
+    }
+}
+
+TerminalAppearance WorldgenDebugPreview::Sample(TileRect cell) {
+    ++work_.cells;
+    if (layer_ == WorldgenDebugLayer::Biomes) {
+        const TileCoord center{cell.min.x + (cell.max.x - cell.min.x) / 2,
+            cell.min.z + (cell.max.z - cell.min.z) / 2};
+        const bool woodland = SampleEnvironment(seed_, center).biome == Biome::Woodland;
+        return Glyph(woodland ? 'T' : '.', woodland
+            ? RgbColor{45, 150, 70} : RgbColor{155, 200, 85});
+    }
+    if (layer_ == WorldgenDebugLayer::Terrain) {
+        const auto position = ChunkOf(cell.min);
+        for (const auto& chunk : chunks_) {
+            if (chunk.position == position) {
+                return content_->GetTerrain(chunk.tiles[static_cast<std::size_t>(TileIndex(cell.min))].terrain).appearance;
+            }
+        }
+        const auto& plan = Plan(RegionOf(cell.min));
+        PreviewChunk chunk;
+        chunk.position = position;
+        chunk.tiles = GenerateChunk(*content_, seed_, plan, position);
+        chunks_.push_back(eastl::move(chunk));
+        ++work_.chunks;
+        return content_->GetTerrain(chunks_.back().tiles[static_cast<std::size_t>(TileIndex(cell.min))].terrain).appearance;
+    }
+    return FeatureCell(Plan(RegionOf(cell.min)), layer_, cell);
+}
+
+const WorldgenDebugView& WorldgenDebugPreview::Prepare(int columns, int rows) {
+    Require(content_ && selection_ && columns > 0 && rows > 0);
+    const auto floorCell = [&](int coordinate) {
+        const int quotient = coordinate / scale_;
+        return quotient - (coordinate % scale_ < 0 ? 1 : 0);
+    };
+    const auto bound = [](std::int64_t coordinate) {
+        return static_cast<int>(std::clamp(coordinate, std::int64_t{-world_coordinate_limit},
+            std::int64_t{world_coordinate_limit + 1}));
+    };
+    const std::int64_t left = (std::int64_t{floorCell(selection_->x)} - columns / 2) * scale_;
+    const std::int64_t top = (std::int64_t{floorCell(selection_->z)} - rows / 2) * scale_;
+    const TileRect bounds{{bound(left), bound(top)},
+        {bound(left + std::int64_t{columns} * scale_), bound(top + std::int64_t{rows} * scale_)}};
+    const bool reuse = image_.scale == scale_ && imageLayer_ == layer_;
+
+    // Keep the visible working set plus a one-region/chunk margin for reversing
+    // direction. Evict before generating; never retain references across erasure.
+    const auto firstRegion = RegionOf(bounds.min);
+    const auto lastRegion = RegionOf({bounds.max.x - 1, bounds.max.z - 1});
+    for (std::size_t i = 0; i < plans_.size();) {
+        const auto region = plans_[i].region;
+        if (region.x < firstRegion.x - 1 || region.x > lastRegion.x + 1
+            || region.z < firstRegion.z - 1 || region.z > lastRegion.z + 1) {
+            if (i + 1 != plans_.size()) { plans_[i] = eastl::move(plans_.back()); }
+            plans_.pop_back();
+        } else { ++i; }
+    }
+    const auto firstChunk = ChunkOf(bounds.min);
+    const auto lastChunk = ChunkOf({bounds.max.x - 1, bounds.max.z - 1});
+    for (std::size_t i = 0; i < chunks_.size();) {
+        const auto position = chunks_[i].position;
+        if (position.x < firstChunk.x - 1 || position.x > lastChunk.x + 1
+            || position.z < firstChunk.z - 1 || position.z > lastChunk.z + 1) {
+            if (i + 1 != chunks_.size()) { chunks_[i] = eastl::move(chunks_.back()); }
+            chunks_.pop_back();
+        } else { ++i; }
+    }
+
+    if (reuse && image_.bounds == bounds) { return image_; }
+    scratch_.bounds = bounds;
+    scratch_.scale = scale_;
+    scratch_.width = (bounds.max.x - bounds.min.x + scale_ - 1) / scale_;
+    scratch_.height = (bounds.max.z - bounds.min.z + scale_ - 1) / scale_;
+    scratch_.cells.resize(static_cast<std::size_t>(scratch_.width) * scratch_.height);
+    for (int row = 0; row < scratch_.height; ++row) {
+        for (int column = 0; column < scratch_.width; ++column) {
+            const TileCoord p{bounds.min.x + column * scale_, bounds.min.z + row * scale_};
+            auto& output = scratch_.cells[static_cast<std::size_t>(row) * scratch_.width + column];
+            if (reuse && Contains(image_.bounds, p)) {
+                const int oldColumn = (p.x - image_.bounds.min.x) / scale_;
+                const int oldRow = (p.z - image_.bounds.min.z) / scale_;
+                output = image_.cells[static_cast<std::size_t>(oldRow) * image_.width + oldColumn];
+            } else {
+                output = Sample({p, {Min(p.x + scale_, world_coordinate_limit + 1),
+                    Min(p.z + scale_, world_coordinate_limit + 1)}});
+            }
+        }
+    }
+    eastl::swap(image_, scratch_);
+    imageLayer_ = layer_;
+    return image_;
 }
 
 }

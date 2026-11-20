@@ -229,9 +229,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
     Localization candidateLocalization;
     eastl::optional<std::uint64_t> settingsId;
     bool saveSettings = false, reloadSettings = false, multiplayerSettings = false;
-    RegionPlan debugPlan;
-    WorldgenDebugView debugImage;
-    Vector<String> debugDetails;
+    WorldgenDebugPreview debugPreview;
     WorldgenDebugLayer debugLayer = WorldgenDebugLayer::Roads;
     int debugScale = 8;
     bool debugAi = false, aiNeeded = false, aiValid = false;
@@ -344,14 +342,12 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
         cursor.y = std::clamp(cursor.y,world_min_y,world_max_y);
         ++aiRevision; aiNeeded = true; aiValid = false; frame.detailScroll = 0;
     };
-    const auto rebuildDebug = [&] {
+    const auto refreshDebug = [&] {
         cursor.x = std::clamp(cursor.x,-world_coordinate_limit,world_coordinate_limit);
         cursor.z = std::clamp(cursor.z,-world_coordinate_limit,world_coordinate_limit);
         cursor.y = 0;
         if (snapshot.generationVersion != world_generation_version) { return; }
-        debugPlan = GenerateRegionPlan(content,snapshot.seed,RegionOf(cursor));
-        debugImage = BuildWorldgenDebugView(content,debugPlan,debugLayer,debugScale);
-        debugDetails = WorldgenDebugDetails(content,debugPlan,cursor,&localization);
+        debugPreview.Select(content,snapshot.seed,cursor,debugLayer,debugScale,&localization);
     };
     const auto collectActions = [&] {
         actions.clear();
@@ -502,7 +498,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 || ResolveAction(keys, InputContext::Menu, *key) == InputAction::Accept) { heldKey.Reset(); }
             if (!itemBrowser.IsOpen()) {
                 debugAi = false; frame.scroll = 0; frame.detailScroll = 0;
-                rebuildDebug(); heldKey.Reset();
+                refreshDebug(); heldKey.Reset();
             }
             if (!browserRequest) {
                 if (const auto grant = itemBrowser.TakeGiveRequest()) {
@@ -678,7 +674,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                     return;
                 }
                 if (debugPower) {
-                    if (*action == InputAction::Inspect) { debugPower = false; rebuildDebug(); }
+                    if (*action == InputAction::Inspect) { debugPower = false; refreshDebug(); }
                     else if (*action == InputAction::South || *action == InputAction::DetailsDown) ++frame.scroll;
                     else if (*action == InputAction::North || *action == InputAction::DetailsUp) frame.scroll = std::max(0, frame.scroll - 1);
                     return;
@@ -686,18 +682,18 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 if (*action == InputAction::Inventory) {
                     itemBrowser.Open(content, localization);
                     debugAi = false; ++aiRevision; aiNeeded = false; aiValid = false;
-                    frame.scroll = 0; frame.detailScroll = 0; frame.debugImage = nullptr;
+                    frame.scroll = 0; frame.detailScroll = 0; frame.debugImage = nullptr; frame.worldgenPreview = nullptr;
                     heldKey.Reset(); return;
                 }
                 if (*action == InputAction::Inspect) {
                     debugAi = !debugAi; ++aiRevision; aiNeeded = false; aiValid = false;
                     frame.detailScroll = 0;
                     if (debugAi) { cursor = snapshot.view.player_position; refreshAi(); }
-                    else { rebuildDebug(); }
+                    else { refreshDebug(); }
                     return;
                 }
                 if (*action == InputAction::DetailsDown || *action == InputAction::DetailsUp) {
-                    const auto count = debugAi ? (aiValid ? aiView.details.size() : 0) : debugDetails.size();
+                    const auto count = debugAi ? (aiValid ? aiView.details.size() : 0) : debugPreview.Details().size();
                     frame.detailScroll = std::clamp(frame.detailScroll + (*action == InputAction::DetailsDown ? 1 : -1),
                         0,std::max(0,static_cast<int>(count)-1)); return;
                 }
@@ -732,7 +728,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                     debugLayer = static_cast<WorldgenDebugLayer>(static_cast<unsigned>(*action)-static_cast<unsigned>(InputAction::Layer1)); break;
                 default: return;
                 }
-                frame.detailScroll = 0; rebuildDebug(); return;
+                frame.detailScroll = 0; refreshDebug(); return;
             }
             if (modal.Active() == Screen::Actions) {
                 if (actions.empty()) { modal.BackToTargets(frame.scroll); return; }
@@ -874,7 +870,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
         saveRequest.reset(); reconcileMenu = true;
         ++aiRevision; aiRequestId.reset(); aiNeeded = false; aiValid = false; aiView = {};
         debugPower = false; powerDebugRequest.reset(); powerDebugLines.clear();
-        debugAi = false; debugPlan = {}; debugImage = {}; debugDetails.clear();
+        debugAi = false; debugPreview.Reset();
         mapIdentity.session = generation; ++mapIdentity.viewRevision;
         mapPacket = {}; mapValid = false; playback = {}; animationDeadline.reset();
         multiplayerRendered = false;
@@ -1246,7 +1242,8 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             if (modal.Active() == Screen::Debug) {
                 itemBrowser.Close();
                 debugPower = false; powerDebugLines.clear();
-                debugAi = false; ++aiRevision; aiNeeded = false; aiValid = false; rebuildDebug();
+                debugAi = false; ++aiRevision; aiNeeded = false; aiValid = false;
+                debugPreview.Reset(); refreshDebug();
             }
             if (modal.Active() == Screen::Targets && !snapshot.interactions.empty()) {
                 cursor = snapshot.interactions.front().request.position;
@@ -1747,7 +1744,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 ? ScreenPresentation::Anchored : ScreenPresentation::Large;
             frame.followCursor = modal.Active() == Screen::Examine;
             frame.scrollText = false;
-            frame.cursor.reset(); frame.highlights.clear(); frame.debugImage = nullptr;
+            frame.cursor.reset(); frame.highlights.clear(); frame.debugImage = nullptr; frame.worldgenPreview = nullptr;
             frame.rows.clear(); frame.details.clear(); frame.selected = -1;
             if (modal.Active() == Screen::Options) { optionsUi.Present(store,localization,frame); }
             if (modal.Active() == Screen::Combat) { combatUi.Refresh(content, snapshot.view); combatUi.Present(frame); }
@@ -1890,14 +1887,16 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                     if (snapshot.generationVersion != world_generation_version) { frame.rows.push_back({"Preview unavailable for this generation version"}); }
                     else {
                         frame.title += "\n"; frame.title += WorldgenDebugLayerName(debugLayer);
-                        frame.title += " | Scale "; frame.title += NumberText(debugScale);
+                        frame.title += " | "; frame.title += NumberText(debugScale); frame.title += " tiles/cell";
                         frame.title += " | X "; frame.title += NumberText(cursor.x); frame.title += " Z "; frame.title += NumberText(cursor.z);
                         frame.title += "\nSurface baseline: excludes saved edits and entities";
-                        frame.debugImage = &debugImage; frame.cursor = cursor; frame.details = debugDetails;
+                        frame.worldgenPreview = &debugPreview; frame.cursor = cursor; frame.details = debugPreview.Details();
                     }
                     frame.footer = "p: power/chunks | i: item browser | a: AI inspector | Escape/F11: close\n";
                     frame.footer += WorldgenDebugLegend(debugLayer);
-                    frame.footer += "\nArrows: move | Shift+arrows: region | Home: recenter | 1-5/Tab: layers | +/-: zoom | PgUp/PgDn: details";
+                    frame.footer += "\nArrows: move | Shift+arrows: region | Home: recenter | 1-5/Tab: layers | ";
+                    frame.footer += BindingHint(keys,InputContext::Debug,InputAction::ZoomIn) + ": in | "
+                        + BindingHint(keys,InputContext::Debug,InputAction::ZoomOut) + ": out | PgUp/PgDn: details";
                 }
             }
             const String sessionLabel = snapshot.mode == SessionMode::Host ? "Host :" + UnsignedText(snapshot.hostPort)

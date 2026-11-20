@@ -244,4 +244,175 @@ TEST_CASE("Terrain debug samples match generated chunks including full Unicode a
     }
 }
 
+TEST_CASE("Worldgen preview zoom is centered and globally aligned at negative coordinates", "[client][worldgen-debug]") {
+    WorldgenDebugPreview preview;
+    preview.Select(TestContent(), 42, {-1, -17}, WorldgenDebugLayer::Biomes, 1);
+    const auto fine = preview.Prepare(5, 3);
+    CHECK(fine.bounds == TileRect{{-3, -18}, {2, -15}});
+    CHECK(fine.width == 5);
+    CHECK(fine.height == 3);
+
+    preview.Select(TestContent(), 42, {-1, -17}, WorldgenDebugLayer::Biomes, 8);
+    const auto coarse = preview.Prepare(5, 3);
+    CHECK(coarse.bounds == TileRect{{-24, -32}, {16, -8}});
+    CHECK(coarse.width == fine.width);
+    CHECK(coarse.height == fine.height);
+    CHECK(Contains(coarse.bounds, {-1, -17}));
+}
+
+TEST_CASE("Worldgen preview matches whole-region samples across a region seam", "[client][worldgen-debug]") {
+    constexpr std::uint64_t seed = 42;
+    const auto left = GenerateRegionPlan(TestContent(), seed, {-1, 0});
+    const auto right = GenerateRegionPlan(TestContent(), seed, {0, 0});
+    WorldgenDebugPreview preview;
+    for (const auto layer : layers) {
+        CAPTURE(WorldgenDebugLayerName(layer));
+        const auto leftView = BuildWorldgenDebugView(TestContent(), left, layer, 16);
+        const auto rightView = BuildWorldgenDebugView(TestContent(), right, layer, 16);
+        preview.Select(TestContent(), seed, {-1, 40}, layer, 16);
+        const auto& view = preview.Prepare(4, 2);
+        CHECK(view.bounds == TileRect{{-48, 16}, {16, 48}});
+        for (int row = 0; row < view.height; ++row) {
+            for (int column = 0; column < view.width; ++column) {
+                const TileCoord p{view.bounds.min.x + column * view.scale,
+                    view.bounds.min.z + row * view.scale};
+                CAPTURE(p.x, p.z);
+                CHECK(At(view, p) == At(p.x < 0 ? leftView : rightView, p));
+            }
+        }
+    }
+}
+
+TEST_CASE("Worldgen preview clips world edge cells and samples their clipped centers", "[client][worldgen-debug]") {
+    constexpr int limit = world_coordinate_limit;
+    WorldgenDebugPreview preview;
+    preview.Select(TestContent(), 42, {limit, limit}, WorldgenDebugLayer::Biomes, 16);
+    const auto& view = preview.Prepare(3, 3);
+    CHECK(view.bounds == TileRect{{limit - 16, limit - 16}, {limit + 1, limit + 1}});
+    CHECK(view.width == 2);
+    CHECK(view.height == 2);
+    const bool woodland = SampleEnvironment(42, {limit, limit}).biome == Biome::Woodland;
+    CHECK(At(view, {limit, limit}).symbol == (woodland ? "T" : "."));
+
+    preview.Select(TestContent(), 42, {-limit, -limit}, WorldgenDebugLayer::Biomes, 16);
+    const auto& negative = preview.Prepare(3, 3);
+    CHECK(negative.bounds == TileRect{{-limit, -limit}, {-limit + 32, -limit + 32}});
+    CHECK(negative.width == 2);
+    CHECK(negative.height == 2);
+}
+
+TEST_CASE("Worldgen preview reuses image strips plans and terrain chunks", "[client][worldgen-debug]") {
+    WorldgenDebugPreview preview;
+    preview.Select(TestContent(), 42, {36, 36}, WorldgenDebugLayer::Terrain, 1);
+    const auto first = preview.Prepare(3, 3);
+    const auto initial = preview.Work();
+    CHECK(initial.regions == 1);
+    CHECK(initial.chunks == 1);
+    CHECK(initial.cells == 9);
+    CHECK(initial.details == 1);
+    CHECK(Has(preview.Details(), "Tile=36,36"));
+
+    CHECK(preview.Prepare(3, 3).cells == first.cells);
+    auto work = preview.Work();
+    CHECK(work.regions == initial.regions);
+    CHECK(work.chunks == initial.chunks);
+    CHECK(work.cells == initial.cells);
+    CHECK(work.details == initial.details);
+
+    preview.Select(TestContent(), 42, {37, 36}, WorldgenDebugLayer::Terrain, 1);
+    const auto moved = preview.Prepare(3, 3);
+    work = preview.Work();
+    CHECK(work.cells == initial.cells + 3);
+    CHECK(work.regions == initial.regions);
+    CHECK(work.chunks == initial.chunks);
+    CHECK(work.details == initial.details + 1);
+    CHECK(Has(preview.Details(), "Tile=37,36"));
+    for (int z = 35; z <= 37; ++z) {
+        for (int x = 36; x <= 37; ++x) {
+            CHECK(At(first, {x, z}) == At(moved, {x, z}));
+        }
+    }
+
+    preview.Select(TestContent(), 42, {37, 36}, WorldgenDebugLayer::Roads, 1);
+    preview.Prepare(3, 3);
+    const auto changedLayer = preview.Work();
+    CHECK(changedLayer.cells == work.cells + 9);
+    CHECK(changedLayer.regions == work.regions);
+    CHECK(changedLayer.chunks == work.chunks);
+    CHECK(changedLayer.details == work.details);
+    preview.Select(TestContent(), 42, {37, 36}, WorldgenDebugLayer::Roads, 2);
+    preview.Prepare(3, 3);
+    const auto zoomed = preview.Work();
+    CHECK(zoomed.cells == changedLayer.cells + 9);
+    CHECK(zoomed.regions == changedLayer.regions);
+    CHECK(zoomed.chunks == changedLayer.chunks);
+    CHECK(zoomed.details == changedLayer.details);
+}
+
+TEST_CASE("Worldgen preview reset and seed changes invalidate cached work", "[client][worldgen-debug]") {
+    WorldgenDebugPreview preview;
+    preview.Select(TestContent(), 42, {36, 36}, WorldgenDebugLayer::Terrain, 1);
+    preview.Prepare(3, 3);
+    preview.Select(TestContent(), 43, {36, 36}, WorldgenDebugLayer::Terrain, 1);
+    auto work = preview.Work();
+    CHECK(work.regions == 1);
+    CHECK(work.chunks == 0);
+    CHECK(work.cells == 0);
+    CHECK(work.details == 1);
+    CHECK(Has(preview.Details(), "seed=43"));
+    preview.Prepare(3, 3);
+    work = preview.Work();
+    CHECK(work.chunks == 1);
+    CHECK(work.cells == 9);
+
+    preview.Reset();
+    work = preview.Work();
+    CHECK(work.regions == 0);
+    CHECK(work.chunks == 0);
+    CHECK(work.cells == 0);
+    CHECK(work.details == 0);
+    CHECK(preview.Details().empty());
+    preview.Select(TestContent(), 43, {36, 36}, WorldgenDebugLayer::Terrain, 1);
+    preview.Prepare(3, 3);
+    work = preview.Work();
+    CHECK(work.regions == 1);
+    CHECK(work.chunks == 1);
+    CHECK(work.cells == 9);
+    CHECK(work.details == 1);
+
+    const ContentSource source{"preview-cache.json5", R"({format_version:1,definitions:[
+        {type:'terrain',id:'air',name:'Air',movement:{passable:true},blocks_sight:false,open_space:true,
+         appearance:{symbol:' ',foreground:'white'}},
+        {type:'terrain',id:'floor',name:'Floor',movement:{passable:true},blocks_sight:false,
+         appearance:{symbol:'.',foreground:'white'}},
+        {type:'terrain',id:'wall',name:'Wall',movement:{passable:false},blocks_sight:true,
+         appearance:{symbol:'#',foreground:'white'}}]})"};
+    auto loaded = LoadContent({&source, 1});
+    REQUIRE(loaded.has_value());
+    preview.Select(*loaded, 43, {36, 36}, WorldgenDebugLayer::Terrain, 1);
+    work = preview.Work();
+    CHECK(work.regions == 1);
+    CHECK(work.chunks == 0);
+    CHECK(work.cells == 0);
+    CHECK(work.details == 1);
+    preview.Prepare(3, 3);
+    CHECK(preview.Work().chunks == 1);
+    CHECK(preview.Work().cells == 9);
+}
+
+TEST_CASE("Worldgen preview evicts distant generation data while preserving revisited output", "[client][worldgen-debug]") {
+    WorldgenDebugPreview preview;
+    preview.Select(TestContent(), 42, {36, 36}, WorldgenDebugLayer::Terrain, 1);
+    const auto original = preview.Prepare(3, 3);
+    preview.Select(TestContent(), 42, {4132, 4132}, WorldgenDebugLayer::Terrain, 1);
+    preview.Prepare(3, 3);
+    const auto distant = preview.Work();
+    preview.Select(TestContent(), 42, {36, 36}, WorldgenDebugLayer::Terrain, 1);
+    const auto& returned = preview.Prepare(3, 3);
+    CHECK(returned.bounds == original.bounds);
+    CHECK(returned.cells == original.cells);
+    CHECK(preview.Work().regions == distant.regions + 1);
+    CHECK(preview.Work().chunks == distant.chunks + 1);
+}
+
 }

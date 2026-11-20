@@ -116,11 +116,16 @@ P opens Players using the shared
 binding. The default gameplay save binding is **S** (Shift+s), when a local or
 host save is open. Guests cannot save or change host pacing.
 
-F11 ports the terminal's world-generation preview: arrows pan, Shift+arrows jump a
-region, Home/c recenter, 1–5 or Tab/Shift+Tab select the five layers, +/- zoom,
-and PageUp/PageDown scroll details. Debug is available locally and to hosts, not
+F11 opens a cursor-centered world-generation preview: arrows pan seamlessly
+across regions, Shift+arrows jump a region, Home/c recenter, and 1–5 or
+Tab/Shift+Tab select the five layers. **+** or **=** zooms in, **-** zooms out
+(keypad +/- also work), and PageUp/PageDown scroll details.
+Debug is available locally and to hosts, not
 guests. The surface preview excludes live entities
 and saved edits. Unsupported generation versions show an explicit warning.
+Zoom changes geographic coverage using 1, 2, 4, 8, or 16 tiles per displayed cell;
+symbols stay readable and the selected position remains centered. The title
+shows tiles/cell, and the footer shows the configured zoom bindings.
 
 Within F11, `a` toggles between world generation and the **AI inspector / live
 resident map**. Entering AI mode resets the cursor to the player's actual X, Z,

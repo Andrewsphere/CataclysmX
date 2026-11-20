@@ -435,37 +435,72 @@ bool DrawScreen(SDL_Renderer* renderer, SdlText& text, ScreenFrame& frame,
     int listWidth = clip.w;
     const bool columns = w >= 850 && !frame.details.empty();
     if (columns) { listWidth = clip.w / 2; }
-    if (frame.debugImage) {
-        const auto& image = *frame.debugImage;
+    if (frame.debugImage || frame.worldgenPreview) {
         const int mapHeight = !columns && !frame.details.empty() ? std::max(1,(bodyHeight-8)/2) : bodyHeight;
         const SDL_Rect mapClip{clip.x,y,listWidth,mapHeight};
+        const int previewCell = std::max(8, lineHeight);
+        if (frame.worldgenPreview) {
+            // Odd dimensions keep selection in the central cell. Edge cells
+            // may be partly clipped, but no offscreen region image is built.
+            frame.debugImage = &frame.worldgenPreview->Prepare(
+                std::max(1, (listWidth + previewCell - 1) / previewCell) | 1,
+                std::max(1, (mapHeight + previewCell - 1) / previewCell) | 1);
+        }
+        const auto& image = *frame.debugImage;
         if (!SDL_SetRenderClipRect(renderer,&mapClip)) { return false; }
-        const float cell = std::min(static_cast<float>(listWidth) / std::max(1,image.width),
-            static_cast<float>(mapHeight) / std::max(1,image.height));
+        const float cell = frame.worldgenPreview ? static_cast<float>(previewCell)
+            : std::min(static_cast<float>(listWidth) / std::max(1,image.width),
+                static_cast<float>(mapHeight) / std::max(1,image.height));
+        const bool hasCursor = frame.cursor && Contains(image.bounds, *frame.cursor);
+        const int cursorColumn = hasCursor ? (frame.cursor->x - image.bounds.min.x) / image.scale : 0;
+        const int cursorRow = hasCursor ? (frame.cursor->z - image.bounds.min.z) / image.scale : 0;
+        const float originX = frame.worldgenPreview && hasCursor
+            ? mapClip.x + mapClip.w / 2.0f - (cursorColumn + 0.5f) * cell : static_cast<float>(left + 8);
+        const float originY = frame.worldgenPreview && hasCursor
+            ? mapClip.y + mapClip.h / 2.0f - (cursorRow + 0.5f) * cell : static_cast<float>(y);
+        const bool glyph = cell >= 8;
         for (int z = 0; z < image.height; ++z) {
             for (int x = 0; x < image.width; ++x) {
                 const auto& appearance = image.cells[static_cast<std::size_t>(z * image.width + x)];
-                SDL_FRect box{left + 8 + x * cell, y + z * cell, cell, cell};
-                const bool glyph = cell >= 8;
+                SDL_FRect box{originX + x * cell, originY + z * cell, cell, cell};
                 const auto color = glyph || appearance.background != RgbColor{}
                     ? appearance.background : appearance.foreground;
                 if (!SDL_SetRenderDrawColor(renderer, color.red, color.green, color.blue, 255)
                     || !SDL_RenderFillRect(renderer, &box)) { return false; }
-                if (glyph) {
-                    if (!text.Draw(7,"M",-10000,-10000,normal)) { return false; }
-                    const float scale = cell / std::max(1,text.Height(7));
-                    const SDL_Rect glyphClip{static_cast<int>(box.x/scale),static_cast<int>(box.y/scale),
-                        static_cast<int>(cell/scale)+1,static_cast<int>(cell/scale)+1};
+            }
+        }
+        if (glyph) {
+            const float scale = cell / lineHeight;
+            if (!SDL_SetRenderScale(renderer,uiScale*scale,uiScale*scale)) { return false; }
+            for (int z = 0; z < image.height; ++z) {
+                for (int x = 0; x < image.width; ++x) {
+                    const auto& appearance = image.cells[static_cast<std::size_t>(z * image.width + x)];
+                    if (appearance.symbol.empty() || appearance.symbol == " ") { continue; }
+                    const float cellX = originX + x * cell, cellY = originY + z * cell;
+                    const float minX = std::max(cellX, static_cast<float>(mapClip.x));
+                    const float minY = std::max(cellY, static_cast<float>(mapClip.y));
+                    const float maxX = std::min(cellX + cell, static_cast<float>(mapClip.x + mapClip.w));
+                    const float maxY = std::min(cellY + cell, static_cast<float>(mapClip.y + mapClip.h));
+                    if (minX >= maxX || minY >= maxY) { continue; }
+                    const SDL_Rect glyphClip{static_cast<int>(minX/scale),static_cast<int>(minY/scale),
+                        std::max(1,static_cast<int>((maxX-minX)/scale)),
+                        std::max(1,static_cast<int>((maxY-minY)/scale))};
+                    // Reuse the bounded glyph slots already used for text art.
+                    // Unlike slot 7 alternating "M"/symbol, repeated glyphs keep
+                    // their text layout across cells and frames.
+                    unsigned hash = 2166136261U;
+                    for (const unsigned char byte : appearance.symbol) { hash = (hash ^ byte) * 16777619U; }
                     const auto fg = appearance.foreground;
-                    if (!SDL_SetRenderScale(renderer,uiScale*scale,uiScale*scale) || !SDL_SetRenderClipRect(renderer,&glyphClip)
-                        || !text.Draw(7,appearance.symbol.c_str(),box.x/scale+3,box.y/scale,{fg.red,fg.green,fg.blue,255})
-                        || !SDL_SetRenderScale(renderer,uiScale,uiScale) || !SDL_SetRenderClipRect(renderer,&mapClip)) { return false; }
-                }
-                if (frame.cursor && (frame.cursor->x - image.bounds.min.x) / image.scale == x
-                    && (frame.cursor->z - image.bounds.min.z) / image.scale == z) {
-                    if (!SDL_SetRenderDrawColor(renderer,255,255,255,255) || !SDL_RenderRect(renderer,&box)) { return false; }
+                    if (!SDL_SetRenderClipRect(renderer,&glyphClip)
+                        || !text.Draw(256 + hash % 64,appearance.symbol.c_str(),cellX/scale+2,cellY/scale,
+                            {fg.red,fg.green,fg.blue,255})) { return false; }
                 }
             }
+            if (!SDL_SetRenderScale(renderer,uiScale,uiScale) || !SDL_SetRenderClipRect(renderer,&mapClip)) { return false; }
+        }
+        if (hasCursor) {
+            const SDL_FRect box{originX + cursorColumn * cell, originY + cursorRow * cell, cell, cell};
+            if (!SDL_SetRenderDrawColor(renderer,255,255,255,255) || !SDL_RenderRect(renderer,&box)) { return false; }
         }
         if (!columns) { y += mapHeight + 8; }
     } else if (frame.scrollText) {

@@ -54,7 +54,11 @@ eastl::optional<KeyChord> TranslateKey(const SDL_KeyboardEvent& event) {
     if (name) { return KeyChord{String(name), ctrl, alt, shift && event.key != SDLK_TAB}; }
 
     SDL_Keycode key = event.key;
-    if ((event.mod & (SDL_KMOD_SHIFT | SDL_KMOD_CAPS)) && event.scancode != SDL_SCANCODE_UNKNOWN) {
+    if (key == SDLK_KP_PLUS) {
+        key = SDLK_PLUS;
+    } else if (key == SDLK_KP_MINUS) {
+        key = SDLK_MINUS;
+    } else if ((event.mod & (SDL_KMOD_SHIFT | SDL_KMOD_CAPS)) && event.scancode != SDL_SCANCODE_UNKNOWN) {
         key = SDL_GetKeyFromScancode(event.scancode, event.mod & (SDL_KMOD_SHIFT | SDL_KMOD_CAPS), false);
     }
     if (key < 32 || (key >= 127 && key <= 159) || key > 0x10ffff || (key >= 0xd800 && key <= 0xdfff)) {

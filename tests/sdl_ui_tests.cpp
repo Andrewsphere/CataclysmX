@@ -12,6 +12,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <thread>
 
@@ -424,6 +425,163 @@ TEST_CASE("SDL anchored windows wait for nonempty body text", "[sdl][ui][render]
     frame.rows = {{"Tile description"}};
     REQUIRE(DrawScreen(display.renderer, text, frame, 480, 360, &view, 32, 32, 0, 1));
     CHECK(text.Height(8) > 0);
+}
+
+TEST_CASE("SDL worldgen viewport zoom and seam pan preserve the centered cursor", "[sdl][ui][render][worldgen]") {
+    WorldgenDebugPreview preview;
+    int previousWidth = 0, previousHeight = 0;
+    for (const auto output : {SDL_Point{480, 360}, SDL_Point{1120, 780}, SDL_Point{1440, 900}, SDL_Point{1600, 1200}}) {
+        const float uiScale = output.x == 1600 ? 2.0f : output.x == 1440 ? 1.5f : 1.0f;
+        Display display(output.x, output.y); REQUIRE(display.renderer);
+        SdlText text(display.renderer, nullptr, 14); REQUIRE(text.Ready());
+        ScreenFrame frame; frame.visible = true;
+        frame.title = "World generation"; frame.footer = "Zoom and pan";
+        frame.worldgenPreview = &preview;
+
+        const auto draw = [&](TileCoord selection, int scale) {
+            preview.Select(TestContent(), 42, selection, WorldgenDebugLayer::Biomes, scale);
+            frame.cursor = selection;
+            frame.details = preview.Details();
+            REQUIRE(SDL_SetRenderDrawColor(display.renderer, 0, 0, 0, 255));
+            REQUIRE(SDL_RenderClear(display.renderer));
+            REQUIRE(DrawScreen(display.renderer, text, frame, output.x, output.y, nullptr, 32, 32, 0, uiScale));
+            REQUIRE(SDL_RenderPresent(display.renderer));
+            REQUIRE(frame.debugImage);
+        };
+        const auto cursorBounds = [&] {
+            int left = output.x, top = output.y, right = -1, bottom = -1;
+            for (int y = 0; y < output.y; ++y) {
+                for (int x = 0; x < output.x; ++x) {
+                    Uint8 r, g, b, a;
+                    REQUIRE(SDL_ReadSurfacePixel(display.surface, x, y, &r, &g, &b, &a));
+                    if (r == 255 && g == 255 && b == 255) {
+                        left = std::min(left, x); top = std::min(top, y);
+                        right = std::max(right, x); bottom = std::max(bottom, y);
+                    }
+                }
+            }
+            REQUIRE(right >= left); REQUIRE(bottom >= top);
+            return SDL_Rect{left, top, right - left + 1, bottom - top + 1};
+        };
+        const TileCoord west{-1, 40}, east{0, 40};
+        draw(west, 1);
+        const auto fine = *frame.debugImage;
+        const auto cursor = cursorBounds();
+        const int w = static_cast<int>(output.x / uiScale), h = static_cast<int>(output.y / uiScale);
+        const auto geometry = MakeGameplayLayout(output.x, output.y, 1, 1, 32, 32, 0, uiScale, {}, text.LineHeight());
+        const int clipHeight = h - geometry.topBar.h - 16;
+        const int titleHeight = std::min(text.Height(8), std::max(text.LineHeight(), clipHeight / 3));
+        const int footerHeight = std::min(text.Height(9), std::max(text.LineHeight(), clipHeight / 3));
+        const int mapTop = geometry.topBar.h + titleHeight + 16;
+        const int footerTop = std::max(mapTop, h - footerHeight - 16);
+        const int bodyHeight = std::max(1, footerTop - mapTop - 8);
+        const bool columns = w >= 850;
+        const int mapWidth = columns ? (w - 28) / 2 : w - 28;
+        const int mapHeight = columns ? bodyHeight : std::max(1, (bodyHeight - 8) / 2);
+        CHECK(std::abs((cursor.x + cursor.w / 2.0f) - (14 + mapWidth / 2.0f) * uiScale) <= uiScale);
+        CHECK(std::abs((cursor.y + cursor.h / 2.0f) - (mapTop + mapHeight / 2.0f) * uiScale) <= uiScale);
+        CHECK(fine.width > 1); CHECK(fine.height > 1);
+        CHECK(fine.width % 2 == 1); CHECK(fine.height % 2 == 1);
+        CHECK(Contains(fine.bounds, west));
+        if (previousWidth) {
+            CHECK((fine.width != previousWidth || fine.height != previousHeight));
+        }
+        previousWidth = fine.width; previousHeight = fine.height;
+
+        for (const int scale : {8, 16, 1}) {
+            draw(west, scale);
+            const auto& image = *frame.debugImage;
+            CHECK(image.scale == scale);
+            CHECK(image.width == fine.width); CHECK(image.height == fine.height);
+            CHECK(image.bounds.max.x - image.bounds.min.x == fine.width * scale);
+            CHECK(image.bounds.max.z - image.bounds.min.z == fine.height * scale);
+            const auto actual = cursorBounds();
+            CHECK(actual.x == cursor.x); CHECK(actual.y == cursor.y);
+            CHECK(actual.w == cursor.w); CHECK(actual.h == cursor.h);
+        }
+        draw(east, 1);
+        CHECK(RegionOf(west) != RegionOf(east));
+        CHECK(Contains(frame.debugImage->bounds, east));
+        const auto moved = cursorBounds();
+        CHECK(moved.x == cursor.x); CHECK(moved.y == cursor.y);
+        CHECK(moved.w == cursor.w); CHECK(moved.h == cursor.h);
+        const TileCoord edge{world_coordinate_limit, world_coordinate_limit};
+        draw(edge, 16);
+        CHECK(Contains(frame.debugImage->bounds, edge));
+        CHECK(frame.debugImage->bounds.max.x == world_coordinate_limit + 1);
+        CHECK(frame.debugImage->bounds.max.z == world_coordinate_limit + 1);
+        const auto edgeCursor = cursorBounds();
+        CHECK(edgeCursor.x == cursor.x); CHECK(edgeCursor.y == cursor.y);
+        CHECK(edgeCursor.w == cursor.w); CHECK(edgeCursor.h == cursor.h);
+    }
+}
+
+TEST_CASE("SDL worldgen viewport clips edge glyphs away from details and footer", "[sdl][ui][render][worldgen]") {
+    const ContentSource source{"debug-clipping.json5", R"({format_version:1,definitions:[
+        {type:'terrain',id:'air',name:'Air',movement:{passable:true},blocks_sight:false,open_space:true,
+         appearance:{symbol:'\u754c',foreground:'#ff00ff',background:'#0000ff'}},
+        {type:'terrain',id:'floor',name:'Floor',movement:{passable:true},blocks_sight:false,
+         appearance:{symbol:'\u754c',foreground:'#ff00ff',background:'#0000ff'}},
+        {type:'terrain',id:'wall',name:'Wall',movement:{passable:false},blocks_sight:true,
+         appearance:{symbol:'\u754c',foreground:'#ff00ff',background:'#0000ff'}}]})"};
+    auto content = LoadContent({&source, 1});
+    REQUIRE(content.has_value());
+    for (const auto output : {SDL_Point{480, 360}, SDL_Point{1120, 780}, SDL_Point{1440, 900}, SDL_Point{1600, 1200}}) {
+        const float uiScale = output.x == 1600 ? 2.0f : output.x == 1440 ? 1.5f : 1.0f;
+        Display display(output.x, output.y); REQUIRE(display.renderer);
+        SdlText text(display.renderer, nullptr, 14); REQUIRE(text.Ready());
+        WorldgenDebugPreview preview;
+        ScreenFrame frame; frame.visible = true; frame.worldgenPreview = &preview;
+        frame.title = "World generation"; frame.footer = "Zoom and pan";
+        const TileCoord selection{36, 36};
+        const auto draw = [&](WorldgenDebugLayer layer, int scale) {
+            preview.Select(*content, 42, selection, layer, scale);
+            frame.cursor = selection; frame.details = preview.Details();
+            REQUIRE_FALSE(frame.details.empty());
+            REQUIRE(SDL_SetRenderDrawColor(display.renderer, 0, 0, 0, 255));
+            REQUIRE(SDL_RenderClear(display.renderer));
+            REQUIRE(DrawScreen(display.renderer, text, frame, output.x, output.y, nullptr, 32, 32, 0, uiScale));
+            REQUIRE(SDL_RenderPresent(display.renderer));
+            REQUIRE(frame.debugImage);
+        };
+        draw(WorldgenDebugLayer::Biomes, 1);
+        const int w = static_cast<int>(output.x / uiScale), h = static_cast<int>(output.y / uiScale);
+        const auto geometry = MakeGameplayLayout(output.x, output.y, 1, 1, 32, 32, 0, uiScale, {}, text.LineHeight());
+        const int clipWidth = w - 28;
+        const int titleHeight = std::min(text.Height(8), std::max(text.LineHeight(), (h - geometry.topBar.h - 16) / 3));
+        const int y = geometry.topBar.h + titleHeight + 16;
+        const int footerHeight = std::min(text.Height(9), std::max(text.LineHeight(), (h - geometry.topBar.h - 16) / 3));
+        const int footerY = std::max(y, h - footerHeight - 16);
+        const int bodyHeight = std::max(1, footerY - y - 8);
+        const bool columns = w >= 850;
+        const SDL_Rect map{14, y, columns ? clipWidth / 2 : clipWidth,
+            columns ? bodyHeight : std::max(1, (bodyHeight - 8) / 2)};
+        Vector<RgbColor> pixels;
+        pixels.reserve(static_cast<std::size_t>(output.x * output.y));
+        for (int py = 0; py < output.y; ++py) {
+            for (int px = 0; px < output.x; ++px) {
+                Uint8 r, g, b, a;
+                REQUIRE(SDL_ReadSurfacePixel(display.surface, px, py, &r, &g, &b, &a));
+                pixels.push_back({r, g, b});
+            }
+        }
+        draw(WorldgenDebugLayer::Terrain, 16);
+        REQUIRE_FALSE(frame.debugImage->cells.empty());
+        CHECK(frame.debugImage->cells.front().symbol == "\xe7\x95\x8c");
+        int changedInside = 0, changedOutside = 0;
+        for (int py = 0; py < output.y; ++py) {
+            for (int px = 0; px < output.x; ++px) {
+                Uint8 r, g, b, a;
+                REQUIRE(SDL_ReadSurfacePixel(display.surface, px, py, &r, &g, &b, &a));
+                if (pixels[static_cast<std::size_t>(py * output.x + px)] == RgbColor{r, g, b}) { continue; }
+                const bool inside = px >= std::floor(map.x * uiScale) && px < std::ceil((map.x + map.w) * uiScale)
+                    && py >= std::floor(map.y * uiScale) && py < std::ceil((map.y + map.h) * uiScale);
+                if (inside) { ++changedInside; } else { ++changedOutside; }
+            }
+        }
+        CHECK(changedInside > 0);
+        CHECK(changedOutside == 0);
+    }
 }
 
 TEST_CASE("SDL HUD and anchored window preview", "[sdl][ui][render]") {

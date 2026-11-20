@@ -85,6 +85,43 @@ TEST_CASE("SDL debug region jumps resolve Shift arrows", "[sdl][input]") {
     }
 }
 
+TEST_CASE("SDL debug zoom resolves keyboard and keypad characters through bindings", "[sdl][input]") {
+    const auto keys = DefaultKeymap();
+    REQUIRE(ValidateKeymap(keys));
+    struct Binding { SDL_Keycode key; SDL_Scancode scan; SDL_Keymod mod; const char* text; InputAction action; };
+    for (const auto binding : {
+        Binding{SDLK_EQUALS, SDL_SCANCODE_EQUALS, SDL_KMOD_SHIFT, "+", InputAction::ZoomIn},
+        {SDLK_EQUALS, SDL_SCANCODE_EQUALS, SDL_KMOD_NONE, "=", InputAction::ZoomIn},
+        {SDLK_MINUS, SDL_SCANCODE_MINUS, SDL_KMOD_NONE, "-", InputAction::ZoomOut},
+        {SDLK_KP_PLUS, SDL_SCANCODE_KP_PLUS, SDL_KMOD_NONE, "+", InputAction::ZoomIn},
+        {SDLK_KP_MINUS, SDL_SCANCODE_KP_MINUS, SDL_KMOD_NONE, "-", InputAction::ZoomOut},
+        {SDLK_KP_PLUS, SDL_SCANCODE_KP_PLUS, SDL_KMOD_SHIFT, "+", InputAction::ZoomIn},
+        {SDLK_KP_MINUS, SDL_SCANCODE_KP_MINUS, SDL_KMOD_SHIFT, "-", InputAction::ZoomOut}}) {
+        const auto chord = sdl::TranslateKey(Key(binding.key, binding.scan, binding.mod));
+        REQUIRE(chord);
+        CHECK(*chord == KeyChord{binding.text});
+        CHECK(ResolveAction(keys, InputContext::Debug, *chord) == binding.action);
+    }
+    const auto altPlus = sdl::TranslateKey(Key(SDLK_KP_PLUS, SDL_SCANCODE_KP_PLUS, SDL_KMOD_ALT));
+    REQUIRE(altPlus);
+    CHECK(*altPlus == KeyChord{"+", false, true});
+    CHECK_FALSE(ResolveAction(keys, InputContext::Debug, *altPlus));
+    CHECK_FALSE(sdl::TranslateKey(Key(SDLK_KP_PLUS, SDL_SCANCODE_KP_PLUS, SDL_KMOD_CTRL)));
+}
+
+TEST_CASE("SDL debug zoom honors custom bindings and claimed equals", "[sdl][input]") {
+    const auto plus = sdl::TranslateKey(Key(SDLK_KP_PLUS)); REQUIRE(plus);
+    const auto equals = sdl::TranslateKey(Key(SDLK_EQUALS)); REQUIRE(equals);
+    const auto custom = ResolveKeymap({{InputContext::Debug, InputAction::ZoomIn, {{"v"}}}}, {});
+    REQUIRE(ValidateKeymap(custom));
+    CHECK_FALSE(ResolveAction(custom, InputContext::Debug, *plus));
+    CHECK_FALSE(ResolveAction(custom, InputContext::Debug, *equals));
+    const auto claimed = ResolveKeymap({{InputContext::Debug, InputAction::Inspect, {{"="}}}}, {});
+    REQUIRE(ValidateKeymap(claimed));
+    CHECK(ResolveAction(claimed, InputContext::Debug, *equals) == InputAction::Inspect);
+    CHECK(ResolveAction(claimed, InputContext::Debug, *plus) == InputAction::ZoomIn);
+}
+
 TEST_CASE("SDL map zoom uses case-sensitive z shortcuts", "[sdl][input]") {
     const SDL_Keymod modifiers[]{SDL_KMOD_NONE, SDL_KMOD_SHIFT, SDL_KMOD_CAPS,
         SDL_KMOD_CAPS | SDL_KMOD_SHIFT};

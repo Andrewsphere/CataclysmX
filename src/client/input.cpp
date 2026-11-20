@@ -204,7 +204,7 @@ Keymap DefaultKeymap() {
     add(debug, InputAction::Recenter, {"Home", "c"});
     add(debug, InputAction::Layer1, {"1"}); add(debug, InputAction::Layer2, {"2"});
     add(debug, InputAction::Layer3, {"3"}); add(debug, InputAction::Layer4, {"4"});
-    add(debug, InputAction::Layer5, {"5"}); add(debug, InputAction::ZoomIn, {"+"});
+    add(debug, InputAction::Layer5, {"5"}); add(debug, InputAction::ZoomIn, {"+", "="});
     add(debug, InputAction::ZoomOut, {"-"}); add(debug, InputAction::Next, {"Tab"});
     add(debug, InputAction::Previous, {"BackTab"});
     add(debug, InputAction::DetailsUp, {"PageUp"}); add(debug, InputAction::DetailsDown, {"PageDown"});
@@ -239,6 +239,7 @@ Keymap ResolveKeymap(const Keymap& global, const Keymap& world) {
                 || binding.action == InputAction::Grab || binding.action == InputAction::Examine || binding.action == InputAction::Northwest
                 || binding.action == InputAction::Northeast || binding.action == InputAction::Southwest || binding.action == InputAction::Southeast
                 || (binding.action == InputAction::Interact && it->key == "e")
+                || (binding.context == InputContext::Debug && binding.action == InputAction::ZoomIn && it->key == "=")
                 || ((binding.action == InputAction::MoveUp || binding.action == InputAction::MoveDown) && it->alt)
                 || ((binding.action == InputAction::JumpWest || binding.action == InputAction::JumpEast
                     || binding.action == InputAction::JumpNorth || binding.action == InputAction::JumpSouth) && it->shift);

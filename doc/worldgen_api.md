@@ -254,7 +254,7 @@ mutate the world.
 
 Controls: arrows move the cursor by the current scale; Shift+arrows move
 by one 256-tile region. Keys 1–5 select Roads, Parcels, Ownership, Biomes, and
-Terrain; Tab and Shift+Tab cycle layers. **+** and **-** adjust scale between 1
+Terrain; Tab and Shift+Tab cycle layers. **+** (or **=**) and **-** adjust scale between 1
 and 16 tiles per displayed cell by powers of two. Home or **c** recenters at the
 player's menu-entry position. PageUp/PageDown browse detail lines. F11, Escape,
 or **q** closes the menu.
@@ -270,6 +270,44 @@ the cell's top-left tile; biome cells use the clipped cell center. Coarse
 roads/parcels/ownership cells aggregate covered tiles so thin features remain
 visible. The FTXUI-specific `CreateWorldgenDebugMenu` factory is in
 `terminal/debug_menu.h` and belongs to the terminal frontend boundary.
+
+### SDL viewport and reuse
+
+SDL uses a cursor-centered geographic viewport rather than fitting a whole
+region into the panel. Symbols retain a readable square cell size based on the
+UI font height. Zoom changes tiles per cell (1, 2, 4, 8, 16); smaller values show
+less terrain in greater detail. Arrows move one displayed cell and the camera
+follows, seamlessly composing adjacent regions. The selected tile stays centered
+when zooming or resizing, including at finite-world edges where outside space is
+blank. Keypad **+/-** work like their main-keyboard equivalents.
+
+`WorldgenDebugPreview` is frontend-owned state in `client/worldgen_debug.h`.
+`Select(content, seed, selection, layer, scale, localization)` refreshes selected
+tile details only when necessary. `Prepare(columns, rows)` returns a reference
+to the preview-owned `DebugMapView` for the measured viewport. Copy it for
+snapshots; do not retain cell references across subsequent preparation,
+selection, or reset calls. The immutable catalog must remain alive through all
+subsequent `Prepare` calls. Localization is only dereferenced during `Select`.
+Callers must `Reset()` when replacing either object in place.
+Catalog identity or seed changes reset automatically. SDL also resets on session
+changes and opening F11.
+
+The preview retains region plans and generated terrain chunks near the viewport,
+with a one-region/one-chunk retention margin for reversing direction. These are
+ordinary vectors with value ownership; their size follows the viewport working
+set rather than distance traveled. Image construction reuses overlapping cells
+and samples only newly exposed strips. Layer/scale changes invalidate image
+samples, while reusing plans and terrain chunks. The global power-of-two sample
+grid divides regions and chunks exactly, including negative coordinates; it
+preserves the whole-region feature priorities and terrain/biome sampling rules.
+`Work()` exposes cumulative generation/sample/detail counts for performance
+diagnostics and reuse regression tests.
+
+The renderer chooses viewport dimensions after measuring title, footer, and
+detail panels. `ScreenFrame::worldgenPreview` borrows the selected preview for
+that draw; `DrawScreen` prepares and renders it at fixed cell size. This keeps SDL
+pixel/layout concerns out of the generation API. Glyph height is measured once,
+and repeated symbols use the existing bounded text-art glyph cache.
 
 Planning and materialization return values; invalid coordinates and violated
 preconditions are programmer errors guarded by assertions. Content loading and

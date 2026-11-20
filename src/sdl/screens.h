@@ -36,6 +36,9 @@ struct ScreenFrame {
     eastl::optional<TileCoord> cursor;
     Vector<TileCoord> highlights;
     const DebugMapView* debugImage = nullptr;
+    // Optional generated viewport, prepared at the measured panel dimensions.
+    // Borrows frontend-owned state for this draw, just like debugImage.
+    WorldgenDebugPreview* worldgenPreview = nullptr;
 };
 // Screen coordinates are logical UI pixels. Never retains the supplied frame.
 bool DrawScreen(SDL_Renderer* renderer, SdlText& text, ScreenFrame& frame,

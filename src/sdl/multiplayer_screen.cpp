@@ -359,7 +359,7 @@ void MultiplayerUi::Present(const SessionSnapshot& snapshot, bool busy, ScreenFr
     frame.visible = true;
     frame.presentation = ScreenPresentation::Large;
     frame.followCursor = false;
-    frame.cursor.reset(); frame.highlights.clear(); frame.debugImage = nullptr;
+    frame.cursor.reset(); frame.highlights.clear(); frame.debugImage = nullptr; frame.worldgenPreview = nullptr;
     frame.rows.clear(); frame.details.clear();
     frame.title = String("Multiplayer | ") + StateText(snapshot);
     const auto shown = snapshot.mode == SessionMode::Guest ? RuntimePacing(snapshot) : pacing_;
