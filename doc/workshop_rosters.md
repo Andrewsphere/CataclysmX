@@ -386,9 +386,11 @@ training at their required levels. No global learning rate changes are made.
 
 All 22 new items use canonical external RGB text art at
 `data/art/items/<id>/art.txt`. Monochrome masters are kept locally under `/out`.
-Reused IDs keep their existing illustrations. The voice combines familiar
+Reused IDs keep their existing illustrations. The original voice combined familiar
 workshop objects, patient craftsmanship and useful salvage; **no deliberate
-humor IDs** are selected. Category/material flags remain descriptive metadata.
+humor IDs** were selected. Future authoring and revisions follow the
+[plain-default description policy](item_authoring.md#description-voice-plain-by-default),
+not that earlier voice brief. Category/material flags remain descriptive metadata.
 Protection is a crafting trait, not an added wearable armor effect or diagnostic
 action.
 

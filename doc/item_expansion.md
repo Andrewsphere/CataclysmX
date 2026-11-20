@@ -14,7 +14,7 @@ the earlier retirement inventory remain intact.
 | Equipment | 20 | 6 tools, 10 wearables including storage, 4 craft-only melee weapons | `data/items/expansion_equipment.json5`, `data/crafting/expansion_equipment.json5`, [equipment record](item_expansion_equipment.md) |
 | Household and outdoors | 20 | 4 containers, 4 sleeping/shelter, 3 field supplies, 3 repair supplies, 3 foods, 2 hygiene, 1 belonging | `data/items/expansion_supplies.json5`, `data/crafting/expansion_supplies.json5`, [supplies record](item_expansion_supplies.md) |
 
-Every item needs a represented unit, physical values, atmosphere-first description,
+Every item needs a represented unit, physical values, a concise plain description,
 shared flags, canonical external RGB text art, and an actual acquisition route.
 Target **76 loot-accessible items and four craft-only weapons**. Stock and tools
 must support reachable crafting; donor devices must have mass-bounded dismantling.
@@ -27,9 +27,13 @@ electronics/office, homes, clothing/laundromat, sporting goods, grocery and medi
 or cleaning storage should all receive appropriate subsets. Bulky items require
 capacity-safe placement. Batch membership never defines a loot pool.
 
-The shared deliberate-humor budget is **three descriptions**: `wood_screws`,
-`toaster`, and `toilet_paper`. Other prose should vary familiarity, history and
-survivor resourcefulness without promising unimplemented actions.
+The description revision uses **80 plain descriptions**, with **no atmospheric
+or humorous exception IDs**. The former jokes on `wood_screws`, `toaster` and
+`toilet_paper`, along with the batch-wide implied histories and survivor hooks,
+have been replaced by factual item descriptions. Tone follows
+[item authoring](item_authoring.md#description-voice-plain-by-default): rare
+exceptions are optional, have separate collection-level limits and require the
+strongest available writing-capable model. An all-plain batch is a valid result.
 
 ## Reserved roster
 

@@ -1,7 +1,8 @@
 # Expansion equipment: 20-item authoring record
 
 Scope: 20 new IDs, no upgrades; six tools, ten functional wearables, four
-craft-only weapons. Deliberately humorous descriptions: **none**. Reading deferred.
+craft-only weapons. Atmospheric and humorous exceptions: **none**; all descriptions
+are plain. Reading deferred.
 Sources: `data/items/expansion_equipment.json5` and
 `data/crafting/expansion_equipment.json5`. Canonical art is
 `data/art/items/<id>/art.txt`; complete monochrome masters below precede colorization.
@@ -475,10 +476,10 @@ regional targeting and fully loaded storage remain outside these confirmations.
 
 ## Actual checks and delivery status
 
-- **20/20 author-complete**, all new: definitions, atmosphere-first prose, shared
+- **20/20 author-complete**, all new: definitions, plain factual prose, shared
   flags, physical units, reviewed monochrome masters, exact colored assets, and
   unique mass-bounded recycling. Seven craft recipes cover all four weapons plus
-  padded jacket, tool belt and duffel. No deliberate humor.
+  padded jacket, tool belt and duffel. No atmospheric or humorous exceptions.
 - A one-off read-only Python content audit passed against the final 23 owned
   files. It normalized the JSON5 subset to Python literals (not the engine JSON5
   loader), checked seven crafting mass inequalities using the actual current

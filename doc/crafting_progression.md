@@ -223,13 +223,14 @@ must have an authored relationship to its information-bearing parts. Recovering
 software does not by itself repair the source equipment.
 
 D3 owns information identity/carriers, compatibility, local deployment and
-software eligibility with W4. It must decide when a job validates or captures the
-required software/profile and what later loss of access means for paused/running
-work. Preserve the existing paid-work and ingredient accounting while defining
-those transitions. D4 provides factory/industrial and broken-equipment acquisition
-contexts; the separate hacking design supplies access and copy-protection actions.
-No software runtime or hacking
-mechanics are implemented by this outline.
+software eligibility with W4. The [accepted D3 foundations](digital_fabrication_design.md)
+use freely transferable information on USB sticks, phones and laptops, explicit
+imports and persistent machine-local design libraries. Jobs validate and capture
+their required instructions at startup; later carrier removal or library deletion
+does not invalidate existing work, including resume and save/load. Detailed
+representations/actions must preserve paid-work and ingredient accounting.
+D4 supplies acquisition contexts; the separate hacking design supplies access
+and copy-protection actions. This outline does not implement those mechanics.
 
 ## 3. Accepted shared skill scale
 
@@ -318,7 +319,9 @@ activities still need their own content passes.
   Factory systems also provide production software for sophisticated equipment
   across trades; acquiring it is a useful progression objective.
   This is a deliberately game-oriented direction. Targets, effects, access,
-  costs and outcomes need a separate hacking design.
+  costs and outcomes need a separate hacking design. That later effort also owns
+  hacking laptop modifications, supporting interfaces/tools and design/schematic
+  extraction; these are explicitly outside the current D3-A/B design scope.
 - **Post-cataclysm resources:** advanced Survival must include useful resources
   that appeared after the cataclysm, including possible monster loot. Candidate
   hides, shells, fibers or secretions are illustrative, not an approved creature
@@ -1262,6 +1265,14 @@ The user explicitly separates operating a printer from manufacturing it:
   futuristic setting. Advanced machines retain meaningful specialized acquisition
   contexts to be chosen with D3/D4.
 
+Accepted first scope: a contemporary home polymer printer with mostly simple,
+supplied/built-in recipes requiring no separately acquired schematic. Its first
+playable example uses those supplied designs. Ordinary file copying/import stays
+in D3-A; design/schematic extraction and hacking laptop modifications wait for a
+separate hacking effort. Do not bridge that gap with temporary schematic/software
+crafting recipes or placeholder unlock items. The earlier recovered-schematic
+demonstration is deferred; intricate designs remain a later progression goal.
+
 Printer recipes are deliberate alternative production routes. A curated printable
 part can bypass its manual Fabrication/tool gates through Computers, the right
 machine and a usable design supplied with the equipment or acquired separately.
@@ -1276,9 +1287,13 @@ must not introduce a hidden mandatory Fabrication gate. Feedstock preparation an
 machine construction can have their own trades, with found/prepared inputs
 available to the printer operator.
 
-Retain the machine-learning boundary: elapsed unattended work grants no passive
-operator XP. D3 defines actual Computers setup/preparation work and its learning,
-file access/transfer, curated designs, material tiers and recovery rules.
+The [accepted D3 learning distinction](digital_fabrication_design.md#5-production-modes-and-learning)
+supersedes the blanket no-passive-operator-XP rule: explicitly commissioned batches
+award the initiating character Computers learning when they finish; continuous
+production grants none. Nominal credit follows recipe executions, not Start count
+or elapsed waiting, and advanced recipients receive practice under the shared
+learning model. D3 defines setup/preparation work, file access/transfer, curated
+designs and material tiers; the later hacking effort owns extraction/recovery.
 Selected advanced printers may also need compatible production software and
 material/process profiles, under the shared software direction above. Product
 designs and control software have different roles even when acquired together.
@@ -1305,9 +1320,10 @@ Accepted acquisition/eligibility outline:
   approved item roster or a claim that printing a casing creates a complete bionic.
 - A schematic is reusable information. Acquiring it can enable repeated supported
   prints while material and operating costs are paid normally.
-- Access/recovery can share the D3 information workflow. The later design decides
-  whether a particular schematic source is protected, what makes a recovered
-  copy usable, and where it must be accessible for setup/start/resume.
+- Access/recovery shares the D3 information workflow. Explicit import retains the
+  design in the machine's local library; startup captures the job's instructions,
+  so resume does not need the carrier or library copy. Source protection and
+  design/schematic extraction remain deferred to the separate D3-C/hacking effort.
 - Higher Computers skill supports preparation and operation; it does not
   automatically supply a missing design. Knowing a manual crafting recipe is
   distinct from having the machine-readable schematic.
@@ -1391,10 +1407,13 @@ Accepted rough hardware-assembly anchors, assuming suitable recovered functional
 - Manufacturing processors, precision motion parts or print heads is separate
   specialist work. Found working machines skip their construction requirements.
 
-Learning comes from actual software preparation, recovery or setup work as
-defined by D3; unattended execution grants no passive operator XP. Routine copying
-need not teach advanced Computers, and advanced bands need appropriate theory
-sources. This direction preserves the current shared learning model.
+Learning comes from meaningful software preparation/recovery/configuration and
+successful commissioned batches under D3. Continuous production and ordinary
+copying/importing are XP-free. Completed batches credit the initiator once,
+including offscreen; advanced bands still need appropriate theory sources.
+The initial automated-learning targets are 100% of the authored budget for
+training levels 0–4 and 80% for 5+, subject to content tuning. Shared teaching
+ceilings, boosts and theory/practice accounting remain in force.
 
 Implementation boundary: the existing ebook reader/electronic books and computer
 salvage are starting content. General software access, copying, installation,

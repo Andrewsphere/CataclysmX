@@ -226,8 +226,10 @@ See [the process-machine brief](crafting_progression.md#queued-design-selected-u
 
 ### D3 — Digital information and additive manufacturing
 
-**Deliverable:** `doc/digital_fabrication_design.md`; consumes D1 and the D2 machine
-contract. D2/D3 may exchange drafts before either interface is accepted.
+**Deliverable:** [digital fabrication design](digital_fabrication_design.md);
+consumes D1 and the D2 machine contract. Information transfer, persistent local
+machine libraries, per-job capture and completion learning are accepted. The
+current design is D3-A/B with a home polymer printer; D3-C/hacking is deferred.
 
 **Accepted progression direction:** operating printers uses Computers rather than
 Fabrication. Simple plastic parts need very little skill; demanding/durable parts
@@ -259,7 +261,31 @@ usable schematics in addition to compatible machine/control software. Simple
 supplied designs and recoverable intricate designs are the accepted acquisition
 outline; see [printer schematics](crafting_progression.md#schematics-for-intricate-prints).
 
-Decide:
+**Accepted information/job boundary:** USB sticks, phones and laptops carry freely
+copyable usable information. Human instructions, machine designs and production
+software retain distinct roles. Explicit import adds designs to a persistent
+machine-local library; nearby media alone do not qualify. Startup captures the
+job's instructions and reserves its batch inputs/output space. Removing the carrier
+or deleting the library copy does not invalidate that job, including on resume or
+load. New jobs use the current library. See the [D3 decisions](digital_fabrication_design.md).
+
+**Accepted production learning:** continuous production earns no ongoing XP;
+explicitly commissioned batches award the initiating character once on completion,
+including offscreen. Learning scales with recipe executions, not Start count or
+elapsed machine time. Ordinary copying/importing is XP-free. Initial automation
+targets are 100% of authored learning for training levels 0–4 and 80% for 5+;
+advanced characters receive practice under the shared theory/practice model.
+This supersedes the earlier blanket no-passive-operator-XP rule.
+
+**Accepted first scope:** use a contemporary home polymer printer. Most recipes
+are simple and supplied/built-in, without a separately acquired schematic; the
+first demonstration uses those recipes. Ordinary copying/import remains in scope.
+Hacking, laptop modifications for hacking, protected/damaged-data recovery and
+design/schematic extraction wait for a separate later effort. Do not create
+temporary schematic/software crafting recipes or placeholder unlock items to
+replace those future acquisition routes.
+
+Remaining current design:
 
 - Computer information sources: workshop terminals, household computers,
   technical archives, portable readers, and removable media. Establish the
@@ -271,42 +297,34 @@ Decide:
   power, time, accessibility, storage, and the role of the Computers skill. Select
   bounded gameplay actions and costs, including outcomes when power/access is lost.
 - Human-readable manuals/recipes versus machine-readable fabrication files.
-  Define schematic eligibility for intricate recipes, supplied/preloaded designs
-  and how an acquired file reaches a compatible printer/controller. Specify where
-  required designs must be accessible during setup/start/resume. Human
-  memorization must have explicitly defined relevance here.
+  Specify the representations and eligibility rules, supplied/preloaded designs,
+  explicit import and local library management. Preserve human reference/learning
+  identity and distinguish it from machine permission.
 - Production software versus product designs/process specifications, including
-  packages that contain both. Define machine compatibility, recovery/export,
+  packages that contain both. Define machine compatibility, ordinary copying,
   local installation/configuration and meaningful Computers work.
-- Installed use versus permission to make a usable copy; terminal access,
-  copy-protection bypass and damaged-hardware recovery are separate actions.
-  Define readable controllers/storage in broken machines, needed interfaces,
-  portable package results and any source-changing outcomes. Coordinate actual
-  hardware work with Electronics and access/recovery work with Computers.
-- Software eligibility at job start/resume and during execution, including
-  loss of source access. Coordinate with W4's paid-work and reservation rules.
-  Found installed software and basic supplied printer software are accepted
-  acquisition routes alongside recovering specialized packages from factories.
-- Basic polymer and endgame metal printers: machine tiers, useful outputs,
-  compatible feedstock, preparation/post-processing, setup work, autonomous print
-  time, power demand, and interruption/recovery rules.
-- Learning and automation: what earns skill progress, who receives it, and when;
-  how automated production interacts with recipe memorization.
-- Endgame acquisition: found operational equipment, commissioning a salvaged
-  machine, and any craftable equipment. Specify the reachable route rather than
-  assuming a general repair system exists.
+- Specify startup validation and durable per-job information capture with W4's
+  paid-work and reservation rules. Resume uses the captured instructions without
+  external source access. Found installed software and basic supplied printer
+  software support the first slice.
+- Home polymer printer: useful simple outputs, compatible feedstock, setup work,
+  autonomous print time, power demand and interruption rules. Settle the setup
+  reservation boundary and supplied recipe catalog.
+- Learning integration: concrete recipe budgets, batch bounds/rounding and
+  once-only completion awards to durable recipients; separate hands-on learning
+  and how automated production interacts with recipe memorization.
 
-Recommended first scope: local/offline archives, portable information transfer,
-and curated print designs. Printers manufacture specified products from explicit
-feedstock. Found/commissioned industrial metal printers are a strong endgame
-candidate, with useful output gated by power, feedstock, files, and competence.
-The exact feedstock technology and whether full printer construction is reachable
-are decisions for this pass.
+Later D3-C/hacking owns target access, export protection, recovery, design/schematic
+extraction and hacking laptop modifications. Hardware work can use Electronics;
+information recovery uses Computers. Industrial/metal printing, intricate acquired
+designs and endgame equipment construction remain later progression goals.
 
-**Exit examples:** power a workshop computer, acquire a useful manual and a print
-file, carry information to another site, complete a polymer print, and trace the
-full path to one worthwhile metal-printed result. Shared information does not
-duplicate study benefits; losing access or power has a specified effect.
+**First exit example:** find a working home printer, supply compatible feedstock
+and power, select a simple built-in design/quantity, perform setup and receive
+the output and initiating-character learning on completion. Show interruption,
+offscreen work and save/load. Ordinary transfers can use already-readable
+information; the initial slice needs no recovered schematic or temporary
+crafting substitute. Shared information preserves learning identity.
 
 ### D4 — Settlement scale, identity, population, and rewards
 
@@ -530,7 +548,7 @@ verification can finish while the external visual pass remains pending.
 | W3A/W3B rosters | Functionally verified | [Implementation](workshop_rosters.md): 22 new items, 8 definition upgrades, 17 new crafting recipes, 19 new recyclers and 5 objects. All 16 focused tests pass; SDL art and four frontend/LAN checks pass. Includes concrete budgets, acquisition evidence and affected unfinished-sword policy; pacing playtesting remains. |
 | D1 Power | Accepted | User reviewed geometry, connection, mains, accounting, residency and inspection rules; see [power design](power_design.md). |
 | D2 Workshop/fuel | Accepted | [Workshop design](workshop_design.md): W1/W2 verified and progression gates approved. W3 uses ordinary protection traits; [M-Bench](powered_manual_stations_design.md) implements powered manual stations. W4/D3 coordination remains. |
-| D3 Digital fabrication | Pending | Printer use/salvage, rough skill bands, cross-domain software acquisition and intricate-print schematics agreed. Detailed machine/file/software contracts remain. Coordinate jobs with D2/W4 and access/protection/recovery actions with the hacking design. |
+| D3 Digital fabrication | In progress | [Accepted D3-A/B scope](digital_fabrication_design.md): home polymer printer with supplied simple designs, ordinary information handling, local libraries, capture and batch-completion learning. Detailed runtime design remains; hacking, laptop modifications and schematic extraction are explicitly deferred to a separate later effort. |
 | D4 Cities | Pending | D1 infrastructure is available; draft remaining acquisition needs and city design. |
 | D5 Integration/roster | Pending | Initial crafting dependency/delivery map drafted; reconcile remaining D1–D4 contracts and select bounded rosters. |
 | I2 Power foundation | Verified (functional) | Debug suite: 1,317 passed, 2 skipped; SDL build and four executable/LAN checks passed. Dedicated sprites and two existing-artwork test failures are tracked in [power design](power_design.md#verification). |
@@ -551,8 +569,12 @@ Suggested next-pass brief:
 > Preserve forge/tongs 2, forming equipment 3 and proper sword 4, with useful
 > level-2/3 practice and both found/crafted equipment routes. The old W3 quantities,
 > gates and blanket runtime assumptions are historical, not implementation targets.
-> Coordinate W4 with D3-A/B before printing; protected recovery is a later D3-C
-> acquisition route. Schedule M-Skills before separate Cooking/Chemistry content.
+> Read `doc/digital_fabrication_design.md` for accepted imports, local libraries
+> and job-capture/production-learning rules. Complete W4/D3-A/B runtime design
+> around a home polymer printer and supplied simple designs. Defer hacking,
+> hacking laptop modifications and design/schematic extraction to the later
+> D3-C effort; add no temporary schematic-crafting acquisition substitutes.
+> Schedule M-Skills before separate Cooking/Chemistry content.
 > Other feature tracks follow their consumers and own designs. Preserve D1 resource
 > authority, paid work and residency. A bounded pass may leave later gaps.
 

@@ -26,24 +26,27 @@ Use `item-create` and `text-art-create` for individual items and illustrations.
   Trace obtainable inputs and tools from early to later items; record gaps and
   unsupported steps instead of fabricating a mechanic.
 - [ ] Apply the item checklist to each roster entry: units and physical values,
-  concise atmosphere-first prose, existing stat anchors, supported capabilities,
+  concise plain descriptions, existing stat anchors, supported capabilities,
   tool traits and melee, shared flags, and canonical external RGB art. Flag
   intended unsupported behavior as metadata-only.
-- [ ] Plan and review the descriptions as a collection. Their primary purpose
-  is atmosphere and vibes, with visual/practical details serving that purpose.
-  Vary implied history, everyday familiarity, loss, survival ingenuity and dry humor;
-  avoid a catalog of specifications or the same apocalypse observation repeated
-  for every item. For a 60-item generation, aim for roughly **2–3 deliberately
-  humorous or satirical descriptions**, leaving the rest room for other moods.
-  Coordinate that target across subagents/sub-batches, not separately per agent;
-  a smaller batch need not force a joke. Record the selected humor IDs in the
-  batch report and check that prose never promises unsupported mechanics.
-- [ ] Give some descriptions **a survivor's perspective**: why an ordinary
-  object is worth carrying now, or a resourceful possibility its finder might
-  notice in a zombie-filled world. This is another atmospheric approach, not
-  another joke quota. Prefer an item-specific survival observation to a forced
-  punchline, and vary the needs it evokes instead of making everything a weapon.
-  Review practical hints against actual mechanics and obtainable crafting routes.
+- [ ] Plan and review descriptions as a collection, with **plain factual prose
+  as the default**: identity, represented unit, construction and useful distinctions.
+  Do not give ordinary entries a backstory, mood, survivor monologue or punchline.
+  Check practical statements against actual mechanics and obtainable recipes.
+- [ ] Treat atmosphere and humor as separate, optional exceptions: **1–3
+  atmospheric and 1–3 humorous descriptions per 100 items at most**, with zero
+  in either category acceptable and preferable to weak writing. These are ceilings,
+  not quotas. Coordinate the allowance across the whole collection, including
+  existing exceptions when extending it; never restart or round it up per subagent
+  or small sub-batch. Count a description using both tones against both limits.
+- [ ] Have the **strongest available writing-capable model** draft and review
+  any exception candidates; resolve the available models when authoring rather
+  than hard-coding a model version or leaving this to a cheaper batch worker.
+  Keep an exception only if it is natural, specific to the object and fully
+  in-world. Reject forced sentiment, feigned profundity, stock apocalypse quips
+  and fourth-wall references. If quality or review is uncertain, use plain prose.
+  Record selected atmospheric and humorous IDs separately (or explicitly none)
+  in the batch record, then review the whole collection for tone drift.
 - [ ] Respect actual recipe constraints including input and trait bounds, retained
   tools, quantities, work and unique recycling targets. Connect requested loot to
   plausible locations and placements independently of batch membership; include

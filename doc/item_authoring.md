@@ -18,71 +18,72 @@ sources disagree. Unknown fields are errors.
    Set integer `mass_g` and positive external `volume_ml` for that entire unit,
    including packaging where appropriate. Container capacity is separate from its
    external volume; compare like units and existing items before changing stats.
-3. Write one to three concise sentences whose primary purpose is **atmosphere
-   and vibes**. Give the object a place in the world: implied history, human
-   habits, a lost everyday comfort, a survivor's new use for it, or a promise
-   that outlived its maker. Visual
-   details and practical use support that purpose; the description should offer
-   more than a verbal version of the illustration or stats. Keep its identity
-   clear and avoid implying unsupported mechanics.
+3. Write **plain factual descriptions by default**, usually one or two concise
+   sentences. Identify the object and represented unit, then give relevant
+   construction, material, condition or ordinary purpose. A clear physical
+   description is enough; do not add a mood or story merely to make it distinctive.
+   Avoid implying unsupported mechanics.
 4. The setting is a futuristic apocalypse with plentiful advanced pre-collapse
    salvage. Historical or simple equipment is primarily accessible through
    plausible low-tech crafting without an operating civilization, rather than
    primarily museum loot. Make crafting inputs and tools obtainable along the path.
 
-## Description voice and restrained humor
+## Description voice: plain by default
 
-Prefer a specific, evocative detail over a list of materials, shapes and features.
-An ordinary object can feel familiar, comforting, neglected or absurd without a
-full backstory. Do not make every item tragic or append the same observation about
-the end of the world. Keep essential distinctions clear (such as full versus
-empty packaging or nonsterile cloth), while leaving numeric specifications to
-their fields and the inspection UI.
+Most descriptions should simply explain what the item is. Use concrete, natural
+wording rather than padded specifications or decorative prose. Keep useful
+distinctions clear: full versus empty packaging, one object versus a packet,
+sterile versus nonsterile cloth, or a complete device versus a component.
+Leave routine numeric stats to their fields and the inspection UI.
 
-Sprinkle in understated humor or satire about the world's end: roughly **2–3
-deliberately humorous descriptions in a 60-item generation** is the desired
-scale, not a punchline on every item. This is a shared editorial target across
-subagents and sub-batches, not a per-agent quota or loader rule. Smaller batches
-need not force a joke. Use object-specific irony, failed marketing promises or
-mundane bureaucracy; avoid repetitive quips and fourth-wall references.
+Examples of the default voice:
 
-For example, the cloth repair tape's description is:
+- **Cloth patch:** "A clean cotton patch cut for mending or other small fabric work."
+- **Appliance motor:** "A compact finned electric motor with mounting feet and a
+  substantial drive shaft."
+- **Wood screws:** "A packet of twenty steel wood screws with countersunk heads."
 
-> A roll of cloth repair tape, sold for temporary fixes. The temporary fixes are
-> now the infrastructure.
+Ordinary descriptions do not need implied history, lost comfort, personification,
+a survivor's perspective or an observation about the collapse. Do not append
+"worth keeping now" or a similar hook to otherwise plain text. A factual detail
+such as a worn handle is fine; inventing a former owner to evoke loss is an
+atmospheric exception. Keep practical claims grounded in supported behavior and
+obtainable recipes. Describing an object's ordinary purpose must not promise an
+unavailable game action, protection value or other effect.
 
-Record the selected humor IDs in the batch report so the final tone pass can
-check the whole collection. Atmosphere remains the purpose of the non-humorous
-descriptions too; humor is only one available tone.
+### Rare, optional exceptions
 
-### A survivor's perspective
+Atmosphere and humor have **separate allowances**. Per 100 items, allow only
+**1–3 atmospheric descriptions and 1–3 humorous descriptions at most**. These
+are ceilings, not required quotas: **zero in either category is acceptable, and
+zero is better than a forced or mediocre exception**. At least 94 of 100
+descriptions remain plain even when both allowances are fully used.
 
-**Survival ingenuity** is another way to create atmosphere: suggest why an
-ordinary object suddenly matters, why it deserves space in a pack, or what a
-resourceful survivor might see in something others discarded. Ask: *What would
-someone living among the dead notice or save this for?*
+Coordinate these limits across the whole collection and its subagents/sub-batches;
+count existing exceptions when extending a collection. Do not restart or round
+up an allowance for every small batch. A standalone item defaults to plain prose.
+A description combining humor and atmosphere counts against both limits.
+Survivor ingenuity, nostalgia and implied history count as atmosphere when used
+to evoke a mood; they are not unbudgeted alternatives to jokes.
 
-Use one concrete possibility or need rather than a feature list. Scarcity,
-preparation, improvised repairs, shelter, recovering useful parts and preserving
-small comforts can all supply a hook. An item need not become a weapon to be
-worth finding. This perspective can replace a forced joke while retaining
-personality and the sense of a changed world.
+Have the **strongest available writing-capable model** draft and perform the
+final editorial review of exception candidates. Resolve available models when
+authoring rather than pinning a version in this guide. Ordinary factual entries
+can use routine batch workers; do not hand the rare creative exceptions to a
+cheaper worker merely because it owns that item file.
 
-Illustrative voice examples:
+Keep an exception only when it is natural, specific to the object and fully
+in-world. Reject forced sentiment, feigned profundity, contrived punchlines,
+repeated apocalypse observations, fourth-wall references and statements telling
+the player what to feel. Strong-model authorship does not guarantee quality: if
+the result or its review is uncertain, retain the plain version. Never add a
+replacement just to fill the allowance.
 
-- **Cloth patch:** "A clean scrap of cotton. Worth keeping for the day the
-  bandages run out."
-- **Appliance motor:** "The appliance is gone, but the copper inside still gives
-  you a reason to carry this home."
-- **Steel scrap:** "Someone once swept this off a workshop floor. You see a blade
-  that has not happened yet."
-
-These examples connect to existing bandage crafting, motor recycling and
-salvaged-blade crafting. Keep actionable suggestions grounded in supported
-behavior and obtainable recipes. An imagined use must not read as a promise of
-an available action, protection value or other unimplemented effect. The goal
-is to spark the player's imagination through the object's place in survival,
-not turn the description into a tutorial.
+Record selected atmospheric and humorous IDs separately in the existing batch
+record, or explicitly record none. Review the whole collection for tone drift
+and unsupported mechanics, not just the selected candidates. This is editorial
+guidance, not a loader rule or an automated humor validator. The plain default
+keeps the few successful exceptions effective through contrast.
 
 ## Classification and actual behavior
 

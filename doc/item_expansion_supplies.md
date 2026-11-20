@@ -3,7 +3,8 @@
 Target: 20 new items, no upgrades: four empty containers, four packed
 sleeping/shelter articles, three field supplies, three repair supplies, three
 packaged foods, two hygiene supplies, one belonging. All are placed as early
-civilian salvage. Only `toilet_paper` carries deliberate humor.
+civilian salvage. All 20 descriptions are plain, with no atmospheric or humorous
+exceptions.
 
 The following are complete, plain-grid monochrome masters. All 20 received a
 source-grid silhouette/proportion review assuming terminal cells twice as tall as
@@ -90,11 +91,11 @@ trail-mix packaging. The plastic bucket's wire bail precludes whole-body electri
 insulation. No new flag definitions or implied capabilities were introduced.
 
 Food consumption, hygiene, fire, light, shelter, sleeping, navigation, sealing,
-liquid handling, repair chemistry, and robot operation are metadata or atmosphere
+liquid handling, repair chemistry, and robot operation are descriptive metadata
 only. The four routes above and generic container storage are the implemented
-capabilities. Default household melee is unchanged. Atmosphere leads the prose;
-repair history and recoverable materials provide grounded survivor perspectives.
-Only `toilet_paper` uses deliberate humor.
+capabilities. Default household melee is unchanged. Prose identifies the objects,
+their construction, contents and packed or empty state, without survivor hooks
+or jokes.
 
 ## Art review and validation
 

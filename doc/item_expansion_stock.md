@@ -3,7 +3,8 @@
 Twenty expansion stock units, quality-reviewed in place: eight metal, seven
 wood/textile/polymer and five hardware. All 20 are placed as early salvage in
 hardware/workshop, auto, warehouse and textile-repair contexts.
-Humor: `wood_screws` only. All 20 complete monochrome masters and RGB illustrations
+Descriptions: all 20 plain; no atmospheric or humorous exceptions.
+All 20 complete monochrome masters and RGB illustrations
 have had a source-grid review with 1:2 terminal cells in mind. Corrected mesh and
 weave borders, packet silhouettes, webbing width, sheet depth and screw spacing
 precede the matching color layouts. The coordinator subsequently reviewed the SDL

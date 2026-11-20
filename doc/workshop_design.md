@@ -321,7 +321,7 @@ Manual labor and machine time stay explicit:
 | Supply loss | Finish paid slice, then pause; explicit resume | Finish paid slice, then wait and retry |
 | Manual pause/Stop | Finish paid slice | Freeze paid remainder immediately |
 | Offscreen work | Requires an eligible active worker | D1 machine/source residency |
-| Skill practice | Current completed-work contribution rules | No passive operator XP; D3 specifies actual setup/post-processing learning |
+| Skill practice | Current completed-work contribution rules | Commissioned batches award the initiator on completion under D3; continuous production earns none |
 
 Add explicitly selected machine recipes with typed IDs, bounded consumed-input
 lists, one output type/count, machine duration and positive grid energy-per-tick.
@@ -381,24 +381,38 @@ For D3, operating printers uses Computers rather than Fabrication. Simple plasti
 printing needs very little skill; more demanding/durable and advanced-material
 work uses appropriate Computers skill, machine, design and feedstock. Basic
 printers should be reasonably accessible as futuristic salvage; constructing one
-can still be difficult. Resolve setup/processing within those requirements and
-retain the no-passive-operator-XP boundary.
+can still be difficult. Resolve setup/processing within those requirements.
+The [accepted D3 learning rule](digital_fabrication_design.md#5-production-modes-and-learning)
+awards commissioned-batch learning to the initiating character on completion,
+independently of collection, including offscreen completion and save/load.
+Continuous production earns no ongoing XP. This supersedes the earlier blanket
+no-passive-operator-XP rule. Batch cancellation/destruction grants no completion
+award; pause/resume preserves it. Nominal learning scales with recipe executions,
+not Start count or elapsed machine time; detailed award integration remains for W4/D3.
 
 Selected intricate printer recipes also require usable schematics distinct from
-the control software. D3 defines supplied/preloaded design coverage, acquisition
-and schematic eligibility alongside the job's other requirements. See
+the control software. The first D3 example instead uses a contemporary home
+polymer printer with supplied simple designs, requiring no acquired schematic.
+Ordinary copying/import remains in scope; schematic extraction and the
+recovered-design example wait for a separate hacking effort. Do not introduce
+temporary schematic-crafting routes. See
 [printer schematics](crafting_progression.md#schematics-for-intricate-prints).
 
 Selected sophisticated equipment across trades can also require compatible
 production software, including packages acquired by hacking factory systems.
 Software can be copy-protected, and broken machines can retain extractable
 software. Equipment operability and information recoverability need distinct
-design decisions; D3 and the hacking design own recovery/protection actions.
+design decisions; the later D3-C/hacking effort owns recovery/protection actions
+and hacking laptop modifications, outside the current D3-A/B design.
 See [production software](crafting_progression.md#accepted-direction-production-software).
-D3/W4 must coordinate software eligibility and access-loss semantics with job
-start/resume and paid work. This is a queued extension to the machine contract;
-software acquisition, deployment and compatibility still need implementation
-design.
+The [accepted D3 information boundary](digital_fabrication_design.md) uses explicit
+imports into persistent machine-local design libraries. Startup validates and
+captures the job's required instructions/software eligibility. Carrier removal or
+library deletion does not invalidate the existing job, including Stop/Resume and
+save/load; new jobs use the current library. Nearby media alone do not qualify.
+This preserves the reserved-input and paid-work rules above. Detailed capture,
+ordinary deployment and compatibility still need implementation design; extraction
+and protected acquisition have their own later contract.
 
 ## 8. Ownership, interfaces, persistence, and presentation
 

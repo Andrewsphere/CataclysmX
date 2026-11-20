@@ -104,24 +104,38 @@ at 5. Book/recipe identities and paid work are preserved.
 
 ## 4. Digital-production slices
 
-These are proposed subdivisions of D3/I4, sharing one information model.
+These are subdivisions of D3/I4, sharing one information model. The current design
+effort covers D3-A/B; D3-C is explicitly deferred to the later hacking effort.
 
 | Slice | Bounded scope | What it enables |
 | --- | --- | --- |
 | **D3-A: ordinary information access** | Usable package/design identity, compatible devices, supplied information, ordinary copying/export and local availability | Accessible archives and transferable unlocked information, including supplied basic printer designs |
-| **D3-B: first functional printing** | W4 integration, setup work/learning, software and schematic eligibility, feedstock and a small set of actual useful prints | Basic polymer printing plus a schematic-gated example; later prepared metal recipes use the same contract where sufficient |
-| **D3-C: protected and damaged-source recovery** | Explicit access/copy-protection/recovery actions, needed interfaces, usable portable results, interruption and source-change semantics | Factory software acquisition and recovery from broken equipment; Electronics work is separate where physical access needs it |
+| **D3-B: first functional printing** | Contemporary home polymer printer, supplied simple designs/software, W4 integration, setup, completion learning, feedstock and useful outputs | Useful basic printing without an acquired schematic; acquired intricate designs and advanced printing follow later |
+| **D3-C: deferred hacking and extraction** | Later separate design for access/protection/recovery, design/schematic extraction, hacking laptop modifications and target-specific tools/interfaces | Factory software/design acquisition and broken-equipment recovery; hardware work retains its Electronics role |
 
-D3-A defines which information is present on a controller/media and how a job
-uses it; D3-B must settle file loss, pause/resume and software/profile capture with
-W4. Installed use, export permission, software integrity and machine operability
-remain distinct. Ordinary copying of an unlocked portable package is reusable
-access, not another hacking challenge per product.
+The [accepted D3 foundations](digital_fabrication_design.md) establish freely
+transferable usable information on USB sticks, phones and laptops, explicit import
+into persistent machine-local libraries, and startup capture of a job's required
+instructions. Removing a carrier or deleting a library copy does not invalidate
+the existing job; new jobs use current library eligibility. D3-A/B must specify
+the representations, actions and W4 persistence integration. Installed use, export
+permission, software integrity and machine operability remain distinct. Ordinary
+copying of an unlocked portable package is not another hacking challenge per product.
 
-D3-C is required for protected/recovery acquisition routes, not for every printer.
-Supplied designs, readable archives and found operational machines can support the
-first printing slice. Specific military interfaces and more demanding recovery
-can be added in later bounded hacking slices.
+The accepted learning distinction grants the initiating character an authored,
+batch-scaled reward on successful commissioned-job completion, including offscreen.
+Continuous production and ordinary copying/importing are XP-free. Training-level-5+
+automated recipes initially use 80% of their authored budget; advanced recipients
+gain practice under the shared learning model. These balance targets and the
+once-only recipient/completion contract are recorded in the D3 design.
+
+Most home-printer recipes should be simple and available from the supplied
+catalog without separately acquired schematics. The first example uses that
+route. Ordinary transfer of readable information remains D3-A; extraction and
+the earlier proposed recovered-schematic example wait for hacking. Do not add
+temporary schematic/software crafting recipes or placeholder unlock items to
+substitute for that future acquisition gameplay. Specific laptop modifications,
+military interfaces and recovery outcomes belong to the later hacking design.
 
 ## 5. Later independent feature designs
 
@@ -161,7 +175,7 @@ coverage.
 | **C-Energy: supply/storage assemblies** | Useful compatible packs/banks and supply equipment | D1 plus each selected source/charging behavior; solar and new fuel routes follow their feature designs |
 | **C-Field/Food: field and meal routes** | Selected natural/post-cataclysm materials, charcoal, meals or preserved supplies | Relevant field/process/food implementation; split into bounded rosters rather than shipping all domains together |
 | **C-Chemistry: instruments and materials** | A chosen chemical product chain with concrete instrument providers and downstream use | M-Skills plus the selected manual/process-machine/analysis capabilities |
-| **C-Digital: printing and information rewards** | Basic printers, useful prints, intricate schematics and production packages | W4 + D3-A/B; protected-source content additionally needs D3-C |
+| **C-Digital: printing and information rewards** | First: home polymer printer and useful supplied-design prints. Later: acquired intricate schematics and production packages | W4 + D3-A/B first; extraction content waits for the separate hacking/D3-C effort |
 | **C-Medicine: care and clinical supplies** | Functional early supplies/instruments, then later surgery and prepared-implant routes | Corresponding medical actions; powered/software-driven equipment follows its own integration |
 | **C-Specialist: selected advanced components** | Complex engine parts, lithium cells, photovoltaic manufacture or advanced bionic/material components | Only the relevant accepted specialist process/equipment contracts; choose one useful chain per roster |
 
@@ -215,8 +229,8 @@ Resolve decisions with the first pass that consumes them:
 | Concrete recipe quantities, work/fuel/XP budgets, loot weights and affected-save policy | Authored in W3A/W3B; pacing remains subject to playtesting |
 | Placed electrical-provider funding grid, rate and mixed payment | Implemented in [M-Bench](powered_manual_stations_design.md) |
 | Combined-skill migration and capped learning/content validation | M-Skills design |
-| File/package/schematic storage, compatibility and job access semantics | D3-A/B and W4 interface review |
-| Source access, protection and damaged-hardware recovery outcomes | D3-C/hacking design |
+| File/package representation, compatibility, import actions and job-capture integration | D3-A/B and W4; [library/capture behavior accepted](digital_fabrication_design.md), detailed runtime design pending |
+| Source access, schematic extraction, protection, recovery and hacking laptop modifications | Later separate D3-C/hacking design; outside the current D3-A/B effort |
 | Gas units/heat/byproducts/repeat behavior; medical/field/vehicle action semantics | Respective later feature design |
 
 Accepted delivery direction:

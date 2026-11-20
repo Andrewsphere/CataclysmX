@@ -150,6 +150,9 @@ the API pages document current contracts:
 - [Urban workshop progression plan](urban_workshop_progression.md): implemented grid
   power, fueled workshops, computer information, 3D printing, old/futuristic cities,
   population and reward progression, and coordinated design/implementation passes.
+- [Digital fabrication design](digital_fabrication_design.md): accepted transferable
+  information, persistent machine libraries, job capture and commissioned-batch
+  completion learning; first home-printer scope and deferred hacking/extraction.
 - [Combat design](../md/CombatDesign.md): JSON-defined arts, progression, weighted
   move/target selection, reactions, active abilities, two-hand equipment, armor,
   human death, and headless balance experiments.

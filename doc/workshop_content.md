@@ -134,9 +134,10 @@ consumer. Its benefit is ready access without building a stand.
   anvil, open shelving. Use readable distinct terminal glyphs during functional
   implementation; forge readiness remains inspectable through existing UI.
   Dedicated state-aware sprite behavior is not assumed.
-- Description voice should emphasize salvaged utility and a workshop becoming
-  usable again. No deliberate humor quota for this small roster. Existing art
-  stays associated with its stable IDs.
+- Description voice should be plain and factual: identify the stock, equipment
+  and supported workshop use. Follow the shared [description policy](item_authoring.md#description-voice-plain-by-default);
+  this small roster has no required atmosphere or humor. Existing art stays
+  associated with its stable IDs.
 
 ## 3. Recipes and skill pacing
 

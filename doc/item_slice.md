@@ -102,10 +102,12 @@ warning), `cloth_repair_tape` (temporary repairs becoming infrastructure), and
 `canned_beans` (a serving suggestion assuming civilization). These are three
 items across the whole 60-item generation, not three per sub-batch.
 
-The authoring skills and guide now make atmosphere, implied history and personality
-the primary purpose of descriptions, with visual/practical detail secondary.
-This follow-up changes those three descriptions; it is not a full prose rewrite
-of the other 57 entries.
+That follow-up also made atmosphere, implied history and personality the primary
+purpose in the authoring skills and guide. **That guidance is superseded** by the
+[plain-default description policy](item_authoring.md#description-voice-plain-by-default),
+with separate, optional atmosphere/humor limits and strongest-model review for
+exceptions. The historical three-in-60 selection is not a quota for new batches.
+The original follow-up changed those three descriptions, not the other 57 entries.
 
 The description-only follow-up passed **2/2 existing content checks** using
 `./scripts/test.ps1 -Preset win-msvc-sdl -R '(Town slice publishes|All shipped manifests)'`.

@@ -16,24 +16,25 @@ for the current authoritative schemas. Check `doc/definition_flags.md` and
   globally unique ID only for a genuinely distinct item.
 - [ ] Set `mass_g` and external `volume_ml` for that whole unit; compare existing
   canonical peers and explain departures.
-- [ ] Write one to three concise sentences whose **primary purpose is atmosphere
-  and vibes**: the life an object belonged to, a small human detail, an obsolete
-  promise, or what finding it feels like after the collapse. Visual description
-  and practical explanation are supporting details; avoid merely restating the
-  name, illustration or stats. Keep the object's identity clear and do not imply
-  unsupported mechanics. Ordinary comfort and quiet familiarity are valid tones;
-  every item need not be tragic or mention the apocalypse explicitly.
-- [ ] Consider **a survivor's perspective** as an alternative to humor: a small
-  spark of survival ingenuity that hints why this object matters now, what makes
-  it worth scavenging, or how someone resourceful might repurpose it. Tie one
-  concrete possibility to life among the dead: scarcity, preparation, repairs,
-  shelter or keeping something useful going. Let it suggest an idea rather than
-  become a list of uses or a tutorial. Ground actionable hints in supported
-  behavior; do not present an imagined use as an available game action or effect.
-- [ ] Use occasional understated humor, irony or satire rooted in the object and
-  the world's end. Follow the batch's shared humor budget (roughly 2–3 items in
-  a 60-item generation), rather than adding a punchline to every item. Avoid
-  repeated jokes, forced quips and fourth-wall references.
+- [ ] Write **plain factual prose by default**, usually one or two concise
+  sentences. Identify the object and represented unit; add relevant construction,
+  material, condition or ordinary purpose. Keep useful distinctions such as empty
+  versus full or sterile versus nonsterile. Do not pad the description with
+  backstory, sentiment, metaphor, a survivor's perspective or apocalypse commentary.
+  Ground practical claims in supported behavior; an ordinary purpose must not
+  read as a promise of an unavailable game action or effect.
+- [ ] Add atmosphere or humor only as a deliberately selected exception within
+  the collection's shared allowance: **at most 1–3 atmospheric and 1–3 humorous
+  descriptions per 100 items**, never a per-item or per-subagent quota. Zero is
+  valid and preferable to a weak exception. An item using both counts against
+  both limits; a standalone item defaults to plain prose.
+- [ ] Have the **strongest available writing-capable model** draft and review
+  exception candidates, resolving model availability at authoring time. Do not
+  delegate this prose to a cheaper batch worker. Keep only natural, object-specific,
+  in-world writing; reject forced sentiment, feigned profundity, repetitive quips
+  and fourth-wall references. If quality or review is uncertain, use the plain
+  version. Record the exception ID and tone in the existing batch record; follow
+  the collection-level review guidance in `doc/item_authoring.md`.
 - [ ] Assign applicable shared category and property flags, checking meaning,
   domain and kind, and include their definitions in the pack. Use only
   implemented capabilities, tool traits, crafting power, and melee; check exact

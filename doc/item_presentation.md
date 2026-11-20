@@ -18,11 +18,12 @@ capabilities and terrain appearance.
 ## Descriptions
 
 `description` must be a string without embedded NUL; empty strings are valid.
-Prefer one to three concise sentences primarily creating atmosphere and a sense
-of the object's place in the world. Visual/practical details are secondary;
-occasional dry humor can support the setting. See [item authoring](item_authoring.md)
-for voice and batch-level tone guidance. This is editorial guidance, not a
-sentence-count or humor validator. The authored
+Prefer plain factual prose, usually one or two concise sentences identifying the
+object, represented unit and useful physical or practical distinctions. Atmosphere
+and humor are rare, optional exceptions: at most 1–3 of each per 100 items, with
+zero preferable to weak writing. See [item authoring](item_authoring.md#description-voice-plain-by-default)
+for collection-level limits, strongest-model authorship and editorial review.
+This is editorial guidance, not a sentence-count or tone validator. The authored
 text is the fallback for the standard localization key
 `item.<stable_item_id>.description`; localization is resolved by the shared
 client rather than content loading. Art is authored presentation, not localized

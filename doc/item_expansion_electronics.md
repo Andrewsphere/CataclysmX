@@ -2,8 +2,8 @@
 
 Scope: 20 expansion items reviewed in place, 18 component/assembly units and two household donors.
 All are placed as early-to-mid pre-collapse salvage in electronics, workshop,
-office and household contexts. `toaster`
-is the sole deliberate humorous description. A unit is one complete part or
+office and household contexts. All 20 descriptions are plain, with no atmospheric
+or humorous exceptions. A unit is one complete part or
 device, except the cable, which is one short complete cable assembly.
 
 ## Tracker and integration contracts
@@ -85,9 +85,8 @@ thermal flags; small leads alone do not justify applying every metal property
 to a mixed assembly. Substantial exposed plastics/board laminates are marked
 combustible where applicable. No new flag vocabulary is required.
 
-Descriptions now give the parts a former home (parts tape, lab inventory sticker,
-maintenance dates, repair-shop labels and kitchen crumbs). Only `toaster` is
-deliberately humorous. Electrical conduction, sensing, computing, radio, display,
+Descriptions identify the parts, their construction and represented units without
+invented histories or jokes. Electrical conduction, sensing, computing, radio, display,
 lighting, heating and appliance operation remain metadata-only, with no authored
 runtime capabilities. No recipes consume other approved-batch items.
 
