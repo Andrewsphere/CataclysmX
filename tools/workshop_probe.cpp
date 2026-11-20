@@ -284,7 +284,7 @@ void Requirements(std::FILE* file, const ContentCatalog& content,
     }
     for (const auto& skill : recipe.skills) {
         std::fprintf(file, "%s,%s,skill,%s,%u\n", kind, recipe.id.c_str(),
-            content.GetSkill(skill.skill).id.c_str(), skill.level);
+            content.GetSkill(skill.Skill()).id.c_str(), skill.Level());
     }
 }
 bool Catalog(const ContentCatalog& content, const std::filesystem::path& directory) {
@@ -345,9 +345,9 @@ bool Catalog(const ContentCatalog& content, const std::filesystem::path& directo
         }
         for (const auto& training : recipe.training) {
             std::fprintf(requirements.stream, "craft,%s,training_level,%s,%u\n", recipe.id.c_str(),
-                content.GetSkill(training.skill).id.c_str(), training.level);
+                content.GetSkill(training.Skill()).id.c_str(), training.Level());
             std::fprintf(requirements.stream, "craft,%s,training_rate,%s,%u\n", recipe.id.c_str(),
-                content.GetSkill(training.skill).id.c_str(), training.xpPerWork);
+                content.GetSkill(training.Skill()).id.c_str(), training.XpPerWork());
         }
     }
     for (std::uint32_t i = 1; i <= content.MachineRecipeCount(); ++i) {

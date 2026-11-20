@@ -265,7 +265,7 @@ TEST_CASE("Combat catalogs resolve moves styles arts abilities manuals and handl
     CHECK(sweep.sweepMove == result->FindCombatMove("weapon_sweep_strike"));
     const auto& advanced = result->GetCombatMove(result->FindCombatMove("boxing_cross"));
     CHECK(advanced.unlock.artXp == 50000);
-    CHECK(advanced.unlock.skills[0].level == 2);
+    CHECK(advanced.unlock.skills[0].Level() == 2);
 }
 
 TEST_CASE("Combat strict schemas reject malformed references weights effects and sources", "[content][combat-content]") {

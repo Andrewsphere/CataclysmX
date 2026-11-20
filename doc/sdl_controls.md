@@ -41,7 +41,13 @@ Enter in ordinary inventory) examines the item, **w** wields/unwields, **d** dro
 **u** uses and **a** manages contents. Examination includes optional descriptions
 and colored UTF-8 art, plus the item's relevant stats.
 
-Advanced inventory keeps two panes open through paid transfers. **Tab** switches
+Advanced inventory initially shows Inventory | All nearby and keeps both panes
+open through paid transfers. Uppercase **A** selects All nearby; lowercase **a**
+still manages contents. All nearby includes direct accessible floor/object items
+in the same-layer 3×3, excluding the opposite pane's entire world tile (including
+the root tile of nested containers). Carried containers exclude nothing. Source
+labels identify separate stacks. Transfers into All nearby choose a concrete
+destination, including empty storage, before a quantity prompt. **Tab** switches
 panes; **I** selects inventory; **1–9** selects the current/neighboring tile in
 keypad order. **f** toggles floor/object storage; **o** opens a portable container
 and **Backspace** returns to its parent. **Enter** transfers one, **m** prompts for

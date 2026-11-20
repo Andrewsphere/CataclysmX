@@ -47,7 +47,7 @@ String SkillName(const ContentCatalog& content, SkillId id) {
 void Requirements(String& label, const ContentCatalog& content,
     eastl::span<const SkillRequirement> requirements) {
     for (const auto& requirement : requirements) {
-        label += " " + SkillName(content, requirement.skill) + " " + UnsignedText(requirement.level);
+        label += " " + SkillName(content, requirement.Skill()) + " " + UnsignedText(requirement.Level());
     }
 }
 
@@ -55,16 +55,16 @@ void Training(String& label, const WorldView& view, const ContentCatalog& conten
     eastl::span<const SkillTraining> training, bool disassembly) {
     if (training.empty()) { label += " | no skill XP (no training)"; }
     for (const auto& reward : training) {
-        const auto* skill = Skill(view, reward.skill);
+        const auto* skill = Skill(view, reward.Skill());
         const unsigned level = skill ? skill->progress.level : 0;
-        const auto* definition = content.TryGetSkill(reward.skill);
+        const auto* definition = content.TryGetSkill(reward.Skill());
         const unsigned maximum = definition ? definition->maxLevel : maximumSkillLevel;
-        const unsigned cap = reward.level < maximum ? reward.level + 1 : maximum;
-        label += " | " + SkillName(content, reward.skill) + " training cap " + UnsignedText(cap);
-        if (!reward.xpPerWork) { label += ": no XP (rate zero)"; }
+        const unsigned cap = reward.Level() < maximum ? reward.Level() + 1 : maximum;
+        label += " | " + SkillName(content, reward.Skill()) + " training cap " + UnsignedText(cap);
+        if (!reward.XpPerWork()) { label += ": no XP (rate zero)"; }
         else if (skill && level >= cap) { label += ": no XP (learned level at cap)"; }
         else {
-            label += ": " + FixedText(reward.xpPerWork) + " XP/work";
+            label += ": " + FixedText(reward.XpPerWork()) + " XP/work";
             if (skill && definition && definition->category == SkillCategory::Noncombat && level >= 5) {
                 label += disassembly ? " theory" : " practice";
                 label += " (advancement needs paired theory + practice)";
@@ -234,17 +234,17 @@ void CollectCraftingMenu(const WorldView& view, const ContentCatalog& content,
             label += " | memorization " + FixedText(knowledge.learningRatio * std::uint64_t{100}) + "%";
             break;
         }
-        if (!recipe.skills.empty()) { label += " | requires learned:"; Requirements(label, content, recipe.skills); }
+        if (!recipe.skills.Empty()) { label += " | requires learned:"; Requirements(label, content, {recipe.skills.begin(), recipe.skills.Size()}); }
         if (!recipe.knownByDefault) {
             label += " | memorize: " + UnsignedText(recipe.craftsToLearn) + " crafts / "
                 + UnsignedText(recipe.disassembliesToLearn) + " disassemblies (combined progress)";
         }
         if (recipe.autolearn) {
             label += " | autolearn requires recipe skills +";
-            if (recipe.autolearnSkills.empty()) { label += " no extra thresholds"; }
-            Requirements(label, content, recipe.autolearnSkills);
+            if (recipe.autolearnSkills.Empty()) { label += " no extra thresholds"; }
+            Requirements(label, content, {recipe.autolearnSkills.begin(), recipe.autolearnSkills.Size()});
         }
-        Training(label, view, content, recipe.training, false);
+        Training(label, view, content, {recipe.training.begin(), recipe.training.Size()}, false);
         rows.push_back({command, eastl::move(label)});
     }
     for (const auto& job : view.craftingJobs) {
@@ -271,8 +271,8 @@ void CollectCraftingMenu(const WorldView& view, const ContentCatalog& content,
             Command command; command.kind = CommandKind::recycle; command.item = item.id;
             String label = "Recycle #" + UnsignedText(item.id) + " " + localization.ItemName(content, item.type) + location;
             const auto& recipe = content.GetRecyclingRecipe(content.FindRecyclingFor(item.type));
-            if (!recipe.skills.empty()) { label += " | requires learned:"; Requirements(label, content, recipe.skills); }
-            Training(label, view, content, recipe.training, true);
+            if (!recipe.skills.Empty()) { label += " | requires learned:"; Requirements(label, content, {recipe.skills.begin(), recipe.skills.Size()}); }
+            Training(label, view, content, {recipe.training.begin(), recipe.training.Size()}, true);
             rows.push_back({command, eastl::move(label)});
         }
     };

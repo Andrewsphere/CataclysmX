@@ -421,9 +421,11 @@ struct PendingMachineRecipe {
 };
 
 bool ParseSkillEntries(yyjson_val* array, Vector<PendingSkillEntry>& output,
-                       const Context& context, bool training, std::uint32_t minimum) {
+                       const Context& context, bool training, std::uint32_t minimum,
+                       std::size_t maximum = SIZE_MAX) {
     if (!array) { return true; }
     if (!yyjson_is_arr(array)) { return context.Fail("expected an array"); }
+    if (yyjson_arr_size(array) > maximum) { return context.Fail("too many skill entries"); }
     std::size_t index, count;
     yyjson_val* value;
     yyjson_arr_foreach(array, index, count, value) {
@@ -530,7 +532,7 @@ bool ParseBook(yyjson_val* object, PendingBook& pending) {
                 || !ReadBoundedInteger(yyjson_obj_get(value, "success_chance"), 1, ratioScale, manual.definition.successChance, child.Child("success_chance"))
                 || !CombatTick(value, "base_duration", manual.definition.baseDuration, child)
                 || !manual.definition.baseDuration) { return child.Fail("manual requires positive study duration"); }
-            manual.definition.prerequisite.level = static_cast<std::uint8_t>(level);
+            manual.definition.prerequisite = SkillRequirement{{}, level};
             for (const auto& previous : pending.manuals) { if (previous.art == manual.art) { return child.Fail("duplicate art manual"); } }
             pending.manuals.push_back(eastl::move(manual));
         }
@@ -572,6 +574,7 @@ struct PendingCrafting {
     SmallVector<PendingTrait, 1> traits;
     PendingOutput result;
     Vector<PendingSkillEntry> skills, training, autolearn;
+    bool hasTraining = false;
     std::size_t inputOrder = 0;
     Context context;
 };
@@ -585,6 +588,7 @@ struct PendingRecycling {
     SmallVector<PendingTrait, 1> traits;
     SmallVector<PendingOutput, 2> returns;
     Vector<PendingSkillEntry> skills, training;
+    bool hasTraining = false;
     Vector<String> teachesRecipes;
     bool hasTeachesRecipes = false;
     std::size_t inputOrder = 0;
@@ -755,13 +759,14 @@ bool ParseRecycling(yyjson_val* object, PendingRecycling& pending, bool generate
     if (auto* heat = yyjson_obj_get(object, "heat_per_work")) {
         if (!ReadBoundedInteger(heat, 1, UINT32_MAX, definition.heatPerWork, context.Child("heat_per_work"))) { return false; }
     }
+    pending.hasTraining = yyjson_obj_get(object, "training") != nullptr;
     return ReadId(yyjson_obj_get(object, "id"), definition.id, context.Child("id"))
         && ParseRecipeName(object, definition.name, definition.id, context)
         && ReadBoundedInteger(yyjson_obj_get(object, "work"), 1, UINT32_MAX, definition.work, context.Child("work"))
         && ParseInputs(yyjson_obj_get(object, "inputs"), pending.inputs, context.Child("inputs"), false)
         && ParseTraits(yyjson_obj_get(object, "tool_traits"), pending.traits, context.Child("tool_traits"))
-        && ParseSkillEntries(yyjson_obj_get(object, "skills"), pending.skills, context.Child("skills"), false, 1)
-        && ParseSkillEntries(yyjson_obj_get(object, "training"), pending.training, context.Child("training"), true, 0);
+        && ParseSkillEntries(yyjson_obj_get(object, "skills"), pending.skills, context.Child("skills"), false, 1, maxRecipeSkills)
+        && ParseSkillEntries(yyjson_obj_get(object, "training"), pending.training, context.Child("training"), true, 0, maxRecipeTraining);
 }
 
 bool ParseCrafting(yyjson_val* object, PendingCrafting& pending) {
@@ -777,8 +782,9 @@ bool ParseCrafting(yyjson_val* object, PendingCrafting& pending) {
     if (auto* heat = yyjson_obj_get(object, "heat_per_work")) {
         if (!ReadBoundedInteger(heat, 1, UINT32_MAX, definition.heatPerWork, context.Child("heat_per_work"))) { return false; }
     }
-    if (!ParseSkillEntries(yyjson_obj_get(object, "skills"), pending.skills, context.Child("skills"), false, 1)
-        || !ParseSkillEntries(yyjson_obj_get(object, "training"), pending.training, context.Child("training"), true, 0)) { return false; }
+    pending.hasTraining = yyjson_obj_get(object, "training") != nullptr;
+    if (!ParseSkillEntries(yyjson_obj_get(object, "skills"), pending.skills, context.Child("skills"), false, 1, maxRecipeSkills)
+        || !ParseSkillEntries(yyjson_obj_get(object, "training"), pending.training, context.Child("training"), true, 0, maxRecipeTraining)) { return false; }
     if (auto* knowledge = yyjson_obj_get(object, "knowledge")) {
         const auto child = context.Child("knowledge");
         definition.knownByDefault = false;
@@ -788,7 +794,7 @@ bool ParseCrafting(yyjson_val* object, PendingCrafting& pending) {
         }
         if (auto* autolearn = yyjson_obj_get(knowledge, "autolearn")) {
             definition.autolearn = true;
-            if (!ParseSkillEntries(autolearn, pending.autolearn, child.Child("autolearn"), false, 0)) { return false; }
+            if (!ParseSkillEntries(autolearn, pending.autolearn, child.Child("autolearn"), false, 0, maxRecipeAutolearnSkills)) { return false; }
         }
         std::uint32_t crafts = definition.craftsToLearn, disassemblies = definition.disassembliesToLearn;
         if (auto* value = yyjson_obj_get(knowledge, "crafts_to_learn")) {
@@ -2662,24 +2668,58 @@ bool ResolveInputs(eastl::span<const PendingInput> pending, StaticList<RecipeInp
     return true;
 }
 
+bool ResolveSkillEntry(const PendingSkillEntry& pending, SkillRequirement& output,
+                       const ContentCatalog& catalog, const Context& context) {
+    const auto skill = catalog.FindSkill(View(pending.skill));
+    if (!skill.value) { return context.Child("skill").Fail("unknown skill reference"); }
+    if (!ValidateSkillMaximum(pending.level, catalog.GetSkill(skill), context.Child("level"))) { return false; }
+    output = SkillRequirement{skill, pending.level};
+    return true;
+}
+
 bool ResolveSkillRequirements(const Vector<PendingSkillEntry>& pending,
-                              SmallVector<SkillRequirement, 1>& output,
-                              const ContentCatalog& catalog, const Context& context) {
+                               SmallVector<SkillRequirement, 1>& output,
+                               const ContentCatalog& catalog, const Context& context) {
     for (std::size_t i = 0; i < pending.size(); ++i) {
-        const auto skill = catalog.FindSkill(View(pending[i].skill));
-        if (!skill.value) { return ArrayElement(context, i).Child("skill").Fail("unknown skill reference"); }
-        if (!ValidateSkillMaximum(pending[i].level, catalog.GetSkill(skill), ArrayElement(context, i).Child("level"))) { return false; }
-        output.push_back({skill, pending[i].level});
+        SkillRequirement entry;
+        if (!ResolveSkillEntry(pending[i], entry, catalog, ArrayElement(context, i))) { return false; }
+        output.push_back(entry);
     }
     eastl::sort(output.begin(), output.end(), [](const SkillRequirement& a, const SkillRequirement& b) {
-        return a.skill.value < b.skill.value;
+        return a.Skill().value < b.Skill().value;
     });
     return true;
 }
 
-bool ResolveTraining(const Vector<PendingSkillEntry>& pending, const SmallVector<SkillRequirement, 1>& requirements,
-                     SmallVector<SkillTraining, 1>& output, const ContentCatalog& catalog, const Context& context) {
-    for (const auto& requirement : requirements) { output.push_back({requirement.skill, requirement.level, 100}); }
+bool ResolveSkillRequirements(const Vector<PendingSkillEntry>& pending,
+                              StaticList<SkillRequirement, maxRecipeSkills>& output,
+                              const ContentCatalog& catalog, const Context& context) {
+    if (pending.size() > maxRecipeSkills) { return context.Fail("expected at most 4 skill requirements"); }
+    for (std::size_t i = 0; i < pending.size(); ++i) {
+        SkillRequirement entry;
+        if (!ResolveSkillEntry(pending[i], entry, catalog, ArrayElement(context, i))) { return false; }
+        if (!output.PushBack(entry)) { return context.Fail("too many skill requirements"); }
+    }
+    eastl::sort(output.begin(), output.end(), [](const SkillRequirement& a, const SkillRequirement& b) {
+        return a.Skill().value < b.Skill().value;
+    });
+    return true;
+}
+
+bool ResolveTraining(const Vector<PendingSkillEntry>& pending, bool hasTraining,
+                     const StaticList<SkillRequirement, maxRecipeSkills>& requirements,
+                     StaticList<SkillTraining, maxRecipeTraining>& output,
+                     const ContentCatalog& catalog, const Context& context) {
+    if (!hasTraining) {
+        if (requirements.Size() > maxRecipeTraining) {
+            return context.Fail("more than 2 required skills requires an explicit training selection of at most 2 skills");
+        }
+        for (const auto& requirement : requirements) {
+            if (!output.PushBack({requirement.Skill(), requirement.Level(), 100})) { std::abort(); }
+        }
+        return true;
+    }
+    if (pending.size() > maxRecipeTraining) { return context.Fail("expected at most 2 training skills"); }
     for (std::size_t i = 0; i < pending.size(); ++i) {
         const auto child = ArrayElement(context, i);
         const auto& entry = pending[i];
@@ -2687,20 +2727,19 @@ bool ResolveTraining(const Vector<PendingSkillEntry>& pending, const SmallVector
         if (!skill.value) { return child.Child("skill").Fail("unknown skill reference"); }
         if (!ValidateSkillMaximum(entry.level, catalog.GetSkill(skill), child.Child("level"))) { return false; }
         bool required = false;
-        for (auto& training : output) {
-            if (training.skill != skill) { continue; }
+        for (const auto& requirement : requirements) {
+            if (requirement.Skill() != skill) { continue; }
             required = true;
-            if (training.level != entry.level) { return child.Child("level").Fail("training level must match required skill level"); }
-            training.xpPerWork = entry.xpPerWork;
+            if (requirement.Level() != entry.level) { return child.Child("level").Fail("training level must match required skill level"); }
             break;
         }
         if (!required) {
             if (entry.level != 0) { return child.Child("level").Fail("ungated training must be introductory level zero"); }
-            output.push_back({skill, entry.level, entry.xpPerWork});
         }
+        if (!output.PushBack({skill, entry.level, entry.xpPerWork})) { return context.Fail("too many training skills"); }
     }
     eastl::sort(output.begin(), output.end(), [](const SkillTraining& a, const SkillTraining& b) {
-        return a.skill.value < b.skill.value;
+        return a.Skill().value < b.Skill().value;
     });
     return true;
 }
@@ -2710,13 +2749,14 @@ bool ResolveBook(PendingBook& pending, const ContentCatalog& catalog) {
         const auto& manual = pending.manuals[i];
         auto definition = manual.definition;
         definition.art = catalog.FindCombatArt(View(manual.art));
-        definition.prerequisite.skill = catalog.FindSkill(View(manual.skill));
-        if (!definition.art.value || !definition.prerequisite.skill.value
-            || catalog.GetSkill(definition.prerequisite.skill).category != SkillCategory::Combat) {
+        const auto skill = catalog.FindSkill(View(manual.skill));
+        if (!definition.art.value || !skill.value
+            || catalog.GetSkill(skill).category != SkillCategory::Combat) {
             return pending.context.Child("art_manuals").Fail("unknown art or combat skill reference");
         }
-        if (!ValidateSkillMaximum(definition.prerequisite.level, catalog.GetSkill(definition.prerequisite.skill),
-                                  ArrayElement(pending.context.Child("art_manuals"), i).Child("level"))) { return false; }
+        if (!ValidateSkillMaximum(definition.prerequisite.Level(), catalog.GetSkill(skill),
+                                   ArrayElement(pending.context.Child("art_manuals"), i).Child("level"))) { return false; }
+        definition.prerequisite = SkillRequirement{skill, definition.prerequisite.Level()};
         pending.definition.artManuals.push_back(definition);
     }
     for (std::size_t i = 0; i < pending.benefits.size(); ++i) {
@@ -2759,14 +2799,14 @@ bool ResolveCrafting(PendingCrafting& pending, const ContentCatalog& catalog) {
     auto& definition = pending.definition;
     definition.result.count = pending.result.count;
     if (!ResolveSkillRequirements(pending.skills, definition.skills, catalog, pending.context.Child("skills"))
-        || !ResolveTraining(pending.training, definition.skills, definition.training, catalog, pending.context.Child("training"))
+        || !ResolveTraining(pending.training, pending.hasTraining, definition.skills, definition.training, catalog, pending.context.Child("training"))
         || !ResolveSkillRequirements(pending.autolearn, definition.autolearnSkills, catalog,
                                      pending.context.Child("knowledge").Child("autolearn"))) { return false; }
     for (std::size_t i = 0; i < pending.autolearn.size(); ++i) {
         const auto& entry = pending.autolearn[i];
         const auto skill = catalog.FindSkill(View(entry.skill));
         for (const auto& requirement : definition.skills) {
-            if (requirement.skill == skill && entry.level < requirement.level) {
+            if (requirement.Skill() == skill && entry.level < requirement.Level()) {
                 return ArrayElement(pending.context.Child("knowledge").Child("autolearn"), i).Child("level")
                     .Fail("autolearn threshold cannot be below required skill level");
             }
@@ -2781,7 +2821,7 @@ bool ResolveCrafting(PendingCrafting& pending, const ContentCatalog& catalog) {
 bool ResolveRecycling(PendingRecycling& pending, const ContentCatalog& catalog) {
     auto& definition = pending.definition;
     if (!ResolveSkillRequirements(pending.skills, definition.skills, catalog, pending.context.Child("skills"))
-        || !ResolveTraining(pending.training, definition.skills, definition.training, catalog, pending.context.Child("training"))) { return false; }
+        || !ResolveTraining(pending.training, pending.hasTraining, definition.skills, definition.training, catalog, pending.context.Child("training"))) { return false; }
     if (!ResolveInputs(pending.inputs, definition.inputs, catalog, pending.context.Child("inputs"))
         || !ResolveTraits(pending.traits, definition.toolTraits, catalog, pending.context.Child("tool_traits"))) { return false; }
     if (!pending.generatedFrom.empty()) {
@@ -3568,7 +3608,7 @@ ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sourc
         || spawns.pools.size() > UINT32_MAX || spawns.monsters.size() > UINT32_MAX || spawns.groups.size() > UINT32_MAX
         || aiProfiles.size() > std::numeric_limits<std::uint32_t>::max()
         || recipes.size() > UINT32_MAX || recyclers.size() > UINT32_MAX || traits.size() > 255 || flags.size() > UINT32_MAX
-        || skills.size() > UINT32_MAX || books.size() > UINT32_MAX
+        || skills.size() > maxSkillId || books.size() > UINT32_MAX
         || information.size() > UINT32_MAX || machineRecipes.size() > UINT32_MAX
         || ((!recipes.empty() || !recyclers.empty() || !machineRecipes.empty()) && items.size() > maxRecipeItemId)) {
         Context{diagnostics, {}, {}}.Fail("too many content definitions");

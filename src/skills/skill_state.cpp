@@ -51,8 +51,8 @@ bool Eligible(const LearningState& state, const ContentCatalog& content, const S
 }
 
 bool Autolearns(const LearningState& state, const CraftingRecipeDefinition& recipe) {
-    return recipe.autolearn && MeetsSkillRequirements(state, recipe.skills)
-        && MeetsSkillRequirements(state, recipe.autolearnSkills);
+    return recipe.autolearn && MeetsSkillRequirements(state, {recipe.skills.begin(), recipe.skills.Size()})
+        && MeetsSkillRequirements(state, {recipe.autolearnSkills.begin(), recipe.autolearnSkills.Size()});
 }
 
 bool Fields(const DataObject& data, std::initializer_list<const char*> names) {
@@ -198,7 +198,7 @@ int EffectiveSkillLevel(const LearningState& state, SkillId skill, int modifier)
 
 bool MeetsSkillRequirements(const LearningState& state, eastl::span<const SkillRequirement> requirements) {
     for (const auto& requirement : requirements) {
-        if (LearnedSkillLevel(state, requirement.skill) < requirement.level) { return false; }
+        if (LearnedSkillLevel(state, requirement.Skill()) < requirement.Level()) { return false; }
     }
     return true;
 }
@@ -210,21 +210,21 @@ std::uint64_t SkillXpRequired(const SkillDefinition& definition, std::uint8_t cu
 
 SkillAward TrainSkill(LearningState& state, const ContentCatalog& content,
     const SkillTraining& training, SkillActivity activity, std::uint64_t fixedWork) {
-    const auto& definition = content.GetSkill(training.skill);
-    if (training.level > definition.maxLevel || training.xpPerWork > ratioScale) { std::abort(); }
+    const auto& definition = content.GetSkill(training.Skill());
+    if (training.Level() > definition.maxLevel || training.XpPerWork() > ratioScale) { std::abort(); }
     SkillAward award;
-    if (!fixedWork || !training.xpPerWork) { return award; }
-    auto& progress = EnsureSkillProgress(state, training.skill);
+    if (!fixedWork || !training.XpPerWork()) { return award; }
+    auto& progress = EnsureSkillProgress(state, training.Skill());
     // Quotient/remainder decomposition avoids overflowing even UINT64_MAX work.
-    const auto fraction = (fixedWork % ratioScale) * training.xpPerWork + progress.workRemainder;
-    const auto amount = (fixedWork / ratioScale) * training.xpPerWork + fraction / ratioScale;
-    const auto ceiling = eastl::min<unsigned>(training.level + 1, definition.maxLevel);
+    const auto fraction = (fixedWork % ratioScale) * training.XpPerWork() + progress.workRemainder;
+    const auto amount = (fixedWork / ratioScale) * training.XpPerWork() + fraction / ratioScale;
+    const auto ceiling = eastl::min<unsigned>(training.Level() + 1, definition.maxLevel);
     if (progress.level >= ceiling || (Advanced(definition, progress) && activity == SkillActivity::Combat)) {
         award.capped = amount;
         return award;
     }
     progress.workRemainder = static_cast<std::uint32_t>(fraction % ratioScale);
-    return AwardSkillXp(state, content, training.skill, training.level, activity, amount);
+    return AwardSkillXp(state, content, training.Skill(), training.Level(), activity, amount);
 }
 
 SkillAward AwardSkillXp(LearningState& state, const ContentCatalog& content,

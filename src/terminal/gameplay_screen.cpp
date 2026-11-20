@@ -765,14 +765,16 @@ ftxui::Element GameplayUi::Render(WorldView view, const ContentCatalog& content,
             }
             for (const auto& stat : frame.examination.stats) { detail.push_back(Paragraph(stat)); }
             itemBody = std::make_shared<ScrollPane>(ftxui::vbox(std::move(detail)), frame.examination.scroll);
-        } else if (frame.screen == ItemUiScreen::Actions || frame.screen == ItemUiScreen::Target || frame.screen == ItemUiScreen::Direction || frame.screen == ItemUiScreen::Amount) {
+        } else if (frame.screen == ItemUiScreen::Actions || frame.screen == ItemUiScreen::Target || frame.screen == ItemUiScreen::Direction || frame.screen == ItemUiScreen::Amount || frame.screen == ItemUiScreen::Destination) {
             ftxui::Elements choices;
+            if (frame.screen == ItemUiScreen::Destination) { choices.push_back(Text(frame.prompt)); }
             if (frame.screen == ItemUiScreen::Amount) { choices.push_back(Text(frame.prompt)); choices.push_back(Text(frame.amount + "_")); }
             else if (frame.screen == ItemUiScreen::Direction) { choices.push_back(ftxui::text("Choose a direction; Escape returns.")); }
             else { for (std::size_t n = 0; n < frame.choices.size(); ++n) {
                 auto row = Text(frame.choices[n]); if (n == frame.choice) { row = row | ftxui::inverted; } choices.push_back(row);
             } }
-            itemBody = std::make_shared<ScrollPane>(ftxui::vbox(std::move(choices)), inventoryScroll_, static_cast<int>(frame.choice));
+            const int selectedChoice = static_cast<int>(frame.choice) + (frame.screen == ItemUiScreen::Destination ? 1 : 0);
+            itemBody = std::make_shared<ScrollPane>(ftxui::vbox(std::move(choices)), inventoryScroll_, selectedChoice);
         } else {
             ftxui::Elements panes;
             for (unsigned p = 0; p < (items_.IsAdvanced() ? 2u : 1u); ++p) {

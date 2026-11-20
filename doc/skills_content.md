@@ -66,6 +66,7 @@ study, but studying it does not itself memorize the recipe.
 ## Skill and book definitions
 
 `skill` requires `id` and `name`; `category` is `noncombat` (default) or `combat`.
+The catalog accepts at most 4095 skill definitions (resolved IDs 1–4095).
 Optional `max_level` is an integer in 1–10, default 10. Optional `xp_to_next`
 contains exactly `max_level` integers, each 1–1000000000, indexed from level 0.
 An omitted curve uses the default curve through that maximum. Field order does
@@ -110,25 +111,34 @@ currently consumed.
 ## Recipe gates and training
 
 Crafting recipes and both explicit and generated recyclers accept `skills` and
-`training` arrays. Each skill requirement is `{skill:'id', level:1}` with level
-1–the referenced skill's maximum. Each required skill automatically trains at its required level and default
-`xp_per_work:100` (0.01 XP per base work). A `training` entry has `skill`,
-`level` 0–the skill's maximum and optional `xp_per_work` 0–10000; it overrides the same required
-skill only at that requirement's level, or adds an independent training skill.
+`training` arrays. At most four required skills and two training entries are
+allowed. Each skill requirement is `{skill:'id', level:1}` with level
+1–the referenced skill's maximum. When `training` is omitted, every required
+skill trains at its required level with default `xp_per_work:100` (0.01 XP per
+base work). More than two requirements therefore need an explicit training
+selection; omission is rejected rather than silently choosing rewards.
+
+A present `training` array is the **complete selection**, not a set of overrides.
+`training:[]` grants no skill XP, even when requirements exist. An entry has
+`skill`, `level` 0–the skill's maximum and optional `xp_per_work` 0–10000.
+For a required skill its level must match that requirement.
 An independent skill without a requirement must use training level 0; higher-tier
 training needs the matching learned-skill gate.
-Duplicates in an array are invalid. A zero rate disables that training reward.
+Duplicates in an array are invalid. A zero rate disables that training reward
+but still occupies one of the two selection slots.
 
 Crafting `knowledge` accepts `known_by_default`, `autolearn`, `crafts_to_learn`
 and `disassemblies_to_learn`. Omitting the whole object preserves legacy
 `known_by_default:true`; supplying `knowledge:{}` defaults it to false. Autolearn
-is enabled only when its array is present, even when empty; its skill thresholds
+is enabled only when its array is present, even when empty; at most four thresholds
+are allowed. Its skill thresholds
 are 0–the skill's maximum and must not undercut the same recipe requirement. It requires both
 recipe gates and all listed thresholds. Counts default to 2 and 3 respectively,
 and each must be 1–65535.
 
-Limits are checked after resolving references, including forward references,
-generated recyclers, inherited training and combat/manual prerequisites.
+Array counts are checked before resolving entries. Skill-specific level limits
+are checked after resolving references, including forward references, generated
+recyclers, inferred training and combat/manual prerequisites.
 Over-cap references are errors, never silently lowered. Cooking-5 recipes remain
 usable even though their default training cannot advance an already qualified cook;
 recipe memorization and other eligible skill training still apply.

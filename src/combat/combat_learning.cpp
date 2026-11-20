@@ -26,7 +26,7 @@ const ArtManualDefinition* FindManual(const ContentCatalog& content, const ArtMa
     return nullptr;
 }
 bool MeetsPrerequisite(const Actor& actor, const ArtManualDefinition& manual) {
-    return LearnedSkillLevel(actor.learning, manual.prerequisite.skill) >= manual.prerequisite.level;
+    return LearnedSkillLevel(actor.learning, manual.prerequisite.Skill()) >= manual.prerequisite.Level();
 }
 ManualAttemptProgress* FindAttempt(Actor& actor, const ArtManualRequest& request) {
     if (!actor.characterCombat) { return nullptr; }
@@ -81,7 +81,7 @@ WorldResult<void> CombatSystem::GrantArt(ActorHandle handle, CombatArtId art, Ar
             if (progress.xp < grant.unlock.artXp) { continue; }
             bool unlocked = true;
             for (const auto& requirement : grant.unlock.skills) {
-                if (LearnedSkillLevel(actor->learning, requirement.skill) < requirement.level) { unlocked = false; break; }
+                if (LearnedSkillLevel(actor->learning, requirement.Skill()) < requirement.Level()) { unlocked = false; break; }
             }
             if (!unlocked) { continue; }
             const AbilityGrant value{grant.ability, {AbilityGrantSourceKind::Art, progress.art}};
@@ -126,7 +126,7 @@ ArtStudyResult CombatSystem::StudyArt(ActorHandle handle, const ArtManualRequest
     }
     if (!attempt->totalDuration) {
         const auto& manual = *FindManual(world_.GetContent(), request);
-        const auto surplus = LearnedSkillLevel(actor->learning, manual.prerequisite.skill) - manual.prerequisite.level;
+        const auto surplus = LearnedSkillLevel(actor->learning, manual.prerequisite.Skill()) - manual.prerequisite.Level();
         attempt->totalDuration = ArtStudyDuration(manual.baseDuration, surplus);
         Require(attempt->totalDuration > 0 && manual.successChance <= ratioScale);
         attempt->remaining = attempt->totalDuration;

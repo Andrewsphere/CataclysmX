@@ -34,7 +34,7 @@ enum class InputAction {
     StyleBalanced, StyleAggressive, StyleDefensive, Examine, Northwest, Northeast, Southwest, Southeast, Crafting, Grab,
     AdvancedInventory, Wield, TransferAmount, TransferStack, OpenContainer, ParentStorage, ToggleStorage,
     CombatMenu, CombatInfo, HoldLeft, HoldRight, TwoHanded, Regrip, Wear, RemoveWorn, ReleaseHand,
-    FocusAbility, LeapAbility, SweepAbility
+    FocusAbility, LeapAbility, SweepAbility, AllNearby
 };
 struct InputBinding {
     InputContext context = InputContext::Gameplay;

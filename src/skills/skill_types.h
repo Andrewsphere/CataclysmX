@@ -13,5 +13,6 @@ struct BookId {
 };
 enum class SkillCategory : std::uint8_t { Noncombat, Combat };
 enum class SkillActivity : std::uint8_t { Craft, Disassembly, Combat };
+inline constexpr std::uint32_t maxSkillId = (1u << 12) - 1;
 inline constexpr std::uint8_t maximumSkillLevel = 10;
 }

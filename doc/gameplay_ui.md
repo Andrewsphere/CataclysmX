@@ -135,7 +135,7 @@ wire validation and session-thread API design.
 | --- | --- | --- |
 | `inventory` | `i` | Carried descendants and accessible ground items, selected by persistent ID |
 | `use` | `u` | Same item list with Enter-to-use |
-| `advanced_inventory` | `/` | Two exact-storage panes and quantity transfers |
+| `advanced_inventory` | `/` | Inventory / All nearby panes and quantity transfers |
 | `players` | `P` | Player connection, readiness, queue and grace status |
 | `help` | `F1` | Shortcut reference, interaction bindings and fixed LAN keys |
 | `quick_actions` | `a` | Select common gameplay commands and windows with arrows |

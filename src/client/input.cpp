@@ -20,7 +20,7 @@ constexpr eastl::string_view actionNames[] = {
     "northwest", "northeast", "southwest", "southeast", "crafting", "grab",
     "advanced_inventory", "wield", "transfer_amount", "transfer_stack", "open_container", "parent_storage", "toggle_storage",
     "combat_menu", "combat_info", "hold_left", "hold_right", "two_handed", "regrip", "wear", "remove_worn", "release_hand",
-    "ability_focus", "ability_leap", "ability_sweep"
+    "ability_focus", "ability_leap", "ability_sweep", "all_nearby"
 };
 constexpr eastl::string_view contextNames[] = {"gameplay", "interaction", "menu", "debug", "items"};
 constexpr eastl::string_view namedKeys[] = {
@@ -178,6 +178,7 @@ Keymap DefaultKeymap() {
     add(InputContext::Items, InputAction::OpenContainer, {"o"});
     add(InputContext::Items, InputAction::ParentStorage, {"Backspace"});
     add(InputContext::Items, InputAction::ToggleStorage, {"f"});
+    add(InputContext::Items, InputAction::AllNearby, {"A"});
     add(InputContext::Items, InputAction::HoldLeft, {"L"});
     add(InputContext::Items, InputAction::HoldRight, {"R"});
     add(InputContext::Items, InputAction::TwoHanded, {"H"});

@@ -201,7 +201,7 @@ CraftingOutcome CraftingSystem::LearningAvailability(ActorHandle handle, const C
     const auto& learning = world_.GetActor(handle)->learning;
     const auto& requirements = state.kind == CraftingKind::Craft ? content.GetCraftingRecipe(state.craftingRecipe).skills
         : content.GetRecyclingRecipe(state.recyclingRecipe).skills;
-    if (!MeetsSkillRequirements(learning, {requirements.data(), requirements.size()})) { return CraftingOutcome::MissingSkills; }
+    if (!MeetsSkillRequirements(learning, {requirements.begin(), requirements.Size()})) { return CraftingOutcome::MissingSkills; }
     if (state.kind == CraftingKind::Craft && !KnowsRecipe(learning, content, state.craftingRecipe)
         && !world_.Learning().HasRecipeReference(handle, state.craftingRecipe, radius)) {
         return CraftingOutcome::MissingRecipeReference;

@@ -37,9 +37,9 @@ void CheckSkill(const ContentCatalog& content, const CraftingRecipeDefinition& r
     const auto id = content.FindSkill(name);
     REQUIRE(id.value != 0);
     bool gate = false, training = false;
-    for (const auto& skill : recipe.skills) { gate |= skill.skill == id && skill.level == level; }
+    for (const auto& skill : recipe.skills) { gate |= skill.Skill() == id && skill.Level() == level; }
     for (const auto& skill : recipe.training) {
-        training |= skill.skill == id && skill.level == level && skill.xpPerWork > 0;
+        training |= skill.Skill() == id && skill.Level() == level && skill.XpPerWork() > 0;
     }
     CHECK(gate);
     CHECK(training);
@@ -128,8 +128,8 @@ void CheckRenewableContent(const ContentCatalog& content) {
                                SkillRequirement{content.FindSkill("mechanics"), 4}}) {
         bool found = false;
         for (const auto& benefit : content.GetBook(bookId).benefits) {
-            found |= benefit.skill == wanted.skill && benefit.firstLevel == 1
-                && benefit.lastLevel == wanted.level && benefit.directXp == 20
+            found |= benefit.skill == wanted.Skill() && benefit.firstLevel == 1
+                && benefit.lastLevel == wanted.Level() && benefit.directXp == 20
                 && benefit.multiplier == 15000;
         }
         CHECK(found);

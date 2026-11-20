@@ -462,7 +462,7 @@ TEST_CASE("Settings descriptions cover every field and action and keyboard limit
             CHECK(f.localization.Text({key.data(), key.size()}) != String("[") + key + "]");
         }
     }
-    for (unsigned i = 0; i <= static_cast<unsigned>(InputAction::SweepAbility); ++i) {
+    for (unsigned i = 0; i <= static_cast<unsigned>(InputAction::AllNearby); ++i) {
         String key = "settings.ui.action_help."; const auto name = ActionName(static_cast<InputAction>(i)); key.append(name.data(), name.size());
         INFO(key.c_str());
         CHECK(f.localization.Text({key.data(), key.size()}) != String("[") + key + "]");

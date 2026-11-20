@@ -36,17 +36,44 @@ at narrow widths and never wraps into a different picture.
 
 ## Advanced inventory
 
-Two panes show direct children of exact storages. **Tab** changes the active pane;
-**I** selects direct inventory. Fixed **1–9** use keypad directions (`7 8 9` north,
+Initially the panes show **Inventory | All nearby**. Reopening retains their modes,
+selections and scroll. **Tab** changes the active pane; **I** selects direct inventory.
+Configurable uppercase **A** selects All nearby (lowercase **a** still manages contents).
+Only one pane may show All nearby; selecting it on the other side swaps complete panes.
+Fixed **1–9** use keypad directions (`7 8 9` north,
 `4 5 6` west/current/east, `1 2 3` south), on the player's layer. Accessible object
 storage at that tile takes priority over floor storage. **f** explicitly toggles
 between object and floor. **o** opens portable container contents; **Backspace**
 selects its immediate parent storage. Choosing the other pane's storage swaps
 both panes, including their selected identities and scroll offsets.
 
+All nearby shows only direct children of accessible floors and object storages in
+the same-layer 3×3 neighborhood, never carried items or recursive container contents.
+It excludes the opposite pane's entire world tile (both floor and objects), resolving
+nested container parents to their root tile; carried containers exclude no tile.
+Rows group only within an exact source and include labels such as `[7 floor]` and
+`[6 cupboard]` in both frontends. Source order is north-to-south, west-to-east,
+floor before objects, then object identity. Totals sum eligible source metadata
+once, without invented aggregate capacity limits or double-counted contents.
+Opening a container from All nearby enters that exact container; Backspace returns
+to its real parent. Floor/object toggle uses the selected row's concrete source.
+
+`ItemUiPane::mode` distinguishes `Storage` from `AllNearby`; `pane.storage` is
+meaningful only in `Storage` mode. Every `ItemUiRow::storage` remains an exact
+immediate source. This keeps aggregation in presentation rather than adding an
+ambiguous engine destination. `ItemUiScreen::Destination` exposes its prompt and
+captured choices through the existing frame fields. Nearby-source collection
+reuses controller-owned scratch storage across refreshes.
+
 **Enter** transfers one selected instance; **m** asks for a positive quantity
 bounded by the selected stack; **M** transfers the entire stack. Escape cancels
-quantity entry. **e** examines and returns to the same pane. Destinations are
+quantity entry. Transfers into All nearby first show a Destination list of concrete,
+accessible floor/object storages, including empty ones, excluding the source's
+whole root tile. Choosing one does not replace the aggregate pane. For **m**,
+destination selection precedes quantity entry; Escape from either prompt cancels.
+Captured identities, accessibility and container ancestry are checked against fresh
+snapshots; stale sources/destinations are refused rather than redirected.
+**e** examines and returns to the same pane. Destinations are
 exact: inventory means direct inventory, without autostashing. A container and
 its tree form one command. Installed/reserved items and self ancestry cannot be
 moved; authoritative access/capacity checks remain with the server. Totals and

@@ -139,6 +139,27 @@ TEST_CASE("SDL inventory renders both capacities empty panes and compact selecte
     }
 }
 
+TEST_CASE("SDL aggregate row names retain source labels and render destination modal", "[sdl][inventory][render]") {
+    Display display(1120, 780); REQUIRE(display.renderer);
+    SdlText text(display.renderer); REQUIRE(text.Ready()); SdlAssets assets;
+    for (int i = 0; i < 1000000 && assets.Poll(display.renderer) == AssetState::Loading; ++i) { std::this_thread::yield(); }
+    REQUIRE(assets.State() == AssetState::Ready);
+    ItemUiFrame frame; frame.screen = ItemUiScreen::Advanced; frame.title = "Advanced inventory";
+    frame.panes[0].title = "Inventory"; frame.panes[1].title = "All nearby";
+    frame.panes[1].mode = ItemUiPaneMode::AllNearby;
+    ItemUiRow row; row.type = TestItem("rock"); row.name = "rock [7 floor]"; row.items = {4};
+    frame.panes[1].rows = {row};
+    REQUIRE(DrawInventoryScreen(display.renderer, text, assets, TestContent(), frame, 1120, 780, 1));
+    const auto labelledWidth = text.Width(96);
+    frame.panes[1].rows[0].name = "rock";
+    REQUIRE(DrawInventoryScreen(display.renderer, text, assets, TestContent(), frame, 1120, 780, 1));
+    CHECK(labelledWidth > text.Width(96));
+    frame.screen = ItemUiScreen::Destination; frame.prompt = "Choose destination";
+    frame.choices = {"[7] Northwest — floor", "[6] East — cupboard"};
+    REQUIRE(DrawInventoryScreen(display.renderer, text, assets, TestContent(), frame, 1120, 780, 1));
+    CHECK(text.Width(68) > 0); CHECK(text.Width(72) > 0); CHECK(text.Width(73) > 0);
+}
+
 TEST_CASE("SDL item examination preserves colored UTF8 cells clips wide art and scrolls stats", "[sdl][inventory][render]") {
     Display display(480, 360); REQUIRE(display.renderer);
     SdlText text(display.renderer); REQUIRE(text.Ready());
@@ -195,6 +216,9 @@ TEST_CASE("SDL item submodal transitions stop held accept and quantity keys", "[
     SDL_Event amount = enter; amount.key.key = SDLK_M;
     REQUIRE(held.Observe(amount, 1001));
     HandleInventoryKey(ui, held, {"m"}, keys, view, TestContent(), localization);
+    REQUIRE(ui.Frame().screen == ItemUiScreen::Destination);
+    CHECK_FALSE(held.Poll(1500, 10));
+    HandleInventoryKey(ui, held, {"Enter"}, keys, view, TestContent(), localization);
     REQUIRE(ui.Frame().screen == ItemUiScreen::Amount);
     CHECK_FALSE(held.Poll(2000, 10));
     HandleInventoryKey(ui, held, {"5"}, keys, view, TestContent(), localization);

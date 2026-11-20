@@ -505,11 +505,11 @@ TEST_CASE("Fractional surplus stops at teaching and ordinary band boundaries", "
     SECTION("teaching ceiling") {}
     SECTION("ordinary to advanced at the teaching ceiling") {
         progress.level = 4;
-        training.level = 4;
+        training = SkillTraining{skill, 4, 5000};
     }
     SECTION("ordinary to advanced with an otherwise eligible source") {
         progress.level = 4;
-        training.level = 9;
+        training = SkillTraining{skill, 9, 5000};
         // Combat cannot add advanced reserves after the band transition.
         activity = SkillActivity::Combat;
     }
@@ -524,7 +524,7 @@ TEST_CASE("Fractional surplus stops at teaching and ordinary band boundaries", "
     CHECK(bulk == split);
     CHECK(FindSkillProgress(bulk, skill)->level == nextLevel);
     CHECK(FindSkillProgress(bulk, skill)->workRemainder == 0);
-    training.level = 9;
+    training = SkillTraining{skill, 9, 5000};
     TrainSkill(bulk, content, training, SkillActivity::Craft, 1);
     TrainSkill(split, content, training, SkillActivity::Craft, 1);
     CHECK(bulk == split);
@@ -584,7 +584,7 @@ TEST_CASE("Advanced reserves discard only capacity-bound fractional work", "[ski
         }
         auto split = bulk;
         auto source = training;
-        if (levels) { source.level = 5; }
+        if (levels) { source = SkillTraining{skill, 5, 5000}; }
         TrainSkill(bulk, content, source, activity, work);
         const auto firstWork = work > 1 ? 2u : 1u;
         TrainSkill(split, content, source, activity, firstWork);

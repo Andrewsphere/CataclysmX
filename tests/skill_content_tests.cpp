@@ -1,4 +1,5 @@
 #include "content/content.h"
+#include "network/network.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <cstdio>
@@ -169,12 +170,12 @@ TEST_CASE("Capped skill references retain inclusive bounds and inherited default
     REQUIRE(loaded);
     const auto skill = loaded->FindSkill("limited");
     const auto& craft = loaded->GetCraftingRecipe(loaded->FindCraftingRecipe("make"));
-    REQUIRE(craft.training.size() == 1);
+    REQUIRE(craft.training.Size() == 1);
     CHECK(craft.training[0] == SkillTraining{skill, 5, 100});
     CHECK(craft.autolearnSkills[0] == SkillRequirement{skill, 5});
     for (const char* id : {"unmake", "explicit"}) {
         const auto& recycler = loaded->GetRecyclingRecipe(loaded->FindRecyclingRecipe(id));
-        REQUIRE(recycler.training.size() == 1);
+        REQUIRE(recycler.training.Size() == 1);
         CHECK(recycler.training[0] == SkillTraining{skill, 5, 100});
     }
     CHECK(loaded->GetBook({1}).benefits[0].lastLevel == 5);
@@ -242,7 +243,7 @@ TEST_CASE("Skills books and carriers resolve forward across sources with canonic
     CHECK(loaded->TryGetBook({3}) == nullptr);
 }
 
-TEST_CASE("Recipe training merges per-skill overrides and preserves zero rewards", "[content][skill-content]") {
+TEST_CASE("Explicit recipe training selects complete rewards and preserves zero rates", "[content][skill-content]") {
     const auto recipe = Recipe(R"(skills:[{skill:'beta',level:10},{skill:'alpha',level:1}],
         training:[{skill:'combat',level:0,xp_per_work:10000},{skill:'beta',level:10,xp_per_work:0}],
         knowledge:{autolearn:[{skill:'beta',level:10},{skill:'alpha',level:1}],crafts_to_learn:65535,disassemblies_to_learn:1},
@@ -252,22 +253,20 @@ TEST_CASE("Recipe training merges per-skill overrides and preserves zero rewards
     const auto loaded = Load(View(definitions));
     REQUIRE(loaded.has_value());
     const auto& craft = loaded->GetCraftingRecipe({1});
-    REQUIRE(craft.skills.size() == 2);
+    REQUIRE(craft.skills.Size() == 2);
     CHECK(craft.skills[0] == SkillRequirement{loaded->FindSkill("alpha"), 1});
-    REQUIRE(craft.training.size() == 3);
-    CHECK(craft.training[0] == SkillTraining{loaded->FindSkill("alpha"), 1, 100});
-    CHECK(craft.training[1] == SkillTraining{loaded->FindSkill("beta"), 10, 0});
-    CHECK(craft.training[2] == SkillTraining{loaded->FindSkill("combat"), 0, 10000});
+    REQUIRE(craft.training.Size() == 2);
+    CHECK(craft.training[0] == SkillTraining{loaded->FindSkill("beta"), 10, 0});
+    CHECK(craft.training[1] == SkillTraining{loaded->FindSkill("combat"), 0, 10000});
     CHECK_FALSE(craft.knownByDefault);
     CHECK(craft.autolearn);
     CHECK(craft.autolearnSkills == craft.skills);
     CHECK(craft.craftsToLearn == 65535);
     CHECK(craft.disassembliesToLearn == 1);
     const auto& recycle = loaded->GetRecyclingRecipe({1});
-    REQUIRE(recycle.training.size() == 3);
+    REQUIRE(recycle.training.Size() == 2);
     CHECK(recycle.training[0] == SkillTraining{loaded->FindSkill("alpha"), 10, 10000});
-    CHECK(recycle.training[1] == SkillTraining{loaded->FindSkill("beta"), 1, 100});
-    CHECK(recycle.training[2] == SkillTraining{loaded->FindSkill("combat"), 0, 0});
+    CHECK(recycle.training[1] == SkillTraining{loaded->FindSkill("combat"), 0, 0});
     REQUIRE(recycle.teachesRecipes.size() == 1);
     CHECK(recycle.teachesRecipes[0] == CraftingRecipeId{1});
 }
@@ -287,15 +286,150 @@ TEST_CASE("Knowledge omission empty objects and empty autolearn have distinct de
         CHECK(craft.autolearn == (view.find("autolearn") != view.npos));
         CHECK(craft.craftsToLearn == 2);
         CHECK(craft.disassembliesToLearn == 3);
-        if (!craft.skills.empty()) {
-            REQUIRE(craft.training.size() == 1);
-            CHECK(craft.training[0] == SkillTraining{loaded->FindSkill("alpha"), 10, 100});
-        }
+        CHECK(craft.training.Empty());
     }
     const auto empty = Load("");
     REQUIRE(empty.has_value());
     CHECK(empty->SkillCount() == 0);
     CHECK(empty->BookCount() == 0);
+}
+
+TEST_CASE("Recipe skill and training capacities apply to crafting and both recycler forms", "[content][skill-content]") {
+    const auto roster = WithSkills(R"({type:'skill',id:'delta',name:'Delta'},
+        {type:'skill',id:'epsilon',name:'Epsilon'})");
+    const auto entries = [](unsigned count, unsigned level) {
+        String result = "[";
+        unsigned i = 0;
+        for (const char* name : {"alpha", "beta", "combat", "delta", "epsilon"}) {
+            if (i == count) { break; }
+            if (i++) { result += ','; }
+            result += "{skill:'"; result += name;
+            result += level ? "',level:1}" : "',level:0}";
+        }
+        result += ']';
+        return result;
+    };
+    for (unsigned form = 0; form < 3; ++form) {
+        for (unsigned count : {2u, 3u, 4u, 5u}) {
+            for (unsigned selection = 0; selection < 3; ++selection) {
+                CAPTURE(form, count, selection);
+                String fields = "skills:" + entries(count, 1);
+                if (selection == 1) { fields += ",training:[]"; }
+                if (selection == 2) {
+                    fields += ",training:[{skill:'alpha',level:1,xp_per_work:0},{skill:'beta',level:1,xp_per_work:137}]";
+                }
+                String definition;
+                if (form == 0) { definition = Recipe(View(fields)); }
+                else if (form == 1) {
+                    definition = "{type:'recycling_recipe',id:'unmake',target:'product',work:1,returns:[],";
+                    definition += fields; definition += '}';
+                } else {
+                    definition = Recipe(View("recycling:{id:'unmake',work:1,efficiency:0," + fields + "}"));
+                }
+                const String data = roster + ',' + definition;
+                Diagnostics diagnostics;
+                const auto loaded = Load(View(data), &diagnostics);
+                if (count > 4 || (selection == 0 && count > 2)) {
+                    REQUIRE_FALSE(loaded);
+                    CHECK(loaded.error() == ContentError::InvalidData);
+                    REQUIRE_FALSE(diagnostics.Empty());
+                    if (count <= 4) {
+                        CHECK(diagnostics.Frames()[0].message.find("explicit training selection") != String::npos);
+                    }
+                    continue;
+                }
+                REQUIRE(loaded);
+                const auto& training = form == 0 ? loaded->GetCraftingRecipe({1}).training
+                                                : loaded->GetRecyclingRecipe({1}).training;
+                CHECK(training.Size() == (selection == 1 ? 0 : 2));
+                if (selection == 2) {
+                    CHECK(training[0].XpPerWork() == 0);
+                    CHECK(training[1].XpPerWork() == 137);
+                } else if (selection == 0) {
+                    CHECK(training[0].XpPerWork() == 100);
+                    CHECK(training[1].XpPerWork() == 100);
+                }
+            }
+        }
+        for (unsigned count : {2u, 3u}) {
+            const String fields = "training:" + entries(count, 0);
+            String definition;
+            if (form == 0) { definition = Recipe(View(fields)); }
+            else if (form == 1) {
+                definition = "{type:'recycling_recipe',id:'unmake',target:'product',work:1,returns:[],";
+                definition += fields; definition += '}';
+            } else {
+                definition = Recipe(View("recycling:{id:'unmake',work:1,efficiency:0," + fields + "}"));
+            }
+            const String data = roster + ',' + definition;
+            CHECK(Load(View(data)).has_value() == (count == 2));
+        }
+    }
+    for (unsigned count : {4u, 5u}) {
+        const auto recipe = Recipe(View("knowledge:{autolearn:" + entries(count, 0) + "}"));
+        const String data = roster + ',' + recipe;
+        const auto loaded = Load(View(data));
+        CHECK(loaded.has_value() == (count == 4));
+        if (loaded) { CHECK(loaded->GetCraftingRecipe({1}).autolearnSkills.Size() == 4); }
+    }
+}
+
+TEST_CASE("Compact skill records preserve boundary IDs and reject oversized catalogs", "[content][skill-content]") {
+    constexpr SkillRequirement requirement{SkillId{4095}, 10};
+    constexpr SkillTraining training{SkillId{4095}, 10, ratioScale};
+    STATIC_REQUIRE(sizeof(SkillRequirement) == 2);
+    STATIC_REQUIRE(sizeof(SkillTraining) == 4);
+    STATIC_REQUIRE(requirement.Skill().value == 4095);
+    STATIC_REQUIRE(requirement.Level() == 10);
+    STATIC_REQUIRE(training.Skill().value == 4095);
+    STATIC_REQUIRE(training.Level() == 10);
+    STATIC_REQUIRE(training.XpPerWork() == ratioScale);
+    String definitions;
+    for (unsigned i = 1; i <= 4096; ++i) {
+        char skill[96];
+        std::snprintf(skill, sizeof(skill), "%s{type:'skill',id:'skill_%04u',name:'Skill'}", i == 1 ? "" : ",", i);
+        definitions += skill;
+        if (i == 4095) {
+            const String recipe = R"(,{type:'item',id:'product',name:'Product',mass_g:0,volume_ml:1},
+                {type:'recipe',id:'make',inputs:[],result:{item:'product',count:1},work:1,
+                 skills:[{skill:'skill_4095',level:10}]})";
+            const auto loaded = Load(View(definitions + recipe));
+            REQUIRE(loaded);
+            CHECK(loaded->FindSkill("skill_4095").value == 4095);
+            CHECK(loaded->GetCraftingRecipe({1}).skills[0] == requirement);
+            CHECK(loaded->GetCraftingRecipe({1}).training[0] == SkillTraining{SkillId{4095}, 10, 100});
+        }
+    }
+    Invalid(View(definitions));
+}
+
+TEST_CASE("Canonical recipe export preserves selected empty and inferred training", "[content][skill-content][fingerprint]") {
+    for (const char* fields : {
+        "skills:[{skill:'beta',level:2},{skill:'alpha',level:1}]",
+        "skills:[{skill:'alpha',level:1}],training:[]",
+        "skills:[{skill:'beta',level:2},{skill:'alpha',level:1}],training:[{skill:'beta',level:2,xp_per_work:0},{skill:'combat',level:0,xp_per_work:10000}]"
+    }) {
+        const String recipe = Recipe(View(String(fields) + ",recycling:{id:'unmake',work:1,efficiency:0," + fields + "}"));
+        const auto loaded = Load(View(WithSkills(View(recipe))));
+        REQUIRE(loaded);
+        const auto canonical = WriteCombatContent(*loaded);
+        DataObject definitions = DataObject::List();
+        for (const char* list : {"recipes", "recycling_recipes"}) {
+            const auto* values = canonical.Find(list); REQUIRE(values);
+            for (std::size_t i = 0; i < values->Size(); ++i) { definitions.Append(values->At(i)); }
+        }
+        DataObject document; document.SetUnsigned("format_version", 1);
+        document.Set("definitions", eastl::move(definitions));
+        const auto text = EncodeDataObject(document);
+        const auto base = Document(View(WithSkills("")));
+        const ContentSource sources[] = {{"export.json", View(text)}, {"base.json5", View(base)}};
+        const auto restored = LoadContent({sources, 2});
+        REQUIRE(restored);
+        CHECK(restored->GetCraftingRecipe({1}).skills == loaded->GetCraftingRecipe({1}).skills);
+        CHECK(restored->GetCraftingRecipe({1}).training == loaded->GetCraftingRecipe({1}).training);
+        CHECK(restored->GetRecyclingRecipe({1}).training == loaded->GetRecyclingRecipe({1}).training);
+        CHECK(network::ContentFingerprint(*restored) == network::ContentFingerprint(*loaded));
+    }
 }
 
 TEST_CASE("Book XP and multipliers accept inclusive limits and retain defaults", "[content][skill-content]") {
@@ -329,7 +463,7 @@ TEST_CASE("Ambiguous legacy recyclers teach nothing while generated ones teach t
     REQUIRE(loaded.has_value());
     const auto& recycle = loaded->GetRecyclingRecipe({1});
     CHECK(recycle.teachesRecipes.empty());
-    CHECK(recycle.training[0].xpPerWork == 100);
+    CHECK(recycle.training[0].XpPerWork() == 100);
     const auto generated = WithSkills(R"(
         {type:'recipe',id:'z_make',inputs:[],result:{item:'product',count:1},work:1,
          recycling:{id:'unmake',work:1,efficiency:0}},
@@ -427,6 +561,7 @@ TEST_CASE("Skill recipe validation rejects duplicate references invalid ranges a
         "training:[{skill:'alpha',level:0,xp_per_work:10001}]",
         "training:[{skill:'alpha',level:0,xp_per_work:-1}]",
         "training:[{skill:'alpha',level:0},{skill:'alpha',level:0}]",
+        "training:[{skill:'alpha',level:0,xp_per_work:0},{skill:'beta',level:0,xp_per_work:0},{skill:'combat',level:0,xp_per_work:0}]",
         "skills:[{skill:'alpha',level:2}],training:[{skill:'alpha',level:1}]",
         "skills:[{skill:'alpha',level:2}],training:[{skill:'alpha',level:0,xp_per_work:0}]",
         "knowledge:{autolearn:[{skill:'alpha',level:11}]}",

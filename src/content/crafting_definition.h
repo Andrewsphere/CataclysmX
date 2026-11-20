@@ -10,6 +10,9 @@ namespace cataclysmx {
 inline constexpr std::uint32_t maxRecipeItemId = (1u << 20) - 1;
 inline constexpr std::size_t maxRecipeInputs = 8;
 inline constexpr std::size_t maxRecipeTraits = 4;
+inline constexpr std::size_t maxRecipeSkills = 4;
+inline constexpr std::size_t maxRecipeAutolearnSkills = 4;
+inline constexpr std::size_t maxRecipeTraining = 2;
 
 struct CraftingRecipeId {
     std::uint32_t value = 0;
@@ -67,12 +70,12 @@ struct CraftingRecipeDefinition {
     ItemOutput result;
     std::uint32_t work = 0;
     bool enabled = true;
-    SmallVector<SkillRequirement, 1> skills;
-    SmallVector<SkillTraining, 1> training;
+    StaticList<SkillRequirement, maxRecipeSkills> skills;
+    StaticList<SkillTraining, maxRecipeTraining> training;
     // Missing knowledge configuration preserves legacy/common recipes.
     bool knownByDefault = true;
     bool autolearn = false;
-    SmallVector<SkillRequirement, 1> autolearnSkills;
+    StaticList<SkillRequirement, maxRecipeAutolearnSkills> autolearnSkills;
     std::uint16_t craftsToLearn = 2;
     std::uint16_t disassembliesToLearn = 3;
     std::uint32_t heatPerWork = 0; // ratioScale heat units per base work; requires forge_heat.
@@ -86,8 +89,8 @@ struct RecyclingRecipeDefinition {
     StaticList<TraitRequirement, maxRecipeTraits> toolTraits;
     StaticList<ItemOutput, maxRecipeInputs> returns;
     std::uint32_t work = 0;
-    SmallVector<SkillRequirement, 1> skills;
-    SmallVector<SkillTraining, 1> training;
+    StaticList<SkillRequirement, maxRecipeSkills> skills;
+    StaticList<SkillTraining, maxRecipeTraining> training;
     SmallVector<CraftingRecipeId, 1> teachesRecipes;
     std::uint32_t heatPerWork = 0;
 };

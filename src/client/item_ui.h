@@ -7,6 +7,7 @@ namespace cataclysmx {
 
 struct ItemUiRow {
     ItemTypeId type{};
+    ItemStorage storage; // Exact immediate source, including in aggregate panes.
     String name;
     Vector<PersistentId> items; // Stable ascending identities captured by grouping.
     std::uint64_t massGrams = 0;
@@ -16,7 +17,10 @@ struct ItemUiRow {
     bool worn = false;
     HandMask heldHands = HandMask::None;
 };
+enum class ItemUiPaneMode { Storage, AllNearby };
 struct ItemUiPane {
+    ItemUiPaneMode mode = ItemUiPaneMode::Storage;
+    // Only meaningful in Storage mode; aggregates never become engine storages.
     ItemStorage storage;
     String title;
     String capacity;
@@ -34,7 +38,7 @@ struct ItemExamination {
     Vector<String> stats;
     int scroll = 0;
 };
-enum class ItemUiScreen { Closed, Inventory, Advanced, Examine, Amount, Actions, Target, Direction };
+enum class ItemUiScreen { Closed, Inventory, Advanced, Examine, Amount, Actions, Target, Direction, Destination };
 // Direct frontend button/key actions; legacy InputAction::Wield remains supported.
 enum class ItemUiAction { HoldLeft, HoldRight, TwoHanded, Regrip, Wear, Remove, Release };
 const char* ItemUiActionLabel(ItemUiAction action);
@@ -102,6 +106,12 @@ private:
     Vector<PersistentId> amountItems_;
     ItemStorage amountSource_;
     ItemStorage amountDestination_;
+    Vector<ItemStorage> nearbyStorages_; // Reused aggregate refresh scratch.
+    Vector<ItemStorage> destinations_;
+    Vector<ItemStorage> sourceAncestry_;
+    Vector<ItemStorage> destinationAncestry_;
+    // Zero requests a quantity prompt after choosing a concrete destination.
+    std::size_t transferCount_ = 0;
     bool initialized_ = false;
     bool opening_ = false;
     std::uint64_t issuedRevision_ = 0;
@@ -110,8 +120,10 @@ private:
     ItemUiScreen actionReturn_ = ItemUiScreen::Inventory;
     std::size_t actionChoice_ = 0;
     void SelectStorage(ItemStorage storage);
+    void SelectAllNearby();
+    void ConfirmTransferDestination(const WorldView& view);
     void QueueCommand(const Command& command);
-    void QueueTransfer(const ItemUiRow& row, std::size_t count);
+    void QueueTransfer(eastl::span<const PersistentId> items, std::size_t count);
     void Examine(PersistentId id, const WorldView& view, const ContentCatalog& content,
         const Localization& localization);
     void BeginActions(PersistentId id, bool manage, const WorldView& view,

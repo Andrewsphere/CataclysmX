@@ -147,9 +147,9 @@ void CollectCombatMenu(const ContentCatalog& content, const WorldView& view,
         if (book) {
             for (const auto& definition : book->artManuals) {
                 if (definition.art != manual.art) { continue; }
-                const auto* skill = content.TryGetSkill(definition.prerequisite.skill);
+                const auto* skill = content.TryGetSkill(definition.prerequisite.Skill());
                 row.details += " | requires learned " + (skill ? skill->name : String("unknown skill"))
-                    + " " + UnsignedText(definition.prerequisite.level);
+                    + " " + UnsignedText(definition.prerequisite.Level());
             }
         }
         Availability(row, manual.active ? CombatRefusal::Busy

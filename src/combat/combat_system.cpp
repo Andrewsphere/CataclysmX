@@ -894,8 +894,8 @@ void CombatSystem::CollectInfo(ActorHandle handle, CombatInfoView& output) const
             const ArtManualRequest request{book, manual.art}; const auto query = QueryArtStudy(handle, request);
             ArtManualView view; view.book = book; view.art = manual.art; view.reason = query.reason;
             view.successChance = manual.successChance;
-            const auto learned = LearnedSkillLevel(actor->learning, manual.prerequisite.skill);
-            view.duration = ArtStudyDuration(manual.baseDuration, learned > manual.prerequisite.level ? learned - manual.prerequisite.level : 0);
+            const auto learned = LearnedSkillLevel(actor->learning, manual.prerequisite.Skill());
+            view.duration = ArtStudyDuration(manual.baseDuration, learned > manual.prerequisite.Level() ? learned - manual.prerequisite.Level() : 0);
             if (actor->characterCombat) { for (const auto& attempt : actor->characterCombat->manuals) {
                 if (attempt.book == book && attempt.art == manual.art) {
                     view.remaining = attempt.remaining; view.duration = attempt.totalDuration;

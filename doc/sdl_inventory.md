@@ -12,7 +12,9 @@ movement, attacks, combat-style changes, or world Examine input.
 - Up/Down select a row; Enter examines in ordinary inventory or transfers one
   item in advanced inventory.
 - `e` examines; `w` wields; `d` drops; `u` uses; `a` manages an item.
-- Tab changes the active advanced pane. `I` selects inventory, `o` enters a
+- Advanced inventory initially opens Inventory | All nearby and retains panes on
+  reopening. Tab changes the active pane. `I` selects inventory, uppercase `A`
+  selects All nearby (lowercase `a` still manages contents), `o` enters a
   portable container, Backspace goes to its parent, and `f` toggles floor/object
   storage.
 - `1`–`9` choose nearby storage using keypad geography (`7 8 9` north,
@@ -20,6 +22,11 @@ movement, attacks, combat-style changes, or world Examine input.
   numeric chords; `5` means the player's tile.
 - `m` enters a quantity and `M` transfers the selected stack. Escape backs out
   or cancels the unissued remainder of a batch. It does not refund paid actions.
+- All nearby includes direct accessible floor/object items in the nearby 3×3,
+  excluding the other pane's entire root world tile. Carried containers exclude
+  nothing. Source-labelled stacks stay separate; aggregate totals have no combined
+  capacity cap. Transfers into it choose a concrete Destination (including empty
+  storage) before any quantity prompt, without changing the pane's mode.
 - Examination scroll controls come from the shared controller and are shown in
   its footer. Descriptions and statistics wrap; art keeps its fixed cell layout.
 

@@ -94,8 +94,8 @@ void CheckPack(const ContentCatalog& content) {
         if (spec.level == 0) { CHECK(recipe.skills.empty()); }
         else {
             REQUIRE(recipe.skills.size() == 1);
-            CHECK(recipe.skills[0].skill == computers);
-            CHECK(recipe.skills[0].level == spec.level);
+            CHECK(recipe.skills[0].Skill() == computers);
+            CHECK(recipe.skills[0].Level() == spec.level);
         }
         const unsigned inputVolume = spec.filament * content.GetItem(filament).volumeMl;
         const unsigned outputVolume = content.GetItem(recipe.result.item).volumeMl;
@@ -158,9 +158,9 @@ void CheckRecipes(const ContentCatalog& content) {
         CHECK(recipe.work == spec.work);
         CHECK(recipe.result.item == content.FindItem(spec.product));
         CHECK(recipe.result.count == 1);
-        REQUIRE(recipe.skills.size() == 1);
-        CHECK(recipe.skills[0].skill == content.FindSkill(spec.skill));
-        CHECK(recipe.skills[0].level == spec.level);
+        REQUIRE(recipe.skills.Size() == 1);
+        CHECK(recipe.skills[0].Skill() == content.FindSkill(spec.skill));
+        CHECK(recipe.skills[0].Level() == spec.level);
         unsigned mass = 0;
         for (const auto& input : recipe.inputs) {
             if (!input.Retained()) { mass += content.GetItem(input.Item()).massGrams * input.Count(); }

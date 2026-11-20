@@ -196,6 +196,26 @@ TEST_CASE("Learning fingerprints distinguish skill categories with compatible bo
     CHECK(ContentFingerprint(LearningCatalog({baseline.data(), baseline.size()})) == fingerprint);
 }
 
+TEST_CASE("Recipe training fingerprints use resolved selection rather than authoring presence", "[skills][network]") {
+    const auto explicitDefault = LearningCatalog();
+    const auto fingerprint = ContentFingerprint(explicitDefault);
+    for (const char* replacement : {"", "training:[],", "training:[{skill:'making',level:1,xp_per_work:0}],"}) {
+        String changed = LearningData;
+        constexpr char field[] = "training:[{skill:'making',level:1,xp_per_work:100}],";
+        std::size_t position = 0;
+        while ((position = changed.find(field, position)) != String::npos) {
+            changed.replace(position, std::strlen(field), replacement);
+            position += std::strlen(replacement);
+        }
+        const auto resolved = LearningCatalog({changed.data(), changed.size()});
+        CHECK((ContentFingerprint(resolved) == fingerprint) == (replacement[0] == '\0'));
+        if (replacement[0] == '\0') {
+            CHECK(resolved.GetCraftingRecipe({1}).training == explicitDefault.GetCraftingRecipe({1}).training);
+            CHECK(resolved.GetRecyclingRecipe({1}).training == explicitDefault.GetRecyclingRecipe({1}).training);
+        }
+    }
+}
+
 TEST_CASE("Capped skill views require canonical and catalog-matching progress", "[skills][network][codec]") {
     String data = LearningData;
     const char* curve = "xp_to_next:[100,200,400,800,1200,1800,2600,3600,4800,6400]";

@@ -99,7 +99,12 @@ resolve to a nonzero 20-bit item ID. Several crafting recipes may produce the
 same output item.
 
 Recipes may also specify learned `skills`, work `training`, and `knowledge`.
-Required skills default to training at the same level. Omitting `knowledge`
+At most four required skills, four autolearn thresholds, and two training entries
+are allowed. Missing `training` infers all required skills at the same level and
+rate 100; more than two requirements need an explicit selection. A present
+`training` array selects all rewards, including `[]` for none; zero-rate entries
+still count toward its limit. The required-skill and training rules also apply to
+explicit and generated recyclers. Omitting `knowledge`
 preserves legacy known-by-default behavior; an explicit empty object gates
 knowledge. See [skill content](skills_content.md) for fields, rates, explicit
 autolearn, book references, and combined craft/disassembly memorization.

@@ -119,9 +119,12 @@ APIs use typed IDs and world results;
 the view supplies skill progress, recipe knowledge/reference and book status.
 
 Sparse character vectors avoid per-entry allocations for untouched actors.
-Definition relationships use overflow-capable `SmallVector<..., 1>` for common
-small lists; book recipe lists use bulk `Vector`, as do job contributions, avoiding
-large inline per-owner costs and allowing growth. Stable content names are saved.
+Recipe requirements and autolearn thresholds use `StaticList<SkillRequirement, 4>`;
+recipe training uses `StaticList<SkillTraining, 2>`, including recycling.
+These are authored limits, checked before inserting external data, not inferred
+from today's sample content. Machine/combat requirement collection limits are unchanged.
+Book recipe lists use bulk `Vector`, as do job contributions, avoiding large inline
+per-owner costs and allowing growth. Stable content names are saved.
 Save format remains 16; the learning envelope alone advances to version 2.
 Missing learning state `{}` remains neutral. Version-1 unresolved
 `cooking_chemistry` progress is validated against the frozen historical ten-level
@@ -149,3 +152,25 @@ books and study/pause controls. See [crafting UI](crafting_ui.md) and
 manual attempts are described in [combat learning](combat_learning.md).
 The local headless script supports `skills`, `study BOOK_ID`, and `pause-study`;
 book IDs are shown in the shared crafting menu.
+
+### Compact content records
+
+`content/skill_definition.h` exposes immutable-value `SkillRequirement` and
+`SkillTraining`. Construct them with full-width `SkillId` and integer arguments;
+read them through `Skill()`, `Level()`, and (for training) `XpPerWork()`.
+There are no field mutators: replace the complete value when resolving content.
+Requirement storage is two bytes (12-bit skill ID, 4-bit level); training adds
+a 16-bit rate for four bytes total. Zero skill IDs remain representable for
+default/pending records, not valid resolved references. Constructors fail fast
+on representation overflow; loaders must validate IDs, skill-specific maxima,
+rates, and matching gates before construction. Gameplay levels remain 0–10.
+
+The compact records and explicit list bounds remove recipe container allocations
+without a generic packing/container framework. On the measured MSVC x64 Debug
+layout, requirement/training records shrink from 8/12 to 2/4 bytes, the three
+crafting skill-list members from 152 to 30 bytes, and `CraftingRecipeDefinition`
+from 280 to 152 bytes (including its existing owning strings). These measurements
+are platform-qualified, not ABI promises. Runtime APIs retain full-width IDs;
+borrow lists as spans using `{list.begin(), list.Size()}`. Serialization and
+fingerprints continue to consume logical values in canonical skill-ID order,
+never packed object bytes.

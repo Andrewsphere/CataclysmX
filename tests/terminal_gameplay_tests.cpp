@@ -814,6 +814,9 @@ TEST_CASE("Advanced terminal transfers drain on refresh and pause only after fin
     f.ui.Open(InputAction::AdvancedInventory); f.Draw();
     Vector<Command> commands;
     const auto submit = [&](Command command) { commands.push_back(command); return true; };
+    REQUIRE(f.ui.HandleEvent(ftxui::Event::Tab, f.view, f.localization, f.keys, submit, {}, &TestContent()));
+    REQUIRE(f.ui.HandleEvent(ftxui::Event::Character('5'), f.view, f.localization, f.keys, submit, {}, &TestContent()));
+    REQUIRE(f.ui.HandleEvent(ftxui::Event::Tab, f.view, f.localization, f.keys, submit, {}, &TestContent()));
     REQUIRE(f.ui.HandleEvent(ftxui::Event::Character('M'), f.view, f.localization, f.keys, submit, {}, &TestContent()));
     REQUIRE(commands.size() == 1); CHECK(commands[0].item == 1); CHECK_FALSE(f.ui.PausesLocal({}));
     CommandResult result; result.outcome = Outcome::transferred; result.advanced = true; result.cost = 10;
@@ -830,6 +833,22 @@ TEST_CASE("Advanced terminal transfers drain on refresh and pause only after fin
     f.ui.RefreshItems(f.view, TestContent(), f.localization, f.keys, submit);
     CHECK(f.ui.PausesLocal({})); CHECK(f.ui.IsOpen()); CHECK(commands.size() == 2);
     CHECK(Find(f.Draw(120, 40), "Moved 2/2"));
+}
+
+TEST_CASE("Terminal All nearby renders concrete source labels and destination choices", "[terminal][gameplay][inventory]") {
+    Fixture f; f.Items(1);
+    ItemStorageView floor; floor.storage = {ItemStorageKind::Ground, f.view.player_position};
+    floor.accessible = true; f.view.itemStorages = {floor};
+    InventoryEntry rock; rock.id = 9; rock.type = TestItem("rock"); rock.storage = floor.storage;
+    f.view.nearbyItems = {rock};
+    f.ui.Open(InputAction::AdvancedInventory);
+    auto screen = f.Draw(160, 50);
+    CHECK(Find(screen, "All nearby")); CHECK(Find(screen, "rock [5 floor]"));
+    REQUIRE(f.ui.HandleEvent(ftxui::Event::Return, f.view, f.localization, f.keys,
+        [&](Command) { FAIL("Choosing a destination must not submit a transfer"); return false; }, {}, &TestContent()));
+    screen = f.Draw(160, 50);
+    CHECK(Find(screen, "Choose destination")); CHECK(Find(screen, "[5] Here"));
+    CHECK(f.submissions == 0);
 }
 
 TEST_CASE("Terminal stale item input stays open and requires an explicit exact-ID retry", "[terminal][gameplay][inventory]") {

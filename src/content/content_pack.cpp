@@ -71,7 +71,7 @@ DataObject WriteUnlock(const MoveUnlock& value, const ContentCatalog& catalog) {
     DataObject skills = DataObject::List();
     for (const auto& skill : value.skills) {
         DataObject entry;
-        entry.SetString("skill", catalog.GetSkill(skill.skill).id); entry.SetUnsigned("level", skill.level);
+        entry.SetString("skill", catalog.GetSkill(skill.Skill()).id); entry.SetUnsigned("level", skill.Level());
         skills.Append(eastl::move(entry));
     }
     out.Set("skills", eastl::move(skills));
@@ -120,8 +120,8 @@ DataObject WriteRecipeSkills(eastl::span<const SkillRequirement> skills, const C
     DataObject out = DataObject::List();
     for (const auto& skill : skills) {
         DataObject entry;
-        entry.SetString("skill", catalog.GetSkill(skill.skill).id);
-        entry.SetUnsigned("level", skill.level);
+        entry.SetString("skill", catalog.GetSkill(skill.Skill()).id);
+        entry.SetUnsigned("level", skill.Level());
         out.Append(eastl::move(entry));
     }
     return out;
@@ -130,9 +130,9 @@ DataObject WriteRecipeTraining(eastl::span<const SkillTraining> training, const 
     DataObject out = DataObject::List();
     for (const auto& skill : training) {
         DataObject entry;
-        entry.SetString("skill", catalog.GetSkill(skill.skill).id);
-        entry.SetUnsigned("level", skill.level);
-        entry.SetUnsigned("xp_per_work", skill.xpPerWork);
+        entry.SetString("skill", catalog.GetSkill(skill.Skill()).id);
+        entry.SetUnsigned("level", skill.Level());
+        entry.SetUnsigned("xp_per_work", skill.XpPerWork());
         out.Append(eastl::move(entry));
     }
     return out;
@@ -393,12 +393,12 @@ DataObject WriteCombatContent(const ContentCatalog& catalog) {
         entry.Set("result", WriteRecipeOutput(recipe.result, catalog));
         entry.SetUnsigned("work", recipe.work);
         if (recipe.heatPerWork) { entry.SetUnsigned("heat_per_work", recipe.heatPerWork); }
-        entry.Set("skills", WriteRecipeSkills({recipe.skills.data(), recipe.skills.size()}, catalog));
-        entry.Set("training", WriteRecipeTraining({recipe.training.data(), recipe.training.size()}, catalog));
+        entry.Set("skills", WriteRecipeSkills({recipe.skills.begin(), recipe.skills.Size()}, catalog));
+        entry.Set("training", WriteRecipeTraining({recipe.training.begin(), recipe.training.Size()}, catalog));
         DataObject knowledge;
         knowledge.SetBoolean("known_by_default", recipe.knownByDefault);
         if (recipe.autolearn) {
-            knowledge.Set("autolearn", WriteRecipeSkills({recipe.autolearnSkills.data(), recipe.autolearnSkills.size()}, catalog));
+            knowledge.Set("autolearn", WriteRecipeSkills({recipe.autolearnSkills.begin(), recipe.autolearnSkills.Size()}, catalog));
         }
         knowledge.SetUnsigned("crafts_to_learn", recipe.craftsToLearn);
         knowledge.SetUnsigned("disassemblies_to_learn", recipe.disassembliesToLearn);
@@ -463,8 +463,8 @@ DataObject WriteCombatContent(const ContentCatalog& catalog) {
         entry.Set("returns", eastl::move(returns));
         entry.SetUnsigned("work", recipe.work);
         if (recipe.heatPerWork) { entry.SetUnsigned("heat_per_work", recipe.heatPerWork); }
-        entry.Set("skills", WriteRecipeSkills({recipe.skills.data(), recipe.skills.size()}, catalog));
-        entry.Set("training", WriteRecipeTraining({recipe.training.data(), recipe.training.size()}, catalog));
+        entry.Set("skills", WriteRecipeSkills({recipe.skills.begin(), recipe.skills.Size()}, catalog));
+        entry.Set("training", WriteRecipeTraining({recipe.training.begin(), recipe.training.Size()}, catalog));
         DataObject teaches = DataObject::List();
         for (const auto taught : recipe.teachesRecipes) {
             teaches.Append(DataObject::Text(catalog.GetCraftingRecipe(taught).id));
@@ -478,8 +478,8 @@ DataObject WriteCombatContent(const ContentCatalog& catalog) {
         const auto& book = catalog.GetBook({i}); DataObject entry; entry.SetString("id", book.id);
         DataObject manuals = DataObject::List();
         for (const auto& manual : book.artManuals) {
-            DataObject m; m.SetString("art", catalog.GetCombatArt(manual.art).id); m.SetString("skill", catalog.GetSkill(manual.prerequisite.skill).id);
-            m.Set("properties", Numbers({manual.prerequisite.level, manual.successChance, manual.baseDuration})); manuals.Append(eastl::move(m));
+            DataObject m; m.SetString("art", catalog.GetCombatArt(manual.art).id); m.SetString("skill", catalog.GetSkill(manual.prerequisite.Skill()).id);
+            m.Set("properties", Numbers({manual.prerequisite.Level(), manual.successChance, manual.baseDuration})); manuals.Append(eastl::move(m));
         }
         entry.Set("art_manuals", eastl::move(manuals)); books.Append(eastl::move(entry));
     }

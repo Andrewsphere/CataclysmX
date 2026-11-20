@@ -244,7 +244,7 @@ WorldResult<MachineResult> MachineSystem::Start(ActorHandle actor, ObjectHandle 
     for (const auto& input : definition.inputs) {
         job.inputs.push_back({content.GetItem(input.Item()).id, std::uint32_t{input.Count()} * quantity});
     }
-    for (const auto& skill : definition.skills) { job.skills.push_back({content.GetSkill(skill.skill).id, skill.level}); }
+    for (const auto& skill : definition.skills) { job.skills.push_back({content.GetSkill(skill.Skill()).id, skill.Level()}); }
     if (definition.learning.skill.value) {
         job.learningSkillName = content.GetSkill(definition.learning.skill).id;
         job.learningLevel = definition.learning.level; job.learningXp = definition.learning.xpPerExecution * quantity;

@@ -75,9 +75,9 @@ TEST_CASE("Town skill pack supplies progression and equivalent reading carriers"
     const auto spearId = content.FindCraftingRecipe("make_coil_spear");
     REQUIRE(spearId.value);
     const auto& spear = content.GetCraftingRecipe(spearId);
-    REQUIRE(spear.skills.size() == 1);
+    REQUIRE(spear.skills.Size() == 1);
     CHECK(spear.skills[0] == SkillRequirement{fabrication, 1});
-    REQUIRE(spear.autolearnSkills.size() == 1);
+    REQUIRE(spear.autolearnSkills.Size() == 1);
     CHECK(spear.autolearnSkills[0] == SkillRequirement{fabrication, 2});
     CHECK(spear.autolearn);
     CHECK_FALSE(spear.knownByDefault);
@@ -88,15 +88,15 @@ TEST_CASE("Town skill pack supplies progression and equivalent reading carriers"
     const auto& recycler = content.GetRecyclingRecipe(recyclerId);
     CHECK(recycler.target == content.FindItem("coil_spear"));
     CHECK(content.FindRecyclingFor(recycler.target) == recyclerId);
-    CHECK(recycler.skills.empty());
-    REQUIRE(recycler.training.size() == 1);
+    CHECK(recycler.skills.Empty());
+    REQUIRE(recycler.training.Size() == 1);
     CHECK(recycler.training[0] == SkillTraining{fabrication, 0, 100});
     REQUIRE(recycler.teachesRecipes.size() == 1);
     CHECK(recycler.teachesRecipes[0] == spearId);
     const auto swordId = content.FindCraftingRecipe("make_current_arming_sword");
     REQUIRE(swordId.value);
     const auto& sword = content.GetCraftingRecipe(swordId);
-    REQUIRE(sword.skills.size() == 1);
+    REQUIRE(sword.skills.Size() == 1);
     CHECK(sword.skills[0] == SkillRequirement{fabrication, 4});
     CHECK(sword.knownByDefault);
 
@@ -166,8 +166,8 @@ TEST_CASE("Town starter recipes and recyclers offer ungated training", "[content
         const auto id = content.FindCraftingRecipe(entry.first);
         REQUIRE(id.value);
         const auto& recipe = content.GetCraftingRecipe(id);
-        CHECK(recipe.skills.empty());
-        REQUIRE(recipe.training.size() == 1);
+        CHECK(recipe.skills.Empty());
+        REQUIRE(recipe.training.Size() == 1);
         CHECK(recipe.training[0] == SkillTraining{content.FindSkill(entry.second), 0, 100});
     }
     for (const auto& entry : {eastl::pair<const char*, const char*>{"cut_up_cotton_tshirt", "tailoring"},
@@ -177,8 +177,8 @@ TEST_CASE("Town starter recipes and recyclers offer ungated training", "[content
         const auto id = content.FindRecyclingRecipe(entry.first);
         REQUIRE(id.value);
         const auto& recipe = content.GetRecyclingRecipe(id);
-        CHECK(recipe.skills.empty());
-        REQUIRE(recipe.training.size() == 1);
+        CHECK(recipe.skills.Empty());
+        REQUIRE(recipe.training.Size() == 1);
         CHECK(recipe.training[0] == SkillTraining{content.FindSkill(entry.second), 0, 100});
     }
     for (const auto& entry : {eastl::pair<const char*, const char*>{"salvage_water_pump", "mechanics"},
@@ -187,9 +187,9 @@ TEST_CASE("Town starter recipes and recyclers offer ungated training", "[content
         REQUIRE(id.value);
         const auto& recipe = content.GetRecyclingRecipe(id);
         const auto skill = content.FindSkill(entry.second);
-        REQUIRE(recipe.skills.size() == 1);
+        REQUIRE(recipe.skills.Size() == 1);
         CHECK(recipe.skills[0] == SkillRequirement{skill, 1});
-        REQUIRE(recipe.training.size() == 1);
+        REQUIRE(recipe.training.Size() == 1);
         CHECK(recipe.training[0] == SkillTraining{skill, 1, 100});
         CHECK(recipe.work == (eastl::string_view(entry.first) == "salvage_water_pump" ? 600u : 700u));
     }

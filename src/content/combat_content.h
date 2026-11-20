@@ -243,15 +243,14 @@ bool ParseUnlock(yyjson_val* object, MoveUnlock& out, const ContentCatalog& cata
         std::size_t i, n; yyjson_val* value;
         yyjson_arr_foreach(array, i, n, value) {
             auto child = ArrayElement(context.Child("skills"), i);
-            SkillRequirement skill;
+            SkillId skill;
             std::uint32_t level = 0;
             if (!CheckObject(value, {"skill", "level"}, child)
-                || !ResolveCombatSkill(yyjson_obj_get(value, "skill"), skill.skill, catalog, child.Child("skill"))
+                || !ResolveCombatSkill(yyjson_obj_get(value, "skill"), skill, catalog, child.Child("skill"))
                 || !ReadBoundedInteger(yyjson_obj_get(value, "level"), 0, maximumSkillLevel, level, child.Child("level"))) { return false; }
-            if (!ValidateSkillMaximum(level, catalog.GetSkill(skill.skill), child.Child("level"))) { return false; }
-            skill.level = static_cast<std::uint8_t>(level);
-            for (const auto& previous : out.skills) { if (previous.skill == skill.skill) { return child.Fail("duplicate skill requirement"); } }
-            out.skills.push_back(skill);
+            if (!ValidateSkillMaximum(level, catalog.GetSkill(skill), child.Child("level"))) { return false; }
+            for (const auto& previous : out.skills) { if (previous.Skill() == skill) { return child.Fail("duplicate skill requirement"); } }
+            out.skills.push_back({skill, level});
         }
     }
     return true;

@@ -52,12 +52,12 @@ void HashInputs(std::uint64_t& hash, const StaticList<RecipeInput, maxRecipeInpu
 }
 void HashRequirements(std::uint64_t& hash, eastl::span<const SkillRequirement> values) {
     HashNumber(hash, values.size());
-    for (const auto& v : values) { HashNumber(hash, v.skill.value); HashNumber(hash, v.level); }
+    for (const auto& v : values) { HashNumber(hash, v.Skill().value); HashNumber(hash, v.Level()); }
 }
 void HashTraining(std::uint64_t& hash, eastl::span<const SkillTraining> values) {
     HashNumber(hash, values.size());
     for (const auto& v : values) {
-        HashNumber(hash, v.skill.value); HashNumber(hash, v.level); HashNumber(hash, v.xpPerWork);
+        HashNumber(hash, v.Skill().value); HashNumber(hash, v.Level()); HashNumber(hash, v.XpPerWork());
     }
 }
 void HashData(std::uint64_t& hash, const DataObject& data) {
@@ -349,7 +349,7 @@ std::uint64_t ContentFingerprint(const ContentCatalog& content) {
         HashNumber(hash, recipe.duration); HashNumber(hash, recipe.energyPerTick);
         HashNumber(hash, recipe.setupWork); HashNumber(hash, recipe.setupWorkPerUnit);
         HashNumber(hash, recipe.skills.size());
-        for (const auto& skill : recipe.skills) { HashString(hash, content.GetSkill(skill.skill).id); HashNumber(hash, skill.level); }
+        for (const auto& skill : recipe.skills) { HashString(hash, content.GetSkill(skill.Skill()).id); HashNumber(hash, skill.Level()); }
         HashNumber(hash, recipe.learning.skill.value);
         HashNumber(hash, recipe.learning.level); HashNumber(hash, recipe.learning.xpPerExecution);
         HashNumber(hash, recipe.requiredSoftware.value);
@@ -366,10 +366,10 @@ std::uint64_t ContentFingerprint(const ContentCatalog& content) {
         HashNumber(hash, recipe.result.item.value); HashNumber(hash, recipe.result.count);
         HashNumber(hash, recipe.work); HashNumber(hash, recipe.enabled);
         HashNumber(hash, recipe.heatPerWork);
-        HashRequirements(hash, {recipe.skills.data(), recipe.skills.size()});
-        HashTraining(hash, {recipe.training.data(), recipe.training.size()});
+        HashRequirements(hash, {recipe.skills.begin(), recipe.skills.Size()});
+        HashTraining(hash, {recipe.training.begin(), recipe.training.Size()});
         HashNumber(hash, recipe.knownByDefault); HashNumber(hash, recipe.autolearn);
-        HashRequirements(hash, {recipe.autolearnSkills.data(), recipe.autolearnSkills.size()});
+        HashRequirements(hash, {recipe.autolearnSkills.begin(), recipe.autolearnSkills.Size()});
         HashNumber(hash, recipe.craftsToLearn); HashNumber(hash, recipe.disassembliesToLearn);
     }
     HashNumber(hash, content.RecyclingRecipeCount());
@@ -383,8 +383,8 @@ std::uint64_t ContentFingerprint(const ContentCatalog& content) {
         }
         HashNumber(hash, recipe.work);
         HashNumber(hash, recipe.heatPerWork);
-        HashRequirements(hash, {recipe.skills.data(), recipe.skills.size()});
-        HashTraining(hash, {recipe.training.data(), recipe.training.size()});
+        HashRequirements(hash, {recipe.skills.begin(), recipe.skills.Size()});
+        HashTraining(hash, {recipe.training.begin(), recipe.training.Size()});
         HashNumber(hash, recipe.teachesRecipes.size());
         for (const auto taught : recipe.teachesRecipes) HashNumber(hash, taught.value);
     }

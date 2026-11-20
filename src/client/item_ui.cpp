@@ -17,11 +17,89 @@ const ItemStorageView* Storage(const WorldView& v, ItemStorage s) {
     return nullptr;
 }
 eastl::optional<TileCoord> StoragePosition(const WorldView& view, ItemStorage storage) {
+    for (std::size_t depth = 0; storage.kind == ItemStorageKind::Container; ++depth) {
+        if (depth > view.inventory.size() + Nearby(view).size()) { return {}; }
+        const auto* item = FindInventoryEntry(view, storage.id);
+        if (!item) { return {}; }
+        storage = item->storage;
+    }
     if (storage.kind == ItemStorageKind::Ground) { return storage.position; }
     if (storage.kind == ItemStorageKind::Object) {
         if (const auto* source = Storage(view, storage)) { return source->objectPosition; }
     }
     return {};
+}
+bool NearbyStorage(const WorldView& view, ItemStorage storage, eastl::optional<TileCoord> excluded) {
+    if (storage.kind != ItemStorageKind::Ground && storage.kind != ItemStorageKind::Object) { return false; }
+    const auto* meta = Storage(view, storage);
+    const auto pos = StoragePosition(view, storage);
+    return meta && meta->accessible && pos && pos != excluded && pos->y == view.player_position.y
+        && pos->x >= view.player_position.x - 1 && pos->x <= view.player_position.x + 1
+        && pos->z >= view.player_position.z - 1 && pos->z <= view.player_position.z + 1;
+}
+void CollectNearbyStorages(const WorldView& view, ItemStorage opposite, Vector<ItemStorage>& result) {
+    result.clear();
+    const auto excluded = StoragePosition(view, opposite);
+    for (const auto& meta : view.itemStorages) {
+        if (NearbyStorage(view, meta.storage, excluded)) { result.push_back(meta.storage); }
+    }
+    std::sort(result.begin(), result.end(), [&](ItemStorage a, ItemStorage b) {
+        const auto pa = *StoragePosition(view, a), pb = *StoragePosition(view, b);
+        if (pa.z != pb.z) { return pa.z < pb.z; }
+        if (pa.x != pb.x) { return pa.x < pb.x; }
+        if (a.kind != b.kind) { return a.kind < b.kind; }
+        return a.id < b.id;
+    });
+}
+String SourceName(const WorldView& view, ItemStorage storage) {
+    if (storage.kind == ItemStorageKind::Ground) { return "floor"; }
+    const auto* meta = Storage(view, storage);
+    return meta && !meta->name.empty() ? meta->name : String("object");
+}
+String SourceLabel(const WorldView& view, ItemStorage storage) {
+    const auto pos = StoragePosition(view, storage);
+    if (!pos) { return {}; }
+    const int index = (1 - (pos->z - view.player_position.z)) * 3 + pos->x - view.player_position.x + 2;
+    return " [" + NumberText(index) + " " + SourceName(view, storage) + "]";
+}
+void CaptureAncestry(const WorldView& view, ItemStorage storage, Vector<ItemStorage>& output) {
+    output.clear();
+    for (std::size_t depth = 0; depth <= view.inventory.size() + Nearby(view).size(); ++depth) {
+        output.push_back(storage);
+        if (storage.kind != ItemStorageKind::Container) { return; }
+        const auto* item = FindInventoryEntry(view, storage.id);
+        if (!item) { return; }
+        storage = item->storage;
+    }
+}
+bool SameAncestry(const WorldView& view, ItemStorage storage, const Vector<ItemStorage>& captured) {
+    for (std::size_t depth = 0; depth < captured.size(); ++depth) {
+        if (storage != captured[depth]) { return false; }
+        if (storage.kind != ItemStorageKind::Container) { return depth + 1 == captured.size(); }
+        const auto* item = FindInventoryEntry(view, storage.id);
+        if (!item) { return false; }
+        storage = item->storage;
+    }
+    return false;
+}
+bool TransferValid(const WorldView& view, PersistentId id, ItemStorage source, ItemStorage destination) {
+    const auto* item = FindInventoryEntry(view, id);
+    if (!item || item->storage != source || item->installation.value) { return false; }
+    for (const auto storage : {source, destination}) {
+        auto current = storage;
+        for (std::size_t depth = 0;; ++depth) {
+            if (depth > view.inventory.size() + Nearby(view).size()) { return false; }
+            if (storage == source && (current.kind == ItemStorageKind::Ground || current.kind == ItemStorageKind::Object)
+                && !Storage(view, current)) { return false; }
+            if (const auto* meta = Storage(view, current); meta && !meta->accessible) { return false; }
+            if (current.kind != ItemStorageKind::Container) { break; }
+            if (storage == destination && current.id == id) { return false; }
+            const auto* ancestor = FindInventoryEntry(view, current.id);
+            if (!ancestor) { return false; }
+            current = ancestor->storage;
+        }
+    }
+    return true;
 }
 ItemStorage DefaultTileStorage(const WorldView& view, TileCoord position) {
     for (const auto& storage : view.itemStorages) {
@@ -62,7 +140,7 @@ void AddRow(ItemUiPane& pane, std::size_t& rowCount, const InventoryEntry& item,
     const ContentCatalog& content, const Localization& loc) {
     if (rowCount == pane.rows.size()) { pane.rows.emplace_back(); }
     auto& row = pane.rows[rowCount++]; row.items.clear();
-    row.type = item.type; row.name = loc.ItemName(content, item.type);
+    row.type = item.type; row.storage = item.storage; row.name = loc.ItemName(content, item.type);
     row.items.push_back(item.id); row.massGrams = item.massGrams; row.volumeMl = item.volumeMl;
     row.depth = depth; row.wielded = item.wielded; row.worn = item.worn; row.heldHands = item.heldHands;
     if (item.heldHands == HandMask::Both) { row.name += " [2H]"; }
@@ -172,10 +250,19 @@ ItemUiFrame& ItemUi::Frame() { return frame_; }
 const ItemUiFrame& ItemUi::Frame() const { return frame_; }
 void ItemUi::SelectStorage(ItemStorage s) {
     const unsigned a = frame_.activePane, b = 1 - a;
-    if (frame_.panes[b].storage == s) {
+    if (frame_.panes[b].mode == ItemUiPaneMode::Storage && frame_.panes[b].storage == s) {
         eastl::swap(frame_.panes[a], frame_.panes[b]); eastl::swap(selected_[a], selected_[b]); eastl::swap(selectionLost_[a], selectionLost_[b]);
-    } else if (!(frame_.panes[a].storage == s)) {
+    } else if (frame_.panes[a].mode != ItemUiPaneMode::Storage || !(frame_.panes[a].storage == s)) {
         frame_.panes[a] = {}; frame_.panes[a].storage = s; selected_[a] = 0; selectionLost_[a] = false;
+    }
+}
+void ItemUi::SelectAllNearby() {
+    const unsigned a = frame_.activePane, b = 1 - a;
+    if (frame_.panes[b].mode == ItemUiPaneMode::AllNearby) {
+        eastl::swap(frame_.panes[a], frame_.panes[b]); eastl::swap(selected_[a], selected_[b]); eastl::swap(selectionLost_[a], selectionLost_[b]);
+    } else if (frame_.panes[a].mode != ItemUiPaneMode::AllNearby) {
+        frame_.panes[a] = {}; frame_.panes[a].mode = ItemUiPaneMode::AllNearby;
+        selected_[a] = 0; selectionLost_[a] = false;
     }
 }
 void ItemUi::Refresh(const WorldView& v, const ContentCatalog& content, const Localization& loc, const Keymap& keys) {
@@ -192,17 +279,21 @@ void ItemUi::Refresh(const WorldView& v, const ContentCatalog& content, const Lo
     if (!IsOpen()) { return; }
     if (!initialized_) {
         frame_.panes = {}; selected_ = {}; selectionLost_ = {}; frame_.activePane = 0;
-        frame_.panes[1].storage = DefaultTileStorage(v, v.player_position); initialized_ = true;
+        if (advanced_) { frame_.panes[1].mode = ItemUiPaneMode::AllNearby; }
+        initialized_ = true;
     }
     for (unsigned p = 0; p < (advanced_ ? 2u : 1u); ++p) {
         auto& pane = frame_.panes[p]; std::size_t rowCount = 0;
-        const auto* meta = Storage(v, pane.storage);
+        const bool aggregate = pane.mode == ItemUiPaneMode::AllNearby;
+        if (aggregate) { CollectNearbyStorages(v, frame_.panes[1 - p].storage, nearbyStorages_); }
+        const auto* meta = aggregate ? nullptr : Storage(v, pane.storage);
         pane.title = pane.storage.kind == ItemStorageKind::Inventory ? "Inventory" : pane.storage.kind == ItemStorageKind::Ground ? "Floor" : "Storage";
         if (meta && !meta->name.empty()) { pane.title = meta->name; }
         if (pane.storage.kind == ItemStorageKind::Container) {
             if (const auto* item = FindInventoryEntry(v, pane.storage.id)) { pane.title = loc.ItemName(content, item->type); }
         }
         pane.title = LocationTitle(v, pane.storage, eastl::move(pane.title));
+        if (aggregate) { pane.title = "All nearby"; }
         pane.capacity.clear();
         if (meta) {
             pane.capacity = ItemMassText(meta->massGrams);
@@ -224,7 +315,18 @@ void ItemUi::Refresh(const WorldView& v, const ContentCatalog& content, const Lo
             }
             AddRow(pane, rowCount, i, depth, content, loc);
         };
-        if (advanced_) { Each(v, [&](const InventoryEntry& i) { if (i.storage == pane.storage) { add(i, 0); } }); }
+        if (advanced_ && aggregate) {
+            std::uint64_t mass = 0, volume = 0;
+            for (const auto source : nearbyStorages_) {
+                const auto* sourceMeta = Storage(v, source);
+                mass += sourceMeta->massGrams; volume += sourceMeta->volumeMl;
+                const auto begin = rowCount;
+                Each(v, [&](const InventoryEntry& i) { if (i.storage == source) { add(i, 0); } });
+                for (auto n = begin; n < rowCount; ++n) { pane.rows[n].name += SourceLabel(v, source); }
+            }
+            pane.capacity = ItemMassText(mass) + " | " + ItemVolumeText(volume);
+        }
+        else if (advanced_) { Each(v, [&](const InventoryEntry& i) { if (i.storage == pane.storage) { add(i, 0); } }); }
         else {
             // Emit parent before descendants, without assuming snapshot ID order is tree order.
             const auto tree = [&](auto&& self, const Vector<InventoryEntry>& list, PersistentId parent, unsigned depth) -> void {
@@ -264,7 +366,7 @@ void ItemUi::Refresh(const WorldView& v, const ContentCatalog& content, const Lo
     frame_.busy = NeedsTime();
     const auto* selectedItem = FindInventoryEntry(v, frame_.screen == ItemUiScreen::Examine ? examined_ : selected_[frame_.activePane]);
     const char* wieldLabel = selectedItem && selectedItem->wielded ? "unwield" : "wield";
-    if (frame_.screen == ItemUiScreen::Amount || frame_.screen == ItemUiScreen::Actions || frame_.screen == ItemUiScreen::Target || frame_.screen == ItemUiScreen::Direction) {
+    if (frame_.screen == ItemUiScreen::Amount || frame_.screen == ItemUiScreen::Actions || frame_.screen == ItemUiScreen::Target || frame_.screen == ItemUiScreen::Direction || frame_.screen == ItemUiScreen::Destination) {
         if (frame_.screen == ItemUiScreen::Amount) { frame_.footer = "0–9 quantity | Backspace erase"; }
         else {
             hint(InputContext::Menu, InputAction::North, frame_.screen == ItemUiScreen::Direction ? "north" : "previous");
@@ -289,6 +391,7 @@ void ItemUi::Refresh(const WorldView& v, const ContentCatalog& content, const Lo
     if (advanced_) {
         hint(InputContext::Items, InputAction::TransferAmount, "amount"); hint(InputContext::Items, InputAction::TransferStack, "stack");
         hint(InputContext::Menu, InputAction::Next, "pane"); hint(InputContext::Items, InputAction::Inventory, "inventory");
+        hint(InputContext::Items, InputAction::AllNearby, "all nearby");
         frame_.footer += " | 1–9 tile"; hint(InputContext::Items, InputAction::ToggleStorage, "floor/object");
         hint(InputContext::Items, InputAction::OpenContainer, "open"); hint(InputContext::Items, InputAction::ParentStorage, "parent");
     } else { hint(InputContext::Items, InputAction::Drop, "drop"); hint(InputContext::Items, InputAction::Wield, wieldLabel); }
@@ -384,13 +487,37 @@ void ItemUi::HandleAction(ItemUiAction action, const WorldView& view) {
     }
     QueueCommand(command);
 }
-void ItemUi::QueueTransfer(const ItemUiRow& row, std::size_t count) {
-    pending_.clear(); nextCommand_ = 0; moved_ = 0; requested_ = std::min(count, row.items.size());
+void ItemUi::QueueTransfer(eastl::span<const PersistentId> items, std::size_t count) {
+    pending_.clear(); nextCommand_ = 0; moved_ = 0; requested_ = std::min(count, items.size());
     for (std::size_t n = 0; n < requested_; ++n) {
-        Command cmd; cmd.kind = CommandKind::transfer_item; cmd.item = row.items[n];
+        Command cmd; cmd.kind = CommandKind::transfer_item; cmd.item = items[n];
         cmd.source = amountSource_; cmd.destination = amountDestination_; pending_.push_back(eastl::move(cmd));
     }
     frame_.feedback.clear(); frame_.busy = true;
+}
+void ItemUi::ConfirmTransferDestination(const WorldView& view) {
+    if (frame_.choice >= destinations_.size()) { return; }
+    const auto destination = destinations_[frame_.choice];
+    if (!NearbyStorage(view, destination, StoragePosition(view, amountSource_))) {
+        frame_.feedback = "Selected destination is no longer accessible."; return;
+    }
+    if (!SameAncestry(view, amountSource_, sourceAncestry_)) {
+        frame_.feedback = "Selected source ancestry has changed."; return;
+    }
+    for (auto id : amountItems_) {
+        if (!TransferValid(view, id, amountSource_, destination)) {
+            frame_.feedback = "Selected source is no longer accessible."; return;
+        }
+    }
+    amountDestination_ = destination;
+    CaptureAncestry(view, amountDestination_, destinationAncestry_);
+    if (!transferCount_) {
+        frame_.choices.clear();
+        frame_.amount.clear(); frame_.prompt = "Quantity (1–" + UnsignedText(amountItems_.size()) + ")";
+        frame_.screen = ItemUiScreen::Amount;
+    } else {
+        QueueTransfer(amountItems_, transferCount_); frame_.screen = returnScreen_;
+    }
 }
 eastl::optional<Command> ItemUi::TakeCommand(const WorldView& v) {
     if (outstanding_ || waitingForReady_ || v.remainingTicks || v.commandQueued || nextCommand_ >= pending_.size()) { return {}; }
@@ -406,7 +533,11 @@ eastl::optional<Command> ItemUi::TakeCommand(const WorldView& v) {
         }
     }
     const auto* item = FindInventoryEntry(v, command.item);
-    if (command.kind == CommandKind::transfer_item && (!item || !(item->storage == command.source) || item->installation.value)) {
+    if (command.kind == CommandKind::transfer_item
+        && (!TransferValid(v, command.item, command.source, command.destination)
+            || !SameAncestry(v, command.source, sourceAncestry_)
+            || !SameAncestry(v, command.destination, destinationAncestry_)
+            || (!destinations_.empty() && !NearbyStorage(v, command.destination, StoragePosition(v, command.source))))) {
         CommandResult refused; refused.outcome = Outcome::inventory_refused;
         refused.inventoryOutcome = item ? InventoryOutcome::Inaccessible : InventoryOutcome::InvalidItem;
         CommandFinished(refused); return {};
@@ -470,15 +601,37 @@ void ItemUi::Handle(const KeyChord& key, const Keymap& keys, const WorldView& v,
         if (a == InputAction::Accept) {
             std::size_t n = 0; auto parsed = std::from_chars(frame_.amount.data(), frame_.amount.data() + frame_.amount.size(), n);
             if (parsed.ec != std::errc{} || !n || n > amountItems_.size()) { frame_.feedback = "Enter a quantity from 1 to " + UnsignedText(amountItems_.size()); return; }
-            ItemUiRow row; row.items = amountItems_; QueueTransfer(row, n); frame_.screen = returnScreen_;
+            if (!SameAncestry(v, amountSource_, sourceAncestry_) || !SameAncestry(v, amountDestination_, destinationAncestry_)) {
+                frame_.feedback = "Selected storage ancestry has changed."; return;
+            }
+            if (!destinations_.empty() && !NearbyStorage(v, amountDestination_, StoragePosition(v, amountSource_))) {
+                frame_.feedback = "Selected destination is no longer accessible."; return;
+            }
+            for (std::size_t index = 0; index < n; ++index) {
+                const auto id = amountItems_[index];
+                if (!TransferValid(v, id, amountSource_, amountDestination_)
+                    || c.GetItem(FindInventoryEntry(v, id)->type).unfinishedCraft) {
+                    frame_.feedback = "Selected source is no longer accessible."; return;
+                }
+            }
+            QueueTransfer(amountItems_, n); frame_.screen = returnScreen_;
         } return;
     }
     if (outstanding_ || nextCommand_ < pending_.size()) { return; }
-    if (frame_.screen == ItemUiScreen::Actions || frame_.screen == ItemUiScreen::Target) {
+    if (frame_.screen == ItemUiScreen::Actions || frame_.screen == ItemUiScreen::Target || frame_.screen == ItemUiScreen::Destination) {
         if (!frame_.choices.empty() && (a == InputAction::North || a == InputAction::South)) {
             frame_.choice = a == InputAction::North ? (frame_.choice + frame_.choices.size() - 1) % frame_.choices.size() : (frame_.choice + 1) % frame_.choices.size();
         } else if (a == InputAction::Accept && !frame_.choices.empty()) {
-            if (frame_.screen == ItemUiScreen::Actions) { ChooseAction(v, c, l); }
+            if (frame_.screen == ItemUiScreen::Destination) {
+                for (auto id : amountItems_) {
+                    const auto* item = FindInventoryEntry(v, id);
+                    if (!item || c.GetItem(item->type).unfinishedCraft) {
+                        frame_.feedback = "Installed or reserved items cannot be transferred."; return;
+                    }
+                }
+                ConfirmTransferDestination(v);
+            }
+            else if (frame_.screen == ItemUiScreen::Actions) { ChooseAction(v, c, l); }
             else if (FindInventoryEntry(v, actionSource_) && FindInventoryEntry(v, targets_[frame_.choice])) {
                 actionCommand_.otherItem = targets_[frame_.choice]; QueueCommand(actionCommand_);
             } else { frame_.feedback = "Selected item is no longer accessible."; }
@@ -499,25 +652,28 @@ void ItemUi::Handle(const KeyChord& key, const Keymap& keys, const WorldView& v,
     } else {
         if (advanced_ && (a == InputAction::Next || a == InputAction::Previous)) { frame_.activePane = 1 - frame_.activePane; return; }
         if (advanced_ && a == InputAction::Inventory) { SelectStorage({}); return; }
+        if (advanced_ && a == InputAction::AllNearby) { SelectAllNearby(); return; }
         if (advanced_ && key.key.size() == 1 && key.key[0] >= '1' && key.key[0] <= '9' && !key.ctrl && !key.alt) {
             const int n = key.key[0] - '1'; auto pos = v.player_position; pos.x += n % 3 - 1; pos.z += 1 - n / 3;
             SelectStorage(DefaultTileStorage(v, pos)); return;
         }
         if (advanced_ && a == InputAction::ToggleStorage) {
-            if (pane.storage.kind != ItemStorageKind::Ground && pane.storage.kind != ItemStorageKind::Object) {
+            const auto source = pane.mode == ItemUiPaneMode::AllNearby && pane.selectionValid
+                ? pane.rows[pane.selected].storage : pane.storage;
+            if (source.kind != ItemStorageKind::Ground && source.kind != ItemStorageKind::Object) {
                 frame_.feedback = "Select a tile before toggling floor/object storage."; return;
             }
-            const auto position = StoragePosition(v, pane.storage);
+            const auto position = StoragePosition(v, source);
             if (!position) { frame_.feedback = "Storage is no longer accessible."; return; }
-            if (pane.storage.kind == ItemStorageKind::Object) {
+            if (source.kind == ItemStorageKind::Object) {
                 SelectStorage({ItemStorageKind::Ground, *position, 0});
             } else {
-                const auto source = DefaultTileStorage(v, *position);
-                if (source.kind == ItemStorageKind::Object) { SelectStorage(source); }
+                const auto objectStorage = DefaultTileStorage(v, *position);
+                if (objectStorage.kind == ItemStorageKind::Object) { SelectStorage(objectStorage); }
                 else { frame_.feedback = "No accessible object storage on that tile."; }
             } return;
         }
-        if (advanced_ && a == InputAction::ParentStorage && pane.storage.kind == ItemStorageKind::Container) {
+        if (advanced_ && a == InputAction::ParentStorage && pane.mode == ItemUiPaneMode::Storage && pane.storage.kind == ItemStorageKind::Container) {
             if (const auto* i = FindInventoryEntry(v, pane.storage.id)) { SelectStorage(i->storage); } else { frame_.feedback = "Storage is no longer accessible."; } return;
         }
         if ((a == InputAction::North || a == InputAction::South) && !pane.rows.empty()) {
@@ -543,20 +699,40 @@ void ItemUi::Handle(const KeyChord& key, const Keymap& keys, const WorldView& v,
         QueueCommand(cmd); return;
     }
     if (advanced_ && (a == InputAction::Accept || a == InputAction::TransferAmount || a == InputAction::TransferStack)) {
-        amountSource_ = pane.storage; amountDestination_ = frame_.panes[1 - frame_.activePane].storage;
+        amountSource_ = i->storage; amountDestination_ = frame_.panes[1 - frame_.activePane].storage;
+        destinations_.clear();
+        CaptureAncestry(v, amountSource_, sourceAncestry_);
+        CaptureAncestry(v, amountDestination_, destinationAncestry_);
         if (i->installation.value || c.GetItem(i->type).unfinishedCraft) { frame_.feedback = "Installed or reserved items cannot be transferred."; return; }
-        auto dest = amountDestination_;
+        auto dest = frame_.panes[1 - frame_.activePane].mode == ItemUiPaneMode::Storage ? amountDestination_ : ItemStorage{};
         for (std::size_t depth = 0; dest.kind == ItemStorageKind::Container && depth <= v.inventory.size() + Nearby(v).size(); ++depth) {
             if (dest.id == id) { frame_.feedback = "Cannot move an item into itself or its descendants."; return; }
             const auto* ancestor = FindInventoryEntry(v, dest.id); if (!ancestor) { break; } dest = ancestor->storage;
         }
         const auto& row = pane.rows[pane.selected];
+        amountItems_.clear();
+        transferCount_ = a == InputAction::Accept ? 1 : a == InputAction::TransferAmount ? 0 : row.items.size();
+        if (a == InputAction::TransferStack) { amountItems_.assign(row.items.begin(), row.items.end()); }
+        else {
+            amountItems_.push_back(id);
+            if (a == InputAction::TransferAmount) {
+                for (auto member : row.items) { if (member != id) { amountItems_.push_back(member); } }
+            }
+        }
+        if (frame_.panes[1 - frame_.activePane].mode == ItemUiPaneMode::AllNearby) {
+            CollectNearbyStorages(v, amountSource_, destinations_);
+            frame_.choices.clear(); frame_.choice = 0;
+            for (const auto destination : destinations_) {
+                frame_.choices.push_back(LocationTitle(v, destination, SourceName(v, destination)));
+            }
+            if (destinations_.empty()) { frame_.feedback = "No accessible destination storage nearby."; return; }
+            frame_.prompt = "Choose destination"; frame_.screen = ItemUiScreen::Destination; return;
+        }
         if (a == InputAction::TransferAmount) {
-            amountItems_.clear(); amountItems_.push_back(id);
-            for (auto member : row.items) { if (member != id) { amountItems_.push_back(member); } }
+            frame_.choices.clear();
             frame_.amount.clear(); frame_.prompt = "Quantity (1–" + UnsignedText(row.items.size()) + ")"; frame_.screen = ItemUiScreen::Amount;
         }
-        else { ItemUiRow captured = row; if (a == InputAction::Accept) { captured.items = {id}; } QueueTransfer(captured, a == InputAction::Accept ? 1 : row.items.size()); }
+        else { QueueTransfer(amountItems_, transferCount_); }
     }
 }
 }

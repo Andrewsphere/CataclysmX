@@ -228,9 +228,9 @@ WorldResult<SkillAward> LearningSystem::Train(ActorHandle handle, const SkillTra
     SkillActivity activity, std::uint64_t fixedWork) {
     auto* actor = world_.MutableActor(handle);
     if (!actor) { return eastl::unexpected(WorldError::invalid_handle); }
-    const auto* definition = world_.GetContent().TryGetSkill(training.skill);
-    if (!definition || training.level > definition->maxLevel
-        || training.xpPerWork > ratioScale || (activity != SkillActivity::Craft
+    const auto* definition = world_.GetContent().TryGetSkill(training.Skill());
+    if (!definition || training.Level() > definition->maxLevel
+        || training.XpPerWork() > ratioScale || (activity != SkillActivity::Craft
             && activity != SkillActivity::Disassembly && activity != SkillActivity::Combat)) {
         return eastl::unexpected(WorldError::invalid_request);
     }
@@ -267,8 +267,9 @@ void LearningSystem::CollectView(ActorHandle handle, LearningView& output) const
     GatherReferences(handle, world_.GetCraftingSettings().nearbyRadius);
     for (std::size_t i = 1; i <= content.CraftingRecipeCount(); ++i) {
         const CraftingRecipeId id{static_cast<std::uint32_t>(i)};
+        const auto& recipe = content.GetCraftingRecipe(id);
         output.recipes.push_back({id, KnowsRecipe(state, content, id), ReferencesRecipe(world_, references_, id),
-            MeetsSkillRequirements(state, content.GetCraftingRecipe(id).skills), RecipeLearningRatio(state, content, id)});
+            MeetsSkillRequirements(state, {recipe.skills.begin(), recipe.skills.Size()}), RecipeLearningRatio(state, content, id)});
     }
     for (std::size_t i = 1; i <= content.BookCount(); ++i) {
         const BookId id{static_cast<std::uint32_t>(i)};

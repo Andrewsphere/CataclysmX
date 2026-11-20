@@ -72,12 +72,12 @@ void CheckLearning(const ContentCatalog& content, const Recipe& recipe, const ch
     std::uint8_t level) {
     const auto skill = content.FindSkill(name); REQUIRE(skill.value != 0);
     bool gated = false, trained = false;
-    for (const auto& gate : recipe.skills) { gated |= gate.skill == skill && gate.level == level; }
+    for (const auto& gate : recipe.skills) { gated |= gate.Skill() == skill && gate.Level() == level; }
     for (const auto& source : recipe.training) {
-        trained |= source.skill == skill && source.level == level && source.xpPerWork > 0;
+        trained |= source.Skill() == skill && source.Level() == level && source.XpPerWork() > 0;
     }
     if (level == 0) {
-        for (const auto& gate : recipe.skills) { CHECK(gate.level == 0); }
+        for (const auto& gate : recipe.skills) { CHECK(gate.Level() == 0); }
     } else {
         CHECK(gated);
     }
@@ -325,7 +325,7 @@ TEST_CASE("Makeshift screwdriver is a default-known level zero scrap bootstrap",
     CHECK(Tier(r.content, definition.toolTraits, "screwdriving") == 1);
     const auto& recipe = Recipe(r.content, "make_makeshift_screwdriver");
     CHECK(recipe.enabled); CHECK(recipe.knownByDefault);
-    CHECK(recipe.skills.empty()); CHECK(recipe.toolTraits.Empty());
+    CHECK(recipe.skills.Empty()); CHECK(recipe.toolTraits.Empty());
     REQUIRE(recipe.inputs.Size() == 1);
     CHECK(recipe.inputs[0].Item() == scrap);
     CHECK(recipe.inputs[0].Count() == 1); CHECK_FALSE(recipe.inputs[0].Retained());
@@ -378,17 +378,17 @@ TEST_CASE("Ordinary screwdriving salvage accepts either provider and keeps other
                 CHECK(recipe.inputs[0].Count() == 1);
                 CHECK(recipe.inputs[0].Retained());
             }
-            REQUIRE(recipe.skills.size() == (expected.skill ? 1 : 0));
+            REQUIRE(recipe.skills.Size() == (expected.skill ? 1 : 0));
             if (expected.skill) {
-                CHECK(recipe.skills[0].skill == r.content.FindSkill(expected.skill));
-                CHECK(recipe.skills[0].level == 1);
+                CHECK(recipe.skills[0].Skill() == r.content.FindSkill(expected.skill));
+                CHECK(recipe.skills[0].Level() == 1);
             }
             for (const auto& input : recipe.inputs) {
                 CHECK(input.Item() != r.content.FindItem("flathead_screwdriver"));
                 for (unsigned i = 0; i < input.Count(); ++i) { r.Add(input.Item()); }
             }
             for (const auto& skill : recipe.skills) {
-                REQUIRE(r.world.Learning().SetLevel(r.actor, skill.skill, skill.level));
+                REQUIRE(r.world.Learning().SetLevel(r.actor, skill.Skill(), skill.Level()));
             }
             const auto target = r.Add(recipe.target);
             CHECK(Take(r.world.StartRecycling(r.actor, target, id)).outcome == CraftingOutcome::MissingTools);
@@ -433,7 +433,7 @@ TEST_CASE("W3 every sword producer requires learned F4 continuous steel and all 
         CHECK(recipe.knownByDefault);
         bool fabrication4 = false, continuousBar = false;
         for (const auto& skill : recipe.skills) {
-            fabrication4 |= skill.skill == content.FindSkill("fabrication") && skill.level == 4;
+            fabrication4 |= skill.Skill() == content.FindSkill("fabrication") && skill.Level() == 4;
         }
         for (const auto& input : recipe.inputs) {
             continuousBar |= !input.Retained() && input.Item() == content.FindItem("spring_steel_bar");
