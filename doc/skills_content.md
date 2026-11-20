@@ -9,8 +9,9 @@ Clubs & Hammers, Axes, Polearms, Shields and Dodge. The main
 and FirstHouse packs include these definitions; activity coverage is a starter
 slice, not a complete ten-tier progression for each skill.
 
-In `data/crafting/slice.json5`, `cut_timber_scrap` is ungated level-0 Fabrication
-training toward level 1. `make_coil_spear` requires Fabrication 1 and a reference
+In `data/crafting/materials.json5`, `cut_timber_scrap` is ungated level-0 Fabrication
+training toward level 1. In `data/crafting/weapons.json5`, `make_coil_spear`
+requires Fabrication 1 and a reference
 or knowledge, and explicitly autolearns at Fabrication 2. Its independent,
 ungated `disassemble_coil_spear` recycler trains Fabrication at level 0 and
 teaches the spear recipe through disassembly. Both arming-sword producers require
@@ -30,9 +31,11 @@ must have charge. FirstHouse offers the manuals through debug spawning.
 The separate `boxing_manual` and `weapon_forms_manual` carriers appear in
 ordinary loot; their repeatable art-acquisition attempts are distinct from ordinary
 book benefits. See [combat content](combat_content.md#shipped-identities-and-starter-tuning)
-and [combat learning](combat_learning.md). Town has 18 skills and 98 items;
+and [combat learning](combat_learning.md). Town has 18 skills and 203 items;
 the demo has 17 items, including the generated corpse container. These counts
-describe the current packs, not fixed content limits.
+describe the current packs, not fixed content limits. See
+[catalog membership](content_pack.md#catalog-membership) for FirstHouse and
+recipe/object totals.
 
 ## Authoring schema
 

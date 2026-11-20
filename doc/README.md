@@ -87,8 +87,8 @@
 - [Item presentation content](item_presentation.md): descriptions, colored UTF-8
   external and inline art, single-cell character policy, melee profiles and defaults.
 - [Item authoring](item_authoring.md): item, flags, art and progression workflows.
-- [Second item expansion](item_expansion.md): 80 new items, acquisition routes,
-  crafting/salvage, artwork and verified starting balance.
+- [Second item expansion](item_expansion.md): historical 80-item authoring record,
+  acquisition routes, crafting/salvage, artwork and starting balance evidence.
 - [Item balance anchors](item_balance.md): reference items, progression tradeoffs,
   acquisition checks and combat comparison criteria for new designs.
 - [Definition flags](definition_flags.md): shared vocabulary, domains and set API.
@@ -112,7 +112,8 @@
   speed-scaled input deadlines and idle policy.
 - [Content format and catalog](content_format.md): JSON5 terrain and item definitions,
   capabilities, IDs, building patterns, appearance inheritance, and loading APIs.
-- [Content packs](content_pack.md): manifest loading, asset roots and deployment.
+- [Content packs](content_pack.md): manifest loading, semantic source ownership,
+  current catalog membership, asset roots and deployment.
 - [Urban content](urban_content.md): Town scenario, building roster, specialists,
   resources and current generation limits.
 - [Urban resources](urban_resources.md): detailed furniture, loot, monsters and recipes.
@@ -153,6 +154,10 @@ the API pages document current contracts:
 - [Digital fabrication design](digital_fabrication_design.md): accepted transferable
   information, persistent machine libraries, job capture and commissioned-batch
   completion learning; first home-printer scope and deferred hacking/extraction.
+- [Home-printing contract](home_printing_design.md): accepted useful products,
+  prepared filament, setup/batch rules, resource budgets and acquisition.
+- [City identity contract](city_identity_design.md): accepted settlement size/era,
+  population, rewards, starts, centralized computing, dystopian sites and terrain.
 - [Combat design](../md/CombatDesign.md): JSON-defined arts, progression, weighted
   move/target selection, reactions, active abilities, two-hand equipment, armor,
   human death, and headless balance experiments.

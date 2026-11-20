@@ -1,4 +1,5 @@
 {format_version:1, definitions:[
+  {type:'recycling_recipe',id:'dismantle_toy_robot',name:'Dismantle a toy robot',target:'toy_robot',inputs:[{item:'flathead_screwdriver',count:1,retained:true},{item:'combination_pliers',count:1,retained:true}],returns:[{item:'tiny_electric_motor',count:1},{item:'rigid_plastic_scrap',count:2},{item:'microcontroller_board',count:1},{item:'light_emitting_diode',count:2}],work:300},
   {type:'recycling_recipe',id:'strip_insulated_power_cable',target:'insulated_power_cable',inputs:[{item:'combination_pliers',count:1,retained:true}],returns:[{item:'copper_wire',count:1}],work:180},
   {type:'recycling_recipe',id:'strip_transformer',target:'transformer',inputs:[{item:'combination_pliers',count:1,retained:true}],returns:[{item:'copper_wire',count:1},{item:'steel_scrap',count:2}],work:400},
   {type:'recycling_recipe',id:'strip_induction_coil',target:'induction_coil',inputs:[{item:'combination_pliers',count:1,retained:true}],returns:[{item:'copper_wire',count:1}],work:250},

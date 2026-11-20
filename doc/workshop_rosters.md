@@ -61,8 +61,9 @@ These are the seven W3A item-definition upgrades plus W3B's multimeter upgrade:
 | `arming_sword` | W3A | Revise cold-shaped-scrap prose to match the new forged-blade routes |
 | `multimeter` | W3B | Add `electrical_testing` 1 for lead/tool/pack assembly; retain its existing grid-meter action |
 
-Definitions live in `data/items/slice_equipment.json5`,
-`data/items/expansion_equipment.json5` and `data/items/low_tech.json5`.
+Definitions now live in `data/items/tools.json5` and `data/items/weapons.json5`;
+I1's [source map](content_pack.md#source-organization) replaces the original
+slice/expansion ownership.
 The existing `claw_hammer`, `metal_file`, `wood_chisel`, `soldering_iron`,
 `wiring_kit`, cells and stock are reused.
 
@@ -131,7 +132,7 @@ melee profile; this brief does not claim a new prying action.
 
 Revise both existing `arming_sword` producers:
 
-- `make_current_arming_sword` in `data/crafting/slice.json5`.
+- `make_current_arming_sword` in `data/crafting/workshop_forging.json5`.
 - `make_salvaged_arming_sword` in `data/crafting/low_tech.json5`.
 
 Both require F4, **anvil 2, hammering 2, metal holding 2 and forge heat 1**.

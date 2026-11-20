@@ -1,5 +1,10 @@
 # Expansion equipment: 20-item authoring record
 
+> Historical authoring/integration record: source paths, counts, and verification
+> below describe that pass, not current ownership. See
+> [current source organization](content_pack.md#source-organization) for semantic
+> ownership.
+
 Scope: 20 new IDs, no upgrades; six tools, ten functional wearables, four
 craft-only weapons. Atmospheric and humorous exceptions: **none**; all descriptions
 are plain. Reading deferred.

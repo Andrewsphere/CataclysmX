@@ -58,8 +58,8 @@ Ratios use `ratioScale`: `10000` is 1.0 and `1000` is 10%.
 | `wooden_shield` | 4.5 blunt | 120 | One-handed | Defensive offhand; base block capacity 14 HP |
 
 Sources: [household items](../data/items/household.json5),
-[slice equipment](../data/items/slice_equipment.json5),
-[low-tech items](../data/items/low_tech.json5) and
+[tools](../data/items/tools.json5),
+[weapons](../data/items/weapons.json5) and
 [combat items](../data/items/combat.json5).
 
 Use the complete profile when choosing values:
@@ -101,7 +101,8 @@ heavy-armor progression. Read region coverage, layer and encumbrance alongside
 protection. For scale, the T-shirt has blunt/slashing protection `30`/`50`
 (0.3/0.5 HP), the work shirt `70`/`100`, and gloves `150`/`250`/`100` against
 blunt/slashing/piercing. Coverage determines where protection can apply.
-Definitions live in [slice equipment](../data/items/slice_equipment.json5),
+Definitions live in [clothing](../data/items/clothing.json5),
+[containers](../data/items/containers.json5),
 [urban items](../data/items/urban.json5) and [combat items](../data/items/combat.json5).
 
 Compare both passive exposure and active combat. Absorbing more damage can still
@@ -123,7 +124,7 @@ environmental systems cannot stand in for currently implemented benefits.
 | `aa_alkaline_battery` | 25 g / 10 ml; 1000 energy, initially full | Disposable power available immediately |
 | `aa_rechargeable_battery` | 30 g / 10 ml; 1000 capacity, initially empty | Rechargeable supply needs a charging route |
 
-Battery definitions are in [slice supplies](../data/items/slice_supplies.json5);
+Battery definitions are in [power equipment](../data/items/power.json5);
 energy values are game units. For containers, tools, power stores and manuals,
 compare supported capacity, task access, throughput, resource costs and usable
 starting state. Use the [items API](items_api.md) and [skill content](skills_content.md)
@@ -137,12 +138,15 @@ Follow the **whole reachable acquisition chain**:
   recipe knowledge, consumed/retained tools, work, power and recycling returns.
   A definition or recipe's existence alone does not establish availability.
 - The current-material sword route, `make_current_arming_sword` in
-  [slice crafting](../data/crafting/slice.json5), uses 14 `steel_scrap`, two
-  `wood_scrap`, one `copper_wire`, hammering/cutting tier 1, fabrication 2 and
-  6000 work. It is an investment reference, not a universal price for weapons.
+  [workshop forging](../data/crafting/workshop_forging.json5), uses one
+  `spring_steel_bar`, two `wood_scrap` and one `copper_wire`, with retained
+  hacksaw/file. It requires Fabrication 4, anvil 2, hammering 2, metal holding 2,
+  forge heat 1 and 6000 work at `heat_per_work:10000`.
+  It is an investment reference, not a universal price for weapons.
 - The sword also has a [legacy route](../data/crafting/low_tech.json5) with older
-  inputs and no explicit skill requirement. Consider every reachable route before
-  claiming an item is gated by its most demanding recipe.
+  wire-bundle binding. Both routes use the same continuous blade stock, skill,
+  tool, heat and work gates. Town loads both; FirstHouse loads only the
+  copper-bound route. See the [workshop roster](workshop_rosters.md).
 - `make_coil_spear` uses 1200 work, fabrication 1, retained hacksaw/pliers and a
   knowledge rule with fabrication-2 autolearn. Compare that access with the sword,
   rather than judging their combat scores as equally priced products.

@@ -1,0 +1,17 @@
+{format_version:1, definitions:[
+  // Explicit returns are bounded by target mass; no second recycler is generated.
+  {type:'recycling_recipe',id:'salvage_retractable_utility_knife',name:'Strip a utility knife',target:'retractable_utility_knife',
+   inputs:[{item:'flathead_screwdriver',count:1,retained:true}],returns:[{item:'steel_scrap',count:1}],work:160,training:[{skill:'mechanics',level:0}]},
+  {type:'recycling_recipe',id:'salvage_tin_snips',name:'Strip tin snips',target:'tin_snips',
+   inputs:[{item:'adjustable_wrench',count:1,retained:true}],returns:[{item:'steel_scrap',count:3}],work:240,training:[{skill:'mechanics',level:0}]},
+  {type:'recycling_recipe',id:'salvage_wood_chisel',name:'Strip a wood chisel',target:'wood_chisel',
+   inputs:[{item:'claw_hammer',count:1,retained:true}],returns:[{item:'steel_scrap',count:1}],work:180,training:[{skill:'fabrication',level:0}]},
+  {type:'recycling_recipe',id:'salvage_hand_drill',name:'Strip a hand drill',target:'hand_drill',
+   inputs:[{item:'flathead_screwdriver',count:1,retained:true},{item:'adjustable_wrench',count:1,retained:true}],
+   returns:[{item:'steel_scrap',count:6},{item:'wood_scrap',count:1}],work:500,training:[{skill:'mechanics',level:0}]},
+  {type:'recycling_recipe',id:'salvage_multimeter',name:'Strip a multimeter',target:'multimeter',
+   inputs:[{item:'flathead_screwdriver',count:1,retained:true},{item:'combination_pliers',count:1,retained:true}],
+   returns:[{item:'rigid_plastic_scrap',count:2}],work:300,training:[{skill:'electronics',level:0}]},
+  {type:'recycling_recipe',id:'salvage_socket_wrench_set',name:'Break down a socket wrench set',target:'socket_wrench_set',
+   inputs:[{item:'claw_hammer',count:1,retained:true}],returns:[{item:'steel_scrap',count:20}],work:400,training:[{skill:'mechanics',level:0}]},
+]}

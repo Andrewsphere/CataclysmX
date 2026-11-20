@@ -1,5 +1,10 @@
 # Supplies slice: authoring and integration record
 
+> Historical authoring/integration record: source paths, counts, and verification
+> below describe that pass, not current ownership. See
+> [current source organization](content_pack.md#source-organization) for semantic
+> ownership.
+
 Twenty new definitions, no upgrades. Coverage target and actual: eight packaged
 foods/drinks; four medical/hygiene; three repair/shelter supplies; two empty
 containers; three electrical supplies. Locations and progression below record

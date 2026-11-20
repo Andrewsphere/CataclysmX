@@ -1,5 +1,10 @@
 # Materials and electronics batch
 
+> Historical authoring record: source paths, counts, and verification below
+> describe that pass, not current ownership. See
+> [current source organization](content_pack.md#source-organization) for semantic
+> ownership.
+
 Twenty new definitions: 11 everyday material units and nine electronic or
 electromechanical components. The items are included in Town and FirstHouse;
 actual acquisition routes and implemented crafting and recycling are recorded in

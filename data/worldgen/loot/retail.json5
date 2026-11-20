@@ -1,5 +1,5 @@
 {format_version:1, definitions:[
-  // Shared by the household and urban packs. Bounds include entry counts.
+  // Shared retail and household stock. Bounds include entry counts.
   // 1800 ml oats stay out of the broad 1500 ml food pool and its ancestors.
   {type:'loot_pool',id:'loot_dry_staples',entries:[
     {pool:'house_pantry',weight:6},{item:'rolled_oats',weight:4},

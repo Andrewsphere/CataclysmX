@@ -1,5 +1,10 @@
 # Electronics expansion batch
 
+> Historical authoring/integration record: source paths, counts, and verification
+> below describe that pass, not current ownership. See
+> [current source organization](content_pack.md#source-organization) for semantic
+> ownership.
+
 Scope: 20 expansion items reviewed in place, 18 component/assembly units and two household donors.
 All are placed as early-to-mid pre-collapse salvage in electronics, workshop,
 office and household contexts. All 20 descriptions are plain, with no atmospheric

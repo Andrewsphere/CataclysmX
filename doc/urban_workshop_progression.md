@@ -2,7 +2,7 @@
 
 ## Status and use
 
-**Coordinating plan; electricity implemented; W1/W2 verified; crafting delivery direction accepted.** This document records the agreed
+**D1–D5 scoped gameplay direction accepted; implementation and playtesting follow.** This document records the agreed
 direction and organizes subsequent design, implementation, content, and validation
 passes. Implemented electricity contracts are in [power design](power_design.md)
 and [power commands and presentation](power_presentation.md).
@@ -24,23 +24,27 @@ recommendations are proposals for the design passes to resolve with the user.
 
 | Area | Agreed direction |
 | --- | --- |
-| Order of work | Electricity design accepted; implement D1 and its functional content slice now. Use later design passes for broader workshop, information, and city contracts. |
+| Order of work | Complete D5, implement the accepted basic-workshop/energy/printing/city scope, then playtest. Proceed to hacking and later progression after that loop is successful. |
 | Electricity | Charge-based supplies/loads, AABB-union grids, generated building mains, installed batteries, generator-only operation, timed machine slices, and machine-held residency with player/debug inspection. |
 | Catalog | Unify the earlier item slice and expansion into a coherent catalog and progression; authoring batches should not determine long-term source organization. |
-| Knowledge | Integrate books, manuals, and computer information sources into crafting and learning. |
+| Knowledge | Public homes/libraries/shops provide basic and professional information supporting the basic workshop. Advanced information belongs to protected specialist locations, designed later. |
 | Production software | Selected high-tier components across trades require software to control sophisticated equipment. Factory systems can be hacked to acquire it; protected software can require hacking to make a usable copy, and broken machines can retain recoverable software. Coordinate information/machine contracts with D3 and recovery/access actions with the hacking design. |
-| Workshop | Include functional soldering, welding, anvils, fueled forges, and external workshop power. Tools may be found or crafted; dependencies should create reachable progression. |
+| Workshop | Scavenge and assemble most machinery; craft simple necessities such as a basic screwdriver without circular tool prerequisites. Include soldering, welding, anvils, fueled forges and external power. |
+| Energy independence | Early recovered-panel solar plus batteries; one integrated wood-gas generator assembled around a recovered gasoline engine and suitable generator-capable electric machine. Complete engine manufacture remains later work. |
+| Acquisition bottlenecks | Multiple practical acquisition routes and craftable basic-tool fallbacks. Guaranteed loot/site coverage is reserved for later consideration after playtesting. |
 | Digital fabrication | Common scavenged basic 3D printers; simple plastic printing needs little Computers skill, stronger/advanced outputs need appropriate skill, equipment and material. Printer use requires Computers rather than Fabrication; constructing one can be difficult. Metal printing is an advanced capability. |
 | Process automation | Selected unattended input/output machines, including coal gasification and oxygen-free wood-gas production for adapted gasoline engines. Most crafting remains manual and tool-based. |
 | Setting | Futuristic construction and technology should be common, especially in cities. Support old cities and newer, more cyberpunk-like cities. |
+| Computing and dystopian sites | Centralized computing is society-wide; standalone computers survive as old salvage. Powerful computing hardware is infrastructure/specialist equipment, not household loot. Include neighborhood compute houses and managed housing, resident-services and reclamation variants. |
 | Terrain | Add more than 18 purposeful terrain variants, including distinct colored concrete and old/new brick. Integrate them into generated places. |
 | Encounters | Increase interior zombie population roughly 5–7 times the current baseline and add population outdoors within cities. Large cities should usually require preparation; smaller settlements should be quieter. |
-| Rewards | Large cities should provide better loot and worthwhile advanced acquisition opportunities. |
+| Rewards | Small/medium settlements support basic workshops. Advanced equipment, software and schematics concentrate in large cities, especially modern ones; older industrial cities retain conventional machinery and stock value. |
 | Artwork workflow | SDL artwork is produced separately on another workstation. This workstation supplies content, terminal presentation, functional integration, and an explicit artwork handoff. |
 
-Exact city dimensions, terrain roster, recipe graph,
-spawn budgets, loot weights, and learning costs remain design decisions. No exact
-new item count or terrain count beyond the agreed lower bound has been approved.
+The linked D3/D4 contracts specify accepted initial printing budgets, city dimensions,
+population targets and forty new terrain variants. D5 below records the accepted
+integration direction. Detailed content quantities and remaining operating budgets
+follow during implementation; measured balance and acquisition reliability need playtesting.
 
 ## 2. Verified starting point before D1
 
@@ -106,18 +110,20 @@ fills selected branches; immediate end-to-end completion or a winnable game is
 not required.
 This cross-domain plan informs D3–D5 without preempting their runtime contracts.
 
-Each design pass produces a decision-ready subsystem document under `/doc`, with:
+Discuss the gameplay proposal with the user first. Write or revise the durable
+subsystem document under `/doc` after agreement, including:
 
 1. Player actions and one concrete end-to-end example.
 2. Chosen rules, brief rationale, and explicitly unresolved questions.
-3. Minimal content/runtime ownership and API shapes; serialization, commands,
-   presentation, and generation implications where applicable.
+3. Player-visible content roles, resource ownership, presentation and world effects.
 4. Failure/interruption rules and focused acceptance scenarios.
 5. A bounded implementation breakdown and dependencies on other passes.
 
 Design drafts become accepted contracts after user review. Later implementation
 passes follow those contracts and surface a necessary contract revision before
-changing dependent behavior. Statuses are `Pending`, `Draft`, `Accepted`,
+changing dependent behavior. Concrete schemas, APIs, save/network representation,
+versioning and internal generation algorithms belong to implementation; they do
+not require a separate gameplay-design iteration. Statuses are `Pending`, `Draft`, `Accepted`,
 `In progress`, and `Verified`; a document alone does not verify implementation.
 
 ### D1 — Electricity and grid power
@@ -285,34 +291,21 @@ design/schematic extraction wait for a separate later effort. Do not create
 temporary schematic/software crafting recipes or placeholder unlock items to
 replace those future acquisition routes.
 
-Remaining current design:
+The [accepted home-printing contract](home_printing_design.md) groups the first useful
+products, prepared filament, concrete setup/batch/resource budgets, acquisition
+and W4 completion-learning integration. The user accepted this package and assigned
+concrete schemas, APIs, saves and networking to the implementation pass.
 
-- Computer information sources: workshop terminals, household computers,
-  technical archives, portable readers, and removable media. Establish the
-  initial useful subset and concrete acquisition contexts.
-- Information identity versus carrier identity. Reuse existing book/reference
-  semantics where appropriate, preserving once-per-character learning across
-  print and digital copies.
-- Reading, searching, copying/exporting, and using information: required device,
-  power, time, accessibility, storage, and the role of the Computers skill. Select
-  bounded gameplay actions and costs, including outcomes when power/access is lost.
-- Human-readable manuals/recipes versus machine-readable fabrication files.
-  Specify the representations and eligibility rules, supplied/preloaded designs,
-  explicit import and local library management. Preserve human reference/learning
-  identity and distinguish it from machine permission.
-- Production software versus product designs/process specifications, including
-  packages that contain both. Define machine compatibility, ordinary copying,
-  local installation/configuration and meaningful Computers work.
-- Specify startup validation and durable per-job information capture with W4's
-  paid-work and reservation rules. Resume uses the captured instructions without
-  external source access. Found installed software and basic supplied printer
-  software support the first slice.
-- Home polymer printer: useful simple outputs, compatible feedstock, setup work,
-  autonomous print time, power demand and interruption rules. Settle the setup
-  reservation boundary and supplied recipe catalog.
-- Learning integration: concrete recipe budgets, batch bounds/rounding and
-  once-only completion awards to durable recipients; separate hands-on learning
-  and how automated production interacts with recipe memorization.
+Implementation handoff:
+
+- Preserve the accepted device roles, information identity and ordinary
+  copy/import rules, including shared book learning identity.
+- Integrate the six supplied prints, prepared filament, setup/reservation rules
+  and useful downstream assembly recipes.
+- Implement durable job capture and once-only initiator learning, including
+  offscreen/archived recipients, without duplicating paid work or output.
+- Choose concrete runtime/content/transport representations and compatibility
+  policy during implementation; surface any necessary gameplay revision.
 
 Later D3-C/hacking owns target access, export protection, recovery, design/schematic
 extraction and hacking laptop modifications. Hardware work can use Electronics;
@@ -328,23 +321,29 @@ crafting substitute. Shared information preserves learning identity.
 
 ### D4 — Settlement scale, identity, population, and rewards
 
-**Deliverable:** `doc/city_identity_design.md`; consumes D1 infrastructure rules and
-the acquisition needs from D2/D3.
+**Accepted contract:** [city identity design](city_identity_design.md), covering
+settlement scale/prevalence, era/district identity, indoor/outdoor population,
+reward coverage, starts, centralized computing, dystopian sites and the terrain/place
+roster together. It consumes D1 infrastructure rules and the accepted acquisition
+needs from D2/D3. Its numerical budgets are initial tuning targets, not measured results.
 
 Keep **settlement size**, **architectural era**, and **district use** as distinct
 design axes. Older large cities can be crowded and rich in industrial machinery;
 new cyberpunk cities can emphasize advanced fabrication and digital information.
 Futuristic construction should be a substantial part of the generated world.
 
-Decide:
+Implement and validate the accepted rules:
 
 - Actual small/medium/large settlement footprints, building/site counts, occupied
-  floors, spacing, and generation prevalence. Resolve whether large cities fit a
-  regional plan or require coordinated multi-region planning. The current street
-  profile names alone are insufficient to establish size classes.
+  floors, spacing, and generation prevalence. Specify continuous large-city
+  behavior across region boundaries; implementation chooses the planning scheme.
+  The current street profile names alone are insufficient to establish size classes.
 - Old, mixed/redeveloped, and newer cyberpunk identities, their frequency, and
-  coherent building/district selection. A candidate roster should include
-  futuristic housing, commercial, industrial/fabrication, and civic settings.
+  coherent building/district selection. The accepted roster includes futuristic
+  housing, commercial, industrial/fabrication, civic and dystopian service settings.
+- Society-wide centralized computing: legacy standalone machines remain salvage,
+  ordinary homes lack powerful hardware, and a neighborhood compute house is
+  dedicated infrastructure despite its domestic-sized footprint.
 - How terrain palettes bind to buildings/rooms/districts and remain coherent under
   rotation, upper floors, and materialization. New-era cities need recognizable
   layout/building differences as well as different colors.
@@ -355,9 +354,10 @@ Decide:
   seed panel. Reconcile it with quieter small settlements and crowded large ones.
   Record size-specific targets; do not silently multiply marker count, chance,
   and a city multiplier into a second unintended increase.
-- Outdoor population ownership and streams, city boundaries versus connecting
-  wilderness roads, exclusion of blocked/unsupported cells, and overlap with
-  existing park/site markers. Ensure one actor per tile and stable generation.
+- Outdoor population within actual city boundaries versus connecting wilderness
+  roads, exclusion of blocked/unsupported cells, and overlap with existing park/site
+  markers. Ensure one actor per tile and stable generation; implementation owns
+  population representation and generation streams.
 - Better large-city rewards: themed equipment quality, useful quantity, advanced
   machines, technical information, production software and feedstock. Factory
   terminals/industrial archives and broken equipment with recoverable controllers
@@ -367,50 +367,122 @@ Decide:
   advanced equipment is required.
 - Town starting position, quieter entry routes and city approaches, the curated
   FirstHouse scenario's population policy, and visibility of danger/reward cues.
-- New generation version, legacy behavior, debugging views, and performance
-  measurement with the proposed actual actor populations.
+- Persistent cleared/depleted places, useful danger/reward cues and actual dense-city
+  performance. Implementation owns generation versions, compatibility and diagnostics.
 
-**Terrain proposal for review:** target 36–48 new terrain IDs, comfortably above
-the requested minimum of more than 18. Reserve concrete quotas in D4 for
-weathered/new masonry, several painted concrete colors, industrial panels,
-futuristic composite/clad walls, floors/exterior paving, and doors/windows. Reuse
-existing identities where they already express the concept; count upgrades
-separately. Every addition needs a named place in generated content.
+**Accepted terrain target:** D4 specifies 40 new variants across
+masonry/partitions, painted concrete, industrial/newer wall systems, interior floors,
+exterior surfaces and two door-state pairs. Each has generated uses; existing
+identities are reused where suitable. Final IDs and artwork briefs follow authoring.
 
 **Exit examples:** representative layouts and target tables for small quiet
 settlements, large older cities, and large futuristic cities. Specify footprint,
 indoor/outdoor population, meaningful reward availability, and a fixed seed/location
 panel for later measurement. Include a route from a quieter start to the first
 powered workshop and a preparation-heavy expedition for advanced fabrication.
-Separate measured current baselines from proposed targets; realized new-world
+Separate measured current baselines from accepted tuning targets; realized new-world
 distributions and playthrough results belong to implementation validation.
 
 ### D5 — Integration contract and content roster
 
-**Deliverable:** extend this plan with the accepted cross-system contract and
-rosters; link the accepted D1–D4 documents.
+**Status: Gameplay integration direction accepted; implementation/content and
+playtesting pending.** The user accepted the following package after discussion,
+with guaranteed progression loot/location generation explicitly deferred.
 
 The [crafting delivery plan](crafting_delivery_plan.md) supplies the initial
-cross-domain dependency map and bounded slice boundaries. This is planning input
-to D5; it does not claim the pending D3/D4 contracts or revised item rosters are
-complete. Early workshop slices can use their relevant accepted contracts.
+cross-domain dependency map and bounded slice boundaries. D5 now reconciles the
+accepted D3 first-printing and D4 city contracts with the existing workshop/power
+routes. Advanced production and hacking retain their later gameplay designs.
+Early workshop slices can use their relevant accepted contracts.
 
-Reconcile:
+#### Basic workshop: recover, assemble and make necessities
+
+| Category | Accepted route |
+| --- | --- |
+| Basic hand tools, handles, brackets and simple adapters | Common finds plus accessible crafting alternatives |
+| Better tool sets, electrical equipment and workshop stations | Scavenging, assembly and selected crafting |
+| Engines, photovoltaic elements, complex controllers and precision machinery | Recover functional equipment or major assemblies; manufacture their internals later |
+
+A makeshift screwdriver supplies ordinary screwdriving capability; a better set
+can be needed for broader operations. Simple fallback techniques are default-known.
+Audit the prerequisite graph for circular bootstrap gates: the first screwdriver
+must not require a screwdriver, and establishing a basic workshop must not require
+that workshop already be complete. Finding working equipment skips its construction.
+Manufacturing a complete reliable diesel/gasoline engine is outside this basic scope.
+
+#### Renewable power in the implementation/playtest package
+
+**Solar:** assemble recovered working panels, compatible control components,
+wiring and mounting. Retain the Electronics-2/Mechanics-1 basic assembly anchor.
+Generation depends on daylight and is zero at night; batteries time-shift supply
+and accumulate energy for demanding work. Small installations support modest
+workshop use, while more panels/storage support expansion. Found complete equipment
+bypasses construction; manufacturing photovoltaic material is a later capability.
+
+**Wood gas:** one installed generator assembly consumes prepared wood and produces
+electricity. Its represented chain is gasifier with cooling/filtering -> adapted
+recovered gasoline engine -> coupling/reduction drive -> suitable generator-capable
+motor or alternator. Gas handling is internal to this first assembly. This is an
+assembly/conversion task rather than engine manufacture or a separate gas-cylinder
+economy. It provides controllable supply at night or for demanding jobs, at the
+cost of wood preparation, fuel and operating effort.
+
+Both routes integrate with D1 supply/storage and resource conservation. Content
+implementation selects concrete equipment, fuel units and operating budgets
+consistent with these roles. Standalone coal/retort processes and broader gas
+handling remain separate later work.
+
+#### Alternatives instead of guaranteed progression loot
+
+Use multiple practical routes to essential basic-workshop capabilities: found
+complete equipment, assembly from suitable recovered parts and craftable fallbacks
+where manufacture is reasonably simple. Distribute suitable parts across several
+believable source types and support relevant substitutions.
+
+Do not introduce required site coverage, mandatory progression-loot quotas or a
+guaranteed complete starter-workshop supply network. Those generation guarantees
+are reserved for later consideration. This supersedes the earlier D4 per-settlement
+coverage guarantees; its composition targets remain useful tuning guidance.
+
+Skill, material quantity, equipment transport, power/storage and deliberate site
+selection should provide meaningful bottlenecks. A single rare tool, component or
+book should not be the sole path to an essential basic capability. Playtest the
+actual acquisition routes across seeds before deciding whether guarantees are needed.
+
+#### Expedition and information progression
+
+Small/medium settlements support the complete basic-workshop loop. Large cities,
+especially modern ones, concentrate precision equipment, advanced control systems,
+specialized components/materials and later production software/schematics.
+Workshop upgrades therefore eventually motivate large-city expeditions. Older
+industrial cities remain valuable for conventional machinery and bulk resources,
+with occasional advanced retrofits.
+
+Books and other ordinary references in homes, libraries and shops cover basic
+and professional knowledge sufficient for the basic workshop, solar assembly and
+wood-gas conversion. Advanced information belongs to protected laboratories,
+military facilities and comparable specialist spaces, addressed later. Classify
+information by the capability taught, not a blanket skill-level cutoff.
+
+Human knowledge, product/process schematics and executable production software
+retain their distinct D3 roles. Protected acquisition and advanced production are
+future progression, not prerequisites for the first implemented/playtested loop.
+
+Implementation handoff:
 
 - One prerequisite graph connecting tools, stations, power, fuel, information,
   skill practice, raw materials/feedstock, locations, and useful outputs.
 - Bootstrap and alternate acquisition routes; ordinary versus specialized
   knowledge; craftable versus found/commissioned equipment; legacy recipe bypasses.
 - Energy/work/time units and resource ownership across manual and machine work.
-- Stable content IDs, semantic source-file layout, manifest inclusion, and each
-  integration boundary. Example domains are tools, materials, electronics,
-  reading, metalworking, fabrication, and tailored location loot; final file
-  names are selected here before moving definitions.
+- Coherent content identities and domains: tools, materials, electronics,
+  reading, metalworking, fabrication and tailored location loot. Implementation
+  owns source-file layout, manifest inclusion and integration boundaries.
 - A roster with existing/new/upgraded identities and realistic per-pass scope.
   Build item rosters around playable routes rather than filling an arbitrary
   total. Apply the item-authoring skills when authoring begins.
-- Player-facing commands/status, headless access, saves, LAN transport and content
-  fingerprints, generated initial state, and UI integration responsibilities.
+- Player-facing actions/status, generated initial state and consistent shared-world
+  behavior. Implementation owns APIs, saves, transport and content fingerprints.
 - The artwork handoff and exact independently verifiable implementation slices.
 
 Use these roster fields once IDs are chosen:
@@ -425,11 +497,16 @@ Use these roster fields once IDs are chosen:
 | Presentation | Description, terminal appearance or item text art, external SDL artwork status |
 | Delivery | Owning pass, dependencies, status, verification, blocker |
 
-**Exit condition:** the graph has reachable starts and useful endpoints, the
-shared schemas/semantics are accepted, and an implementation agent can take one
-bounded pass without inventing another subsystem's rules.
+**Exit condition:** the graph has reachable starts and useful endpoints, shared
+gameplay semantics are accepted, and an implementation agent can take one bounded
+pass without inventing another subsystem's gameplay rules.
 
 ## 4. Implementation sequence after design
+
+The accepted order is **D5 -> implement the designed basic workshop, energy,
+printing and city content -> playtest -> consider hacking and later progression
+after successful playtesting**. Broader advanced-production outlines are later
+goals, not a requirement to implement every future branch before this first playtest.
 
 These are work packages, not a requirement that one agent completes an entire
 package in one session. Split each into reviewed vertical slices in its design.
@@ -438,12 +515,12 @@ manual workshop slice need not wait for unrelated digital or city systems.
 
 | Pass | Depends on | Deliverable and completion criterion |
 | --- | --- | --- |
-| I1 Catalog organization | D1–D5 accepted | Move definitions into agreed semantic sources, preserve stable IDs and catalog meaning, update manifests/references, and correct stale durable docs. Independently load all affected packs. |
+| I1 Catalog organization | D1–D5 accepted | Verified: semantic item/operation sources, explicit manifests and current ownership docs; per-pack fingerprints preserved. See [source map and verification](content_pack.md#source-organization). |
 | I2 Power foundation | D1 contract; early implementation authorized | Sources/stores/connections, consumers, commands/status, save/LAN integration, and one powered-tool slice. Implemented before I1; preserve its IDs through later catalog organization. |
 | I3 Workshop and fueled forge | I2, D2 contract | Station capabilities, placement/access, fuel/heat, soldering/welding/forging work, and one reachable found/crafted-tool route. Verify interruption and reservation behavior. |
-| I4 Digital fabrication | I2/I3, D3 contract | Computer information access/transfer and polymer/metal printing paths with useful outputs. Verify information identity, file access, power/feedstock, output capacity, and unattended-work semantics. |
+| I4 Digital fabrication | I2/I3, D3 contract | Ordinary information access/transfer and the accepted home-polymer printing slice. Verify identity, power/feedstock, capacity, setup and completion learning; advanced/metal printing follows later. |
 | I5 City-generation foundation | I1, D4 contract and I2 interfaces | Settlement scale/era/district selection, infrastructure placement, outdoor population, and size-based population/reward selection. Verify generation and persistence before broad population tuning. |
-| I6 Integrated content | Relevant capabilities verified and selected roster accepted | Manuals/digital sources, tools/machines, recipes, feedstock, terrain palettes, city layouts, loot and interior spawns. Deliver functional bounded slices and explicitly record incomplete progression branches. |
+| I6 Integrated content | Relevant capabilities verified and accepted D5 scope | Basic-tool fallbacks, recovered-panel solar and integrated wood-gas generation, manuals/digital sources, equipment, printing feedstock, terrain/city layouts and population. Verify their acquisition alternatives and record later progression gaps. |
 | I7 Balance and completion | I6 | Seeded end-to-end play, reachability and reward reviews, population measurement, performance checks, current usage docs, and explicit remaining artwork status. |
 | A1 External SDL artwork | Accepted IDs/visual brief; final integration follows stable content | Separate-workstation sprites/mappings and visual review. Functional content can be verified with terminal/glyph presentation before this pass. |
 
@@ -541,25 +618,28 @@ verification can finish while the external visual pass remains pending.
 
 | Pass | Status | Evidence / next action |
 | --- | --- | --- |
-| Coordinating plan | Draft | Accepted user goals and current interfaces recorded; subsystem decisions remain open. |
+| Coordinating plan | Accepted scoped direction | D1–D5 define the basic-workshop/energy/printing/city package; implement and playtest before expanding into hacking and later progression. |
 | Shared crafting progression | Reviewed outlines accepted | [Framework](crafting_progression.md): reviewed trade/skill outlines through Medicine and Computers, software acquisition/recovery, and supplied/recovered intricate-print designs agreed. Exact rosters and subsystem runtime contracts follow their own passes. |
 | Crafting delivery sequence | Accepted direction | [Dependency/delivery plan](crafting_delivery_plan.md): W3A/W3B implementation authorized; later tracks retain their explicit dependencies and separate contract reviews. |
 | Crafting protection | Accepted | [Ordinary-trait rule](crafting_progression.md#welding-protection): accessible equipment and normal handheld sharing qualify; existing selection and paid-work behavior apply. M-Worn and its W3B mechanics dependency are retired. |
 | W3A/W3B rosters | Functionally verified | [Implementation](workshop_rosters.md): 22 new items, 8 definition upgrades, 17 new crafting recipes, 19 new recyclers and 5 objects. All 16 focused tests pass; SDL art and four frontend/LAN checks pass. Includes concrete budgets, acquisition evidence and affected unfinished-sword policy; pacing playtesting remains. |
 | D1 Power | Accepted | User reviewed geometry, connection, mains, accounting, residency and inspection rules; see [power design](power_design.md). |
 | D2 Workshop/fuel | Accepted | [Workshop design](workshop_design.md): W1/W2 verified and progression gates approved. W3 uses ordinary protection traits; [M-Bench](powered_manual_stations_design.md) implements powered manual stations. W4/D3 coordination remains. |
-| D3 Digital fabrication | In progress | [Accepted D3-A/B scope](digital_fabrication_design.md): home polymer printer with supplied simple designs, ordinary information handling, local libraries, capture and batch-completion learning. Detailed runtime design remains; hacking, laptop modifications and schematic extraction are explicitly deferred to a separate later effort. |
-| D4 Cities | Pending | D1 infrastructure is available; draft remaining acquisition needs and city design. |
-| D5 Integration/roster | Pending | Initial crafting dependency/delivery map drafted; reconcile remaining D1–D4 contracts and select bounded rosters. |
+| D3 Digital fabrication | Accepted first slice; implementation pending | [D3-A/B foundations](digital_fabrication_design.md) and [home-printing gameplay/content](home_printing_design.md) accepted. Implementation owns schemas, APIs, saves and networking. Hacking, laptop modifications and extraction remain deferred. |
+| D4 Cities | Accepted; implementation pending | [City contract](city_identity_design.md): scale/era/districts, population targets, rewards, starts, centralized computing, thirteen place families, three dystopian variants and forty terrain variants accepted. |
+| D5 Integration/roster | Accepted direction; implementation pending | Scavenged/assembled workshop, craftable tool fallbacks, solar and integrated wood-gas power, alternative acquisition, city upgrades and public/protected knowledge roles. Generation guarantees deferred. |
 | I2 Power foundation | Verified (functional) | Debug suite: 1,317 passed, 2 skipped; SDL build and four executable/LAN checks passed. Dedicated sprites and two existing-artwork test failures are tracked in [power design](power_design.md#verification). |
 | I3 Workshop and fueled forge | W3 content integrated | W1/W2 verification remains in [workshop evidence](workshop_design.md#current-evidence-and-handoff); W3's authored progression, budget and current validation are in its [implementation record](workshop_rosters.md). W4 remains separate. |
-| I1, I4–I7 | Pending | Broader implementation/content work follows the remaining design dependencies. |
+| I1 Catalog organization | Verified | [Source map and evidence](content_pack.md#source-organization): 142 item definitions reorganized, crafting split by operation and shared retail loot renamed; Demo/FirstHouse/Town fingerprints match baseline. Debug build and 65 focused tests passed; all four shipped manifests load independently. |
+| I4–I7 | Pending | Broader implementation/content work follows the remaining design dependencies. |
 | A1 SDL artwork | Ready for external workstation | W3 object briefs and map fallback policy are in [the roster](workshop_rosters.md#external-sdl-artwork-handoff--ready-for-artwork); canonical item text art is supplied. |
 
 Suggested next-pass brief:
 
 > Read `doc/crafting_progression.md` for accepted progression and
 > `doc/crafting_delivery_plan.md` for the accepted delivery direction.
+> I1 is verified: use `doc/content_pack.md` for semantic source ownership and
+> per-pack membership. Historical slice/expansion paths are authoring provenance.
 > Read `doc/workshop_rosters.md` for the W3A forging / W3B electrical-welding
 > implementation, concrete budgets, acquisition, save-upgrade policy and validation.
 > W3A uses W1/W2; W3B uses D1 and ordinary accessible/shared traits for protection.
@@ -570,10 +650,17 @@ Suggested next-pass brief:
 > level-2/3 practice and both found/crafted equipment routes. The old W3 quantities,
 > gates and blanket runtime assumptions are historical, not implementation targets.
 > Read `doc/digital_fabrication_design.md` for accepted imports, local libraries
-> and job-capture/production-learning rules. Complete W4/D3-A/B runtime design
-> around a home polymer printer and supplied simple designs. Defer hacking,
+> and job-capture/production-learning rules, and `doc/home_printing_design.md`
+> for the accepted first roster, setup/batch costs and acquisition. W4/D3-A/B
+> implementation owns schemas, APIs, saves and networking. Defer hacking,
 > hacking laptop modifications and design/schematic extraction to the later
 > D3-C effort; add no temporary schematic-crafting acquisition substitutes.
+> Follow `doc/city_identity_design.md` for accepted scale, era, population, reward
+> and terrain targets, including centralized computing and dystopian destinations.
+> Implementation and measured generation/balance evidence remain pending.
+> Follow D5 above for basic-tool fallbacks, recovered solar and integrated wood-gas
+> generation. Use acquisition alternatives; guaranteed loot/site coverage is deferred.
+> Implement the accepted package and playtest it before proceeding to hacking.
 > Schedule M-Skills before separate Cooking/Chemistry content.
 > Other feature tracks follow their consumers and own designs. Preserve D1 resource
 > authority, paid work and residency. A bounded pass may leave later gaps.

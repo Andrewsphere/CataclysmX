@@ -1,5 +1,10 @@
 # Equipment slice: authoring record
 
+> Historical authoring record: source paths, counts, and verification below
+> describe that pass, not current ownership. See
+> [current source organization](content_pack.md#source-organization) for semantic
+> ownership.
+
 20 new items, no upgrades. Targets and actuals: 8 practical tools, 5 wearable
 articles, 4 emergency/combat items, 1 improvised weapon, 1 repair supply,
 1 container. Workshop, household, emergency and outdoor salvage are represented.

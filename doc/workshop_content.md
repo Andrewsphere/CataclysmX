@@ -1,6 +1,8 @@
 # W3 playable metalworking content
 
 **Status: Historical bounded proposal; superseded by the [W3A/W3B implementation](workshop_rosters.md).**
+Current semantic ownership is listed in
+[current source organization](content_pack.md#source-organization).
 The [shared crafting progression framework](crafting_progression.md) now records
 the reviewed domain outlines. The low station/sword skill gates below are
 superseded by the accepted metalworking direction: tiered anvils,

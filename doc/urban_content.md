@@ -176,12 +176,14 @@ See [actors](actors_api.md), [save format](save_format.md), and
 
 ## Resources and crafting
 
-Furniture and themed loot now expose the [60-item broad slice](item_slice.md),
+Furniture and themed loot expose the [semantic catalog](content_pack.md#source-organization),
 including material stock, three motor sizes, tools, clothing, emergency equipment,
-food and medical supplies. Reading material is deferred until skills; reading
-rooms contain ordinary visitor supplies. Food, clothing, medical effects and
-ranged firearm use remain descriptive rather than implemented survival mechanics.
-Storage, charging, authored melee and cutting/crafting use their existing systems.
+food, medical supplies and workshop equipment. Reading-room and hobby loot include
+workshop/salvage references and combat manuals; electronics loot can supply an
+ebook reader. See [skill content](skills_content.md) for learning and reference use.
+Storage, charging, authored melee, clothing protection/encumbrance and crafting
+use their implemented systems. Food/medical classifications and ranged firearm
+profiles alone do not supply consumption, healing or firing actions.
 
 Current recipes cut cloth bandages and wood scraps, forge the pilot sword from
 suitable continuous steel, and assemble a coil spear. W3A/W3B adds the

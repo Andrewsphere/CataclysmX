@@ -1,4 +1,10 @@
 {format_version:1, definitions:[
+  {type:'recipe', id:'cut_timber_scrap', name:'Cut timber into wood scraps',
+   inputs:[{item:'timber_plank',count:1}], tool_traits:[{id:'house_cutting',tier:1}],
+   result:{item:'wood_scrap',count:10}, work:200, training:[{skill:'fabrication',level:0}]},
+  {type:'recycling_recipe', id:'cut_steel_sheet', name:'Cut a steel sheet into offcuts',
+   target:'steel_sheet', inputs:[{item:'hacksaw',count:1,retained:true}],
+   returns:[{item:'steel_scrap',count:15}], work:600, training:[{skill:'fabrication',level:0}]},
   {type:'recipe',id:'shape_timber_dowels',name:'Shape wooden dowels',inputs:[{item:'timber_plank',count:1},{item:'hacksaw',count:1,retained:true},{item:'wood_chisel',count:1,retained:true}],result:{item:'wooden_dowel',count:4},work:900,training:[{skill:'fabrication',level:0}]},
   {type:'recycling_recipe',id:'cut_stock_steel_pipe',name:'Cut steel pipe into scrap',target:'steel_pipe',inputs:[{item:'hacksaw',count:1,retained:true}],returns:[{item:'steel_scrap',count:10}],work:450},
   {type:'recycling_recipe',id:'cut_stock_steel_rod',name:'Cut steel rod into scrap',target:'steel_rod',inputs:[{item:'hacksaw',count:1,retained:true}],returns:[{item:'steel_scrap',count:7}],work:350},

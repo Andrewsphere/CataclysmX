@@ -78,6 +78,13 @@ be a worthwhile shortcut. Manufacturing complex working parts belongs to later
 skill bands, often 5+ and sometimes 7–8+. Use real manufacturing difficulty where
 it gives players reasonable expectations without requiring a detailed simulation.
 
+The accepted [D5 basic-workshop direction](urban_workshop_progression.md#d5--integration-contract-and-content-roster)
+requires craftable basic-tool fallbacks, including ordinary screwdriving, with
+default-known simple techniques and no circular tool/workshop prerequisites.
+Most machinery is recovered and assembled. Supply multiple practical acquisition
+routes and suitable component alternatives; guaranteed loot/location coverage is
+deferred until playtesting shows whether it is needed.
+
 Recipes can support assembly/rebuild when their actual inputs/outputs express it.
 Generic equipment repair, calibration and commissioning actions are not assumed
 to exist merely because the outline names them.
@@ -121,6 +128,13 @@ remain separate questions for D3, alongside executable production software and
 machine/process profiles. Selected intricate printer recipes explicitly require
 the appropriate schematic; the printer's control software is a separate
 requirement.
+
+Publicly found books/references in homes, libraries and shops cover basic and
+professional knowledge sufficient for the basic workshop, including solar assembly
+and wood-gas conversion. Advanced information belongs to protected laboratories,
+military facilities and comparable specialist spaces designed later. The distinction
+follows the capability taught, not a universal skill-level cutoff. Advanced
+equipment, software and schematics concentrate in large cities, especially modern ones.
 
 Do not change the XP curve merely to close a temporary content gap. Each future
 skill band should eventually have multiple useful activities and, for advanced
@@ -761,8 +775,9 @@ Important boundaries:
   capability, not implied by assembling useful electronics.
 - A ready functional controller can be reused without custom programming.
   Firmware/software preparation and hacking tools follow the Computers discussion.
-- Solar generation is proposed future engine/content work, not a shipped power
-  source. Its output/activation rules need an explicit power design before use.
+- Solar generation is accepted in the D5 implementation/playtest package, but is
+  not yet a shipped source. It generates according to daylight, produces nothing
+  at night and uses ordinary D1 storage; implementation supplies its concrete budgets.
 - New electronic item names do not grant light, sensing, switching or charging
   behavior automatically. Later passes must connect each useful product to its
   actual implemented function or record the required engine work.
@@ -779,6 +794,13 @@ an affordable early energy option. A complete found working unit skips its
 construction requirements. The Electronics-2/Mechanics-1 basic assembly
 uses functional recovered elements and control components; it does not imply
 manufacturing photovoltaic material.
+
+Solar and an integrated wood-gas generator supply the accepted basic-workshop
+energy loop. Stored solar energy supports nighttime work and high-demand jobs;
+larger installations increase useful supply. The wood-gas assembly consumes
+prepared wood for controllable generation, with internal gas handling, cooling
+and filtering around a recovered gasoline engine, coupling/reduction drive and
+generator-capable motor/alternator. Complete engine manufacture is outside this scope.
 
 Accepted specialist manufacturing anchors:
 
@@ -1204,14 +1226,20 @@ Sterilization, monitoring/imaging, bionic effects and robotic treatment require
 explicit functional support. This is an accepted progression outline awaiting
 the relevant runtime design.
 
-### Queued design: selected unattended process machines
+### Accepted basic wood-gas generation and later process machines
+
+D5 selects one installed wood-gas generator assembly for the first implementation
+and playtest: prepared wood enters and electricity leaves; gas handling is internal.
+It includes gasifier cooling/filtering, an adapted recovered gasoline engine and
+a suitable coupled electric generator. It does not require a standalone gas-product
+or gas-cylinder economy. See the [D5 contract](urban_workshop_progression.md#d5--integration-contract-and-content-roster).
 
 Accepted direction: a limited set of machines consumes specified inputs,
 performs elapsed work without a player continuously operating it, and produces
 specified outputs. This supplements the predominantly manual tool-based crafting
-game. Reserve a separate process-machine design pass alongside W4/D3.
+game. Broader separate-output processes remain a later design effort.
 
-Required candidate processes:
+Later candidate processes:
 
 | Process | Rough inputs/conditions | Intended useful output |
 | --- | --- | --- |
@@ -1224,8 +1252,9 @@ other byproducts are explicit useful outputs or abstracted waste. This terminolo
 does not require a detailed chemistry simulation.
 
 Fuel-gas use should involve a modest engine conversion/adapter rather than
-manufacturing a new engine. The exact conversion work, gas cleanup abstraction,
-usable output and engine tradeoffs belong to the queued design.
+manufacturing a new engine. The first integrated generator abstracts its internal
+gas cleanup; separate process products and their engine interfaces belong to the
+later design.
 
 That pass must settle:
 

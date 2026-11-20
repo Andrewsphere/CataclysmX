@@ -1,5 +1,10 @@
 # Broad item slice — batch plan and integration
 
+> Historical authoring/integration record: source paths, counts, and verification
+> below describe that pass, not current ownership. See
+> [current source organization](content_pack.md#source-organization) for semantic
+> ownership.
+
 ## Agreed scope
 
 First milestone: **60 new definitions**, in three 20-item authoring batches,

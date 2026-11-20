@@ -1,0 +1,10 @@
+{format_version:1, definitions:[
+  {type:'recycling_recipe', id:'salvage_appliance_motor', name:'Strip an appliance motor',
+   target:'appliance_electric_motor',
+   inputs:[{item:'adjustable_wrench',count:1,retained:true},{item:'combination_pliers',count:1,retained:true}],
+   returns:[{item:'steel_scrap',count:20},{item:'copper_wire',count:4}], work:800, training:[{skill:'mechanics',level:0}]},
+  {type:'recycling_recipe', id:'salvage_water_pump', name:'Strip a water pump',
+   target:'water_pump', inputs:[{item:'adjustable_wrench',count:1,retained:true}],
+    returns:[{item:'steel_scrap',count:12},{item:'copper_wire',count:2}], work:600,
+    skills:[{skill:'mechanics',level:1}], training:[{skill:'mechanics',level:1}]},
+]}

@@ -1,5 +1,10 @@
 # Completed slice: integration and retirement inventory
 
+> Historical integration record: source paths, counts, and verification below
+> describe that pass, not current ownership. See
+> [current source organization](content_pack.md#source-organization) for semantic
+> ownership.
+
 ## Status and ownership
 
 Data integration, retirement, content/gameplay checks and renderer review are

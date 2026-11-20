@@ -1,7 +1,7 @@
 # D3: digital information and fabrication
 
 **Status: Home-printer scope, ordinary information handling, machine libraries,
-job capture and production learning accepted; detailed runtime design pending.**
+job capture and production learning accepted; implementation pending.**
 
 This document develops D3-A/B from the
 [crafting delivery plan](crafting_delivery_plan.md), using the accepted
@@ -10,8 +10,14 @@ This document develops D3-A/B from the
 D3-C is deferred to a separate later hacking design; only its future integration
 direction is recorded here.
 The rules below are design decisions, not implemented or verified mechanics.
-Schemas, API shapes, action costs and the first printing roster remain to be
-reviewed before implementation.
+The implementation pass chooses schemas, APIs, persistence/network representation
+and versions, and concrete action costs within the accepted gameplay direction.
+Return for review if an implementation choice needs a gameplay-contract change.
+
+The [accepted home-printing contract](home_printing_design.md) groups the first roster,
+feedstock, setup/batch lifecycle, operating/learning budgets, acquisition and
+acceptance scenarios. A separate technical-design iteration is not required
+before its implementation.
 
 ### Current scope: an ordinary home printer
 
@@ -67,6 +73,13 @@ and power costs remain to be specified.
 | Phone | Everyday information library: read instructions, copy files and transfer usable designs |
 | Laptop/workstation | Ordinary information handling and supported production configuration; later hacking/recovery tools have their own design |
 | Machine controller | Stores supplied/imported designs and compatible software, and starts supported jobs |
+
+Acquisition follows the [accepted city setting](city_identity_design.md#society-wide-centralized-computing):
+centralized computing is the society-wide norm, household/personal devices are
+access terminals, and standalone laptops/computers survive as old salvage.
+Powerful computing hardware belongs to infrastructure and specialist workplaces,
+not ordinary households. The roles above describe supported local capabilities;
+storing/copying information does not imply general-purpose processing capacity.
 
 Operate on named packages/designs rather than a player-facing directory tree.
 Initially omit gameplay byte-capacity management. Storage capability does not
@@ -134,8 +147,9 @@ The machine menu presents design, quantity, required materials, duration, power
 requirements and expected learning before Start. Use a short recipe-dependent
 hands-on setup period followed by autonomous production. The completion reward
 already represents the commissioned job; this setup has no second automatic XP
-bonus. Exact setup timing, interruption and reservation/commit boundaries remain
-for the W4/D3 runtime design.
+bonus. The [home-printing contract](home_printing_design.md) sets the first setup
+budget, reservation boundary and interruption behavior; implementation chooses
+their runtime representation.
 
 For a selected batch:
 
@@ -280,16 +294,19 @@ readable information, without a temporary crafting-based acquisition substitute.
 
 These are future acceptance scenarios, not test results.
 
-## 7. Remaining design work
+## 7. Implementation handoff and later gameplay designs
 
 - **D3-A:** concrete carrier/package representation and identity, device access,
   compatibility, transfer power/time and interruption implementation,
   human reference access, software installation and library management.
 - **D3-B/W4:** atomic startup and completion integration, durable job/recipient
-  representation, batch bounds and integer learning accounting, actual setup
-  work and reservation boundaries, the home-printer roster using supplied simple
-  designs and its learning budgets,
-  feedstock/operating budgets, persistence/LAN contracts and shared presentation.
+  representation, batch bounds and integer learning accounting, and shared
+  presentation/persistence/LAN support. Implement the setup, supplied-design roster,
+  feedstock, operating and learning budgets in the
+  [accepted first-slice contract](home_printing_design.md).
+
+These technical choices belong to the implementation pass, not another gameplay
+design review.
 
 **Deferred to the later hacking effort:** D3-C source access/protection/recovery,
 design/schematic extraction, hacking laptop modifications and supporting

@@ -182,7 +182,9 @@ exact header rules, limits, and both formats.
 
 The five pilot definitions are `wood_scrap`, `claw_hammer`, `glass_bottle`,
 `work_shirt`, and `arming_sword`. The first and last are in
-`data/items/low_tech.json5`; the others are in the household and urban item files.
+`data/items/materials.json5` and `data/items/weapons.json5`; the others are in the
+household and urban item files. Follow the
+[semantic ownership rules](content_pack.md#source-organization) for new content.
 See [item pilot](item_pilot.md) for the crafted sword progression and balance
 rationale; consult the actual manifests for current pack inclusion.
 

@@ -1,5 +1,10 @@
 # Second broad item expansion
 
+> Historical authoring/integration record: source paths, counts, and verification
+> below describe that pass, not current ownership. See
+> [current source organization](content_pack.md#source-organization) for semantic
+> ownership.
+
 ## Approved scope and coverage
 
 The approved scope is **80 new items**, authored in four separate 20-item batches.

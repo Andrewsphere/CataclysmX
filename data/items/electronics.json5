@@ -1,4 +1,12 @@
 {format_version:1, definitions:[
+  {type:'item', id:'transistor', name:'transistor', mass_g:2, volume_ml:5,
+   description:'A small packaged transistor with three wire leads for a circuit board.', art:'/art/items/transistor/art.txt', flags:['salvage','electronics','electrically_conductive','opaque','rigid']},
+  {type:'item', id:'diode', name:'diode', mass_g:1, volume_ml:3,
+   description:'A small axial diode in a clear glass package, with a band marking one end and a wire lead at each end.', art:'/art/items/diode/art.txt', flags:['salvage','electronics','electrically_conductive','transparent','brittle','rigid']},
+  {type:'item', id:'microcontroller_board', name:'microcontroller board', mass_g:30, volume_ml:80,
+   description:'A compact circuit board carrying a microcontroller, connectors and small components.', art:'/art/items/microcontroller_board/art.txt', flags:['salvage','electronics','electrically_conductive','combustible','opaque','rigid']},
+  {type:'item', id:'desktop_motherboard', name:'desktop motherboard', mass_g:800, volume_ml:2500,
+   description:'A desktop computer motherboard crowded with sockets, slots and circuitry.', art:'/art/items/desktop_motherboard/art.txt', flags:['salvage','electronics','electrically_conductive','combustible','opaque','rigid']},
   {type:'item',id:'resistor',name:'resistor',mass_g:1,volume_ml:2,description:'A small resistor with colored bands marking its value.',art:'/art/items/resistor/art.txt',flags:['salvage','electronics','electrically_conductive','opaque','rigid']},
   {type:'item',id:'capacitor',name:'capacitor',mass_g:5,volume_ml:8,description:'An electrolytic capacitor with a stripe marking its polarity.',art:'/art/items/capacitor/art.txt',flags:['salvage','electronics','electrically_conductive','opaque','rigid']},
   {type:'item',id:'light_emitting_diode',name:'light-emitting diode',mass_g:1,volume_ml:2,description:'A transparent red indicator LED with two bare leads.',art:'/art/items/light_emitting_diode/art.txt',flags:['salvage','electronics','electrically_conductive','combustible','transparent','rigid']},
@@ -17,6 +25,4 @@
   {type:'item',id:'cooling_fan',name:'cooling fan',mass_g:120,volume_ml:350,description:'A plastic-framed computer cooling fan with a small electric motor.',art:'/art/items/cooling_fan/art.txt',flags:['salvage','electronics','ferromagnetic','combustible','rigid','opaque']},
   {type:'item',id:'display_module',name:'display module',mass_g:150,volume_ml:250,description:'A small display mounted on a circuit board with a row of contacts.',art:'/art/items/display_module/art.txt',flags:['salvage','electronics','electrically_conductive','combustible','rigid','opaque']},
   {type:'item',id:'distance_sensor',name:'distance sensor',mass_g:30,volume_ml:60,description:'A distance sensor board with paired ultrasonic transducers and bare contacts.',art:'/art/items/distance_sensor/art.txt',flags:['salvage','electronics','electrically_conductive','combustible','rigid','opaque']},
-  {type:'item',id:'toaster',name:'toaster',mass_g:1600,volume_ml:5500,description:'A two-slot toaster with a metal casing.',art:'/art/items/toaster/art.txt',flags:['salvage','electrically_conductive','thermally_conductive','rigid','opaque','ferromagnetic']},
-  {type:'item',id:'desk_radio',name:'desk radio',mass_g:900,volume_ml:2500,description:'A small plastic-cased desk radio with a tuning scale and metal antenna.',art:'/art/items/desk_radio/art.txt',flags:['salvage','electronics','electrically_conductive','combustible','rigid','opaque']},
 ]}

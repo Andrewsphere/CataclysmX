@@ -1,0 +1,11 @@
+{format_version: 1, definitions: [
+  {type:'item', id:'antiseptic', name:'antiseptic', mass_g:280, volume_ml:300,
+   description:'One capped plastic bottle of topical antiseptic solution.', art:'/art/items/antiseptic/art.txt',
+   flags:['medicine','container','rigid','opaque','watertight','airtight','resealable','toxic_on_ingestion']},
+  {type:'item', id:'sterile_gauze', name:'sterile gauze', mass_g:15, volume_ml:80,
+   description:'One sealed packet containing a sterile gauze pad.', art:'/art/items/sterile_gauze/art.txt',
+   flags:['medicine','flexible','opaque','combustible','watertight','airtight']},
+  {type:'item', id:'cloth_bandage', name:'cloth bandage', mass_g:20, volume_ml:50,
+   description:'One nonsterile strip of cloth for a simple dressing.', art:'/art/items/cloth_bandage/art.txt',
+   flags:['medicine','flexible','combustible','water_absorbent','porous']},
+]}

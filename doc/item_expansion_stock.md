@@ -1,5 +1,10 @@
 # Stock and hardware expansion
 
+> Historical authoring/integration record: source paths, counts, and verification
+> below describe that pass, not current ownership. See
+> [current source organization](content_pack.md#source-organization) for semantic
+> ownership.
+
 Twenty expansion stock units, quality-reviewed in place: eight metal, seven
 wood/textile/polymer and five hardware. All 20 are placed as early salvage in
 hardware/workshop, auto, warehouse and textile-repair contexts.

@@ -1,4 +1,11 @@
 {format_version:1, definitions:[
+   // Continuous suitable blade stock; the legacy binding route has the same workshop gates.
+   {type:'recipe', id:'make_current_arming_sword', name:'Forge a copper-bound arming sword',
+    inputs:[{item:'spring_steel_bar',count:1},{item:'wood_scrap',count:2},{item:'copper_wire',count:1},
+            {item:'hacksaw',count:1,retained:true},{item:'metal_file',count:1,retained:true}],
+    tool_traits:[{id:'anvil',tier:2},{id:'hammering',tier:2},{id:'metal_holding',tier:2},{id:'forge_heat',tier:1}],
+    heat_per_work:10000, result:{item:'arming_sword',count:1}, work:6000,
+    skills:[{skill:'fabrication',level:4}], knowledge:{known_by_default:true}},
   // Whole stock units; work is base work, not elapsed wall-clock time.
   // 24,200 g -> 24,000 g. Mounting needs no pre-existing station.
   {type:'recipe',id:'assemble_crude_anvil',name:'Mount a crude anvil',

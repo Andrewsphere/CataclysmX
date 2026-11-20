@@ -19,6 +19,9 @@ The expansion added 80 new IDs and upgraded no existing IDs:
 The slice and expansion rosters are references for completed items. Legacy
 definitions marked `obsolete` do not count as current coverage; see the
 [retirement inventory](item_slice_integration.md).
+Their authoring batches no longer define source ownership; use the
+[semantic source map](content_pack.md#source-organization) when adding or finding
+definitions.
 
 ## Authoring decisions to preserve
 

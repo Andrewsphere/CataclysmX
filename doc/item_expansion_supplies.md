@@ -1,5 +1,10 @@
 # Household and outdoors batch
 
+> Historical authoring/integration record: source paths, counts, and verification
+> below describe that pass, not current ownership. See
+> [current source organization](content_pack.md#source-organization) for semantic
+> ownership.
+
 Target: 20 new items, no upgrades: four empty containers, four packed
 sleeping/shelter articles, three field supplies, three repair supplies, three
 packaged foods, two hygiene supplies, one belonging. All are placed as early

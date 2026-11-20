@@ -71,6 +71,10 @@ mechanics proposal in favor of this abstraction.
 
 ## 2. Inspected starting point
 
+This is the historical pre-W1/W2 inspection. Current content ownership is in
+[the semantic source map](content_pack.md#source-organization); the
+[W3 roster](workshop_rosters.md) records the implemented sword and equipment gates.
+
 - `CraftingSystem::Gather`, `Select`, and `Fund` in
   `src/crafting/crafting_system.cpp` select items, including nearby object-storage
   contents. Objects themselves supply no traits.

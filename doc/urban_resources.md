@@ -1,9 +1,10 @@
 # Urban resources: building author checklist
 
 These are shared definitions for building patterns. `data/content.json5` includes
-urban/specialist sources and the three current item-slice sources together with
-shared demo dependencies, household items, crafting, loot, furniture, cellar
-monsters, and AI profiles.
+urban/specialist sources and the shared semantic item/crafting catalog, including
+power and workshop equipment, together with demo dependencies, household loot,
+furniture, cellar monsters, and AI profiles. See
+[source organization](content_pack.md#source-organization) for current ownership.
 References resolve across sources.
 IDs below are exact; names are display names. See `house_content.md` for placement
 rules and `crafting_content.md` for recipe semantics.
@@ -59,7 +60,7 @@ conservative bound, but is not an unlimited budget. For ground loot use
 | `loot_hardware` | typed material stock and workshop supplies |
 | `loot_electronics` | batteries, boards, small components and motors |
 | `loot_clothing` | work clothing and sewing supplies |
-| `loot_reading_room_supplies` | visitor supplies; no reading material |
+| `loot_reading_room_supplies` | visitor supplies, workshop/salvage references and combat manuals |
 | `loot_office` | visitor supplies, cardboard and electronics |
 | `loot_fire_station` | emergency tools, medical supplies and rope |
 | `loot_police_station` | baton, shotgun, shells, office and medical supplies |
@@ -112,23 +113,31 @@ do not add armor, healing, gear or extra health. Each group includes the existin
 
 ## Items
 
-The [broad-slice roster](item_slice.md) and its three authoring records list all
-60 current IDs, represented units, physical values and artwork. The five approved
-pilots remain current. The [retirement inventory](item_slice_integration.md)
-lists removed definitions and the dependency-only `obsolete` entries.
+Town loads 203 item definitions, including generated runtime items and retained
+obsolete dependencies. The [catalog membership table](content_pack.md#catalog-membership)
+compares the packs. The [broad slice](item_slice.md), [expansion](item_expansion.md)
+and [workshop roster](workshop_rosters.md) record their respective additions;
+the [retirement inventory](item_slice_integration.md) records dependency-only
+`obsolete` entries.
 
-Food, clothing and medical supplies have no eating, wearing, or healing mechanics.
-Books and similar reading material are deferred entirely. The current containers
-(`camping_backpack`, `steel_water_bottle`, `plastic_storage_box`) expose ordinary
-item storage; `hacksaw` and `chef_knife` provide `house_cutting`. The current AA
-batteries and `battery_charger` use the existing energy-store/charger behaviors.
+Clothing supports wearing, authored protection and encumbrance. Containers expose
+ordinary item storage; `hacksaw` and `chef_knife` provide `house_cutting`. AA batteries
+and `battery_charger` use the energy-store/charger behaviors. Food and medical
+classifications alone do not provide eating or healing actions.
+
+Printed workshop/salvage references and combat manuals occur in reading-room and
+hobby loot; `workshop_ebook_reader` occurs in electronics loot. Ordinary book
+study, recipe references and shared printed/electronic learning identity are
+implemented; see [skill content](skills_content.md). D3's transferable digital
+packages and printer libraries follow their separate accepted design.
 
 ## Crafting and recycling
 
-The following compatibility routes retain their obsolete dependency identities.
-Current-only bandage, wood-scrap, sword and spear routes and five useful recyclers
-are in `data/crafting/slice.json5`; see the
-[integration table](item_slice_integration.md#current-only-recipes-and-recycling).
+The following compatibility routes retain their obsolete dependency identities
+in `data/crafting/urban.json5`. Current-material bandage, stock-preparation,
+forging and spear routes live in the semantic crafting sources; see
+[source organization](content_pack.md#source-organization) and the
+[workshop roster](workshop_rosters.md) for current ownership and requirements.
 
 | ID | Name | Effect |
 | --- | --- | --- |

@@ -1,0 +1,12 @@
+{format_version: 1, definitions: [
+  {type:'item', id:'tiny_electric_motor', name:'tiny electric motor', mass_g:20, volume_ml:30,
+   description:'A tiny metal-can motor with a projecting shaft, like those used in toys.', art:'/art/items/tiny_electric_motor/art.txt', flags:['salvage','electrically_conductive','thermally_conductive','ferromagnetic','opaque','rigid']},
+  {type:'item', id:'appliance_electric_motor', name:'appliance electric motor', mass_g:4000, volume_ml:3500,
+   description:'A compact finned electric motor with mounting feet and a substantial drive shaft.', art:'/art/items/appliance_electric_motor/art.txt', flags:['salvage','electrically_conductive','thermally_conductive','ferromagnetic','opaque','rigid']},
+  {type:'item', id:'traction_electric_motor', name:'traction electric motor', mass_g:60000, volume_ml:45000,
+   description:'A massive finned vehicle traction motor with heavy mounting lugs and a drive shaft.', art:'/art/items/traction_electric_motor/art.txt', flags:['salvage','electrically_conductive','thermally_conductive','ferromagnetic','opaque','rigid']},
+  {type:'item', id:'servo', name:'servo', mass_g:60, volume_ml:100,
+   description:'A small geared servo in a plastic housing, with a projecting output horn and lead.', art:'/art/items/servo/art.txt', flags:['salvage','electronics','combustible','opaque','rigid']},
+  {type:'item', id:'water_pump', name:'water pump', mass_g:2500, volume_ml:3000,
+   description:'A compact electric water pump assembly with inlet and outlet ports and a motor housing.', art:'/art/items/water_pump/art.txt', flags:['salvage','electrically_conductive','thermally_conductive','ferromagnetic','opaque','rigid']},
+]}

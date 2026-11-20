@@ -1,9 +1,14 @@
 # Item content pilot
 
-This records the original pilot. The later [broad item slice](item_slice.md)
-preserves all five definitions and original recipes, adds current-material
-crafting alternatives, replaces the original saw/knife loot with current tools,
-and marks retained older material dependencies `obsolete`.
+> Historical authoring record: source paths, counts, and verification describe
+> the original pilot, not current ownership. See
+> [current source organization](content_pack.md#source-organization) for semantic
+> ownership.
+
+The later [broad item slice](item_slice.md) preserves all five definitions and
+original recipes, adds current-material crafting alternatives, replaces the
+original saw/knife loot with current tools, and marks retained older material
+dependencies `obsolete`.
 
 **Sword progression superseded:** [W3A/W3B](workshop_rosters.md) preserves the
 sword and both recipe IDs but replaces the historical cold-scrap routes below.

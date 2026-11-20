@@ -2,5 +2,4 @@
   {type:'recycling_recipe',id:'salvage_foam_sleeping_mat',name:'Cut up a foam sleeping mat',target:'foam_sleeping_mat',tool_traits:[{id:'house_cutting',tier:1}],returns:[{item:'foam_padding',count:2}],work:250},
   {type:'recycling_recipe',id:'salvage_sleeping_bag',name:'Salvage a sleeping bag',target:'sleeping_bag',tool_traits:[{id:'house_cutting',tier:1}],returns:[{item:'nylon_webbing',count:1}],work:400},
   {type:'recycling_recipe',id:'salvage_camping_tent',name:'Salvage a camping tent',target:'camping_tent',tool_traits:[{id:'house_cutting',tier:1}],returns:[{item:'canvas_patch',count:6},{item:'nylon_webbing',count:2}],work:700},
-  {type:'recycling_recipe',id:'dismantle_toy_robot',name:'Dismantle a toy robot',target:'toy_robot',inputs:[{item:'flathead_screwdriver',count:1,retained:true},{item:'combination_pliers',count:1,retained:true}],returns:[{item:'tiny_electric_motor',count:1},{item:'rigid_plastic_scrap',count:2},{item:'microcontroller_board',count:1},{item:'light_emitting_diode',count:2}],work:300},
 ]}

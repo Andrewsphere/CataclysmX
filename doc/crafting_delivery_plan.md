@@ -1,16 +1,25 @@
 # Crafting progression: dependencies and delivery
 
-**Status: Delivery direction accepted; W3A/W3B authored and functionally verified.**
+**Status: Delivery direction accepted; W3A/W3B and I1 catalog organization functionally verified.**
 The [framework](crafting_progression.md) records skill bands, capability families
 and acquisition roles. This document consolidates their dependencies and proposes
 bounded mechanics/content passes. The user accepted ordinary accessible/shared
 traits for crafting protection, retiring M-Worn and its W3B dependency.
-Later schema/roster drafts still need review before their implementation/content
-passes. This plan does not replace
+Later gameplay/roster drafts need review before their implementation/content
+passes; technical representation belongs to implementation. This plan does not replace
 the accepted [power](power_design.md) and [workshop](workshop_design.md) contracts.
 
 The [W3A/W3B implementation](workshop_rosters.md) records the accepted item/operation
 coverage, learning links, acquisition contexts and concrete authored budgets.
+The [I1 source map and verification](content_pack.md#source-organization) establish
+semantic catalog ownership with identical per-pack content fingerprints.
+
+The accepted [D5 integration direction](urban_workshop_progression.md#d5--integration-contract-and-content-roster)
+adds craftable basic-tool fallbacks, recovered-panel solar and an integrated
+wood-gas generator to the implementation/playtest package. Use multiple acquisition
+routes; guaranteed progression loot/site coverage is deferred. Implement and
+playtest the agreed workshop/energy/printing/city package before hacking and later
+progression.
 
 Existing W1–W4 and D1–D5 names retain their meaning in
 [urban workshop progression](urban_workshop_progression.md). Additional labels
@@ -50,7 +59,7 @@ Construction skill requirements apply to the route that actually builds the devi
 | Manual metalworking | Ordinary tools + recovered stock → forge/tongs at Fabrication 2 → forming equipment/anvil 2 at 3 → proper sword at 4 | Found stations/tools skip construction; fuel, blade stock, recipe skill and knowledge remain |
 | Electrical/welded work | Recovered heater/control/power parts → soldering equipment → makeshift welder at Electronics 3 / Mechanics 2 → useful welded products | Found welder still needs job-appropriate accessible protection, consumables and D1 supply; products primarily use Fabrication |
 | Precision mechanisms | Found measurement/tools and precision assemblies → fitted parts and workshop mechanisms → specialist machine construction | A found lathe or spindle bypasses manufacturing that equipment; powered manual use needs funded station support |
-| Energy independence | Found mains/batteries/generator → assembled packs and supply equipment → later manufactured cells/complex internals | Early recovered solar elements need a solar-source implementation; photovoltaic manufacture is not their prerequisite |
+| Energy independence | Found supplies → recovered-panel solar, storage and integrated wood-gas generation → later manufactured cells/complex internals | D5 includes functional solar and prepared-wood-to-electricity assembly around a recovered engine; engine/photovoltaic manufacture is later |
 | Textiles and field materials | Found fabric/leather or prepared natural materials → sewing/leather tools → useful clothing/storage/protection | Harvesting can later supply materials; Tailoring need not wait for a complete creature/harvesting system |
 | Food and chemistry | Suitable ingredients + process equipment → meals/preservation or chemical products → specialist materials | The skill split precedes content using the new skill identities; found prepared chemicals can bypass their manufacture |
 | Medicine and bionics | Found care supplies/instruments → clinical preparation and treatment → surgery/implant installation | Complete implants bypass manufacture, not installation requirements; patient actions require a medical runtime contract |
@@ -117,8 +126,8 @@ The [accepted D3 foundations](digital_fabrication_design.md) establish freely
 transferable usable information on USB sticks, phones and laptops, explicit import
 into persistent machine-local libraries, and startup capture of a job's required
 instructions. Removing a carrier or deleting a library copy does not invalidate
-the existing job; new jobs use current library eligibility. D3-A/B must specify
-the representations, actions and W4 persistence integration. Installed use, export
+the existing job; new jobs use current library eligibility. D3-A/B implementation
+owns representations, APIs and W4 persistence/network integration. Installed use, export
 permission, software integrity and machine operability remain distinct. Ordinary
 copying of an unlocked portable package is not another hacking challenge per product.
 
@@ -137,15 +146,24 @@ temporary schematic/software crafting recipes or placeholder unlock items to
 substitute for that future acquisition gameplay. Specific laptop modifications,
 military interfaces and recovery outcomes belong to the later hacking design.
 
-## 5. Later independent feature designs
+The [accepted home-printing contract](home_printing_design.md) covers six supplied
+prints, seven new physical item identities, three existing-product assembly
+consumers, feedstock/costs, setup and batch ownership, and acquisition together.
+The user accepted the package. Concrete schemas, APIs, saves and networking belong
+to implementation; a separate technical-design iteration is not a prerequisite.
+Hacking and extraction retain their later gameplay scope.
 
-These tracks need their own bounded runtime proposals before functional content.
-They are not prerequisites for the whole manual workshop.
+## 5. Energy implementation and later independent feature designs
+
+D5 accepts the first energy expansion below for implementation/playtesting.
+The other tracks need bounded gameplay rules before functional content;
+implementation settles their runtime representation. They are not prerequisites
+for the whole manual workshop.
 
 | Track | First useful design target | Important dependencies/questions |
 | --- | --- | --- |
-| Energy supply expansion | One early recovered-panel solar route; separately, any new generator-fuel compatibility | Define output/time/activation rules under D1. Preserve charge conservation and existing battery accounting |
-| Thermal/process machinery | One wood/coal fuel-gas route before a larger processing roster | Heat source, startup/running costs, represented gas units/storage, engine adaptation, useful byproducts, capacity and interruption; review W4 extensions explicitly |
+| Energy supply expansion — accepted D5 scope | Recovered-panel daylight solar and one integrated prepared-wood-to-electricity generator using a recovered gasoline engine | Concrete output/fuel budgets and activation under D1; zero nighttime solar, existing battery accounting, internal gas cooling/filtering and no separate gas-cylinder economy |
+| Later thermal/process machinery | Standalone coal/wood/retort process products beyond the integrated generator | Heat source, startup/running costs, represented gas units/storage, useful byproducts, capacity and interruption; review W4 extensions explicitly |
 | Field resources | A useful harvesting/preparation route feeding existing material consumers; charcoal production as a separate bounded process | Source/depletion semantics, output handling and learning; first charcoal must not require an already charcoal-fueled forge |
 | Food/preservation | One usable food/preparation or preservation loop at a time | M-Skills for separate Cooking; define actual consumption/preservation benefits and elapsed processing where needed |
 | Chemical processes | A selected separation/reaction/material-production loop with its relevant instruments | M-Skills for Chemistry, actual supplies/containers, heat/power or machine jobs; analysis and control effects need explicit support |
@@ -167,12 +185,12 @@ coverage.
 
 | Content slice | Representative coverage | Runtime dependency |
 | --- | --- | --- |
-| **C-Hand: hand tools and stock preparation** | Existing-tool trait upgrades, useful sets, handles/frames and selected stock conversions | Existing crafting/traits; settle remaining wood-saw/drill/carving provider details with the roster |
+| **C-Hand: hand tools and stock preparation** | Default-known basic-tool fallbacks without circular prerequisites, useful sets, handles/frames and selected stock conversions | Existing crafting/traits; settle provider details with the roster |
 | **W3A: forging progression** | [Authored roster](workshop_rosters.md#3-w3a-forging-stock-and-storage): stock, stations, tongs/hammer, both sword routes and useful intermediate storage/tool work | W1/W2; concrete budgets and verification in the roster |
 | **W3B: electrical/welding progression** | [Authored roster](workshop_rosters.md#4-w3b-electrical-assemblies-and-useful-welding): iron, leads/pack, makeshift/found welder, protection and welded products | D1 + ordinary manual crafting; follows W3A shared definitions. Selected handheld providers avoid M-Bench |
 | **C-Textiles: useful soft equipment** | Sewing/leather tools, garments, bags, padding and carriers from available prepared materials | Existing supported storage/armor/crafting behavior; defer additional weather/repair effects to their actual feature passes |
 | **C-Mechanisms: workshop assemblies** | Vises, supported tooling and selected fitted mechanisms from recovered assemblies | Existing passive capabilities where adequate; M-Bench and any new actions for powered/function-specific equipment |
-| **C-Energy: supply/storage assemblies** | Useful compatible packs/banks and supply equipment | D1 plus each selected source/charging behavior; solar and new fuel routes follow their feature designs |
+| **C-Energy: supply/storage assemblies** | Useful compatible packs/banks, recovered solar and integrated wood-gas generation | D1 plus the accepted D5 source behavior and its implementation |
 | **C-Field/Food: field and meal routes** | Selected natural/post-cataclysm materials, charcoal, meals or preserved supplies | Relevant field/process/food implementation; split into bounded rosters rather than shipping all domains together |
 | **C-Chemistry: instruments and materials** | A chosen chemical product chain with concrete instrument providers and downstream use | M-Skills plus the selected manual/process-machine/analysis capabilities |
 | **C-Digital: printing and information rewards** | First: home polymer printer and useful supplied-design prints. Later: acquired intricate schematics and production packages | W4 + D3-A/B first; extraction content waits for the separate hacking/D3-C effort |
@@ -182,8 +200,9 @@ coverage.
 C-Hand can be folded into W3A/B when a small provider upgrade directly serves those
 recipes. It is not a mandatory all-tools catalog expansion. Found prepared inputs
 let C-Textiles and other assembly branches proceed before upstream manufacture.
-Full catalog reorganization and the large-city overhaul retain their separate
-I1/D4 scope.
+I1 catalog reorganization is verified; use the
+[semantic source map](content_pack.md#source-organization) for later authoring.
+The large-city overhaul retains its separate D4 scope.
 
 ### Revised W3 boundary
 
@@ -229,9 +248,10 @@ Resolve decisions with the first pass that consumes them:
 | Concrete recipe quantities, work/fuel/XP budgets, loot weights and affected-save policy | Authored in W3A/W3B; pacing remains subject to playtesting |
 | Placed electrical-provider funding grid, rate and mixed payment | Implemented in [M-Bench](powered_manual_stations_design.md) |
 | Combined-skill migration and capped learning/content validation | M-Skills design |
-| File/package representation, compatibility, import actions and job-capture integration | D3-A/B and W4; [library/capture behavior accepted](digital_fabrication_design.md), detailed runtime design pending |
+| File/package representation, compatibility, import actions and job-capture integration | D3-A/B and W4 implementation; [library/capture behavior](digital_fabrication_design.md) and [first printing slice](home_printing_design.md) accepted |
 | Source access, schematic extraction, protection, recovery and hacking laptop modifications | Later separate D3-C/hacking design; outside the current D3-A/B effort |
-| Gas units/heat/byproducts/repeat behavior; medical/field/vehicle action semantics | Respective later feature design |
+| Basic solar/wood-gas source budgets and assembly content | D5 implementation; accepted daylight solar and internal-gas generator roles |
+| Standalone gas products/heat/byproducts/repeat behavior; medical/field/vehicle action semantics | Respective later feature design |
 
 Accepted delivery direction:
 
@@ -244,13 +264,16 @@ Accepted delivery direction:
 3. **Design/implement M-Bench and selected mechanical/electrical content**, then
    **W4 with D3-A/B** for the first functional printing route. These are independent
    tracks where their shared interfaces are settled.
-4. **Schedule M-Skills before Cooking/Chemistry content**, and select later field,
-   energy/process, chemical, recovery/hacking and medical tracks by their useful
-   consumer. Their relative priority is not fixed by the skill ladder.
+4. **Implement the accepted D5 basic-workshop/energy/printing/city package and
+   playtest it.** Solar and integrated wood-gas generation are included. Advance
+   to hacking and later progression after that loop is successful.
+5. **Schedule M-Skills before Cooking/Chemistry content**; other later field,
+   process, chemical and medical tracks follow their useful consumers.
 
 The user accepted this direction and authorized the initial design work.
-Individual mechanics schemas and content rosters follow their own review; later
-feature-track priority remains consumer-driven.
+Later gameplay rules and content rosters follow their own review; schemas, APIs,
+saves and networking belong to implementation. Later feature-track priority
+remains consumer-driven.
 
 ## 8. Evidence expected from each later pass
 
