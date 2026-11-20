@@ -2,8 +2,8 @@
 
 ## Shipped starter content
 
-`data/skills/core.json5` defines the noncombat skills Cooking & Chemistry
-(`cooking_chemistry`), Fabrication, Mechanics, Electronics, Computers, Tailoring,
+`data/skills/core.json5` defines the noncombat skills Cooking (`cooking`, maximum 5),
+Chemistry (`chemistry`, maximum 10), Fabrication, Mechanics, Electronics, Computers, Tailoring,
 Survival and Medicine, plus nine combat skills: Melee, Unarmed, Knives, Swords,
 Clubs & Hammers, Axes, Polearms, Shields and Dodge. The main
 and FirstHouse packs include these definitions; activity coverage is a starter
@@ -30,7 +30,7 @@ must have charge. FirstHouse offers the manuals through debug spawning.
 The separate `boxing_manual` and `weapon_forms_manual` carriers appear in
 ordinary loot; their repeatable art-acquisition attempts are distinct from ordinary
 book benefits. See [combat content](combat_content.md#shipped-identities-and-starter-tuning)
-and [combat learning](combat_learning.md). Town has 17 skills and 98 items;
+and [combat learning](combat_learning.md). Town has 18 skills and 98 items;
 the demo has 17 items, including the generated corpse container. These counts
 describe the current packs, not fixed content limits.
 
@@ -63,12 +63,25 @@ study, but studying it does not itself memorize the recipe.
 ## Skill and book definitions
 
 `skill` requires `id` and `name`; `category` is `noncombat` (default) or `combat`.
-Optional `xp_to_next` is exactly ten integers, each 1–1000000000, indexed from
-level 0. The default curve is listed in [runtime skills](skills.md).
+Optional `max_level` is an integer in 1–10, default 10. Optional `xp_to_next`
+contains exactly `max_level` integers, each 1–1000000000, indexed from level 0.
+An omitted curve uses the default curve through that maximum. Field order does
+not matter. The default curve is listed in [runtime skills](skills.md).
+
+```json5
+{type:'skill', id:'cooking', name:'Cooking', max_level:5,
+ xp_to_next:[100,200,400,800,1200]}
+{type:'skill', id:'chemistry', name:'Chemistry'}
+```
+
+Food preparation/preservation uses Cooking; chemical processing, reagents and
+material production use Chemistry. Use both only when the operation needs both.
+The removed combined identity has a bounded save migration, not a content alias
+or shared XP pool.
 
 `book` requires `id`, `name`, and `study_work` (1–UINT32_MAX). `benefits` and
 `recipes` default to empty. Each benefit requires a unique `skill`, `first_level`
-and `last_level` in 1–10, inclusive and ordered. Optional `direct_xp` and
+and `last_level` in 1–the referenced skill's maximum, inclusive and ordered. Optional `direct_xp` and
 `theory_xp` default to zero and range through 1000000000; `multiplier` defaults
 to 10000 and ranges from 10000 to 40000. Combat benefits require zero direct and
 theory XP and multiplier at most 12000. Ranges refer to the next level earned.
@@ -95,9 +108,9 @@ currently consumed.
 
 Crafting recipes and both explicit and generated recyclers accept `skills` and
 `training` arrays. Each skill requirement is `{skill:'id', level:1}` with level
-1–10. Each required skill automatically trains at its required level and default
+1–the referenced skill's maximum. Each required skill automatically trains at its required level and default
 `xp_per_work:100` (0.01 XP per base work). A `training` entry has `skill`,
-`level` 0–10 and optional `xp_per_work` 0–10000; it overrides the same required
+`level` 0–the skill's maximum and optional `xp_per_work` 0–10000; it overrides the same required
 skill only at that requirement's level, or adds an independent training skill.
 An independent skill without a requirement must use training level 0; higher-tier
 training needs the matching learned-skill gate.
@@ -107,9 +120,15 @@ Crafting `knowledge` accepts `known_by_default`, `autolearn`, `crafts_to_learn`
 and `disassemblies_to_learn`. Omitting the whole object preserves legacy
 `known_by_default:true`; supplying `knowledge:{}` defaults it to false. Autolearn
 is enabled only when its array is present, even when empty; its skill thresholds
-are 0–10 and must not undercut the same recipe requirement. It requires both
+are 0–the skill's maximum and must not undercut the same recipe requirement. It requires both
 recipe gates and all listed thresholds. Counts default to 2 and 3 respectively,
 and each must be 1–65535.
+
+Limits are checked after resolving references, including forward references,
+generated recyclers, inherited training and combat/manual prerequisites.
+Over-cap references are errors, never silently lowered. Cooking-5 recipes remain
+usable even though their default training cannot advance an already qualified cook;
+recipe memorization and other eligible skill training still apply.
 
 Recycler `teaches_recipes` explicitly lists distinct recipe IDs, including an
 empty list to teach none. If omitted, a generated recycler teaches its generating

@@ -148,7 +148,7 @@ TEST_CASE("Learning summary is read only reusable and preserves fixed point prog
     const auto before = view.learning;
     Vector<String> lines; lines.reserve(20);
     CollectLearningSummary(view, *content, lines);
-    CHECK(Contains(lines, "learned 2 / effective 4 | XP 1.25/400"));
+    CHECK(Contains(lines, "learned 2/10 | effective 4 | XP 1.25/400"));
     CHECK(Contains(lines, "direct book XP 1/120"));
     CHECK(Contains(lines, "study boost 2x until next level"));
     CHECK(view.learning == before);
@@ -177,6 +177,41 @@ TEST_CASE("Learning summary is read only reusable and preserves fixed point prog
     REQUIRE(rows.size() == 2);
     CHECK(FindRow(rows, CommandKind::study_book) == nullptr);
     CHECK(rows[0].label.find("missing skills") == String::npos);
+}
+
+TEST_CASE("Learning UI shows skill ceilings and completed study states", "[skill-ui]") {
+    const ContentSource source{"caps-ui.json5", R"({format_version:1,definitions:[
+        {type:'skill',id:'cooking',name:'Cooking',max_level:5},
+        {type:'item',id:'food',name:'Food',mass_g:0,volume_ml:1},
+        {type:'recipe',id:'meal',name:'Meal',inputs:[],result:{item:'food',count:1},work:10,
+         skills:[{skill:'cooking',level:5}],training:[{skill:'cooking',level:5,xp_per_work:100}]},
+        {type:'book',id:'book',name:'Book',study_work:100,
+         benefits:[{skill:'cooking',first_level:1,last_level:5,direct_xp:1}]}
+    ]})"};
+    Diagnostics diagnostics;
+    auto content = LoadContent({&source, 1}, &diagnostics);
+    INFO(FormatDiagnostics(diagnostics).c_str()); REQUIRE(content);
+    WorldView view;
+    SkillView skill; skill.progress.skill = content->FindSkill("cooking"); skill.progress.level = 5;
+    skill.effectiveLevel = 7; view.learning.skills.push_back(skill);
+    view.learning.books.push_back({content->FindBook("book"), true, false, false, 100 * ratioScale});
+    Vector<String> lines;
+    CollectLearningSummary(view, *content, lines);
+    CHECK(Contains(lines, "learned 5/5 | effective 7 | maximum reached"));
+    CHECK_FALSE(Contains(lines, "XP 0/0"));
+    CHECK_FALSE(Contains(lines, "paired theory"));
+    CHECK(Contains(lines, "completed study; no eligible benefit"));
+    view.learning.books[0].eligible = true;
+    CollectLearningSummary(view, *content, lines);
+    CHECK(Contains(lines, "completed study; eligible benefit"));
+    view.learning.books[0].completedWork = ratioScale;
+    CollectLearningSummary(view, *content, lines);
+    CHECK(Contains(lines, "partial study"));
+    Vector<CraftingMenuRow> rows;
+    CollectCraftingMenu(view, *content, Localization{}, rows);
+    const auto* meal = FindRow(rows, CommandKind::craft, content->FindCraftingRecipe("meal"));
+    REQUIRE(meal);
+    CHECK(meal->label.find("training cap 5: no XP") != String::npos);
 }
 
 TEST_CASE("Learning UI labels authoritative paused job gates", "[skill-ui]") {

@@ -1,6 +1,7 @@
 #include "content/content.h"
 
 #include <catch2/catch_test_macros.hpp>
+#include <cstdio>
 #include <initializer_list>
 
 namespace {
@@ -51,6 +52,132 @@ void Invalid(eastl::string_view definitions, eastl::string_view path = {}) {
     const auto quiet = Load(definitions);
     REQUIRE_FALSE(quiet.has_value());
     CHECK(quiet.error() == ContentError::InvalidData);
+}
+
+TEST_CASE("Skill ceilings normalize default and explicit curves independently of field order", "[content][skill-content]") {
+    const SkillDefinition defaults;
+    CHECK(defaults.maxLevel == 10);
+    for (const unsigned maximum : {1u, 5u, 6u, 10u}) {
+        CAPTURE(maximum);
+        char maximumText[16];
+        std::snprintf(maximumText, sizeof(maximumText), "%u", maximum);
+        String base = "{type:'skill',id:'limited',name:'Limited',max_level:";
+        base += maximumText;
+        base += '}';
+        String curve = "[";
+        for (unsigned i = 0; i < maximum; ++i) {
+            char xp[32];
+            std::snprintf(xp, sizeof(xp), "%u", defaults.xpToNext[i]);
+            if (i) { curve += ','; }
+            curve += xp;
+        }
+        curve += ']';
+        String explicitCurve = "{type:'skill',id:'limited',name:'Limited',xp_to_next:";
+        explicitCurve += curve;
+        explicitCurve += ",max_level:";
+        explicitCurve += maximumText;
+        explicitCurve += '}';
+        const auto implicit = Load(View(base));
+        const auto explicitLoaded = Load(View(explicitCurve));
+        REQUIRE(implicit);
+        REQUIRE(explicitLoaded);
+        const auto& skill = implicit->GetSkill({1});
+        CHECK(skill.maxLevel == maximum);
+        CHECK(skill.xpToNext == explicitLoaded->GetSkill({1}).xpToNext);
+        for (unsigned i = 0; i < maximumSkillLevel; ++i) {
+            CHECK(skill.xpToNext[i] == (i < maximum ? defaults.xpToNext[i] : 0));
+        }
+        // Exact lengths are relative to the authored maximum, not storage capacity.
+        for (const unsigned length : {maximum - 1, maximum + 1}) {
+            String invalid = "{type:'skill',id:'limited',name:'Limited',max_level:";
+            invalid += maximumText;
+            invalid += ",xp_to_next:[";
+            for (unsigned i = 0; i < length; ++i) {
+                if (i) { invalid += ','; }
+                invalid += '1';
+            }
+            invalid += "]}";
+            Invalid(View(invalid), "definitions[0].xp_to_next");
+        }
+    }
+    for (const char* maximum : {"0", "11", "-1", "1.5", "true", "null", "'5'", "4294967296"}) {
+        String invalid = "{type:'skill',id:'limited',name:'Limited',max_level:";
+        invalid += maximum;
+        invalid += '}';
+        Invalid(View(invalid), "definitions[0].max_level");
+    }
+    Invalid("{type:'skill',id:'limited',name:'Limited',max_level:5,max_level:5}");
+    for (const char* xp : {"0", "1000000001", "-1", "1.5", "true", "null"}) {
+        String invalid = "{type:'skill',id:'limited',name:'Limited',xp_to_next:[";
+        invalid += xp;
+        invalid += "],max_level:1}";
+        Invalid(View(invalid), "definitions[0].xp_to_next[0]");
+    }
+    const auto boundary = Load("{type:'skill',id:'limited',name:'Limited',xp_to_next:[1,1000000000,1,1,1],max_level:5}");
+    REQUIRE(boundary);
+    CHECK(boundary->GetSkill({1}).xpToNext[1] == 1000000000);
+}
+
+TEST_CASE("Resolved skill gates reject levels above forward referenced ceilings", "[content][skill-content]") {
+    struct Example { const char* definition; const char* path; };
+    for (const auto& example : {
+        Example{"{type:'recipe',id:'make',inputs:[],result:{item:'product',count:1},work:1,skills:[{skill:'limited',level:6}]}",
+                "definitions[0].skills[0].level"},
+        Example{"{type:'recipe',id:'make',inputs:[],result:{item:'product',count:1},work:1,training:[{skill:'limited',level:6}]}",
+                "definitions[0].training[0].level"},
+        Example{"{type:'recipe',id:'make',inputs:[],result:{item:'product',count:1},work:1,knowledge:{autolearn:[{skill:'limited',level:6}]}}",
+                "definitions[0].knowledge.autolearn[0].level"},
+        Example{"{type:'recycling_recipe',id:'unmake',target:'product',work:1,returns:[],skills:[{skill:'limited',level:6}]}",
+                "definitions[0].skills[0].level"},
+        Example{"{type:'recycling_recipe',id:'unmake',target:'product',work:1,returns:[],training:[{skill:'limited',level:6}]}",
+                "definitions[0].training[0].level"},
+        Example{"{type:'recipe',id:'make',inputs:[],result:{item:'product',count:1},work:1,recycling:{id:'unmake',work:1,efficiency:0,skills:[{skill:'limited',level:6}]}}",
+                "definitions[0].recycling.skills[0].level"},
+        Example{"{type:'recipe',id:'make',inputs:[],result:{item:'product',count:1},work:1,recycling:{id:'unmake',work:1,efficiency:0,training:[{skill:'limited',level:6}]}}",
+                "definitions[0].recycling.training[0].level"},
+        Example{"{type:'book',id:'manual',name:'Manual',study_work:1,benefits:[{skill:'limited',first_level:6,last_level:6}]}",
+                "definitions[0].benefits[0].first_level"},
+        Example{"{type:'book',id:'manual',name:'Manual',study_work:1,benefits:[{skill:'limited',first_level:1,last_level:6}]}",
+                "definitions[0].benefits[0].last_level"}
+    }) {
+        CAPTURE(example.definition);
+        String definitions = example.definition;
+        definitions += R"(,{type:'skill',id:'limited',name:'Limited',max_level:5},
+            {type:'item',id:'product',name:'Product',mass_g:0,volume_ml:1})";
+        Invalid(View(definitions), example.path);
+        Diagnostics diagnostics;
+        const auto loaded = Load(View(definitions), &diagnostics);
+        REQUIRE_FALSE(loaded);
+        CHECK(diagnostics.Frames()[0].message.find("limited") != String::npos);
+        CHECK(diagnostics.Frames()[0].message.find("maximum 5") != String::npos);
+    }
+}
+
+TEST_CASE("Capped skill references retain inclusive bounds and inherited default training", "[content][skill-content]") {
+    const auto loaded = Load(R"(
+        {type:'recipe',id:'make',inputs:[],result:{item:'product',count:1},work:1,
+         skills:[{skill:'limited',level:5}],knowledge:{autolearn:[{skill:'limited',level:5}]},
+         recycling:{id:'unmake',work:1,efficiency:0,skills:[{skill:'limited',level:5}]}},
+        {type:'recipe',id:'intro',inputs:[],result:{item:'product',count:1},work:1,
+         training:[{skill:'limited',level:0}],knowledge:{autolearn:[{skill:'limited',level:0}]}},
+        {type:'recycling_recipe',id:'explicit',target:'other_product',work:1,returns:[],
+         skills:[{skill:'limited',level:5}],teaches_recipes:[]},
+        {type:'book',id:'manual',name:'Manual',study_work:1,benefits:[{skill:'limited',first_level:1,last_level:5}]},
+        {type:'skill',id:'limited',name:'Limited',max_level:5},
+        {type:'item',id:'product',name:'Product',mass_g:0,volume_ml:1},
+        {type:'item',id:'other_product',name:'Other product',mass_g:0,volume_ml:1})");
+    REQUIRE(loaded);
+    const auto skill = loaded->FindSkill("limited");
+    const auto& craft = loaded->GetCraftingRecipe(loaded->FindCraftingRecipe("make"));
+    REQUIRE(craft.training.size() == 1);
+    CHECK(craft.training[0] == SkillTraining{skill, 5, 100});
+    CHECK(craft.autolearnSkills[0] == SkillRequirement{skill, 5});
+    for (const char* id : {"unmake", "explicit"}) {
+        const auto& recycler = loaded->GetRecyclingRecipe(loaded->FindRecyclingRecipe(id));
+        REQUIRE(recycler.training.size() == 1);
+        CHECK(recycler.training[0] == SkillTraining{skill, 5, 100});
+    }
+    CHECK(loaded->GetBook({1}).benefits[0].lastLevel == 5);
 }
 
 TEST_CASE("Skills books and carriers resolve forward across sources with canonical IDs", "[content][skill-content]") {

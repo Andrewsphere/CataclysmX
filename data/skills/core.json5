@@ -1,5 +1,6 @@
 {format_version:1, definitions:[
-  {type:'skill',id:'cooking_chemistry',name:'Cooking & Chemistry',category:'noncombat'},
+  {type:'skill',id:'cooking',name:'Cooking',category:'noncombat',max_level:5},
+  {type:'skill',id:'chemistry',name:'Chemistry',category:'noncombat'},
   {type:'skill',id:'fabrication',name:'Fabrication',category:'noncombat'},
   {type:'skill',id:'mechanics',name:'Mechanics',category:'noncombat'},
   {type:'skill',id:'electronics',name:'Electronics',category:'noncombat'},

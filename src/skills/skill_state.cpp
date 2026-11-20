@@ -14,7 +14,7 @@ bool Advanced(const SkillDefinition& definition, const SkillProgress& progress) 
     return definition.category == SkillCategory::Noncombat && progress.level >= 5;
 }
 
-void LevelUp(SkillProgress& progress) {
+void LevelUp(SkillProgress& progress, const SkillDefinition& definition) {
     ++progress.level;
     progress.xp = 0;
     progress.theory = 0;
@@ -22,7 +22,7 @@ void LevelUp(SkillProgress& progress) {
     progress.directBookXp = 0;
     progress.multiplier = ratioScale;
     progress.boostRemainder = 0;
-    if (progress.level == maximumSkillLevel) { progress.workRemainder = 0; }
+    if (progress.level == definition.maxLevel) { progress.workRemainder = 0; }
 }
 
 SkillAward AddReserve(SkillProgress& progress, const SkillDefinition& definition,
@@ -39,15 +39,15 @@ SkillAward AddReserve(SkillProgress& progress, const SkillDefinition& definition
     progress.xp += pairs;
     award.advancement = pairs;
     if (progress.xp == SkillXpRequired(definition, progress.level)) {
-        LevelUp(progress);
+        LevelUp(progress, definition);
         award.levels = 1;
     }
     return award;
 }
 
-bool Eligible(const LearningState& state, const SkillBookBenefit& benefit) {
+bool Eligible(const LearningState& state, const ContentCatalog& content, const SkillBookBenefit& benefit) {
     const unsigned next = LearnedSkillLevel(state, benefit.skill) + 1;
-    return next <= maximumSkillLevel && next >= benefit.firstLevel && next <= benefit.lastLevel;
+    return next <= content.GetSkill(benefit.skill).maxLevel && next >= benefit.firstLevel && next <= benefit.lastLevel;
 }
 
 bool Autolearns(const LearningState& state, const CraftingRecipeDefinition& recipe) {
@@ -76,10 +76,10 @@ bool Number32(const DataObject& data, const char* name, std::uint32_t& value) {
 }
 
 bool ValidSkill(const SkillProgress& p, const SkillDefinition& definition) {
-    if (p.level > maximumSkillLevel || p.workRemainder >= ratioScale || p.boostRemainder >= ratioScale) {
+    if (p.level > definition.maxLevel || p.workRemainder >= ratioScale || p.boostRemainder >= ratioScale) {
         return false;
     }
-    if (p.level == maximumSkillLevel) {
+    if (p.level == definition.maxLevel) {
         return !p.xp && !p.theory && !p.practice && !p.directBookXp && !p.workRemainder
             && !p.boostRemainder && p.multiplier == ratioScale;
     }
@@ -95,6 +95,26 @@ bool ValidSkill(const SkillProgress& p, const SkillDefinition& definition) {
         && p.directBookXp <= (combat ? 0 : required * 3 / 10)
         && p.multiplier >= ratioScale && p.multiplier <= (combat ? 12000u : 40000u)
         && (p.multiplier != ratioScale || !p.boostRemainder);
+}
+
+// This is a save-format contract, not the current content default curve.
+SkillDefinition LegacyCookingChemistry() {
+    SkillDefinition definition;
+    definition.category = SkillCategory::Noncombat;
+    definition.maxLevel = 10;
+    definition.xpToNext = {100, 200, 400, 800, 1200, 1800, 2600, 3600, 4800, 6400};
+    return definition;
+}
+
+bool MigrationDestination(const SkillDefinition* definition, std::uint8_t maximum,
+    const SkillDefinition& legacy) {
+    if (!definition || definition->category != SkillCategory::Noncombat || definition->maxLevel != maximum) {
+        return false;
+    }
+    for (unsigned i = 0; i < maximum; ++i) {
+        if (definition->xpToNext[i] != legacy.xpToNext[i]) { return false; }
+    }
+    return true;
 }
 
 bool ValidState(const LearningState& state, const ContentCatalog& content) {
@@ -184,20 +204,21 @@ bool MeetsSkillRequirements(const LearningState& state, eastl::span<const SkillR
 }
 
 std::uint64_t SkillXpRequired(const SkillDefinition& definition, std::uint8_t currentLevel) {
-    return currentLevel < maximumSkillLevel ? std::uint64_t{definition.xpToNext[currentLevel]} * ratioScale : 0;
+    if (currentLevel > definition.maxLevel) { std::abort(); }
+    return currentLevel < definition.maxLevel ? std::uint64_t{definition.xpToNext[currentLevel]} * ratioScale : 0;
 }
 
 SkillAward TrainSkill(LearningState& state, const ContentCatalog& content,
     const SkillTraining& training, SkillActivity activity, std::uint64_t fixedWork) {
     const auto& definition = content.GetSkill(training.skill);
-    if (training.level > maximumSkillLevel || training.xpPerWork > ratioScale) { std::abort(); }
+    if (training.level > definition.maxLevel || training.xpPerWork > ratioScale) { std::abort(); }
     SkillAward award;
     if (!fixedWork || !training.xpPerWork) { return award; }
     auto& progress = EnsureSkillProgress(state, training.skill);
     // Quotient/remainder decomposition avoids overflowing even UINT64_MAX work.
     const auto fraction = (fixedWork % ratioScale) * training.xpPerWork + progress.workRemainder;
     auto amount = (fixedWork / ratioScale) * training.xpPerWork + fraction / ratioScale;
-    const auto ceiling = eastl::min<unsigned>(training.level + 1, maximumSkillLevel);
+    const auto ceiling = eastl::min<unsigned>(training.level + 1, definition.maxLevel);
     if (progress.level >= ceiling || (Advanced(definition, progress) && activity == SkillActivity::Combat)) {
         award.capped = amount;
         return award;
@@ -223,7 +244,7 @@ SkillAward TrainSkill(LearningState& state, const ContentCatalog& content,
             award.advancement += gained;
             award.capped += boosted / ratioScale - gained;
             if (progress.xp == SkillXpRequired(definition, progress.level)) {
-                LevelUp(progress);
+                LevelUp(progress, definition);
                 ++award.levels;
             }
         }
@@ -241,7 +262,7 @@ bool CanStudyBook(const LearningState& state, const ContentCatalog& content, Boo
     const auto* definition = content.TryGetBook(book);
     const auto* progress = FindBookProgress(state, book);
     if (!definition || (progress && progress->used)) { return false; }
-    for (const auto& benefit : definition->benefits) { if (Eligible(state, benefit)) { return true; } }
+    for (const auto& benefit : definition->benefits) { if (Eligible(state, content, benefit)) { return true; } }
     return false;
 }
 
@@ -249,7 +270,7 @@ bool CompleteBookStudy(LearningState& state, const ContentCatalog& content, Book
     if (!CanStudyBook(state, content, book)) { return false; }
     const auto& definition = content.GetBook(book);
     for (const auto& benefit : definition.benefits) {
-        if (!Eligible(state, benefit)) { continue; }
+        if (!Eligible(state, content, benefit)) { continue; }
         auto& progress = EnsureSkillProgress(state, benefit.skill);
         const auto& skill = content.GetSkill(benefit.skill);
         if (Advanced(skill, progress)) {
@@ -265,7 +286,7 @@ bool CompleteBookStudy(LearningState& state, const ContentCatalog& content, Book
                 std::uint64_t{benefit.directXp} * ratioScale);
             progress.xp += grant;
             progress.directBookXp += grant;
-            if (progress.xp == required) { LevelUp(progress); }
+            if (progress.xp == required) { LevelUp(progress, skill); }
         }
         if (progress.level == earnedLevel) {
             progress.multiplier = eastl::max(progress.multiplier,
@@ -333,7 +354,7 @@ void UpdateAutolearn(LearningState& state, const ContentCatalog& content) {
 DataObject CaptureLearningState(const LearningState& state, const ContentCatalog& content) {
     if (!ValidState(state, content)) { std::abort(); }
     DataObject data;
-    data.SetUnsigned("version", 1);
+    data.SetUnsigned("version", 2);
     auto skills = DataObject::List();
     for (const auto& p : state.skills) {
         DataObject value;
@@ -380,14 +401,15 @@ DataObject CaptureLearningState(const LearningState& state, const ContentCatalog
 
 StateResult<LearningState> ReadLearningState(const DataObject& input, const ContentCatalog& content,
     Diagnostics* diagnostics) {
-    const auto invalid = [diagnostics](StateError error = StateError::InvalidData) {
-        if (diagnostics) { diagnostics->Add("Invalid or unsupported learning state"); }
+    const auto invalid = [diagnostics](StateError error = StateError::InvalidData,
+        const char* message = "Invalid or unsupported learning state") {
+        if (diagnostics) { diagnostics->Add(message); }
         return eastl::unexpected(error);
     };
     if (input.Type() == DataType::Object && !input.Size()) { return LearningState{}; }
     const auto version = input.GetUnsigned("version");
     if (!version) { return invalid(); }
-    if (*version != 1) { return invalid(StateError::UnsupportedVersion); }
+    if (*version != 1 && *version != 2) { return invalid(StateError::UnsupportedVersion); }
     if (!Fields(input, {"version", "skills", "recipes", "books", "study"})) { return invalid(); }
     const auto skills = input.Get("skills", DataType::List);
     const auto recipes = input.Get("recipes", DataType::List);
@@ -395,6 +417,9 @@ StateResult<LearningState> ReadLearningState(const DataObject& input, const Cont
     if (!skills || !recipes || !books || (*skills)->Size() > content.SkillCount()
         || (*recipes)->Size() > content.CraftingRecipeCount() || (*books)->Size() > content.BookCount()) { return invalid(); }
     LearningState state;
+    bool migrated = false;
+    const auto cooking = content.FindSkill("cooking");
+    const auto chemistry = content.FindSkill("chemistry");
     for (std::size_t i = 0; i < (*skills)->Size(); ++i) {
         const auto& value = (*skills)->At(i);
         if (!Fields(value, {"skill", "level", "xp", "theory", "practice", "directBookXp", "multiplier",
@@ -402,14 +427,47 @@ StateResult<LearningState> ReadLearningState(const DataObject& input, const Cont
         const auto name = value.GetString("skill");
         if (!name) { return invalid(); }
         const auto id = content.FindSkill(*name);
-        if (!id.value || FindSkillProgress(state, id)) { return invalid(); }
-        auto& p = EnsureSkillProgress(state, id);
+        const bool legacy = *version == 1 && !id.value && *name == "cooking_chemistry";
+        if (legacy && migrated) {
+            return invalid(StateError::InvalidData, "Duplicate legacy cooking_chemistry skill");
+        }
+        if (migrated && (id == cooking || id == chemistry)) {
+            return invalid(StateError::InvalidData, "Conflicting cooking_chemistry migration destination");
+        }
+        if (!legacy && (!id.value || FindSkillProgress(state, id))) {
+            return invalid(StateError::InvalidData, "Unknown, duplicate or conflicting saved skill");
+        }
+        SkillProgress p{id};
         std::uint64_t level = 0;
         if (!Number(value, "level", maximumSkillLevel, level) || !Number(value, "xp", UINT64_MAX, p.xp)
             || !Number(value, "theory", UINT64_MAX, p.theory) || !Number(value, "practice", UINT64_MAX, p.practice)
             || !Number(value, "directBookXp", UINT64_MAX, p.directBookXp) || !Number32(value, "multiplier", p.multiplier)
-            || !Number32(value, "workRemainder", p.workRemainder) || !Number32(value, "boostRemainder", p.boostRemainder)) { return invalid(); }
+            || !Number32(value, "workRemainder", p.workRemainder) || !Number32(value, "boostRemainder", p.boostRemainder)) {
+            return invalid(StateError::InvalidData, legacy
+                ? "Invalid legacy cooking_chemistry progress" : "Invalid saved skill progress");
+        }
         p.level = static_cast<std::uint8_t>(level);
+        if (!legacy) {
+            EnsureSkillProgress(state, id) = p;
+            continue;
+        }
+        const auto historical = LegacyCookingChemistry();
+        if (!ValidSkill(p, historical)) {
+            return invalid(StateError::InvalidData, "Invalid legacy cooking_chemistry progress");
+        }
+        if (!MigrationDestination(content.TryGetSkill(cooking), 5, historical)
+            || !MigrationDestination(content.TryGetSkill(chemistry), 10, historical)) {
+            return invalid(StateError::InvalidData, "Incompatible cooking_chemistry migration destinations");
+        }
+        if (FindSkillProgress(state, cooking) || FindSkillProgress(state, chemistry)) {
+            return invalid(StateError::InvalidData, "Conflicting cooking_chemistry migration destination");
+        }
+        p.skill = chemistry;
+        EnsureSkillProgress(state, chemistry) = p;
+        p.skill = cooking;
+        if (p.level >= 5) { p = SkillProgress{cooking}; p.level = 5; }
+        EnsureSkillProgress(state, cooking) = p;
+        migrated = true;
     }
     for (std::size_t i = 0; i < (*recipes)->Size(); ++i) {
         const auto& value = (*recipes)->At(i);
@@ -453,6 +511,7 @@ StateResult<LearningState> ReadLearningState(const DataObject& input, const Cont
         || !Number32(study, "timingSpeed", state.study.timingSpeed)
         || !Number32(study, "timingRemainder", state.study.timingRemainder)
         || !ValidState(state, content)) { return invalid(); }
+    if (migrated) { UpdateAutolearn(state, content); }
     return state;
 }
 

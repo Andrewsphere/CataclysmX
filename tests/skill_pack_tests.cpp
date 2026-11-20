@@ -15,19 +15,54 @@ bool PoolContains(const ContentCatalog& content, const char* poolName, const cha
     return false;
 }
 
+TEST_CASE("Principal packs expose independent Cooking and Chemistry definitions", "[content][skill-pack]") {
+    String firstHouse = CATACLYSMX_CONTENT_PACK;
+    firstHouse.resize(firstHouse.find_last_of("/\\") + 1);
+    firstHouse += "first_house.json5";
+    for (const char* path : {CATACLYSMX_CONTENT_PACK, firstHouse.c_str()}) {
+        CAPTURE(path);
+        const auto loaded = LoadContentPack(path);
+        REQUIRE(loaded);
+        CHECK(loaded->SkillCount() == 18);
+        CHECK_FALSE(loaded->FindSkill("cooking_chemistry").value);
+        const auto cookingId = loaded->FindSkill("cooking");
+        const auto chemistryId = loaded->FindSkill("chemistry");
+        REQUIRE(cookingId.value);
+        REQUIRE(chemistryId.value);
+        CHECK(cookingId != chemistryId);
+        const auto& cooking = loaded->GetSkill(cookingId);
+        const auto& chemistry = loaded->GetSkill(chemistryId);
+        CHECK(cooking.category == SkillCategory::Noncombat);
+        CHECK(chemistry.category == SkillCategory::Noncombat);
+        CHECK(cooking.maxLevel == 5);
+        CHECK(chemistry.maxLevel == 10);
+        for (unsigned i = 0; i < maximumSkillLevel; ++i) {
+            CHECK(cooking.xpToNext[i] == (i < 5 ? chemistry.xpToNext[i] : 0));
+        }
+        CHECK(chemistry.xpToNext[9] == 6400);
+    }
+}
+
 TEST_CASE("Town skill pack supplies progression and equivalent reading carriers", "[content][skill-pack]") {
     Diagnostics diagnostics;
     const auto loaded = LoadContentPack(CATACLYSMX_CONTENT_PACK, &diagnostics);
     REQUIRE(loaded.has_value());
     const auto& content = *loaded;
-    CHECK(content.SkillCount() == 17); // Eight noncombat and nine combat skills.
-    for (const char* name : {"cooking_chemistry", "fabrication", "mechanics", "electronics",
+    CHECK(content.SkillCount() == 18); // Nine noncombat and nine combat skills.
+    CHECK_FALSE(content.FindSkill("cooking_chemistry").value);
+    const auto& cooking = content.GetSkill(content.FindSkill("cooking"));
+    CHECK(cooking.category == SkillCategory::Noncombat);
+    CHECK(cooking.maxLevel == 5);
+    CHECK(cooking.xpToNext[4] == 1200);
+    CHECK(cooking.xpToNext[5] == 0);
+    for (const char* name : {"chemistry", "fabrication", "mechanics", "electronics",
                              "computers", "tailoring", "survival", "medicine"}) {
         CAPTURE(name);
         const auto id = content.FindSkill(name);
         REQUIRE(id.value);
         const auto& skill = content.GetSkill(id);
         CHECK(skill.category == SkillCategory::Noncombat);
+        CHECK(skill.maxLevel == 10);
         CHECK(skill.xpToNext[0] == 100);
         CHECK(skill.xpToNext[9] == 6400);
     }

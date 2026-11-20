@@ -30,8 +30,8 @@ below identify proposed follow-on slices, not new implemented subsystems.
   Its present scope is one explicitly started job, bounded consumed inputs, one
   output type and positive grid demand. Thermal processing and repeating jobs are
   later contract questions.
-- `SkillDefinition` still has the shared ten-entry XP curve and no per-skill
-  ceiling; shipped data still uses `cooking_chemistry`.
+- M-Skills implements per-skill ceilings and separate Cooking (maximum 5) and
+  Chemistry (maximum 10), with the shared curve and versioned legacy migration.
 - Manual recipes currently allow eight distinct input types including retained
   tools and four required traits. The accepted sword requirements fit that shape.
   Protection uses an ordinary trait slot; the revised welding roster must fit the
@@ -89,7 +89,7 @@ focused verification. API shapes and version numbers belong to its design.
 | Slice | Bounded scope | Dependency / completion example |
 | --- | --- | --- |
 | **M-Bench: powered manual stations** | [Implemented contract](powered_manual_stations_design.md): station-local grid costs, provider-owned rates, atomic station/handheld/heat payment and crafting-area source residency | Builds on D1/W1/W2; useful connector production demonstrated with a powered fixture. Shipped station content is selected separately |
-| **M-Skills: split and ceiling** | Per-skill maximum, Cooking/Chemistry split, validation/presentation and deliberate migration of existing progress/references | Required before content uses the separate skill identities. Cooking stops at 5; other default ceilings remain 10; preserve the shared learning model |
+| **M-Skills: split and ceiling** | [Implemented contract](skill_caps_and_split_design.md): per-skill maximum, Cooking/Chemistry split, validation/presentation and versioned migration of existing progress | Available for content using separate identities. Cooking stops at 5; other default ceilings remain 10; shared learning model preserved |
 | **W4: selectable grid machines** | Implement the existing single-job reservation, output-capacity, paid-slice and recovery contract after a bounded D3 interface review | Reuses D1 ownership/residency. Demonstrate one selectable input/output conversion, interruption and offscreen completion before extending process types |
 
 M-Worn is retired: the [accepted protection rule](crafting_progression.md#welding-protection)
@@ -98,9 +98,9 @@ powered placed manual station. A carried grid-funded welder can use D1 item-powe
 rules. Forging content can use W1/W2 without waiting for either electricity
 extension or digital fabrication.
 
-M-Skills is independent of the initial metalworking roster. Its migration design
-must explicitly decide how old combined-skill levels, XP/reserves and applicable
-learning references map to the two skills; this plan chooses no migration policy.
+M-Skills is independent of the initial metalworking roster. Its migration copies
+the validated old combined proficiency to Chemistry and Cooking, capping Cooking
+at 5. Book/recipe identities and paid work are preserved.
 
 ## 4. Digital-production slices
 

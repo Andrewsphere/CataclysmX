@@ -230,7 +230,8 @@ WorldResult<SkillAward> LearningSystem::Train(ActorHandle handle, const SkillTra
     SkillActivity activity, std::uint64_t fixedWork) {
     auto* actor = world_.MutableActor(handle);
     if (!actor) { return eastl::unexpected(WorldError::invalid_handle); }
-    if (!world_.GetContent().TryGetSkill(training.skill) || training.level > maximumSkillLevel
+    const auto* definition = world_.GetContent().TryGetSkill(training.skill);
+    if (!definition || training.level > definition->maxLevel
         || training.xpPerWork > ratioScale || (activity != SkillActivity::Craft
             && activity != SkillActivity::Disassembly && activity != SkillActivity::Combat)) {
         return eastl::unexpected(WorldError::invalid_request);
@@ -243,7 +244,8 @@ WorldResult<SkillAward> LearningSystem::Train(ActorHandle handle, const SkillTra
 WorldResult<void> LearningSystem::SetLevel(ActorHandle handle, SkillId skill, std::uint8_t level) {
     auto* actor = world_.MutableActor(handle);
     if (!actor) { return eastl::unexpected(WorldError::invalid_handle); }
-    if (!world_.GetContent().TryGetSkill(skill) || level > maximumSkillLevel) { return eastl::unexpected(WorldError::invalid_request); }
+    const auto* definition = world_.GetContent().TryGetSkill(skill);
+    if (!definition || level > definition->maxLevel) { return eastl::unexpected(WorldError::invalid_request); }
     UpdateAutolearn(actor->learning, world_.GetContent());
     auto& progress = EnsureSkillProgress(actor->learning, skill);
     progress = SkillProgress{skill}; progress.level = level;
@@ -281,8 +283,8 @@ void LearningSystem::CollectView(ActorHandle handle, LearningView& output) const
             const auto* stored = FindSkillProgress(state, benefit.skill);
             const auto p = stored ? *stored : SkillProgress{benefit.skill};
             const unsigned next = p.level + 1;
-            if (next > maximumSkillLevel || next < benefit.firstLevel || next > benefit.lastLevel) { continue; }
             const auto& skill = content.GetSkill(benefit.skill);
+            if (next > skill.maxLevel || next < benefit.firstLevel || next > benefit.lastLevel) { continue; }
             const auto required = SkillXpRequired(skill, p.level);
             if (skill.category == SkillCategory::Noncombat && p.level >= 5) {
                 const auto amount = std::uint64_t{benefit.theoryXp} * ratioScale;

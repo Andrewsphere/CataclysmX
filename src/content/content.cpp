@@ -430,10 +430,19 @@ bool ParseSkillEntries(yyjson_val* array, Vector<PendingSkillEntry>& output,
     return true;
 }
 
+bool ValidateSkillMaximum(std::uint32_t level, const SkillDefinition& skill, const Context& context) {
+    if (level <= skill.maxLevel) { return true; }
+    if (!context.diagnostics) { return false; }
+    char message[256];
+    std::snprintf(message, sizeof(message), "level exceeds skill '%s' maximum %u",
+                  skill.id.c_str(), static_cast<unsigned>(skill.maxLevel));
+    return context.Fail(message);
+}
+
 bool ParseSkill(yyjson_val* object, PendingSkill& pending) {
     auto& definition = pending.definition;
     const auto& context = pending.context;
-    if (!CheckObject(object, {"type", "id", "name", "category", "xp_to_next"}, context)
+    if (!CheckObject(object, {"type", "id", "name", "category", "max_level", "xp_to_next"}, context)
         || !ReadId(yyjson_obj_get(object, "id"), definition.id, context.Child("id"))
         || !ReadString(yyjson_obj_get(object, "name"), definition.name, context.Child("name"))) { return false; }
     if (auto* category = yyjson_obj_get(object, "category")) {
@@ -441,14 +450,25 @@ bool ParseSkill(yyjson_val* object, PendingSkill& pending) {
         if (JsonString(category) == "combat") { definition.category = SkillCategory::Combat; }
         else if (JsonString(category) != "noncombat") { return context.Child("category").Fail("expected noncombat or combat"); }
     }
+    if (auto* maximum = yyjson_obj_get(object, "max_level")) {
+        std::uint32_t level = 0;
+        if (!ReadBoundedInteger(maximum, 1, maximumSkillLevel, level, context.Child("max_level"))) { return false; }
+        definition.maxLevel = static_cast<std::uint8_t>(level);
+    }
     if (auto* xp = yyjson_obj_get(object, "xp_to_next")) {
         const auto child = context.Child("xp_to_next");
-        if (!yyjson_is_arr(xp) || yyjson_arr_size(xp) != maximumSkillLevel) { return child.Fail("expected exactly 10 XP thresholds"); }
-        for (std::size_t i = 0; i < maximumSkillLevel; ++i) {
+        if (!yyjson_is_arr(xp) || yyjson_arr_size(xp) != definition.maxLevel) {
+            char message[80];
+            std::snprintf(message, sizeof(message), "expected exactly %u XP thresholds for max_level",
+                          static_cast<unsigned>(definition.maxLevel));
+            return child.Fail(message);
+        }
+        for (std::size_t i = 0; i < definition.maxLevel; ++i) {
             if (!ReadBoundedInteger(yyjson_arr_get(xp, i), 1, 1000000000,
                                    definition.xpToNext[i], ArrayElement(child, i))) { return false; }
         }
     }
+    for (std::size_t i = definition.maxLevel; i < maximumSkillLevel; ++i) { definition.xpToNext[i] = 0; }
     return true;
 }
 
@@ -2463,6 +2483,7 @@ bool ResolveSkillRequirements(const Vector<PendingSkillEntry>& pending,
     for (std::size_t i = 0; i < pending.size(); ++i) {
         const auto skill = catalog.FindSkill(View(pending[i].skill));
         if (!skill.value) { return ArrayElement(context, i).Child("skill").Fail("unknown skill reference"); }
+        if (!ValidateSkillMaximum(pending[i].level, catalog.GetSkill(skill), ArrayElement(context, i).Child("level"))) { return false; }
         output.push_back({skill, pending[i].level});
     }
     eastl::sort(output.begin(), output.end(), [](const SkillRequirement& a, const SkillRequirement& b) {
@@ -2479,6 +2500,7 @@ bool ResolveTraining(const Vector<PendingSkillEntry>& pending, const SmallVector
         const auto& entry = pending[i];
         const auto skill = catalog.FindSkill(View(entry.skill));
         if (!skill.value) { return child.Child("skill").Fail("unknown skill reference"); }
+        if (!ValidateSkillMaximum(entry.level, catalog.GetSkill(skill), child.Child("level"))) { return false; }
         bool required = false;
         for (auto& training : output) {
             if (training.skill != skill) { continue; }
@@ -2499,7 +2521,8 @@ bool ResolveTraining(const Vector<PendingSkillEntry>& pending, const SmallVector
 }
 
 bool ResolveBook(PendingBook& pending, const ContentCatalog& catalog) {
-    for (const auto& manual : pending.manuals) {
+    for (std::size_t i = 0; i < pending.manuals.size(); ++i) {
+        const auto& manual = pending.manuals[i];
         auto definition = manual.definition;
         definition.art = catalog.FindCombatArt(View(manual.art));
         definition.prerequisite.skill = catalog.FindSkill(View(manual.skill));
@@ -2507,6 +2530,8 @@ bool ResolveBook(PendingBook& pending, const ContentCatalog& catalog) {
             || catalog.GetSkill(definition.prerequisite.skill).category != SkillCategory::Combat) {
             return pending.context.Child("art_manuals").Fail("unknown art or combat skill reference");
         }
+        if (!ValidateSkillMaximum(definition.prerequisite.level, catalog.GetSkill(definition.prerequisite.skill),
+                                  ArrayElement(pending.context.Child("art_manuals"), i).Child("level"))) { return false; }
         pending.definition.artManuals.push_back(definition);
     }
     for (std::size_t i = 0; i < pending.benefits.size(); ++i) {
@@ -2514,6 +2539,8 @@ bool ResolveBook(PendingBook& pending, const ContentCatalog& catalog) {
         const auto child = ArrayElement(pending.context.Child("benefits"), i);
         benefit.skill = catalog.FindSkill(View(pending.benefits[i].skill));
         if (!benefit.skill.value) { return child.Child("skill").Fail("unknown skill reference"); }
+        if (!ValidateSkillMaximum(benefit.firstLevel, catalog.GetSkill(benefit.skill), child.Child("first_level"))
+            || !ValidateSkillMaximum(benefit.lastLevel, catalog.GetSkill(benefit.skill), child.Child("last_level"))) { return false; }
         if (catalog.GetSkill(benefit.skill).category == SkillCategory::Combat) {
             if (benefit.directXp) { return child.Child("direct_xp").Fail("combat books cannot grant direct XP"); }
             if (benefit.theoryXp) { return child.Child("theory_xp").Fail("combat books cannot grant theory XP"); }

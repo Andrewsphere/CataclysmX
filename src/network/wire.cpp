@@ -97,10 +97,10 @@ bool ValidLearning(const LearningView& v) {
             || p.multiplier < ratioScale || p.multiplier > 40000 || p.workRemainder >= ratioScale
             || p.boostRemainder >= ratioScale || p.directBookXp > p.xp
             || (p.multiplier == ratioScale && p.boostRemainder)) return false;
-        if (p.level == maximumSkillLevel) {
-            if (s.requiredXp || p.xp || p.theory || p.practice || p.directBookXp
+        if (!s.requiredXp) {
+            if (!p.level || p.xp || p.theory || p.practice || p.directBookXp
                 || p.workRemainder || p.boostRemainder || p.multiplier != ratioScale) return false;
-        } else if (!s.requiredXp || s.requiredXp > std::uint64_t{1000000000} * ratioScale
+        } else if (p.level == maximumSkillLevel || s.requiredXp > std::uint64_t{1000000000} * ratioScale
             || p.xp >= s.requiredXp || p.theory > s.requiredXp - p.xp
             || p.practice > s.requiredXp - p.xp || (p.theory && p.practice)) return false;
         last = p.skill.value;
@@ -760,8 +760,9 @@ bool ValidLearningDefinitions(const WorldView& view, const ContentCatalog& conte
     for (const auto& s : v.skills) {
         const auto& p = s.progress;
         const auto* definition = content.TryGetSkill(p.skill);
-        if (!definition || s.requiredXp != SkillXpRequired(*definition, p.level)) return false;
-        if (p.level == maximumSkillLevel) continue;
+        if (!definition || p.level > definition->maxLevel
+            || s.requiredXp != SkillXpRequired(*definition, p.level)) return false;
+        if (p.level == definition->maxLevel) continue;
         const bool combat = definition->category == SkillCategory::Combat;
         if (!combat && p.level >= 5) {
             if (p.directBookXp || p.multiplier != ratioScale || p.boostRemainder) return false;
@@ -773,7 +774,8 @@ bool ValidLearningDefinitions(const WorldView& view, const ContentCatalog& conte
         const auto* definition = content.TryGetBook(b.book);
         if (!definition) return false;
         const auto total = std::uint64_t{definition->studyWork} * ratioScale;
-        if (b.completedWork > total || (!b.used && b.completedWork == total)) return false;
+        if (b.completedWork > total || (b.used && b.completedWork != total)
+            || (b.book == v.activeBook && b.completedWork == total)) return false;
         std::uint64_t direct = 0, theory = 0;
         for (const auto& benefit : definition->benefits) {
             direct += std::uint64_t{benefit.directXp} * ratioScale;

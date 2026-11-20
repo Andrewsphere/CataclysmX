@@ -248,6 +248,7 @@ bool ParseUnlock(yyjson_val* object, MoveUnlock& out, const ContentCatalog& cata
             if (!CheckObject(value, {"skill", "level"}, child)
                 || !ResolveCombatSkill(yyjson_obj_get(value, "skill"), skill.skill, catalog, child.Child("skill"))
                 || !ReadBoundedInteger(yyjson_obj_get(value, "level"), 0, maximumSkillLevel, level, child.Child("level"))) { return false; }
+            if (!ValidateSkillMaximum(level, catalog.GetSkill(skill.skill), child.Child("level"))) { return false; }
             skill.level = static_cast<std::uint8_t>(level);
             for (const auto& previous : out.skills) { if (previous.skill == skill.skill) { return child.Fail("duplicate skill requirement"); } }
             out.skills.push_back(skill);

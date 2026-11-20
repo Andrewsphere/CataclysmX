@@ -11,7 +11,14 @@ ContentCatalog LearningContent() {
       {type:'terrain',id:'floor',name:'floor',movement:{passable:true},blocks_sight:false,appearance:{symbol:'.',foreground:'white'}},
       {type:'terrain',id:'wall',name:'wall',movement:{passable:false},blocks_sight:true,appearance:{symbol:'#',foreground:'white'}},
       {type:'terrain',id:'air',name:'air',movement:{passable:true},open_space:true,blocks_sight:false,appearance:{symbol:' ',foreground:'white'}},
-      {type:'skill',id:'work',name:'Work'}, {type:'skill',id:'unused',name:'Unused'},
+      {type:'skill',id:'work',name:'Work'}, {type:'skill',id:'unused',name:'Unused',max_level:1},
+      {type:'book',id:'capped',name:'Capped',study_work:50,recipes:['make'],benefits:[
+        {skill:'unused',first_level:1,last_level:1,direct_xp:20,multiplier:20000}]},
+      {type:'book',id:'mixed',name:'Mixed',study_work:50,benefits:[
+        {skill:'unused',first_level:1,last_level:1,direct_xp:20,multiplier:20000},
+        {skill:'work',first_level:1,last_level:10,direct_xp:20,theory_xp:100,multiplier:20000}]},
+      {type:'item',id:'capped_print',name:'Capped',mass_g:1,volume_ml:1,books:['capped']},
+      {type:'item',id:'mixed_print',name:'Mixed',mass_g:1,volume_ml:1,books:['mixed']},
       {type:'book',id:'manual',name:'Manual',study_work:250,recipes:['make'],benefits:[
         {skill:'work',first_level:1,last_level:10,direct_xp:100,theory_xp:2000,multiplier:20000}]},
       {type:'book',id:'other',name:'Other',study_work:150,benefits:[
@@ -170,5 +177,62 @@ TEST_CASE("Learning inspection is neutral and previews clipping without mutation
     CHECK_FALSE(r.world.Learning().SetLevel(r.actor, r.skill, 11));
     Take(r.world.Learning().Train(r.actor, {r.skill, 0, ratioScale}, SkillActivity::Craft, 100 * ratioScale));
     CHECK(LearnedSkillLevel(r.State(), r.skill) == 1);
+}
+
+TEST_CASE("World learning APIs enforce authored maxima and capped previews", "[skills][world]") {
+    Rig r;
+    const auto skill = r.content.FindSkill("unused");
+    const auto before = r.State();
+    CHECK_FALSE(r.world.Learning().SetLevel(r.actor, skill, 2));
+    CHECK_FALSE(r.world.Learning().Train(r.actor, {skill, 2, ratioScale}, SkillActivity::Craft, 100));
+    CHECK(r.State() == before);
+    REQUIRE(r.world.Learning().SetLevel(r.actor, skill, 1));
+    Take(r.world.Learning().Train(r.actor, {skill, 1, ratioScale}, SkillActivity::Craft, UINT64_MAX));
+    r.Add("capped_print", ItemLocation::Carried(r.actor));
+    r.Add("mixed_print", ItemLocation::Carried(r.actor));
+    LearningView view;
+    r.world.Learning().CollectView(r.actor, view);
+    for (const auto& entry : view.skills) {
+        if (entry.progress.skill == skill) { CHECK(entry.requiredXp == 0); }
+    }
+    for (const auto& entry : view.books) {
+        if (entry.book == r.content.FindBook("capped")) { CHECK_FALSE(entry.eligible); }
+        if (entry.book == r.content.FindBook("mixed")) { CHECK(entry.eligible); }
+    }
+    r.Start(r.content.FindBook("mixed")); r.Step(50);
+    CHECK(FindBookProgress(r.State(), r.content.FindBook("mixed"))->used);
+    CHECK(FindSkillProgress(r.State(), skill)->xp == 0);
+    CHECK(FindSkillProgress(r.State(), skill)->multiplier == ratioScale);
+    CHECK(FindSkillProgress(r.State(), r.skill)->xp == 20 * ratioScale);
+}
+
+TEST_CASE("Cap changes preserve paid final study and completed unused references", "[skills][world]") {
+    Rig r;
+    const auto skill = r.content.FindSkill("unused");
+    const auto book = r.content.FindBook("capped");
+    r.Add("capped_print", ItemLocation::Carried(r.actor));
+    r.Start(book);
+    r.Step(20);
+    REQUIRE(r.world.Learning().SetLevel(r.actor, skill, 1));
+    const auto paid = r.State();
+    const auto restored = ReadLearningState(CaptureLearningState(paid, r.content), r.content);
+    REQUIRE(restored);
+    CHECK(*restored == paid);
+    CHECK(r.world.Learning().Busy(r.actor));
+    r.Step(30);
+    const auto* progress = FindBookProgress(r.State(), book);
+    REQUIRE(progress);
+    CHECK(progress->work == 50 * ratioScale);
+    CHECK_FALSE(progress->used);
+    CHECK_FALSE(r.world.Learning().Busy(r.actor));
+    CHECK(Take(r.world.Learning().Study(r.actor, book)).outcome == StudyOutcome::OutsideTeachingRange);
+    CHECK(r.world.Learning().HasRecipeReference(r.actor, r.content.FindCraftingRecipe("make")));
+    REQUIRE(ReadLearningState(CaptureLearningState(r.State(), r.content), r.content));
+    REQUIRE(r.world.Learning().SetLevel(r.actor, skill, 0));
+    const auto turns = r.world.GetActor(r.actor)->turns;
+    r.Start(book);
+    CHECK(r.world.GetActor(r.actor)->turns == turns);
+    CHECK(FindBookProgress(r.State(), book)->used);
+    REQUIRE(r.world.CheckInvariants());
 }
 }

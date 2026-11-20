@@ -2,7 +2,9 @@
 #include "network/wire.h"
 
 #include <catch2/catch_test_macros.hpp>
+#include <chrono>
 #include <cstring>
+#include <thread>
 
 namespace {
 using namespace cataclysmx;
@@ -192,5 +194,101 @@ TEST_CASE("Learning fingerprints distinguish skill categories with compatible bo
     changed.replace(categoryPosition, std::strlen(category), "category:'combat'");
     CHECK(ContentFingerprint(LearningCatalog({changed.data(), changed.size()})) != fingerprint);
     CHECK(ContentFingerprint(LearningCatalog({baseline.data(), baseline.size()})) == fingerprint);
+}
+
+TEST_CASE("Capped skill views require canonical and catalog-matching progress", "[skills][network][codec]") {
+    String data = LearningData;
+    const char* curve = "xp_to_next:[100,200,400,800,1200,1800,2600,3600,4800,6400]";
+    const auto pos = data.find(curve); REQUIRE(pos != String::npos);
+    data.replace(pos, std::strlen(curve), "max_level:5");
+    const auto content = LearningCatalog({data.data(), data.size()});
+    auto v = LearningSnapshot(content);
+    auto& s = v.learning.skills[0];
+    s.progress = {}; s.progress.skill = content.FindSkill("making"); s.progress.level = 5;
+    s.effectiveLevel = 7; s.requiredXp = 0;
+    v.learning.activeBook = {}; v.learning.studyRemaining = 0; v.learning.studyPauseRequested = false;
+    v.learning.books[0].completedWork = 250 * ratioScale;
+    v.learning.books[0].eligible = false;
+    REQUIRE(wire::ValidLearningDefinitions(v, content));
+    wire::Writer w; REQUIRE(w.View(v));
+    wire::Reader r{{w.bytes.data(), w.bytes.size()}}; WorldView decoded;
+    REQUIRE(r.View(decoded)); CHECK(wire::ValidLearningDefinitions(decoded, content));
+    SECTION("cap retains XP") { s.progress.xp = 1; }
+    SECTION("cap retains theory") { s.progress.theory = 1; }
+    SECTION("cap retains remainder") { s.progress.workRemainder = 1; }
+    SECTION("zero required at level zero") { s.progress.level = 0; }
+    SECTION("positive required at cap") { s.requiredXp = 100 * ratioScale; }
+    SECTION("over definition maximum") { s.progress.level = 6; }
+    SECTION("zero required below cap") { s.progress.level = 4; }
+    CHECK_FALSE(wire::ValidLearningDefinitions(v, content));
+    wire::Writer malformed;
+    const bool structurallyValid = s.progress.level == 4 || s.progress.level == 6
+        || (s.progress.level == 5 && s.requiredXp != 0);
+    CHECK(malformed.View(v) == structurallyValid);
+}
+
+TEST_CASE("Skill fingerprints use maximum and active normalized thresholds", "[skills][network]") {
+    String implicit = LearningData;
+    const char* curve = "xp_to_next:[100,200,400,800,1200,1800,2600,3600,4800,6400]";
+    const auto pos = implicit.find(curve); REQUIRE(pos != String::npos);
+    implicit.replace(pos, std::strlen(curve), "max_level:5");
+    String explicitCurve = implicit;
+    const auto maxPos = explicitCurve.find("max_level:5"); REQUIRE(maxPos != String::npos);
+    explicitCurve.replace(maxPos, std::strlen("max_level:5"),
+        "max_level:5,xp_to_next:[100,200,400,800,1200]");
+    const auto capped = LearningCatalog({implicit.data(), implicit.size()});
+    const auto explicitCapped = LearningCatalog({explicitCurve.data(), explicitCurve.size()});
+    CHECK(ContentFingerprint(capped) == ContentFingerprint(explicitCapped));
+    CHECK(ContentFingerprint(capped) != ContentFingerprint(LearningCatalog()));
+    explicitCurve.replace(explicitCurve.find("100,200"), std::strlen("100,200"), "101,200");
+    CHECK(ContentFingerprint(capped) != ContentFingerprint(LearningCatalog({explicitCurve.data(), explicitCurve.size()})));
+}
+
+TEST_CASE("Completed book views preserve unused benefits without claiming active work", "[skills][network][codec]") {
+    const auto content = LearningCatalog();
+    auto view = LearningSnapshot(content);
+    view.learning.activeBook = {}; view.learning.studyRemaining = 0; view.learning.studyPauseRequested = false;
+    auto& book = view.learning.books.front();
+    book.completedWork = 250 * ratioScale;
+    SECTION("completed eligible") { CHECK(wire::ValidLearningDefinitions(view, content)); }
+    SECTION("completed ineligible") {
+        book.eligible = false;
+        CHECK(wire::ValidLearningDefinitions(view, content));
+    }
+    SECTION("used completed") {
+        book.used = true; book.eligible = false;
+        CHECK(wire::ValidLearningDefinitions(view, content));
+        --book.completedWork;
+        CHECK_FALSE(wire::ValidLearningDefinitions(view, content));
+    }
+    SECTION("completed cannot still have a funded slice") {
+        view.learning.activeBook = book.book;
+        CHECK_FALSE(wire::ValidLearningDefinitions(view, content));
+    }
+}
+
+TEST_CASE("LAN rejects a client with a different skill maximum", "[skills][network][admission]") {
+    Diagnostics diagnostics;
+    auto hostContent = LoadContentPack(CATACLYSMX_TERRAIN_FILE, &diagnostics);
+    INFO(FormatDiagnostics(diagnostics).c_str()); REQUIRE(hostContent);
+    auto clientContent = LoadContentPack(CATACLYSMX_TERRAIN_FILE, &diagnostics);
+    REQUIRE(clientContent);
+    REQUIRE(clientContent->SkillCount() > 0);
+    auto& skill = const_cast<SkillDefinition&>(clientContent->GetSkill({1}));
+    REQUIRE(skill.maxLevel > 1);
+    --skill.maxLevel;
+    REQUIRE(ContentFingerprint(*hostContent) != ContentFingerprint(*clientContent));
+    auto runtime = NetworkRuntime::Create(); REQUIRE(runtime);
+    Server server(*hostContent);
+    LanHost host(**runtime, server, *hostContent);
+    REQUIRE(host.Open({0, 0, "Skill caps"}));
+    LanClient client(**runtime, *clientContent);
+    REQUIRE(client.Connect({"127.0.0.1", host.GetPort(), "Guest", 0}));
+    for (int i = 0; i < 300 && client.GetState() != ConnectionState::Rejected; ++i) {
+        client.Pump(10000); host.Pump(10000);
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(client.GetState() == ConnectionState::Rejected);
+    CHECK(client.GetError() == NetworkError::IncompatibleContent);
 }
 }

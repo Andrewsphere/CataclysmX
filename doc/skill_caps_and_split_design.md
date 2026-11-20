@@ -1,13 +1,17 @@
 # M-Skills: individual ceilings and the Cooking/Chemistry split
 
-**Status: Proposed implementation and migration contract; review pending.**
+**Status: Implemented mechanics and migration contract.**
 Cooking's maximum of 5, the separate Chemistry identity, and the shared learning
 model are already accepted in [crafting progression](crafting_progression.md).
 The preceding [M-Bench proposal](powered_manual_stations_design.md) has also been
 accepted. This standalone document develops the next independent mechanics slice
 from the [delivery plan](crafting_delivery_plan.md).
 
-## 1. Recommended outcome
+The implementation uses learning payload version **2** and LAN protocol **26**
+(`0x43584e1a`); the enclosing save format remains **16**. See [runtime skills](skills.md)
+and [authoring schema](skills_content.md) for the current APIs and content rules.
+
+## 1. Accepted outcome
 
 | Skill | Stable ID | Learned maximum | Learning |
 | --- | --- | ---: | --- |
@@ -20,21 +24,21 @@ entries of the existing default curve, without rescaling:
 100, 200, 400, 800 and 1,200 XP to earn successive levels.
 Chemistry retains the complete ten-entry curve.
 
-**Recommended migration:** an old `cooking_chemistry` record becomes progress in
+**Accepted migration:** an old `cooking_chemistry` record becomes progress in
 both new skills. Chemistry retains the full record; Cooking retains it below
 level 5 or becomes a clean capped level-5 record. This grants continuity of the
 proficiency represented by the former combined skill. After migration, the two
 skills earn progress independently.
 
-The inspected shipped data references `cooking_chemistry` only in
-`data/skills/core.json5`; no current recipe, recycler or book refers to it.
+The integrated pre-split data referenced `cooking_chemistry` only in
+`data/skills/core.json5`; no shipped recipe, recycler or book referred to it.
 The skill roster therefore grows from 17 to 18 without a shipped recipe/book
-rewrite. Recheck that observation against the integrated baseline before coding.
+rewrite.
 Separate food and chemical gameplay/content passes provide useful activities.
 
 ## 2. Content schema and definition shape
 
-Add optional `max_level` to a skill definition:
+Skill definitions accept optional `max_level`:
 
 ```json5
 {type:'skill', id:'cooking', name:'Cooking',
@@ -43,7 +47,7 @@ Add optional `max_level` to a skill definition:
  category:'noncombat'}
 ```
 
-Proposed rules:
+Schema rules:
 
 - `max_level` is an integer in `[1, 10]`, default 10. Zero does not mean disabled
   or unlimited. Unknown/duplicate fields remain errors.
@@ -62,7 +66,7 @@ For example, an explicit Cooking curve is:
  xp_to_next:[100,200,400,800,1200]}
 ```
 
-Recommended addition to `SkillDefinition`:
+`SkillDefinition` stores:
 
 ```cpp
 std::uint8_t maxLevel = maximumSkillLevel;
@@ -214,11 +218,11 @@ advanced reserves into ordinary Cooking XP.
 
 ### Versioned, transactional read
 
-Use a new learning-payload version for the changed identity/ceiling semantics.
-The inspected payload is version 1; version 2 is the candidate, to confirm against
-the integrated implementation baseline. The field layout can remain unchanged.
+Learning payload version 2 records the changed identity/ceiling semantics.
+Version 1 remains readable under the migration rules below; the field layout is
+unchanged.
 
-Recommended `ReadLearningState` flow:
+`ReadLearningState` flow:
 
 1. Parse the old payload strictly into temporary state. Detect duplicate stable
    names even if a name will expand into two destination entries.
@@ -267,10 +271,10 @@ The save transaction remains authoritative, and a failed read cannot leave one
 destination skill installed. No full-world activation or second migration ledger
 is needed.
 
-Only the learning envelope changes version here. This design needs no additional
+Only the learning envelope changes save version here. This design needs no additional
 SQLite column, per-character maximum, world-generation change or new crafting-job
-field. Confirm the enclosing save compatibility policy during implementation
-rather than reserving a global version number alongside concurrent work.
+field. The enclosing format remains version 16: its archive validator and writer
+already decode learning envelopes and capture normalized values transactionally.
 
 ## 6. Books, knowledge and unfinished jobs during the split
 
@@ -330,16 +334,15 @@ Update both levels of network validation:
    XP exactly at that maximum, and the correct positive threshold below it.
    Apply ordinary/advanced accounting constraints only to noncapped entries.
 
-The existing wire validator assumes every learned level below 10 has positive
+The previous wire validator assumed every learned level below 10 had positive
 required XP. Merely changing server progression would therefore reject valid
-Cooking-5 views. This is a protocol-semantic change even if byte layout remains
-the same: allocate the next protocol version during integration, and fingerprint
-skill maxima and active XP curves. Matching clients use the same cap semantics.
+Cooking-5 views. Protocol 26 carries the new semantics with unchanged byte layout,
+and fingerprints skill maxima and active XP curves. Matching clients use the same cap semantics.
 Content-local numeric skill IDs may shift; saves continue using stable names.
 
-## 8. Implementation handoff and acceptance
+## 8. Implementation and acceptance
 
-Likely touchpoints for the later mechanics pass:
+Implemented touchpoints:
 
 - Skill definition/parsing and all resolved skill-reference validation.
 - Pure progression helpers, world learning entry points, study previews and state
@@ -366,9 +369,14 @@ Focused verification:
 Relevant read-only references included `skill_definition.h`, `skill_state.cpp`,
 `learning_system.cpp`, content skill/book resolution, shared crafting summaries,
 learning wire validators and the progression/save test sources. Implementation
-and game verification are pending.
+is covered by focused schema, progression, world, persistence, network, UI and pack tests.
+Verification: the `win-msvc-debug` build and 183 focused CTest cases passed
+(`skills`, `skill-content`, `skill-ui`, `skill-pack`, `combat-content`,
+`combat-learning`, `combat-ui`, `crafting-ui`, `codec`, and `content-pack` tags).
+This includes archived-credit migration, paid study, unfinished-job resources and
+independent future training; the full suite and other presets were not run.
 
-### Decisions to review
+### Accepted decisions
 
 1. **Grandfather legacy combined proficiency into both skills**, capping Cooking
    at 5 and retaining full Chemistry accounting.
@@ -377,6 +385,6 @@ and game verification are pending.
 3. **Preserve the current effective-level and paid-study semantics**, with clear
    cap presentation and matching network validation.
 
-After acceptance, M-Skills can be implemented independently of M-Bench and W3.
-Food, preservation and chemical-process content then use the separate identities
+M-Skills is independent of M-Bench and W3.
+Food, preservation and chemical-process content can use the separate identities
 under their own gameplay contracts.

@@ -75,9 +75,10 @@ bool TrainSkillWork(World& world, ActorHandle handle, SkillId skill, int opponen
         const auto level = LearnedSkillLevel(actor->learning, skill);
         const auto ratio = CombatTrainingRatio(opponentRank, level);
         if (!ratio) { return true; }
-        if (level == maximumSkillLevel) { return false; }
+        const auto& definition = world.GetContent().GetSkill(skill);
+        if (level == definition.maxLevel) { return false; }
         const auto* progress = FindSkillProgress(actor->learning, skill);
-        const auto required = SkillXpRequired(world.GetContent().GetSkill(skill), level);
+        const auto required = SkillXpRequired(definition, level);
         const auto missing = required - (progress ? progress->xp : 0);
         const auto multiplier = progress ? progress->multiplier : ratioScale;
         const auto boostRemainder = progress ? progress->boostRemainder : 0;
@@ -87,7 +88,7 @@ bool TrainSkillWork(World& world, ActorHandle handle, SkillId skill, int opponen
         const auto workNumerator = rawNeeded * ratioScale - workRemainder;
         const auto untilLevel = workNumerator / ratio + (workNumerator % ratio != 0);
         const auto chunk = eastl::min(work, eastl::max(std::uint64_t{1}, untilLevel));
-        Require(world.Learning().Train(handle, {skill, 9, ratio}, SkillActivity::Combat, chunk).has_value());
+        Require(world.Learning().Train(handle, {skill, definition.maxLevel, ratio}, SkillActivity::Combat, chunk).has_value());
         work -= chunk;
     }
     return false;

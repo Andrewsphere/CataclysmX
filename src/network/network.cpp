@@ -385,7 +385,8 @@ std::uint64_t ContentFingerprint(const ContentCatalog& content) {
         const auto& skill = content.GetSkill({static_cast<std::uint32_t>(i + 1)});
         HashString(hash, skill.id); HashString(hash, skill.name);
         HashNumber(hash, static_cast<std::uint8_t>(skill.category));
-        for (const auto xp : skill.xpToNext) HashNumber(hash, xp);
+        HashNumber(hash, skill.maxLevel);
+        for (std::size_t level = 0; level < skill.maxLevel; ++level) HashNumber(hash, skill.xpToNext[level]);
     }
     HashNumber(hash, content.BookCount());
     for (std::size_t i = 0; i < content.BookCount(); ++i) {

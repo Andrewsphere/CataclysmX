@@ -49,6 +49,61 @@ ContentResult<ContentCatalog> LoadCombat(eastl::string_view extra, eastl::string
     return LoadContent({sources, 3}, diagnostics);
 }
 
+TEST_CASE("Skill ceilings and active curves participate in content fingerprints", "[content][combat-content][skill-content]") {
+    const auto implicit = LoadFixture("{type:'skill',id:'limited',name:'Limited',max_level:5}");
+    const auto explicitCurve = LoadFixture("{type:'skill',id:'limited',name:'Limited',xp_to_next:[100,200,400,800,1200],max_level:5}");
+    const auto higher = LoadFixture("{type:'skill',id:'limited',name:'Limited',max_level:6}");
+    const auto changed = LoadFixture("{type:'skill',id:'limited',name:'Limited',max_level:5,xp_to_next:[100,200,400,800,1201]}");
+    REQUIRE(implicit); REQUIRE(explicitCurve); REQUIRE(higher); REQUIRE(changed);
+    CHECK(network::ContentFingerprint(*implicit) == network::ContentFingerprint(*explicitCurve));
+    CHECK(network::ContentFingerprint(*implicit) != network::ContentFingerprint(*higher));
+    CHECK(network::ContentFingerprint(*implicit) != network::ContentFingerprint(*changed));
+    const auto defaultMaximum = LoadFixture("{type:'skill',id:'limited',name:'Limited'}");
+    const auto explicitMaximum = LoadFixture("{type:'skill',id:'limited',name:'Limited',max_level:10}");
+    REQUIRE(defaultMaximum); REQUIRE(explicitMaximum);
+    CHECK(network::ContentFingerprint(*defaultMaximum) == network::ContentFingerprint(*explicitMaximum));
+}
+
+TEST_CASE("Combat unlocks and art manuals enforce forward referenced skill ceilings", "[content][combat-content][skill-content]") {
+    constexpr auto skill = "{type:'skill',id:'limited',name:'Limited',category:'combat',max_level:5}";
+    struct Example { const char* definition; const char* path; };
+    for (const auto& example : {
+        Example{"{type:'combat_move',id:'limited_move',name:'Move',requirements:{primary:{kind:'empty_hand'}},strikes:[{}],unlock:{skills:[{skill:'limited',level:6}]}}",
+                "definitions[0].unlock.skills[0].level"},
+        Example{"{type:'book',id:'limited_manual',name:'Manual',study_work:1,art_manuals:[{art:'boxing',skill:'limited',level:6,success_chance:10000,base_duration:1}]}",
+                "definitions[0].art_manuals[0].level"}
+    }) {
+        String extra = example.definition;
+        extra += ',';
+        extra += skill;
+        Diagnostics diagnostics;
+        const auto loaded = LoadCombat(View(extra), {}, {}, &diagnostics);
+        REQUIRE_FALSE(loaded);
+        REQUIRE_FALSE(diagnostics.Empty());
+        REQUIRE(diagnostics.Frames()[0].location);
+        CHECK(diagnostics.Frames()[0].location->path == example.path);
+        CHECK(diagnostics.Frames()[0].message.find("maximum 5") != String::npos);
+        CHECK_FALSE(LoadCombat(View(extra)));
+    }
+    Diagnostics diagnostics;
+    const auto artGrant = LoadCombat(skill,
+        "ability:'leap',unlock:{skills:[{skill:'unarmed',level:2}]",
+        "ability:'leap',unlock:{skills:[{skill:'limited',level:6}]", &diagnostics);
+    REQUIRE_FALSE(artGrant);
+    REQUIRE_FALSE(diagnostics.Empty());
+    CHECK(diagnostics.Frames()[0].message.find("maximum 5") != String::npos);
+    CHECK(diagnostics.Frames()[0].location->path.find(".abilities[1].unlock.skills[0].level") != String::npos);
+    for (const char* level : {"0", "5"}) {
+        String extra = "{type:'combat_move',id:'limited_move',name:'Move',requirements:{primary:{kind:'empty_hand'}},strikes:[{}],unlock:{skills:[{skill:'limited',level:";
+        extra += level;
+        extra += "}]}},{type:'book',id:'limited_manual',name:'Manual',study_work:1,art_manuals:[{art:'boxing',skill:'limited',level:";
+        extra += level;
+        extra += ",success_chance:10000,base_duration:1}]},";
+        extra += skill;
+        CHECK(LoadCombat(View(extra)));
+    }
+}
+
 TEST_CASE("Combat fixture baseline is explicit and does not add skills", "[content][combat-content]") {
     const auto result = LoadFixture("");
     REQUIRE(result);

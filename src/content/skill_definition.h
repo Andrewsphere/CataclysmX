@@ -10,6 +10,7 @@ struct SkillDefinition {
     String id;
     String name;
     SkillCategory category = SkillCategory::Noncombat;
+    std::uint8_t maxLevel = maximumSkillLevel;
     // Whole XP to earn each next level (index 0 earns level 1).
     eastl::array<std::uint32_t, maximumSkillLevel> xpToNext{
         100, 200, 400, 800, 1200, 1800, 2600, 3600, 4800, 6400};

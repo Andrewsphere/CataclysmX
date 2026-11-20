@@ -270,4 +270,4 @@ The content sources and focused tests are registered in the integrated build.
 The complete SDL-enabled suite passes; see [combat verification](combat_verification.md)
 for commands, counts, and the separate gameplay experiment baseline. Catalog
 checks preserve authored-item and capability assertions while accounting for the
-generated corpse: the demo pack has 17 items, Town 98 items, and Town 17 skills.
+generated corpse: the demo pack has 17 items, Town 98 items, and Town 18 skills.

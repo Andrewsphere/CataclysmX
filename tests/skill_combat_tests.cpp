@@ -9,7 +9,7 @@ namespace {
 using namespace cataclysmx;
 template<class T, class E> T Take(eastl::expected<T, E> value) { REQUIRE(value); return eastl::move(*value); }
 
-ContentCatalog CombatContent() {
+ContentCatalog CombatContent(bool capped = false) {
     const ContentSource source{"skill-combat.json5", R"({format_version:1,definitions:[
       {type:'terrain',id:'floor',name:'floor',movement:{passable:true},blocks_sight:false,appearance:{symbol:'.',foreground:'white'}},
       {type:'terrain',id:'wall',name:'wall',movement:{passable:false},blocks_sight:true,appearance:{symbol:'#',foreground:'white'}},
@@ -32,15 +32,20 @@ ContentCatalog CombatContent() {
     fist.requirements.primary.freeHands = HandMask::Both;
     auto& weapon = const_cast<CombatMoveDefinition&>(content->GetCombatMove(content->FindCombatMove("basic_weapon")));
     weapon.strikes[0].intrinsicMiss = 0;
+    if (capped) {
+        auto& melee = const_cast<SkillDefinition&>(content->GetSkill(content->FindSkill("melee")));
+        melee.maxLevel = 1;
+        for (std::size_t i = 1; i < melee.xpToNext.size(); ++i) { melee.xpToNext[i] = 0; }
+    }
     return eastl::move(*content);
 }
 
 struct Rig {
-    ContentCatalog content = CombatContent();
+    ContentCatalog content;
     World world{content};
     ActorHandle attacker{}, defender{};
     std::uint32_t rng = 7;
-    Rig() {
+    explicit Rig(bool capped = false) : content(CombatContent(capped)) {
         Take(world.RequestChunks({{}, 0}, LoadMode::active)); REQUIRE(world.ReconcileChunks());
         for (int z = 1; z <= 5; ++z) for (int x = 1; x <= 6; ++x) {
             REQUIRE(world.SetTile({x, z}, {content.FindTerrain("floor"), 0}));
@@ -79,6 +84,22 @@ TEST_CASE("Multiple weapon packets train melee once and no unarmed", "[skills][c
     CHECK(r.Xp(r.attacker, "melee") == ratioScale);
     CHECK(r.Xp(r.attacker, "unarmed") == 0);
     CHECK(r.Xp(r.defender, "dodge") == 0);
+}
+
+TEST_CASE("Combat training honors a lower skill maximum without suppressing other skills", "[skills][combat]") {
+    Rig r(true);
+    const auto melee = r.content.FindSkill("melee");
+    Take(r.world.Learning().Train(r.attacker, {melee, 0, ratioScale}, SkillActivity::Combat, 100 * ratioScale - 1));
+    REQUIRE(r.world.Combat().Attack(r.attacker, r.defender, r.rng).committed);
+    SkillProgress capped{melee}; capped.level = 1;
+    REQUIRE(FindSkillProgress(r.world.GetActor(r.attacker)->learning, melee));
+    CHECK(*FindSkillProgress(r.world.GetActor(r.attacker)->learning, melee) == capped);
+    CHECK(r.Xp(r.attacker, "unarmed") == 6000);
+    r.world.ElapseTicks(100); r.world.Combat().ProcessEvents(r.rng);
+    REQUIRE(r.world.Combat().Attack(r.attacker, r.defender, r.rng).committed);
+    CHECK(*FindSkillProgress(r.world.GetActor(r.attacker)->learning, melee) == capped);
+    CHECK(r.Xp(r.attacker, "unarmed") == 12000);
+    REQUIRE(r.world.CheckInvariants());
 }
 
 TEST_CASE("Parrying trains defender melee instead of dodge", "[skills][combat]") {

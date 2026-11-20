@@ -272,10 +272,9 @@ separate "simple" and "complex" skill systems.
 - With the current advanced-learning boundary, reaching Cooking 5 uses ordinary
   progression from levels 0–4. It would have no 5→6 theory/practice step.
 
-This needs a later engine/content implementation pass: `SkillDefinition`
-currently has a fixed ten-entry XP curve and no individual level ceiling.
-Learning, content validation, presentation and persistence compatibility need a
-coordinated review. No code or data change is part of this discussion.
+M-Skills implements this policy through `SkillDefinition::maxLevel`, bounded
+fixed-array curves, cap-aware learning/content validation/presentation and versioned
+migration. See the [implementation contract](skill_caps_and_split_design.md).
 
 ## 4. Skill ownership and rough output families
 
@@ -291,8 +290,8 @@ their own acquisition/operation review.
 | Computers | Software, information, digital control and future hacking | Ordinary file handling, basic device setup and preparing simple software tools | Data recovery, technical archives, hacking-tool preparation/use, machine setup and design-file preparation | Advanced automation, specialized hacking systems and fabrication software |
 | Tailoring | Textile/leather construction and fit | Patches, bindings, bags and simple garments | Work clothing, load-bearing equipment, reinforced clothing and fitted protection | Technical fabrics, complex protective garments and specialized gear |
 | Survival | Field materials, low-infrastructure production and post-cataclysm biological resources | Cordage, simple field tools, basic shelter components | Durable outdoor equipment and prepared natural materials | Recognizing/preparing useful monster-derived materials and specialized field equipment |
-| Cooking (planned split) | Food preparation and preservation | Basic preparation and meals | Demanding preparation and preservation | Selected specialist work at accepted cap 5 |
-| Chemistry (planned split) | Chemical processing and material preparation | Simple material mixtures | Controlled workshop chemical processes | Specialized compounds and industrial material preparation |
+| Cooking | Food preparation and preservation | Basic preparation and meals | Demanding preparation and preservation | Selected specialist work at accepted cap 5 |
+| Chemistry | Chemical processing and material preparation | Simple material mixtures | Controlled workshop chemical processes | Specialized compounds and industrial material preparation |
 | Medicine | Medical preparation, treatment and future surgery | Simple dressings and basic care supplies | Prepared medical kits and clinical supplies | Surgery, including installing bionics in other characters, and specialized medical work |
 
 Combat skills govern use of weapons and combat learning. A proposed sword recipe
@@ -300,9 +299,10 @@ belongs primarily to Fabrication rather than requiring Swords merely because its
 product is a sword. Manufacturing medical equipment may require Electronics or
 Mechanics alongside relevant medical knowledge; it is not all Medicine.
 
-**Accepted direction:** split Cooking and Chemistry in a later implementation
-pass. The current `cooking_chemistry` identity remains unchanged in shipped data.
-Existing progress, recipes and books need an explicit migration/content decision.
+**Implemented mechanics:** Cooking and Chemistry have separate shipped identities.
+Legacy `cooking_chemistry` progress migrates to both, capped at Cooking 5, under the
+[bounded migration contract](skill_caps_and_split_design.md). Food and chemical
+activities still need their own content passes.
 
 ### Agreed future-domain hooks
 
@@ -1103,8 +1103,8 @@ construction/setup skills are still open. Chemical processing supplies a useful
 application of selected unattended machines, with actual setup work distinct from
 elapsed runtime.
 
-Implementation boundary: the shipped skill remains `cooking_chemistry`. Splitting
-it and introducing a Cooking ceiling need the migration/learning review above.
+Implementation boundary: shipped Cooking and Chemistry are separate, with Cooking
+capped at 5 and validated legacy proficiency migrated into both.
 Food preservation and chemical processes need their own material, container,
 heat and action support; this discussion does not specify a general chemistry
 simulation or change the existing power/workshop contracts.

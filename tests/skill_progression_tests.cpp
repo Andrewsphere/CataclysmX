@@ -45,6 +45,318 @@ SkillAward Train(LearningState& state, const ContentCatalog& content, SkillId sk
     return TrainSkill(state, content, {skill, ceiling, ratioScale}, activity, xp * xpUnit);
 }
 
+ContentCatalog SplitContent(bool extra = false) {
+    const ContentSource sources[]{
+        {"split", R"({format_version:1,definitions:[
+          {type:'skill',id:'cooking',name:'Cooking',max_level:5},
+          {type:'skill',id:'chemistry',name:'Chemistry'},
+          {type:'skill',id:'advanced',name:'Advanced',max_level:6},
+          {type:'skill',id:'small',name:'Small',max_level:1},
+          {type:'book',id:'both',name:'Both',study_work:100,benefits:[
+            {skill:'cooking',first_level:1,last_level:5,direct_xp:20,multiplier:20000},
+            {skill:'chemistry',first_level:1,last_level:10,direct_xp:20,theory_xp:100,multiplier:20000}]},
+          {type:'item',id:'result',name:'Result',mass_g:1,volume_ml:1},
+          {type:'recipe',id:'manual',inputs:[],result:{item:'result',count:1},work:1,
+            knowledge:{crafts_to_learn:2,disassemblies_to_learn:3}},
+          {type:'recipe',id:'automatic',inputs:[],result:{item:'result',count:1},work:1,
+            skills:[{skill:'cooking',level:3}],knowledge:{autolearn:[{skill:'chemistry',level:3}]}}
+        ]})"},
+        {"extra", R"({format_version:1,definitions:[{type:'skill',id:'aaa',name:'Earlier'}]})"}
+    };
+    Diagnostics diagnostics;
+    auto content = LoadContent({sources, extra ? 2u : 1u}, &diagnostics);
+    INFO(FormatDiagnostics(diagnostics).c_str());
+    REQUIRE(content);
+    return eastl::move(*content);
+}
+
+ContentCatalog LegacyContent() {
+    const ContentSource source{"legacy", R"({format_version:1,definitions:[
+      {type:'skill',id:'cooking_chemistry',name:'Cooking and Chemistry'}]})"};
+    auto content = LoadContent({&source, 1});
+    REQUIRE(content);
+    return eastl::move(*content);
+}
+
+DataObject LegacyPayload(SkillProgress progress) {
+    const auto content = LegacyContent();
+    progress.skill = content.FindSkill("cooking_chemistry");
+    LearningState state;
+    EnsureSkillProgress(state, progress.skill) = progress;
+    auto data = CaptureLearningState(state, content);
+    data.SetUnsigned("version", 1);
+    return data;
+}
+
+void CheckCap(const SkillProgress& progress, std::uint8_t maximum) {
+    SkillProgress expected{progress.skill};
+    expected.level = maximum;
+    CHECK(progress == expected);
+}
+
+TEST_CASE("Individual skill ceilings clear ordinary and advanced accounting", "[skills][progression]") {
+    const auto content = SplitContent();
+    LearningState state;
+    const auto skill = content.FindSkill("cooking");
+    auto& p = EnsureSkillProgress(state, skill);
+    p.level = 4;
+    p.xp = SkillXpRequired(content.GetSkill(skill), 4) - 1;
+    p.directBookXp = 10;
+    p.multiplier = 15001;
+    p.boostRemainder = 37;
+    p.workRemainder = 1;
+    const auto award = TrainSkill(state, content, {skill, 5, 5000}, SkillActivity::Craft, 1000000);
+    CHECK(award.levels == 1);
+    CHECK(award.capped > 0);
+    CheckCap(*FindSkillProgress(state, skill), 5);
+    CHECK(SkillXpRequired(content.GetSkill(skill), 5) == 0);
+    CHECK(EffectiveSkillLevel(state, skill, 2) == 7);
+    const auto before = state;
+    TrainSkill(state, content, {skill, 5, 137}, SkillActivity::Disassembly, UINT64_MAX);
+    CHECK(state == before);
+
+    const auto advanced = content.FindSkill("advanced");
+    auto& a = EnsureSkillProgress(state, advanced);
+    a.level = 5;
+    a.xp = SkillXpRequired(content.GetSkill(advanced), 5) - 1;
+    a.theory = 1;
+    a.workRemainder = 1;
+    CHECK(TrainSkill(state, content, {advanced, 6, 5000}, SkillActivity::Craft, 3).levels == 1);
+    CheckCap(*FindSkillProgress(state, advanced), 6);
+    const auto small = content.FindSkill("small");
+    TrainSkill(state, content, {small, 1, ratioScale}, SkillActivity::Craft, UINT64_MAX);
+    CheckCap(*FindSkillProgress(state, small), 1);
+    CHECK(ReadLearningState(CaptureLearningState(state, content), content));
+}
+
+TEST_CASE("Mixed books skip capped benefits without disabling remaining learning", "[skills][books]") {
+    const auto content = SplitContent();
+    LearningState state;
+    const auto cooking = content.FindSkill("cooking"), chemistry = content.FindSkill("chemistry");
+    EnsureSkillProgress(state, cooking).level = 5;
+    EnsureSkillProgress(state, chemistry).level = 5;
+    const auto book = content.FindBook("both");
+    REQUIRE(CanStudyBook(state, content, book));
+    REQUIRE(CompleteBookStudy(state, content, book));
+    CheckCap(*FindSkillProgress(state, cooking), 5);
+    CHECK(FindSkillProgress(state, chemistry)->theory == 100 * xpUnit);
+    CHECK(FindBookProgress(state, book)->used);
+    CHECK_FALSE(CompleteBookStudy(state, content, book));
+}
+
+TEST_CASE("Ordinary book completion reaches a clean authored cap", "[skills][books]") {
+    const auto content = SplitContent();
+    LearningState state;
+    const auto cooking = content.FindSkill("cooking");
+    auto& p = EnsureSkillProgress(state, cooking);
+    p.level = 4;
+    p.xp = SkillXpRequired(content.GetSkill(cooking), 4) - xpUnit;
+    p.multiplier = 23456;
+    p.workRemainder = 123;
+    p.boostRemainder = 456;
+    REQUIRE(CompleteBookStudy(state, content, content.FindBook("both")));
+    CheckCap(*FindSkillProgress(state, cooking), 5);
+    REQUIRE(ReadLearningState(CaptureLearningState(state, content), content));
+}
+
+TEST_CASE("Split skills advance independently after a shared legacy threshold", "[skills][migration]") {
+    const auto content = SplitContent();
+    SkillProgress source; source.level = 4; source.xp = 1199 * xpUnit;
+    auto state = ReadLearningState(LegacyPayload(source), content);
+    REQUIRE(state);
+    const auto cooking = content.FindSkill("cooking"), chemistry = content.FindSkill("chemistry");
+    CHECK(TrainSkill(*state, content, {cooking, 5, ratioScale}, SkillActivity::Craft, xpUnit).levels == 1);
+    CheckCap(*FindSkillProgress(*state, cooking), 5);
+    CHECK(FindSkillProgress(*state, chemistry)->level == 4);
+    CHECK(FindSkillProgress(*state, chemistry)->xp == source.xp);
+    CHECK(TrainSkill(*state, content, {chemistry, 10, ratioScale}, SkillActivity::Craft, 100 * xpUnit).levels == 1);
+    CHECK(FindSkillProgress(*state, chemistry)->level == 5);
+    CHECK(FindSkillProgress(*state, chemistry)->practice == 0);
+    CHECK(FindSkillProgress(*state, chemistry)->theory == 0);
+    CHECK(FindSkillProgress(*state, chemistry)->xp == 0);
+}
+
+TEST_CASE("Legacy split preserves exact accounting and permanently reevaluates autolearn", "[skills][migration]") {
+    const auto content = SplitContent();
+    SkillProgress source;
+    source.level = 3;
+    source.xp = 250 * xpUnit + 13;
+    source.directBookXp = 20 * xpUnit;
+    source.multiplier = 23456;
+    source.workRemainder = 123;
+    source.boostRemainder = 456;
+    SECTION("ordinary boosted fractional") {}
+    SECTION("ordinary final threshold") {
+        source.level = 4; source.xp = 1199 * xpUnit;
+    }
+    SECTION("advanced theory") {
+        source = {}; source.level = 7; source.xp = 600 * xpUnit; source.theory = 100 * xpUnit;
+        source.workRemainder = 4321;
+    }
+    SECTION("advanced practice") {
+        source = {}; source.level = 5; source.practice = 100 * xpUnit;
+    }
+    SECTION("maximum") { source = {}; source.level = 10; }
+    const auto saved = LegacyPayload(source);
+    auto restored = ReadLearningState(saved, content);
+    REQUIRE(restored);
+    auto expected = source;
+    expected.skill = content.FindSkill("chemistry");
+    CHECK(*FindSkillProgress(*restored, expected.skill) == expected);
+    expected.skill = content.FindSkill("cooking");
+    if (source.level >= 5) { expected = SkillProgress{expected.skill}; expected.level = 5; }
+    CHECK(*FindSkillProgress(*restored, expected.skill) == expected);
+    REQUIRE(restored->recipes.size() == 1);
+    const auto automatic = content.FindCraftingRecipe("automatic");
+    CHECK(restored->recipes[0].points == RecipeLearningGoal(content.GetCraftingRecipe(automatic)));
+    const auto current = CaptureLearningState(*restored, content);
+    CHECK(current.GetUnsigned("version") == 2);
+    const auto repeated = ReadLearningState(current, content);
+    REQUIRE(repeated);
+    CHECK(*repeated == *restored);
+    const auto reordered = SplitContent(true);
+    const auto reorderedState = ReadLearningState(saved, reordered);
+    REQUIRE(reorderedState);
+    CHECK(CaptureLearningState(*reorderedState, reordered) == current);
+    EnsureSkillProgress(*restored, content.FindSkill("cooking")) = SkillProgress{content.FindSkill("cooking")};
+    EnsureSkillProgress(*restored, content.FindSkill("chemistry")) = SkillProgress{content.FindSkill("chemistry")};
+    CHECK(KnowsRecipe(*restored, content, automatic));
+}
+
+TEST_CASE("Absent legacy records stay sparse and defined old names resolve normally", "[skills][migration]") {
+    const auto content = SplitContent();
+    auto saved = CaptureLearningState(LearningState{}, content);
+    saved.SetUnsigned("version", 1);
+    const auto absent = ReadLearningState(saved, content);
+    REQUIRE(absent);
+    CHECK(*absent == LearningState{});
+    CHECK(ReadLearningState(DataObject{}, content));
+    SkillProgress p; p.level = 7; p.theory = 123;
+    const auto old = LegacyContent();
+    const auto normal = ReadLearningState(LegacyPayload(p), old);
+    REQUIRE(normal);
+    REQUIRE(normal->skills.size() == 1);
+    CHECK(normal->skills[0].level == 7);
+    CHECK(normal->skills[0].theory == 123);
+    auto versionTwo = LegacyPayload(p); versionTwo.SetUnsigned("version", 2);
+    CHECK(ReadLearningState(versionTwo, old));
+    CHECK_FALSE(ReadLearningState(versionTwo, content));
+}
+
+TEST_CASE("Legacy conversion rejects corrupt sources before clipping cooking", "[skills][migration]") {
+    const auto content = SplitContent();
+    SkillProgress p; p.level = 7;
+    auto saved = LegacyPayload(p);
+    auto value = saved.Find("skills")->At(0);
+    SECTION("mastery XP") { value.SetUnsigned("level", 10); value.SetUnsigned("xp", 1); }
+    SECTION("level out of range") { value.SetUnsigned("level", 11); }
+    SECTION("mastery reserve") { value.SetUnsigned("level", 10); value.SetUnsigned("practice", 1); }
+    SECTION("mastery fraction") { value.SetUnsigned("level", 10); value.SetUnsigned("workRemainder", 1); }
+    SECTION("overfull XP") { value.SetUnsigned("xp", 3600 * xpUnit); }
+    SECTION("overfull reserve") { value.SetUnsigned("theory", 3600 * xpUnit + 1); }
+    SECTION("paired reserves") { value.SetUnsigned("theory", 1); value.SetUnsigned("practice", 1); }
+    SECTION("advanced multiplier") { value.SetUnsigned("multiplier", 20000); }
+    SECTION("advanced book XP") { value.SetUnsigned("directBookXp", 1); }
+    SECTION("ordinary reserve") { value.SetUnsigned("level", 4); value.SetUnsigned("theory", 1); }
+    SECTION("ordinary book allowance") {
+        value.SetUnsigned("level", 4); value.SetUnsigned("xp", 400 * xpUnit);
+        value.SetUnsigned("directBookXp", 361 * xpUnit);
+    }
+    SECTION("fraction out of range") { value.SetUnsigned("workRemainder", ratioScale); }
+    SECTION("boost fraction without boost") { value.SetUnsigned("level", 4); value.SetUnsigned("boostRemainder", 1); }
+    auto list = DataObject::List(); list.Append(value); saved.Set("skills", eastl::move(list));
+    Diagnostics diagnostics;
+    CHECK_FALSE(ReadLearningState(saved, content, &diagnostics));
+    CHECK_FALSE(FormatDiagnostics(diagnostics).empty());
+    CHECK_FALSE(ReadLearningState(saved, content));
+}
+
+TEST_CASE("Legacy split conflicts reject both record orders and duplicates", "[skills][migration]") {
+    const auto content = SplitContent();
+    auto saved = LegacyPayload({});
+    auto legacy = saved.Find("skills")->At(0);
+    auto destination = legacy;
+    const char* name = "cooking";
+    SECTION("cooking") {}
+    SECTION("chemistry") { name = "chemistry"; }
+    SECTION("duplicate legacy") { name = "cooking_chemistry"; }
+    destination.SetString("skill", name);
+    for (const bool reversed : {false, true}) {
+        auto list = DataObject::List();
+        list.Append(reversed ? destination : legacy);
+        list.Append(reversed ? legacy : destination);
+        saved.Set("skills", eastl::move(list));
+        CHECK_FALSE(ReadLearningState(saved, content));
+    }
+}
+
+TEST_CASE("Legacy split requires exact bounded destinations and never clamps other skills", "[skills][migration]") {
+    const char* definitions = nullptr;
+    SECTION("missing chemistry") { definitions = R"({format_version:1,definitions:[
+      {type:'skill',id:'cooking',name:'Cooking',max_level:5}]})"; }
+    SECTION("missing cooking") { definitions = R"({format_version:1,definitions:[
+      {type:'skill',id:'chemistry',name:'Chemistry'}]})"; }
+    SECTION("wrong cooking maximum") { definitions = R"({format_version:1,definitions:[
+      {type:'skill',id:'cooking',name:'Cooking',max_level:6},{type:'skill',id:'chemistry',name:'Chemistry'}]})"; }
+    SECTION("wrong chemistry maximum") { definitions = R"({format_version:1,definitions:[
+      {type:'skill',id:'cooking',name:'Cooking',max_level:5},{type:'skill',id:'chemistry',name:'Chemistry',max_level:9}]})"; }
+    SECTION("wrong category") { definitions = R"({format_version:1,definitions:[
+      {type:'skill',id:'cooking',name:'Cooking',max_level:5,category:'combat'},{type:'skill',id:'chemistry',name:'Chemistry'}]})"; }
+    SECTION("rebalanced curve") { definitions = R"({format_version:1,definitions:[
+      {type:'skill',id:'cooking',name:'Cooking',max_level:5,xp_to_next:[101,200,400,800,1200]},
+      {type:'skill',id:'chemistry',name:'Chemistry'}]})"; }
+    REQUIRE(definitions);
+    const ContentSource source{"changed", definitions};
+    auto content = LoadContent({&source, 1});
+    REQUIRE(content);
+    CHECK_FALSE(ReadLearningState(LegacyPayload({}), *content));
+    const auto split = SplitContent();
+    auto current = LegacyPayload({});
+    current.SetUnsigned("version", 2);
+    auto value = current.Find("skills")->At(0);
+    value.SetString("skill", "cooking");
+    value.SetUnsigned("level", 6);
+    auto list = DataObject::List(); list.Append(value); current.Set("skills", eastl::move(list));
+    CHECK_FALSE(ReadLearningState(current, split));
+    current.SetUnsigned("version", 1);
+    CHECK_FALSE(ReadLearningState(current, split));
+}
+
+TEST_CASE("Legacy migration preserves recipe credit book identity and paid study", "[skills][migration]") {
+    const auto content = SplitContent();
+    LearningState state;
+    const auto book = content.FindBook("both");
+    EnsureBookProgress(state, book).work = 123;
+    state.study = {book, 37, 500000, 137, 5, true, true};
+    const auto recipe = content.FindCraftingRecipe("manual");
+    LearnRecipe(state, content, recipe, 1234);
+    SkillProgress source; source.level = 2;
+    SECTION("partial paid study") {}
+    SECTION("paid study becomes capped") { source.level = 10; }
+    SECTION("used identity") {
+        EnsureBookProgress(state, book).work = 100 * xpUnit;
+        EnsureBookProgress(state, book).used = true;
+        state.study = {};
+    }
+    auto saved = CaptureLearningState(state, content);
+    saved.SetUnsigned("version", 1);
+    const auto legacy = LegacyPayload(source);
+    saved.Set("skills", *legacy.Find("skills"));
+    const auto restored = ReadLearningState(saved, content);
+    REQUIRE(restored);
+    CHECK(restored->books == state.books);
+    CHECK(restored->study == state.study);
+    bool found = false;
+    for (const auto& p : restored->recipes) {
+        if (p.recipe == recipe) { found = true; CHECK(p.points == 1234); }
+    }
+    CHECK(found);
+    if (source.level == 10) {
+        CHECK_FALSE(CanStudyBook(*restored, content, book));
+        CHECK(restored->study.active);
+    }
+}
+
 TEST_CASE("Skill teaching ceilings and ordinary to paired boundary clip surplus", "[skills][progression]") {
     const auto content = LearningContent();
     const auto skill = content.FindSkill("making");

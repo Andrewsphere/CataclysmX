@@ -6,8 +6,8 @@
 
 namespace cataclysmx::network::wire {
 
-// Version 25 adds forge actions, readiness/fuel views and heat funding refusals.
-inline constexpr std::uint32_t protocol = 0x43584e19;
+// Version 26 supports per-skill learned maxima in learning views.
+inline constexpr std::uint32_t protocol = 0x43584e1a;
 inline constexpr int maxViewRadius = maxPresentationRadius;
 inline constexpr int maxViewDimension = 2 * maxViewRadius + 1;
 static_assert(maxViewDimension <= UINT8_MAX && maxViewDimension * maxViewDimension <= UINT16_MAX);

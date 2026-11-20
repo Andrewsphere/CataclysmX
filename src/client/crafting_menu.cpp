@@ -57,13 +57,14 @@ void Training(String& label, const WorldView& view, const ContentCatalog& conten
     for (const auto& reward : training) {
         const auto* skill = Skill(view, reward.skill);
         const unsigned level = skill ? skill->progress.level : 0;
-        const unsigned cap = reward.level < maximumSkillLevel ? reward.level + 1 : maximumSkillLevel;
+        const auto* definition = content.TryGetSkill(reward.skill);
+        const unsigned maximum = definition ? definition->maxLevel : maximumSkillLevel;
+        const unsigned cap = reward.level < maximum ? reward.level + 1 : maximum;
         label += " | " + SkillName(content, reward.skill) + " training cap " + UnsignedText(cap);
         if (!reward.xpPerWork) { label += ": no XP (rate zero)"; }
         else if (skill && level >= cap) { label += ": no XP (learned level at cap)"; }
         else {
             label += ": " + FixedText(reward.xpPerWork) + " XP/work";
-            const auto* definition = content.TryGetSkill(reward.skill);
             if (skill && definition && definition->category == SkillCategory::Noncombat && level >= 5) {
                 label += disassembly ? " theory" : " practice";
                 label += " (advancement needs paired theory + practice)";
@@ -81,7 +82,13 @@ String BookLabel(const BookStudyView& book, const ContentCatalog& content) {
     const auto& definition = content.GetBook(book.book);
     String label = "Book #" + UnsignedText(book.book.value) + " " + definition.name + " (" + definition.id + ")";
     label += book.accessible ? " [accessible]" : " [reference unavailable]";
-    label += book.used ? " [used; study benefit already consumed]" : book.eligible ? " [eligible]" : " [outside teaching range]";
+    if (book.used) { label += " [used; study benefit already consumed]"; }
+    else if (book.completedWork == std::uint64_t{definition.studyWork} * ratioScale) {
+        label += book.eligible ? " [completed study; eligible benefit]" : " [completed study; no eligible benefit]";
+    } else {
+        if (book.completedWork) { label += " [partial study]"; }
+        label += book.eligible ? " [eligible]" : " [outside teaching range]";
+    }
     label += " | study " + FixedText(book.completedWork) + "/" + UnsignedText(definition.studyWork) + " base work";
     label += " (study time " + UnsignedText(definition.studyWork) + " ticks at speed 100)";
     label += " | clipped XP: direct " + FixedText(book.cappedDirectXp) + ", theory " + FixedText(book.cappedTheoryXp);
@@ -189,19 +196,22 @@ void CollectLearningSummary(const WorldView& view, const ContentCatalog& content
         const auto& p = skill.progress;
         const auto* definition = content.TryGetSkill(p.skill);
         if (!definition) { continue; }
-        String line = definition->name + " | learned " + UnsignedText(p.level) + " / effective "
-            + NumberText(skill.effectiveLevel) + " | XP " + FixedText(p.xp) + "/" + FixedText(skill.requiredXp);
-        if (p.level == maximumSkillLevel) { line += " [maximum level; no XP]"; }
-        else if (definition->category == SkillCategory::Noncombat && p.level >= 5) {
-            line += " | theory " + FixedText(p.theory) + ", practice " + FixedText(p.practice)
-                + " (each reserve capped at " + FixedText(skill.requiredXp - p.xp)
-                + "; paired theory + practice advances XP)";
-        } else {
-            if (definition->category == SkillCategory::Noncombat) {
-                line += " | direct book XP " + FixedText(p.directBookXp) + "/" + FixedText(skill.requiredXp * 3 / 10)
-                    + " (30% per-level cap; study boost cap 4x)";
-            } else { line += " | combat: books grant no direct/theory XP; boost cap 1.2x"; }
-            line += " | study boost " + FixedText(p.multiplier) + "x until next level";
+        String line = definition->name + " | learned " + UnsignedText(p.level) + "/" + UnsignedText(definition->maxLevel)
+            + " | effective " + NumberText(skill.effectiveLevel);
+        if (p.level == definition->maxLevel) { line += " | maximum reached"; }
+        else {
+            line += " | XP " + FixedText(p.xp) + "/" + FixedText(skill.requiredXp);
+            if (definition->category == SkillCategory::Noncombat && p.level >= 5) {
+                line += " | theory " + FixedText(p.theory) + ", practice " + FixedText(p.practice)
+                    + " (each reserve capped at " + FixedText(skill.requiredXp - p.xp)
+                    + "; paired theory + practice advances XP)";
+            } else {
+                if (definition->category == SkillCategory::Noncombat) {
+                    line += " | direct book XP " + FixedText(p.directBookXp) + "/" + FixedText(skill.requiredXp * 3 / 10)
+                        + " (30% per-level cap; study boost cap 4x)";
+                } else { line += " | combat: books grant no direct/theory XP; boost cap 1.2x"; }
+                line += " | study boost " + FixedText(p.multiplier) + "x until next level";
+            }
         }
         lines.push_back(eastl::move(line));
     }

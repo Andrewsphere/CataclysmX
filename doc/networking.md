@@ -1,9 +1,18 @@
 # LAN networking API
 
-## Current protocol 25
+## Current protocol 26
 
-The current protocol constant is `0x43584e19`. Peers need matching builds and
-content. Protocol 25 adds explicit forge load/ignite/extinguish/discard commands,
+The current protocol constant is `0x43584e1a`. Peers need matching builds and
+content. Protocol 26 adds per-skill ceiling semantics without changing learning
+view byte layout. Structural decoding permits zero required XP only with canonical
+cap accounting and learned level 1–10. Catalog-aware validation requires zero
+required XP exactly at `maxLevel`, the correct threshold below it, and rejects
+over-cap levels. Ordinary/advanced accounting applies only below the cap.
+Skill fingerprints include each maximum and its active thresholds; omitted and
+explicit equivalent default curves agree. Completed full-work unused books are
+valid views, including when no learning benefit remains eligible.
+
+Protocol 25 added explicit forge load/ignite/extinguish/discard commands,
 fuel/readiness on station and tile-inspection snapshots, and typed heat refusals.
 Forge settings, fuel identities/yields and recipe heat costs participate in content
 fingerprints. See [forge controls](power_presentation.md#fueled-workshop-controls).
