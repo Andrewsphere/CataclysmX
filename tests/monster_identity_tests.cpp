@@ -311,7 +311,7 @@ TEST_CASE("Invalid monster identity during disk materialization leaves demand un
     CHECK(world.CheckInvariants());
 }
 
-TEST_CASE("Legacy v7 through v9 actors remain untyped and reject the optional v10 field", "[monster][identity][save]") {
+TEST_CASE("Legacy v7 through v9 saves are rejected before world publication", "[monster][identity][save]") {
     const auto content = IdentityContent();
     for (int version : {7, 8, 9}) {
         CAPTURE(version);
@@ -329,20 +329,10 @@ TEST_CASE("Legacy v7 through v9 actors remain untyped and reject the optional v1
             if (version == 7) { raw.Exec("UPDATE world_state SET payload=json_remove(payload,'$.session.circle_residency')"); }
             raw.Exec(("UPDATE metadata SET format_version=" + std::to_string(version)).c_str());
         }
-        {
-            World world(content);
-            REQUIRE(world.LoadSave(file.path.c_str()));
-            Load(world);
-            REQUIRE(world.GetActor(world.ActorAt({2, 2})));
-            CHECK(world.GetActor(world.ActorAt({2, 2}))->monsterType == MonsterTypeId{});
-        }
-        {
-            RawDatabase raw(file.path.c_str());
-            raw.Exec("UPDATE chunks SET payload=json_set(payload,'$.actors[0].monster_type','') WHERE y=0");
-        }
         World rejected(content);
-        CHECK(rejected.LoadSave(file.path.c_str()) == eastl::unexpected(SaveError::InvalidData));
+        CHECK(rejected.LoadSave(file.path.c_str()) == eastl::unexpected(SaveError::UnsupportedVersion));
         CHECK_FALSE(rejected.HasSave());
+        CHECK(rejected.LoadedChunks().empty());
     }
 }
 }

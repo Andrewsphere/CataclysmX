@@ -483,6 +483,7 @@ int main(int argc, char** argv) {
     const char* contentPack = nullptr;
     NewGameScenario scenario = NewGameScenario::Town;
     eastl::optional<std::uint32_t> seedOverride;
+    eastl::optional<int> startSafetyRadius;
     const char* savePath = nullptr;
     const char* loadPath = nullptr;
     bool script = false;
@@ -525,13 +526,20 @@ int main(int argc, char** argv) {
             std::uint32_t seed = 0;
             if (!Number(eastl::string_view(argv[++i]), seed)) { return 2; }
             seedOverride = seed;
+        } else if (argument == "--start-safety-radius") {
+            if (i + 1 >= argc) { std::fputs("--start-safety-radius requires an integer from 0 to 64\n", stderr); return 2; }
+            int radius = 0;
+            if (!Number(eastl::string_view(argv[++i]), radius) || radius < 0 || radius > 64) {
+                std::fputs("--start-safety-radius requires an integer from 0 to 64\n", stderr); return 2;
+            }
+            startSafetyRadius = radius;
         } else if (argument == "--save" && i + 1 < argc) { savePath = argv[++i];
         } else if (argument == "--load" && i + 1 < argc) { loadPath = argv[++i];
         } else if (argument == "--user-dir" && i + 1 < argc) { configuration.userRoot = argv[++i]; configuration.enabled = true;
         } else if (argument == "--world-dir" && i + 1 < argc) { configuration.worldDirectory = argv[++i]; configuration.enabled = true;
         } else {
             std::fputs("Usage: cataclysmx_headless [--content path] [--user-dir path] [--world-dir path] [--save path | --load path] [--script | --host | --join address[:port] | --discover] [--port n] [--discovery-port n] [--discovery-address address] [--name name] [--profile path] [--new-character] [--run-for ms] [--command 'move e'] | --probe | --fail-log\nMovement: move n/s/e/w, move down or move < (downstairs), move up or move > (upstairs).\nCombat: attack [persistentId], style balanced|aggressive|defensive.\n", stderr);
-            std::fputs("Content: --content <single definition file> | --content-pack <manifest>. New game: --scenario demo|first-house|town|zombie-showcase (default town) --seed <uint32>.\nGrab (local --script): grab n/ne/e/se/s/sw/w/nw, move in any of those directions, ungrab.\nCrafting (local --script): recipes, crafting, craft ID, recycle ITEM_ID, resume-craft JOB_ID, pause-craft JOB_ID, cancel-craft JOB_ID.\nLearning (local --script): skills, study BOOK_ID, pause-study.\nCombat (local --script): combat, styles, style ID, hold ITEM_ID left|right [two], releasehand left|right, regrip left|right one|two, wear ITEM_ID, remove ITEM_ID, abilities, use ability ID [self|tile X Z|north|east|south|west], study-art BOOK ART, pause-art, new-character.\n", stderr);
+            std::fputs("Content: --content <single definition file> | --content-pack <manifest>. New game: --scenario demo|first-house|town|zombie-showcase (default town) --seed <uint32> --start-safety-radius <0-64> (0 disables; default depends on scenario).\nGrab (local --script): grab n/ne/e/se/s/sw/w/nw, move in any of those directions, ungrab.\nCrafting (local --script): recipes, crafting, craft ID, recycle ITEM_ID, resume-craft JOB_ID, pause-craft JOB_ID, cancel-craft JOB_ID.\nLearning (local --script): skills, study BOOK_ID, pause-study.\nCombat (local --script): combat, styles, style ID, hold ITEM_ID left|right [two], releasehand left|right, regrip left|right one|two, wear ITEM_ID, remove ITEM_ID, abilities, use ability ID [self|tile X Z|north|east|south|west], study-art BOOK ART, pause-art, new-character.\n", stderr);
             std::fputs("Workshop (local --script and LAN --command): stations, place-station ITEM X Z Y, pack-station OBJECT, load-forge OBJECT ITEM, ignite-forge OBJECT, extinguish-forge OBJECT, discard-forge-fuel OBJECT.\n", stderr);
             std::fputs("Digital (local --script and LAN --command): machines, information, begin-machine OBJECT RECIPE QUANTITY, stop-machine OBJECT, resume-machine OBJECT, cancel-machine OBJECT, collect-machine OBJECT, copy-information SOURCE DESTINATION PACKAGE [HOST_ITEM], import-information SOURCE DESTINATION PACKAGE [HOST_ITEM], export-information SOURCE DESTINATION PACKAGE [HOST_ITEM], delete-information DESTINATION PACKAGE, cancel-information. Endpoints: item:ID or object:ID.\n", stderr);
             return 2;
@@ -539,6 +547,7 @@ int main(int argc, char** argv) {
     }
     if (contentPath && contentPack) { std::fputs("Choose either --content or --content-pack\n", stderr); return 2; }
     if (loadPath && seedOverride) { std::fputs("--seed applies only to a new game, not --load\n", stderr); return 2; }
+    if (loadPath && startSafetyRadius) { std::fputs("--start-safety-radius applies only to a new game, not --load\n", stderr); return 2; }
     if (savePath != nullptr && loadPath != nullptr) {
         std::fputs("Choose either --save or --load\n", stderr);
         return 2;
@@ -585,7 +594,7 @@ int main(int argc, char** argv) {
             || (scenario == NewGameScenario::Town && !FindTownStart(*content, seed, &diagnostics))) {
             std::fprintf(stderr, "Scenario validation failed: %s\n", FormatDiagnostics(diagnostics).c_str()); return 1;
         }
-        server = eastl::make_unique<Server>(*content, seed, scenario);
+        server = eastl::make_unique<Server>(*content, seed, scenario, startSafetyRadius);
     }
     if (configuration.store && !ApplySettings(*server, *configuration.store, &diagnostics)) {
         std::fprintf(stderr, "Configuration application failed: %s\n", FormatDiagnostics(diagnostics).c_str()); return 1;

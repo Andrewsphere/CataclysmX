@@ -13,6 +13,7 @@ struct AppOptions {
     float uiScale = 1.0f;
     NewGameScenario scenario = NewGameScenario::Town;
     eastl::optional<std::uint32_t> seedOverride;
+    eastl::optional<int> startSafetyRadius;
     SessionOptions session;
 };
 

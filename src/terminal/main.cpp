@@ -56,6 +56,7 @@ int main(int argc, char** argv) {
     const char* contentPack = nullptr;
     NewGameScenario scenario = NewGameScenario::Town;
     eastl::optional<std::uint32_t> seedOverride;
+    eastl::optional<int> startSafetyRadius;
     String localizationDirectory = CATACLYSMX_LOC_DIRECTORY;
     String userRoot = DefaultUserRoot();
     String worldDirectory;
@@ -83,6 +84,15 @@ int main(int argc, char** argv) {
             const auto parsed = std::from_chars(value.data(), value.data() + value.size(), seed);
             if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size()) { return 2; }
             seedOverride = seed;
+        } else if (argument == "--start-safety-radius") {
+            if (i + 1 >= argc) { std::fputs("--start-safety-radius requires an integer from 0 to 64\n", stderr); return 2; }
+            const eastl::string_view value(argv[++i]);
+            int radius = 0;
+            const auto parsed = std::from_chars(value.data(), value.data() + value.size(), radius);
+            if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size() || radius < 0 || radius > 64) {
+                std::fputs("--start-safety-radius requires an integer from 0 to 64\n", stderr); return 2;
+            }
+            startSafetyRadius = radius;
         } else if (argument == "--host") { openLan = true;
         } else if (argument == "--discover") { browse = true;
         } else if (argument == "--join" && i + 1 < argc) { joinAddress = argv[++i];
@@ -97,12 +107,13 @@ int main(int argc, char** argv) {
         } else if (argument == "--loc-dir" && i + 1 < argc) { localizationDirectory = argv[++i];
         } else {
             std::fputs("Usage: cataclysmx_game [--content <path>] [--user-dir <path>] [--world-dir <path>] [--loc-dir <path>] [--render] [--save <path> | --load <path>] [--host] [--port n] [--join address[:port]] [--discover] [--name name] [--profile path]\n", stderr);
-            std::fputs("Content: --content <single definition file> | --content-pack <manifest>. New game: --scenario demo|first-house|town|zombie-showcase --seed <uint32>.\n", stderr);
+            std::fputs("Content: --content <single definition file> | --content-pack <manifest>. New game: --scenario demo|first-house|town|zombie-showcase --seed <uint32> --start-safety-radius <0-64> (0 disables; default depends on scenario).\n", stderr);
             return 2;
         }
     }
     if (contentPath && contentPack) { std::fputs("Choose either --content or --content-pack\n", stderr); return 2; }
     if (!loadPath.empty() && seedOverride) { std::fputs("--seed applies only to a new game, not --load\n", stderr); return 2; }
+    if (!loadPath.empty() && startSafetyRadius) { std::fputs("--start-safety-radius applies only to a new game, not --load\n", stderr); return 2; }
     if (!savePath.empty() && !loadPath.empty()) { std::fputs("Choose either --save or --load\n", stderr); return 2; }
     if (worldDirectory.empty() && (!savePath.empty() || !loadPath.empty())) {
         worldDirectory = WorldDirectoryForSave((savePath.empty() ? loadPath : savePath).c_str());
@@ -133,7 +144,7 @@ int main(int argc, char** argv) {
             || (scenario == NewGameScenario::Town && !FindTownStart(*content, seed, &diagnostics))) {
             return Failure("Scenario validation failed", diagnostics);
         }
-        ownedServer = eastl::make_unique<Server>(*content, seed, scenario);
+        ownedServer = eastl::make_unique<Server>(*content, seed, scenario, startSafetyRadius);
     }
     Server& server = *ownedServer;
     if (!ApplySettings(server, settings, &diagnostics)) { return Failure("Settings application failed", diagnostics); }

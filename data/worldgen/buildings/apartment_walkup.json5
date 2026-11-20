@@ -1,5 +1,5 @@
 {format_version:1, definitions:[{
-  type:'building_pattern', id:'apartment_walkup', weight:1000, use:'residential',
+  type:'building_pattern', id:'apartment_walkup', weight:1000, use:'residential', occupied_floors:2,
   family:'apartments', family_weight:1500,
   // 20 x 18, two occupied floors. A transverse landing serves one generous
   // one-bedroom flat to the rear and two compact flats beside the front stairs.

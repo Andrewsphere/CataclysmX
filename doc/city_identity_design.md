@@ -1,6 +1,6 @@
 # D4: settlement scale, identity, danger and rewards
 
-**Status: Gameplay contract accepted; implementation pending.**
+**Status: Pass 4 implemented and functionally verified; expedition balance and SDL artwork follow separately.**
 
 This contract develops the accepted city goals in the
 [urban workshop plan](urban_workshop_progression.md#1-accepted-goals).
@@ -19,6 +19,33 @@ improves the player's options; city access has no character-level gate.
 Content schemas, APIs, planning algorithms, saves, networking and version numbers
 belong to implementation. This contract defines the places and gameplay they
 must deliver.
+
+### Pass 4 implementation agreement
+
+Pass 4 delivers I5 and the city-specific I6 content together: settlement planning,
+scale/era/district identity, population, starts, all thirteen place families and
+three variants, forty terrain variants, useful current equipment/loot, diagnostics
+and functional verification. The user approved replacing the legacy generator;
+new worlds are required and older generation saves are rejected explicitly.
+Retaining old generation algorithms or seeded layouts is not a requirement.
+
+Advanced destinations provide useful supported equipment, materials and references.
+Advanced production and protected-information interactions retain their later
+subsystem scope. Infrastructure furniture can communicate the setting without
+claiming unsupported operating capabilities.
+
+Start safety is scenario-configurable from 0 through 64 tiles, with 0 disabling
+exclusion. Town defaults to 16; FirstHouse defaults to 0 to preserve its curated
+encounters. The user selected a horizontal Euclidean circle on the starting floor:
+walls do not affect its radius, other floors are unaffected, and there is no
+line-of-sight exclusion. Startup options may override the scenario default.
+The initial-generation exclusion survives save/load without deleting subsequently
+arriving actors or clearing the area for another player.
+
+SDL PNG artwork is a separate effort. New terrain, objects and any agreed items
+use functional terminal/glyph presentation and receive an explicit artwork brief.
+Generation measurements, persistence/LAN checks and dense-city performance evidence
+remain part of this pass.
 
 ## 1. Settlement scale and spacing
 
@@ -338,15 +365,18 @@ scouting and a less exposed service entrance should sometimes pay off.
 
 **Town:** start on the residential edge of a small settlement, with a
 nearby ordinary house entrance, a road outward and an unobstructed retreat into
-countryside. Apply a one-time scenario-start exclusion: no initial hostile in
-the player's initial line of sight or within 12 walkable steps of the spawn.
-This is a start condition, not a continuing safety aura or a cleared whole town.
+countryside. Apply the scenario's one-time initial-hostile exclusion in a horizontal
+circle on the starting floor, default radius 16 tiles and configurable from 0 to
+64 inclusive. Distance is straight-line X/Z distance, independent of walls.
+Radius 0 disables exclusion. There is no line-of-sight exclusion or clearing on
+other floors. This is a start condition, not a continuing safety aura or a cleared
+whole town.
 
 Select the start and its initial population together. Later approaches and LAN
 arrivals do not remove already generated actors. Default Town should not place
 an unequipped character directly inside a large-city gathering.
 
-**FirstHouse:** preserve the curated house/basement population policy and its
+**FirstHouse:** default the safety radius to 0 and preserve the curated house/basement population policy and its
 existing startup equipment. It does not receive the Town density multipliers or
 general city street population. It retains the accepted optional home-printer
 acquisition route. The same house type in Town uses Town's population policy.
@@ -383,9 +413,9 @@ entrance permits movement. Industrial doors use ordinary opaque closed/open
 behavior. Color and material names promise no new armor, fire, conductivity,
 cleanliness or powered-lock mechanics.
 
-Terrain variants need terminal names/glyph/colors and external SDL briefs,
+Terrain variants have terminal names/glyph/colors and [external SDL briefs](city_artwork.md),
 including connected wall edges, door states and rotated entrances. New artwork
-status is **Brief pending**. Functional and visual review remain separate
+status is **Ready for artwork**. Functional and visual review remain separate
 completion evidence.
 
 ## 9. Two expedition examples
@@ -424,13 +454,16 @@ Use seeds **0–31 and 42**, at region coordinates **(0,0), (-1,0), (0,-1),
 (1,1)** as a reproducible comparison panel, deduplicating settlements that cross
 regions. Add representative examples for every size/era pairing and at least one
 large city crossing a region boundary. Select and record those actual example
-seeds during implementation; none are claimed to exist under these rules yet.
+seeds during implementation. The measured IDs and results are recorded in the
+[city probe](city_probe.md#pass-4-reference-measurements).
 
 Acceptance should demonstrate legal unique population, connected streets and
 stairs, usable reward approaches, ordinary starting/retreat routes, and unchanged
 cleared state after revisiting/save/load. Same generation inputs and different
 chunk visitation orders must produce the same initial places and inhabitants.
-Existing saved places must not gain fresh enemies, supplies or equipment.
+Existing saved places in the new generation must not gain fresh enemies, supplies
+or equipment. Pre-pass-4 generation saves are unsupported under the accepted
+new-world policy.
 
 Measure dense-city runtime with actual actors, including nearby offscreen work
 and multiplayer views. If the accepted target density cannot run acceptably, return with
@@ -438,9 +471,11 @@ measurements and a gameplay tradeoff rather than silently thinning the city.
 Schemas, algorithm/version choices and the checks needed to deliver these
 outcomes are implementation work.
 
-The current evidence is source inspection, the authored-probability baseline and
-the older documented 10–35-site town sample. No new generation, performance or
-playthrough results are claimed.
+Current generation and runtime evidence is recorded in the
+[city probe](city_probe.md#pass-4-reference-measurements). The older 10–35-site
+town sample is historical. Functional checks cover authored routes, generation,
+scenario safety, persistence and LAN; an end-to-end expedition playthrough and
+balance iteration remain separate follow-up work.
 
 **Accepted package:**
 

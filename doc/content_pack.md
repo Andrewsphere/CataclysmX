@@ -40,6 +40,12 @@ The manifests reference shared definition files; they do not duplicate those
 definitions within a loaded pack. See [urban content](urban_content.md) for the
 complete roster and scenario guide.
 
+Pass 4 adds Town-only `terrain/city.json5`, `objects/city.json5`,
+`worldgen/loot/city_industry.json5` and the `city_residential.json5`,
+`city_civic.json5`, and `city_industry.json5` building sources. These semantic
+sources supply city architecture and supported rewards. FirstHouse retains its
+curated pack and authored population policy.
+
 Town and FirstHouse also share W3A/W3B's `workshop_forging.json5` and
 `workshop_electrical.json5` sources under `items/`, `crafting/`, `objects/` and
 `worldgen/loot/`. That roster introduced 22 items, 17 crafting recipes, 19 explicit

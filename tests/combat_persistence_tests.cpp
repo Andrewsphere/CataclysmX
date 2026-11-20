@@ -192,7 +192,7 @@ TEST_CASE("Combat envelope preserves ability source target exertion effects reac
     auto json = DecodeDataObject(EncodeDataObject(d)); REQUIRE(json); auto fromJson = ReadCombatState(*json, c); REQUIRE(fromJson); CHECK(*fromJson == s);
 }
 
-TEST_CASE("Format 13 checkpoint migrates paid windup and stable session identity transactionally", "[combat][save][database]") {
+TEST_CASE("Format 13 combat checkpoint is rejected", "[combat][save][database]") {
     const auto& c = TestContent(); SaveFile file; auto chunk = Chunk(); auto snapshot = Snapshot();
     auto old = MakeCombatState(true); old.stamina = 31; old.heavyCooldown = 87;
     old.action = {ActorActionKind::MeleeWindup, 99, static_cast<unsigned>(CombatMove::HeavyAttack), 73};
@@ -202,33 +202,8 @@ TEST_CASE("Format 13 checkpoint migrates paid windup and stable session identity
         REQUIRE(db.WriteSnapshot(snapshot)); REQUIRE(db.Commit());
     }
     { RawDatabase raw(file.path.c_str()); raw.LegacyCombat(chunk.actors[0].combat); }
-    {
-        SaveDatabase db(c); auto loaded = db.Open(file.path.c_str()); REQUIRE(loaded);
-        REQUIRE(loaded->session.players.size() == 1); CHECK(loaded->session.players[0].session == 1);
-        auto restored = db.ReadChunk({}, 100); REQUIRE(restored); REQUIRE(*restored);
-        CHECK((**restored).actors[0].remainingTicks == 41);
-        auto state = ReadCombatState((**restored).actors[0].combat, c); REQUIRE(state);
-        CHECK(state->action.definitionDriven); CHECK(state->action.recoveryTicks == 73); CHECK(state->stamina == 31);
-        CHECK(state->combatLockRemaining == 114);
-        REQUIRE(db.Begin()); db.Rollback(); REQUIRE(db.Begin()); REQUIRE(db.Commit());
-    }
-    SaveDatabase reopened(c); auto loaded = reopened.Open(file.path.c_str()); REQUIRE(loaded);
-    CHECK(loaded->session.players[0].session == 1); auto restored = reopened.ReadChunk({}, 100); REQUIRE(restored); REQUIRE(*restored);
-    CHECK((**restored).actors[0].combat.GetUnsigned("version") == 3);
-    World world(c); REQUIRE(world.LoadSave(file.path.c_str()));
-    auto request = world.RequestChunks({{}, 0}, LoadMode::resident); REQUIRE(request); REQUIRE(world.ReconcileChunks());
-    const auto actor = world.FindActor(1); REQUIRE(actor.value);
-    world.ElapseTicks(50); // Inactive paid time must remain frozen.
-    CHECK(world.GetActor(actor)->combat.combatLockRemaining == 114); CHECK(world.GetActorRemainingTicks(actor) == 41);
-    REQUIRE(world.UpdateRequest(*request, {{}, 0}, LoadMode::active)); REQUIRE(world.ReconcileChunks());
-    std::uint32_t rng = 7;
-    world.ElapseTicks(41); world.Combat().ProcessEvents(rng);
-    CHECK(world.GetActor(actor)->combat.stamina == 31); CHECK(world.GetActor(actor)->combat.combatLockRemaining == 73);
-    CHECK(world.GetActor(actor)->combat.action.kind == ActorActionKind::Recovery);
-    world.ElapseTicks(72); CHECK(world.GetActor(actor)->combat.stamina == 31);
-    world.ElapseTicks(1); world.Combat().ProcessEvents(rng);
-    CHECK(world.GetActor(actor)->combat.stamina == 31); CHECK(world.GetActor(actor)->combat.combatLockRemaining == 0);
-    CHECK(world.GetActor(actor)->combat.action.kind == ActorActionKind::None);
+    SaveDatabase db(c);
+    CHECK(db.Open(file.path.c_str()) == eastl::unexpected(SaveError::UnsupportedVersion));
 }
 
 TEST_CASE("Session roster preserves stable session across replacement and rejects duplicate sessions", "[combat][save][database]") {
@@ -337,7 +312,7 @@ TEST_CASE("Parked terminal hosts survive full database validation with explicit 
             REQUIRE(current->session.players.size() == 1); CHECK(current->session.players[0].session == 19);
         }
     }
-    // Exercise legacy lifecycle migration in every roster representation too.
+    // Old-format checkpoints are rejected in every roster representation too.
     auto legacy = MakeCombatState(true); legacy.body.parts[static_cast<unsigned>(BodyPart::Head)].hp = 0;
     legacy.action = {ActorActionKind::MeleeWindup, 99, static_cast<unsigned>(CombatMove::HeavyAttack), 73};
     REQUIRE(ValidateBody(legacy.body, legacy.injury));
@@ -345,15 +320,8 @@ TEST_CASE("Parked terminal hosts survive full database validation with explicit 
         RawDatabase raw(file.path.c_str()); raw.LegacyCombat(CaptureCombatState(legacy));
         raw.Exec("UPDATE chunks SET payload=json_set(payload,'$.actors[0].remaining_ticks','39')");
     }
-    SaveDatabase db(c); const auto loaded = db.Open(file.path.c_str()); REQUIRE(loaded);
-    auto restored = db.ReadChunk({}, 100); REQUIRE(restored); REQUIRE(*restored);
-    const auto& actor = (**restored).actors[0]; CHECK(actor.parked); CHECK(actor.remainingTicks == 0);
-    const auto state = ReadCombatState(actor.combat, c); REQUIRE(state);
-    CHECK(state->life == ActorLifeState::Dead); CHECK(state->corpse == 0); CHECK(state->action == ActorActionState{});
-    REQUIRE(db.Begin()); REQUIRE(db.Commit());
-    SaveDatabase observer(c); REQUIRE(observer.Open(file.path.c_str()));
-    auto again = observer.ReadChunk({}, 100); REQUIRE(again); REQUIRE(*again);
-    CHECK((**again).actors[0].combat == actor.combat);
+    SaveDatabase db(c);
+    CHECK(db.Open(file.path.c_str()) == eastl::unexpected(SaveError::UnsupportedVersion));
 }
 
 TEST_CASE("Full combat reads preserve exact pending source commitments and windup flags", "[combat][save]") {
@@ -462,28 +430,23 @@ TEST_CASE("Character persistence checks funded manual pairs and independent cool
     CHECK(ReadCharacterCombat(data, c) == eastl::unexpected(StateError::InvalidData));
 }
 
-TEST_CASE("Legacy recovery migration preserves its paid lock and rejects duration overflow", "[combat][save][database]") {
+TEST_CASE("Legacy recovery checkpoints are rejected before payload validation", "[combat][save][database]") {
     const auto& c = TestContent(); SaveFile file; auto chunk = Chunk(); auto snapshot = Snapshot();
     {
         SaveDatabase db(c); REQUIRE(db.Create(file.path.c_str())); REQUIRE(db.Begin());
         REQUIRE(db.WriteChunk(chunk)); REQUIRE(db.WriteSnapshot(snapshot)); REQUIRE(db.Commit());
     }
     auto old = MakeCombatState(true); old.stamina = 31; old.action.kind = ActorActionKind::Recovery;
-    bool overflow = false;
     SECTION("paid recovery") {}
     SECTION("windup plus recovery overflows") {
-        overflow = true; old.action = {ActorActionKind::MeleeWindup, 99, static_cast<unsigned>(CombatMove::HeavyAttack), UINT64_MAX};
+        old.action = {ActorActionKind::MeleeWindup, 99, static_cast<unsigned>(CombatMove::HeavyAttack), UINT64_MAX};
     }
     {
         RawDatabase raw(file.path.c_str()); raw.LegacyCombat(CaptureCombatState(old));
         raw.Exec("UPDATE chunks SET payload=json_set(payload,'$.actors[0].remaining_ticks','114')");
     }
-    SaveDatabase db(c); const auto loaded = db.Open(file.path.c_str());
-    if (overflow) { CHECK(loaded == eastl::unexpected(SaveError::InvalidData)); return; }
-    REQUIRE(loaded); const auto restored = db.ReadChunk({}, 100); REQUIRE(restored); REQUIRE(*restored);
-    const auto& saved = (**restored).actors[0]; CHECK(saved.remainingTicks == 114);
-    const auto state = ReadCombatState(saved.combat, c); REQUIRE(state);
-    CHECK(state->combatLockRemaining == 114); CHECK(state->stamina == 31); CHECK(state->action.kind == ActorActionKind::Recovery);
+    SaveDatabase db(c);
+    CHECK(db.Open(file.path.c_str()) == eastl::unexpected(SaveError::UnsupportedVersion));
 }
 
 TEST_CASE("A runtime committed Sweep survives actual world save and reload", "[combat][save][database][abilities]") {

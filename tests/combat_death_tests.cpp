@@ -359,7 +359,7 @@ TEST_CASE("Oversized corpse possessions preserve roots and nested items through 
     checkPossessions();
 }
 
-TEST_CASE("Legacy zero-head worker releases its paid crafting slice for a fresh character", "[combat][death][crafting][save]") {
+TEST_CASE("Legacy zero-head worker checkpoint is rejected", "[combat][death][crafting][save]") {
     const ContentSource source{"legacy-dead-worker", R"({format_version:1,definitions:[
       {type:'terrain',id:'floor',name:'Floor',movement:{passable:true},blocks_sight:false,appearance:{symbol:'.',foreground:'white'}},
       {type:'terrain',id:'wall',name:'Wall',movement:{passable:false},blocks_sight:true,appearance:{symbol:'#',foreground:'white'}},
@@ -383,7 +383,7 @@ TEST_CASE("Legacy zero-head worker releases its paid crafting slice for a fresh 
         return Take(ReadCraftingState(*payload));
     };
     SaveFile file;
-    PersistentId originalId = 0, jobId = 0, materialId = 0, toolId = 0;
+    PersistentId originalId = 0;
     CraftingJobState paid;
     {
         World world{content};
@@ -392,12 +392,10 @@ TEST_CASE("Legacy zero-head worker releases its paid crafting slice for a fresh 
         REQUIRE(world.SetCraftingSettings({1, 100}));
         const auto actor = Take(world.CreateActor({3, 3}, true));
         originalId = world.GetActor(actor)->id;
-        const auto material = Take(world.CreateItem(content.FindItem("material"), ItemLocation::Carried(actor)));
+        Take(world.CreateItem(content.FindItem("material"), ItemLocation::Carried(actor)));
         const auto tool = Take(world.CreateItem(content.FindItem("tool"), ItemLocation::Carried(actor)));
-        materialId = world.GetItem(material)->id; toolId = world.GetItem(tool)->id;
         const auto started = Take(world.StartCrafting(actor, content.FindCraftingRecipe("make")));
         REQUIRE(started.outcome == CraftingOutcome::Started);
-        jobId = world.GetItem(started.unfinished)->id;
         world.ElapseTicks(100); REQUIRE(world.ProcessCraftingEvents());
         world.ElapseTicks(30);
         paid = readJob(world, started.unfinished);
@@ -446,68 +444,7 @@ TEST_CASE("Legacy zero-head worker releases its paid crafting slice for a fresh 
             nullptr, nullptr, nullptr) == SQLITE_OK);
         REQUIRE(sqlite3_exec(database.value, "UPDATE metadata SET format_version=13", nullptr, nullptr, nullptr) == SQLITE_OK);
     }
-    auto server = Take(Server::LoadSave(content, file.path.c_str(), &diagnostics));
-    auto& world = server->GetWorld();
-    const auto original = world.FindActor(originalId);
-    REQUIRE(original.value);
-    CHECK_FALSE(world.IsActorAlive(original));
-    CHECK(world.GetActor(original)->parked);
-    REQUIRE(world.GetActor(original)->combat.corpse);
-    const auto corpseId = world.GetActor(original)->combat.corpse;
-    const auto corpse = world.FindItem(corpseId);
-    auto job = world.FindItem(jobId);
-    REQUIRE(job.value);
-    CHECK(world.GetItem(job)->location == ItemLocation::Inside(corpse));
-    CHECK(world.GetItem(world.FindItem(materialId))->location == ItemLocation::Inside(job));
-    CHECK(world.GetItem(world.FindItem(toolId))->location == ItemLocation::Inside(corpse));
-    const auto released = readJob(world, job);
-    CHECK(released.worker == 0);
-    CHECK(released.status == CraftingStatus::WorkerUnavailable);
-    CHECK(released.work == paid.work);
-    CHECK(released.pendingWork == paid.pendingWork);
-    CHECK(released.remaining == paid.remaining);
-    CHECK(released.energyRemainder == paid.energyRemainder);
-    CHECK(released.timingRemainder == paid.timingRemainder);
-    CHECK(world.GetItemEnergy(world.FindItem(toolId), power)->energy == 800);
-    CHECK(world.GetTick() == 130);
-    server->Update(1'000'000);
-    CHECK(world.GetTick() == 130);
-    CHECK(readJob(world, job).remaining == paid.remaining);
-    CHECK(world.CheckInvariants());
-    REQUIRE(server->Save());
-    server.reset();
-    // The unassigned paid remainder is durable, not just a transient fix made
-    // during legacy loading. Reopening must neither finish nor charge it.
-    server = Take(Server::LoadSave(content, file.path.c_str(), &diagnostics));
-    auto& resumedWorld = server->GetWorld();
-    CHECK(resumedWorld.GetActor(resumedWorld.FindActor(originalId))->combat.corpse == corpseId);
-    job = resumedWorld.FindItem(jobId);
-    REQUIRE(job.value);
-    CHECK(readJob(resumedWorld, job).worker == 0);
-    CHECK(readJob(resumedWorld, job).remaining == 70);
-    CHECK(Take(server->CreateFreshCharacter(originalId)) != originalId);
-    const auto fresh = server->GetPlayer();
-    const auto resumed = Take(resumedWorld.ResumeCrafting(fresh, job));
-    REQUIRE(resumed.outcome == CraftingOutcome::Resumed);
-    CHECK(resumedWorld.GetActorRemainingTicks(fresh) == 70);
-    CHECK(readJob(resumedWorld, job).pendingWork == paid.pendingWork);
-    CHECK(resumedWorld.GetItemEnergy(resumedWorld.FindItem(toolId), power)->energy == 800);
-    resumedWorld.ElapseTicks(70); REQUIRE(resumedWorld.ProcessCraftingEvents());
-    REQUIRE(resumedWorld.InspectCrafting(job));
-    CHECK(resumedWorld.InspectCrafting(job)->completedWork == 200);
-    CHECK(resumedWorld.InspectCrafting(job)->fundedTicksRemaining == 50);
-    CHECK(resumedWorld.GetItemEnergy(resumedWorld.FindItem(toolId), power)->energy == 750);
-    resumedWorld.ElapseTicks(50); REQUIRE(resumedWorld.ProcessCraftingEvents());
-    CHECK_FALSE(resumedWorld.FindItem(jobId).value);
-    CHECK_FALSE(resumedWorld.FindItem(materialId).value);
-    CHECK(resumedWorld.GetItemEnergy(resumedWorld.FindItem(toolId), power)->energy == 750);
-    unsigned products = 0;
-    for (const auto item : resumedWorld.GetActor(fresh)->inventory) {
-        if (resumedWorld.GetItem(item)->type == content.FindItem("product")) { ++products; }
-    }
-    CHECK(products == 1);
-    CHECK(resumedWorld.GetTick() == 250);
-    CHECK_FALSE(resumedWorld.ProcessCraftingEvents());
-    CHECK(resumedWorld.CheckInvariants());
+    SaveDatabase database(content);
+    CHECK(database.Open(file.path.c_str()) == eastl::unexpected(SaveError::UnsupportedVersion));
 }
 }

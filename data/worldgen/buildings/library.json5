@@ -1,5 +1,5 @@
 {format_version:1, definitions:[{
-  type:'building_pattern', id:'library', weight:850,
+  type:'building_pattern', id:'library', weight:850, use:'civic',
   // Parallel book aisles behind a reading room and lending counter.
   rows:[
     '##ww###ww###ww####',

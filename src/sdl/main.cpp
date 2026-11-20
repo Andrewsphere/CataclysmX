@@ -16,9 +16,10 @@ bool Address(eastl::string_view value) {
 void Usage() {
     std::fputs("Usage: cataclysmx_sdl_game [--content path | --content-pack manifest] [--user-dir path] [--world-dir path] [--loc-dir path]\n"
         "  [--tileset directory] [--font path] [--font-size 8-48] [--ui-scale 1-4] [--smoke]\n"
-        "  [--scenario demo|first-house|town|zombie-showcase] [--seed uint32] [--save path | --load path]\n"
+        "  [--scenario demo|first-house|town|zombie-showcase] [--seed uint32] [--start-safety-radius 0-64] [--save path | --load path]\n"
         "  [--host | --join hostname[:port]] [--discover] [--port n] [--discovery-port n]\n"
         "  [--discovery-address address] [--name name] [--profile path] [--new-character]\n"
+        "--start-safety-radius: 0 disables; default depends on scenario. Applies only to new games.\n"
         "--save creates a persistent world; --load resumes one. World settings default to the save's directory.\n"
         "LAN peers must use matching content. --discovery-address supports directed discovery, including loopback.\n", stderr);
 }
@@ -79,6 +80,16 @@ int main(int argc, char** argv) {
             if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size()) { return 2; }
             options.seedOverride = seed;
         }
+        else if (argument == "--start-safety-radius") {
+            if (i + 1 >= argc) { std::fputs("--start-safety-radius requires an integer from 0 to 64\n", stderr); return 2; }
+            const eastl::string_view value(argv[++i]);
+            int radius = 0;
+            const auto parsed = std::from_chars(value.data(), value.data() + value.size(), radius);
+            if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size() || radius < 0 || radius > 64) {
+                std::fputs("--start-safety-radius requires an integer from 0 to 64\n", stderr); return 2;
+            }
+            options.startSafetyRadius = radius;
+        }
         else if (argument == "--loc-dir" && i + 1 < argc && argv[i + 1][0]) { localizationDirectory = argv[++i]; }
         else if (argument == "--user-dir" && i + 1 < argc && argv[i + 1][0]) { userRoot = argv[++i]; }
         else if (argument == "--tileset" && i + 1 < argc && argv[i + 1][0]) { options.tilesetDirectory = argv[++i]; }
@@ -101,6 +112,9 @@ int main(int argc, char** argv) {
         }
     }
     if (contentPath && contentPack) { std::fputs("Choose either --content or --content-pack\n", stderr); return 2; }
+    if (options.startSafetyRadius && !options.session.loadPath.empty()) {
+        std::fputs("--start-safety-radius applies only to a new game, not --load\n", stderr); return 2;
+    }
     if ((options.session.host && options.session.join) || (options.session.newCharacter && !options.session.join)
         || (!options.session.savePath.empty() && !options.session.loadPath.empty())
         || (options.seedOverride && !options.session.loadPath.empty())

@@ -39,6 +39,25 @@ ContentCatalog HouseContent() {
     return eastl::move(*loaded);
 }
 
+RegionPlan PopulatedHousePlan(const ContentCatalog& content) {
+    const auto patch = GeneratePlanningPatch(42, {0, 0});
+    for (const auto& descriptor : patch.settlements) {
+        const auto settlement = GenerateSettlementPlan(content, 42, descriptor);
+        for (const auto& building : settlement.buildings) {
+            const auto region = RegionOf(building.bounds.min);
+            const TileCoord last{building.bounds.max.x - 1, building.bounds.max.z - 1};
+            if (RegionOf(last) != region) { continue; }
+            auto plan = GenerateRegionPlan(content, 42, region);
+            if (plan.buildings.empty()) { continue; }
+            const auto& first = plan.buildings.front();
+            if (RegionOf(first.bounds.min) == region
+                && RegionOf({first.bounds.max.x - 1, first.bounds.max.z - 1}) == region) { return plan; }
+        }
+    }
+    FAIL("No house building in the planning patch");
+    return {};
+}
+
 struct Rig {
     ContentCatalog content = HouseContent();
     World world{content};
@@ -170,7 +189,7 @@ TEST_CASE("Object movement query is side effect free and has typed mutation erro
 
 TEST_CASE("Incoming request order does not affect generated persistent ID allocation", "[house][world][generation]") {
     const auto content = HouseContent();
-    const auto plan = GenerateRegionPlan(content, 42, {0, 0});
+    const auto plan = PopulatedHousePlan(content);
     REQUIRE_FALSE(plan.buildings.empty());
     const auto first = ChunkOf(plan.buildings[0].bounds.min);
     const ChunkCoord second{first.x + 1, first.z, first.y};
@@ -237,14 +256,15 @@ struct SaveFile {
 
 TEST_CASE("Generated population and empty source snapshots survive RAM and disk reload", "[house][world][save]") {
     const auto content = HouseContent();
-    const auto plan = GenerateRegionPlan(content, 42, {0, 0});
+    const auto plan = PopulatedHousePlan(content);
     REQUIRE_FALSE(plan.buildings.empty());
     const auto& building = plan.buildings[0];
     ChunkPlacements placements;
     TileCoord furniturePosition{};
     bool found = false;
-    for (int z = ChunkOf(building.bounds.min).z; z <= ChunkOf(building.bounds.max).z && !found; ++z) {
-        for (int x = ChunkOf(building.bounds.min).x; x <= ChunkOf(building.bounds.max).x && !found; ++x) {
+    const TileCoord last{building.bounds.max.x - 1, building.bounds.max.z - 1};
+    for (int z = ChunkOf(building.bounds.min).z; z <= ChunkOf(last).z && !found; ++z) {
+        for (int x = ChunkOf(building.bounds.min).x; x <= ChunkOf(last).x && !found; ++x) {
             GenerateChunkPlacements(content, 42, plan, {x, z, 0}, placements);
             if (!placements.furniture.empty()) { furniturePosition = placements.furniture.front().position; found = true; }
         }

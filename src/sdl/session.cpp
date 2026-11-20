@@ -187,7 +187,7 @@ bool SessionOwner::Local(SessionReply& failure, bool fallback) {
             options_.settings.residencyMode = residency.residencyMode;
             options_.settings.residentRadiusTiles = residency.residentRadiusTiles;
         }
-    } else { server_.reset(new Server(content_, options_.settings.seed, scenario)); }
+    } else { server_.reset(new Server(content_, options_.settings.seed, scenario, options_.startSafetyRadius)); }
     const auto applied = options_.settingsOverridesProvided
         ? ApplySettings(*server_, options_.globalSettings, options_.worldSettings, &diagnostics)
         : ApplySettings(*server_, options_.settings, &diagnostics);

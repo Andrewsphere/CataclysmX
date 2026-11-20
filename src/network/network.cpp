@@ -90,6 +90,8 @@ void HashPosition(std::uint64_t& hash, TileCoord position) {
 void HashLayer(std::uint64_t& hash, const PatternLayer& layer) {
     HashNumber(hash, layer.y); HashNumber(hash, layer.tiles.size());
     for (TerrainId terrain : layer.tiles) { HashNumber(hash, terrain.value); }
+    HashNumber(hash, layer.spaces.size());
+    for (PopulationSpace space : layer.spaces) { HashNumber(hash, static_cast<std::uint8_t>(space)); }
 }
 
 void HashPopulation(std::uint64_t& hash, const PatternPopulation& population) {
@@ -187,7 +189,11 @@ std::uint64_t ContentFingerprint(const ContentCatalog& content) {
         HashNumber(hash, p.entrance.x); HashNumber(hash, p.entrance.z); HashNumber(hash, p.weight);
         HashNumber(hash, static_cast<std::uint8_t>(p.site));
         HashString(hash, p.family); HashNumber(hash, p.familyWeight); HashNumber(hash, static_cast<std::uint8_t>(p.use));
+        HashNumber(hash, static_cast<std::uint8_t>(p.era));
+        HashNumber(hash, static_cast<std::uint8_t>(p.minSettlementSize)); HashNumber(hash, p.occupiedFloors);
         HashNumber(hash, p.tiles.size()); for (TerrainId t : p.tiles) HashNumber(hash, t.value);
+        HashNumber(hash, p.spaces.size());
+        for (PopulationSpace space : p.spaces) { HashNumber(hash, static_cast<std::uint8_t>(space)); }
         HashNumber(hash, p.layers.size());
         for (const auto& layer : p.layers) { HashLayer(hash, layer); }
         HashPopulation(hash, p.population);

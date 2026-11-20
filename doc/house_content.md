@@ -137,6 +137,12 @@ independent of weighted probability and preserves small immutable definitions.
 
 ## Building extensions
 
+Generation 8 also supports the [city metadata and explicit space classification](city_generation.md#catalog-fields).
+`use:'civic'` is valid. Author `occupied_floors` on multi-storey buildings and
+classify courtyards, gardens and civic outdoor glyphs with `space:'exterior'`;
+use `space:'none'` for unused space. Palette shorthand otherwise defaults to
+interior. The v4–v7 selection descriptions below are historical.
+
 The existing required `rows`, `palette`, and boundary `entrance:{x,z}` remain the
 surface at Y=0. Width and height are inferred from 1..64 equal-width printable
 ASCII rows, each 1..64 characters. Existing `weight` defaults to 1 (1..1000000).

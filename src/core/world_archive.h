@@ -68,12 +68,13 @@ struct ChunkArchive {
 
 struct SaveSnapshot {
     std::uint32_t seed = 42;
-    std::uint32_t generationVersion = 3;
+    std::uint32_t generationVersion = world_generation_version;
     PersistentId nextId = 1;
     SessionState session;
     std::uint8_t skyLight = defaultSkyLight;
     Vector<PlayerMemory> memories;
     SavedPowerState power;
+    GenerationSettings generation;
 };
 
 }

@@ -1,5 +1,5 @@
 {format_version:1, definitions:[{
-  type:'building_pattern', id:'office_annex', weight:1000, family:'office', family_weight:1200, use:'commercial',
+  type:'building_pattern', id:'office_annex', weight:1000, family:'office', family_weight:1200, use:'commercial', occupied_floors:2,
   // L-shaped office with a recessed pedestrian forecourt and two working floors.
   rows:[
     '##ww####ww####ww####',
@@ -20,7 +20,7 @@
     '#.....I......#gggggg',
     '###+####ww####gggggg',
   ],
-  palette:{'#':'wall_brick',I:'wall_plaster',w:'window','.':'floor_wood','+':'closed_door','>':'stairs',g:'grass',':':'pavement',' ':'air',
+  palette:{'#':'wall_brick',I:'wall_plaster',w:'window','.':'floor_wood','+':'closed_door','>':'stairs',g:{terrain:'grass',space:'exterior'},':':{terrain:'pavement',space:'exterior'},' ':{terrain:'air',space:'none'},
     d:{terrain:'floor_wood',object:'office_desk',facing:'south'},a:{terrain:'floor_wood',object:'bookcase',facing:'east'},
     l:{terrain:'floor_wood',object:'cellar_lamp'},
     b:{terrain:'floor_wood',object:'bookcase',facing:'east',loot:[{pool:'loot_reading_room_supplies',rolls:3,destination:'furniture'}]},

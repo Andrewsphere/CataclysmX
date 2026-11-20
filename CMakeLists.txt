@@ -203,6 +203,13 @@ target_compile_definitions(cataclysmx_chunk_benchmark PRIVATE
 target_link_libraries(cataclysmx_chunk_benchmark PRIVATE cataclysmx_engine)
 cataclysmx_no_exceptions(cataclysmx_chunk_benchmark)
 
+# Explicit measurement executable; reports live generation/runtime, not a tooling test.
+add_executable(cataclysmx_city_probe EXCLUDE_FROM_ALL tools/city_probe.cpp)
+target_compile_definitions(cataclysmx_city_probe PRIVATE
+    CATACLYSMX_CONTENT_PACK="${CMAKE_CURRENT_SOURCE_DIR}/data/content.json5")
+target_link_libraries(cataclysmx_city_probe PRIVATE cataclysmx_engine)
+cataclysmx_no_exceptions(cataclysmx_city_probe)
+
 # Production combat/scheduler experiments, deliberately outside automated tooling tests.
 add_executable(cataclysmx_combat_experiment EXCLUDE_FROM_ALL tools/combat_experiment.cpp)
 target_compile_definitions(cataclysmx_combat_experiment PRIVATE
@@ -371,6 +378,8 @@ if(CATACLYSMX_BUILD_TESTS)
         tests/house_server_tests.cpp)
     target_sources(cataclysmx_tests PRIVATE tests/monster_identity_tests.cpp tests/monster_network_tests.cpp
         tests/monster_presentation_tests.cpp tests/urban_content_tests.cpp tests/town_scenario_tests.cpp tests/zombie_showcase_tests.cpp)
+    target_sources(cataclysmx_tests PRIVATE tests/city_content_tests.cpp tests/pass4_runtime_tests.cpp
+        tests/city_places_tests.cpp tests/city_population_tests.cpp)
     target_compile_definitions(cataclysmx_tests PRIVATE
         CATACLYSMX_TERRAIN_FILE="${CMAKE_CURRENT_SOURCE_DIR}/data/demo.json5"
         CATACLYSMX_FIRST_HOUSE_PACK="${CMAKE_CURRENT_SOURCE_DIR}/data/first_house.json5"

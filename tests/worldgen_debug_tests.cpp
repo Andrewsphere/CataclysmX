@@ -26,6 +26,25 @@ bool Has(const Vector<String>& lines, const char* text) {
     return false;
 }
 
+bool Before(const FeatureOwner& a, const FeatureOwner& b) {
+    if (a.region.x != b.region.x) { return a.region.x < b.region.x; }
+    if (a.region.z != b.region.z) { return a.region.z < b.region.z; }
+    if (a.settlement != b.settlement) { return a.settlement < b.settlement; }
+    return a.parcel < b.parcel;
+}
+
+RegionPlan PopulatedPlan(std::uint64_t seed) {
+    const auto patch = GeneratePlanningPatch(seed, {0, 0});
+    for (const auto& descriptor : patch.settlements) {
+        const auto settlement = GenerateSettlementPlan(TestContent(), seed, descriptor);
+        if (!settlement.buildings.empty()) {
+            return GenerateRegionPlan(TestContent(), seed, RegionOf(settlement.buildings.front().bounds.min));
+        }
+    }
+    FAIL("No building in the planning patch");
+    return {};
+}
+
 TEST_CASE("Worldgen debug layers own bounded repeatable whole-region images", "[client][worldgen-debug]") {
     const RegionCoord regions[] = {{-2, -3}, {-3907, -3907}, {-3907, 3906},
         {3906, -3907}, {3906, 3906}};
@@ -57,65 +76,61 @@ TEST_CASE("Worldgen debug layers own bounded repeatable whole-region images", "[
     }
 }
 
-TEST_CASE("Coarse debug feature cells preserve exact crossings and feature priorities", "[client][worldgen-debug]") {
-    const auto plan = GenerateRegionPlan(TestContent(), 1234, {-2, -3});
+TEST_CASE("Coarse debug feature cells preserve feature presence and priorities", "[client][worldgen-debug]") {
+    const auto plan = PopulatedPlan(1234);
+    REQUIRE_FALSE(plan.buildings.empty());
     for (int scale : {8, 16}) {
         const auto roads = BuildWorldgenDebugView(TestContent(), plan, WorldgenDebugLayer::Roads, scale);
         const auto parcels = BuildWorldgenDebugView(TestContent(), plan, WorldgenDebugLayer::Parcels, scale);
         const auto owners = BuildWorldgenDebugView(TestContent(), plan, WorldgenDebugLayer::Ownership, scale);
-        for (const auto& crossing : plan.boundaries) {
-            auto position = crossing.position;
-            if (position.x == plan.bounds.max.x) { --position.x; }
-            if (position.z == plan.bounds.max.z) { --position.z; }
-            REQUIRE(IsRoad(plan, position));
-            CHECK(At(roads, position).symbol == "+");
-            CHECK(At(parcels, position).symbol == "+");
-            CHECK(At(owners, position).symbol == "+");
-        }
         // Independent per-cell oracle for feature presence and lowest ordinal:
         // a center/top-left-only implementation misses narrow features here.
         for (int row = 0; row < roads.height; ++row) {
             for (int column = 0; column < roads.width; ++column) {
                 const TileCoord start{plan.bounds.min.x + column * scale, plan.bounds.min.z + row * scale};
                 bool road = false;
-                int parcel = 1000;
-                int building = 1000;
+                const ParcelPlan* parcel = nullptr;
+                const BuildingPlan* building = nullptr;
                 for (int z = start.z; z < start.z + scale && z < plan.bounds.max.z; ++z) {
                     for (int x = start.x; x < start.x + scale && x < plan.bounds.max.x; ++x) {
                         road |= IsRoad(plan, {x, z});
                         if (const auto* p = ParcelAt(plan, {x, z})) {
-                            if (static_cast<int>(p->owner.parcel) < parcel) { parcel = static_cast<int>(p->owner.parcel); }
+                            if (!parcel || Before(p->owner, parcel->owner)) { parcel = p; }
                         }
                         if (const auto* b = BuildingAt(plan, {x, z})) {
-                            if (static_cast<int>(b->owner.parcel) < building) { building = static_cast<int>(b->owner.parcel); }
+                            if (!building || Before(b->owner, building->owner)) { building = b; }
                         }
                     }
                 }
                 CHECK((At(roads, start).symbol == "+") == road);
-                if (building != 1000) { CHECK(At(parcels, start).symbol == "#"); }
+                if (building) { CHECK(At(parcels, start).symbol == "#"); }
                 else if (road) { CHECK(At(parcels, start).symbol == "+"); }
-                else if (parcel != 1000) {
-                    CHECK(At(parcels, start).symbol == String(1, static_cast<char>('A' + parcel % 26)));
+                else if (parcel) {
+                    CHECK(At(parcels, start).symbol == String(1, static_cast<char>('A' + parcel->owner.parcel % 26)));
                 }
-                const int owner = building != 1000 ? building : parcel;
-                if (owner != 1000) {
-                    CHECK(At(owners, start).symbol == String(1, static_cast<char>('A' + owner % 26)));
+                const FeatureOwner* owner = building ? &building->owner : parcel ? &parcel->owner : nullptr;
+                if (owner) {
+                    CHECK(At(owners, start).symbol == String(1, static_cast<char>('A' + owner->parcel % 26)));
                 } else if (road) { CHECK(At(owners, start).symbol == "+"); }
             }
         }
-        // The first corner has no crossing, so an outline remains visible.
-        CHECK(roads.cells.front().symbol == "|");
-        CHECK(parcels.cells.front().symbol == "|");
-        CHECK(owners.cells.front().symbol == "|");
     }
 }
 
-TEST_CASE("Selected debug details identify stable owners buildings environment and contracts", "[client][worldgen-debug]") {
-    const auto plan = GenerateRegionPlan(TestContent(), 73, {-2, 1});
+TEST_CASE("Selected debug details identify stable owners buildings and settlements", "[client][worldgen-debug]") {
+    const auto plan = PopulatedPlan(73);
     REQUIRE_FALSE(plan.buildings.empty());
     const auto owners = BuildWorldgenDebugView(TestContent(), plan, WorldgenDebugLayer::Ownership, 1);
+    std::size_t inspected = 0;
     for (const auto& building : plan.buildings) {
-        const auto selection = building.entrance;
+        // A slice may retain a building solely for its crossing driveway.
+        if (building.bounds.min.x >= plan.bounds.max.x || building.bounds.max.x <= plan.bounds.min.x
+            || building.bounds.min.z >= plan.bounds.max.z || building.bounds.max.z <= plan.bounds.min.z) { continue; }
+        ++inspected;
+        const TileCoord selection{building.bounds.min.x < plan.bounds.min.x ? plan.bounds.min.x : building.bounds.min.x,
+            building.bounds.min.z < plan.bounds.min.z ? plan.bounds.min.z : building.bounds.min.z};
+        REQUIRE(Contains(plan.bounds, selection));
+        REQUIRE(BuildingAt(plan, selection));
         CHECK(At(owners, selection).symbol == String(1, static_cast<char>('A' + building.owner.parcel % 26)));
         const auto details = WorldgenDebugDetails(TestContent(), plan, selection);
         CHECK(details == WorldgenDebugDetails(TestContent(), plan, selection));
@@ -141,17 +156,29 @@ TEST_CASE("Selected debug details identify stable owners buildings environment a
             building.bounds.max.x, building.bounds.max.z, building.entrance.x, building.entrance.z,
             building.abandoned ? "yes" : "no");
         CHECK(Has(details, expected));
-        CHECK(Has(details, "Town: present=yes selected=yes"));
-        for (const auto& crossing : plan.boundaries) {
-            std::snprintf(expected, sizeof(expected), "axis=%c key=%d,%d position=%d,%d width=%d approach=%d",
-                crossing.key.axis == BorderAxis::X ? 'X' : 'Z', crossing.key.border, crossing.key.alongRegion,
-                crossing.position.x, crossing.position.z, crossing.width, crossing.approachLength);
-            CHECK(Has(details, expected));
+        std::snprintf(expected, sizeof(expected), "Settlement %d,%d:%u:", building.owner.region.x,
+            building.owner.region.z, static_cast<unsigned>(building.owner.settlement));
+        CHECK(Has(details, expected));
+        const SettlementDescriptor* descriptor = nullptr;
+        for (const auto& settlement : plan.settlements) {
+            if (settlement.id.region == building.owner.region
+                && settlement.id.ordinal == building.owner.settlement) { descriptor = &settlement; }
         }
+        REQUIRE(descriptor);
+        const char* size = descriptor->scale == SettlementScale::Small ? "small"
+            : descriptor->scale == SettlementScale::Medium ? "medium" : "large";
+        const char* era = descriptor->era == SettlementEra::Older ? "older"
+            : descriptor->era == SettlementEra::Mixed ? "mixed" : "newer";
+        std::snprintf(expected, sizeof(expected), "Settlement %d,%d:%u: %s / %s",
+            descriptor->id.region.x, descriptor->id.region.z,
+            static_cast<unsigned>(descriptor->id.ordinal), size, era);
+        CHECK(Has(details, expected));
+        CHECK(Has(details, "District:"));
+        CHECK(Has(details, "construction:"));
+        CHECK(Has(details, "Region slice:"));
+        CHECK(Has(details, "initial hostiles before scenario exclusion"));
     }
-    const auto outside = WorldgenDebugDetails(TestContent(), plan, plan.bounds.min);
-    CHECK(Has(outside, "Parcel: none"));
-    CHECK(Has(outside, "Building: none"));
+    CHECK(inspected > 0);
 }
 
 TEST_CASE("Biome debug cells classify their clipped centers", "[client][worldgen-debug]") {

@@ -1,5 +1,29 @@
 # Save format
 
+## Format 18: continuous cities and initial population policy
+
+Pass 4 requires generation **8** and save format **18**. Previous generation
+versions are explicitly unsupported; no legacy world migration or mixed-generator
+continuation is promised. The four SQL tables retain their shape and metadata
+writes `(1, 18, "0.1.0")`.
+
+The world-state root adds required `generation`, with exactly:
+
+- `position`: the original scenario start coordinate `{x,z,y}`.
+- `safety_radius`: integer 0–64; 0 disables initial-hostile exclusion.
+- `population`: integer 0 for Urban or 1 for Authored.
+
+Coordinates and enum/radius bounds are validated before publication. These values
+are saved alongside chunks, session and power in the existing transaction.
+The same-floor horizontal circle filters only new initial hostile placements;
+restored actors and subsequent arrivals are never cleared. Population mode keeps
+FirstHouse authored while Town uses city budgets. Full chunk snapshots, including
+empty ones, remain authoritative.
+
+The sections below describe earlier payload additions. Their historical
+backward-migration statements do not override pass 4's new-world requirement.
+See [city generation](city_generation.md#scenario-policy-and-persistence).
+
 ## Digital fabrication payloads (format 17)
 
 Pass 3 adds version-1 `information_library` item state and version-1 selectable

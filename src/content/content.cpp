@@ -304,6 +304,7 @@ struct PaletteEntry {
     char glyph = 0;
     String terrain;
     TerrainId resolved;
+    PopulationSpace space = PopulationSpace::Interior;
     String object;
     ObjectTypeId resolvedObject;
     ObjectFacing facing = ObjectFacing::North;
@@ -1925,7 +1926,8 @@ bool ParsePattern(yyjson_val* object, PendingPattern& pattern) {
     const auto& context = pattern.context;
     auto& definition = pattern.definition;
     if (!CheckObject(object, {"type", "id", "rows", "palette", "entrance", "weight", "layers",
-                              "furniture", "loot", "monsters", "basements", "site", "family", "family_weight", "use"}, context)
+                              "furniture", "loot", "monsters", "basements", "site", "family", "family_weight", "use",
+                              "era", "min_settlement_size", "occupied_floors"}, context)
         || !ReadId(yyjson_obj_get(object, "id"), definition.id, context.Child("id"))) { return false; }
     if (auto* family = yyjson_obj_get(object, "family")) {
         if (!ReadId(family, definition.family, context.Child("family"))) { return false; }
@@ -1941,7 +1943,28 @@ bool ParsePattern(yyjson_val* object, PendingPattern& pattern) {
         else if (name == "residential") { definition.use = BuildingUse::Residential; }
         else if (name == "commercial") { definition.use = BuildingUse::Commercial; }
         else if (name == "industrial") { definition.use = BuildingUse::Industrial; }
+        else if (name == "civic") { definition.use = BuildingUse::Civic; }
         else { return context.Child("use").Fail("unknown use"); }
+    }
+    if (auto* era = yyjson_obj_get(object, "era")) {
+        if (!yyjson_is_str(era)) { return context.Child("era").Fail("expected an era name"); }
+        const auto name = JsonString(era);
+        if (name == "older") { definition.era = BuildingEra::Older; }
+        else if (name == "newer") { definition.era = BuildingEra::Newer; }
+        else { return context.Child("era").Fail("unknown era"); }
+    }
+    if (auto* size = yyjson_obj_get(object, "min_settlement_size")) {
+        if (!yyjson_is_str(size)) { return context.Child("min_settlement_size").Fail("expected a settlement size"); }
+        const auto name = JsonString(size);
+        if (name == "small") { definition.minSettlementSize = SettlementScale::Small; }
+        else if (name == "medium") { definition.minSettlementSize = SettlementScale::Medium; }
+        else if (name == "large") { definition.minSettlementSize = SettlementScale::Large; }
+        else { return context.Child("min_settlement_size").Fail("unknown settlement size"); }
+    }
+    if (auto* floors = yyjson_obj_get(object, "occupied_floors")) {
+        std::uint32_t count = 0;
+        if (!ReadBoundedInteger(floors, 1, 10, count, context.Child("occupied_floors"))) { return false; }
+        definition.occupiedFloors = static_cast<std::uint8_t>(count);
     }
     auto* rows = yyjson_obj_get(object, "rows");
     const auto rowsContext = context.Child("rows");
@@ -1981,8 +2004,16 @@ bool ParsePattern(yyjson_val* object, PendingPattern& pattern) {
         PaletteEntry entry;
         entry.glyph = glyph[0];
         if (yyjson_is_obj(value)) {
-            if (!CheckObject(value, {"terrain", "object", "facing", "loot", "monsters"}, entryContext)
+            if (!CheckObject(value, {"terrain", "object", "facing", "loot", "monsters", "space"}, entryContext)
                 || !ReadId(yyjson_obj_get(value, "terrain"), entry.terrain, entryContext.Child("terrain"))) { return false; }
+            if (auto* space = yyjson_obj_get(value, "space")) {
+                if (!yyjson_is_str(space)) { return entryContext.Child("space").Fail("expected a space name"); }
+                const auto name = JsonString(space);
+                if (name == "interior") { entry.space = PopulationSpace::Interior; }
+                else if (name == "exterior") { entry.space = PopulationSpace::Exterior; }
+                else if (name == "none") { entry.space = PopulationSpace::None; }
+                else { return entryContext.Child("space").Fail("unknown space"); }
+            }
             if (auto* objectId = yyjson_obj_get(value, "object")) {
                 if (!ReadId(objectId, entry.object, entryContext.Child("object"))) { return false; }
             }
@@ -2420,16 +2451,19 @@ bool ResolvePattern(PendingPattern& pattern, const ContentCatalog& catalog) {
     }
     auto& definition = pattern.definition;
     definition.tiles.reserve(static_cast<std::size_t>(definition.width * definition.height));
+    definition.spaces.reserve(static_cast<std::size_t>(definition.width * definition.height));
     for (std::size_t z = 0; z < pattern.rows.size(); ++z) {
         for (char glyph : pattern.rows[z]) {
             TerrainId terrain;
+            PopulationSpace space = PopulationSpace::Interior;
             for (const auto& entry : pattern.palette) {
-                if (entry.glyph == glyph) { terrain = entry.resolved; break; }
+                if (entry.glyph == glyph) { terrain = entry.resolved; space = entry.space; break; }
             }
             if (terrain == TerrainId{}) {
                 return ArrayElement(pattern.context.Child("rows"), z).Fail("row glyph is absent from palette");
             }
             definition.tiles.push_back(terrain);
+            definition.spaces.push_back(space);
         }
     }
     const auto entranceIndex = static_cast<std::size_t>(definition.entrance.z * definition.width
@@ -2929,15 +2963,18 @@ bool ResolvePopulation(PendingPopulation& pending, const ContentCatalog& catalog
     return true;
 }
 
-bool ResolveLayerRows(const Vector<String>& rows, const PendingPattern& pending, Vector<TerrainId>& output, const Context& context) {
+bool ResolveLayerRows(const Vector<String>& rows, const PendingPattern& pending, Vector<TerrainId>& output,
+                      Vector<PopulationSpace>& spaces, const Context& context) {
     for (std::size_t z = 0; z < rows.size(); ++z) {
         for (char glyph : rows[z]) {
             TerrainId terrain;
+            PopulationSpace space = PopulationSpace::Interior;
             for (const auto& entry : pending.palette) {
-                if (entry.glyph == glyph) { terrain = entry.resolved; break; }
+                if (entry.glyph == glyph) { terrain = entry.resolved; space = entry.space; break; }
             }
             if (!terrain.value) { return ArrayElement(context, z).Fail("row glyph is absent from surface palette"); }
             output.push_back(terrain);
+            spaces.push_back(space);
         }
     }
     return true;
@@ -3092,7 +3129,7 @@ bool ResolvePatternExtensions(PendingPattern& pending, const ContentCatalog& cat
         const auto context = ArrayElement(pending.context.Child("layers"), i);
         PatternLayer layer;
         layer.y = pending.layers[i].y;
-        if (!ResolveLayerRows(pending.layers[i].rows, pending, layer.tiles, context.Child("rows"))) { return false; }
+        if (!ResolveLayerRows(pending.layers[i].rows, pending, layer.tiles, layer.spaces, context.Child("rows"))) { return false; }
         ExpandPalettePopulation(pending.layers[i].rows, pending, layer.y, pattern.population);
         pattern.layers.push_back(eastl::move(layer));
     }
@@ -3102,7 +3139,7 @@ bool ResolvePatternExtensions(PendingPattern& pending, const ContentCatalog& cat
         BasementVariant basement;
         basement.id = eastl::move(source.id);
         basement.weight = source.weight;
-        if (!ResolveLayerRows(source.rows, pending, basement.layer.tiles, context.Child("rows"))
+        if (!ResolveLayerRows(source.rows, pending, basement.layer.tiles, basement.layer.spaces, context.Child("rows"))
             || !ResolvePopulation(source.population, catalog, context)) { return false; }
         basement.population = eastl::move(source.population.definition);
         ExpandPalettePopulation(source.rows, pending, -1, basement.population);

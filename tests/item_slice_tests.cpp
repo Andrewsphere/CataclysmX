@@ -306,13 +306,26 @@ TEST_CASE("Town slice motor scales and placement keep traction assemblies on gar
     ChunkPlacements placements;
     for (std::uint32_t seed = 0; seed < 64 && !generatedMotor; ++seed) {
         const auto plan = GenerateRegionPlan(content, seed, {0, 0});
+        Vector<RegionPlan> neighboringPlans;
         for (const auto& building : plan.buildings) {
             if (building.pattern != garageId) { continue; }
             const auto first = ChunkOf(building.bounds.min);
             const auto last = ChunkOf({building.bounds.max.x - 1, building.bounds.max.z - 1});
             for (int z = first.z; z <= last.z; ++z) {
                 for (int x = first.x; x <= last.x; ++x) {
-                    GenerateChunkPlacements(content, seed, plan, {x, z, 0}, placements);
+                    const auto region = RegionOf({x * chunk_size, z * chunk_size});
+                    const RegionPlan* chunkPlan = &plan;
+                    if (region != plan.region) {
+                        chunkPlan = nullptr;
+                        for (const auto& neighbor : neighboringPlans) {
+                            if (neighbor.region == region) { chunkPlan = &neighbor; break; }
+                        }
+                        if (!chunkPlan) {
+                            neighboringPlans.push_back(GenerateRegionPlan(content, seed, region));
+                            chunkPlan = &neighboringPlans.back();
+                        }
+                    }
+                    GenerateChunkPlacements(content, seed, *chunkPlan, {x, z, 0}, placements);
                     for (const auto& item : placements.items) {
                         if (item.type != traction) { continue; }
                         CHECK(item.destination == LootDestination::Ground);

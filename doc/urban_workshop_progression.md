@@ -633,12 +633,14 @@ verification can finish while the external visual pass remains pending.
 | D1 Power | Accepted | User reviewed geometry, connection, mains, accounting, residency and inspection rules; see [power design](power_design.md). |
 | D2 Workshop/fuel | Functionally verified through W4 | [Workshop design](workshop_design.md): W1/W2 verified and progression gates approved. W3 uses ordinary protection traits; [M-Bench](powered_manual_stations_design.md) implements powered manual stations. W4 ships with D3-A/B. |
 | D3 Digital fabrication | First slice implemented and functionally verified | [D3-A/B runtime](digital_runtime.md) and [home-printing content/evidence](pass3_content.md). Hacking, laptop modifications and extraction remain deferred. |
-| D4 Cities | Accepted; implementation pending | [City contract](city_identity_design.md): scale/era/districts, population targets, rewards, starts, centralized computing, thirteen place families, three dystopian variants and forty terrain variants accepted. |
+| D4 Cities / pass 4 | Implemented; functional integration verified | [Generation 8 and checks](city_generation.md), [measured outcomes](city_probe.md#pass-4-reference-measurements): I5 plus city-specific I6, thirteen place families, three variants and forty used terrains. New worlds/save format 18 required. Town safety is a same-floor circle, default 16 and configurable 0–64. SDL PNG artwork and expedition balance follow separately; the known existing welder sprite test failure remains documented. |
 | D5 Integration/roster | Accepted direction; implementation pending | Scavenged/assembled workshop, craftable tool fallbacks, solar and integrated wood-gas power, alternative acquisition, city upgrades and public/protected knowledge roles. Generation guarantees deferred. |
 | I2 Power foundation | Verified (functional) | Debug suite: 1,317 passed, 2 skipped; SDL build and four executable/LAN checks passed. Dedicated sprites and two existing-artwork test failures are tracked in [power design](power_design.md#verification). |
 | I3 Workshop and fueled forge | W3 content integrated | W1/W2 verification remains in [workshop evidence](workshop_design.md#current-evidence-and-handoff); W3's authored progression, budget and current validation are in its [implementation record](workshop_rosters.md). W4 remains separate. |
 | I1 Catalog organization | Verified | [Source map and evidence](content_pack.md#source-organization): 142 item definitions reorganized, crafting split by operation and shared retail loot renamed; Demo/FirstHouse/Town fingerprints match baseline. Debug build and 65 focused tests passed; all four shipped manifests load independently. |
-| I4–I7 | Pending | Broader implementation/content work follows the remaining design dependencies. |
+| I4 Digital fabrication | First slice verified | D3-A/B and W4 delivered; protected access and advanced production retain their later dependencies. |
+| I5 and city-specific I6 | Functionally verified | Pass 4 delivers continuous settlements, their full place roster and supported rewards. See [city generation](city_generation.md). |
+| Remaining I6 / I7 | Follow-up | Broader content and end-to-end expedition balance retain their own dependencies; city measurements now provide the initial tuning evidence. |
 | A1 SDL artwork | Ready for external workstation | W3 object briefs and map fallback policy are in [the roster](workshop_rosters.md#external-sdl-artwork-handoff--ready-for-artwork); canonical item text art is supplied. |
 
 Suggested next-pass brief:
@@ -664,7 +666,8 @@ Suggested next-pass brief:
 > D3-C effort; add no temporary schematic-crafting acquisition substitutes.
 > Follow `doc/city_identity_design.md` for accepted scale, era, population, reward
 > and terrain targets, including centralized computing and dystopian destinations.
-> Implementation and measured generation/balance evidence remain pending.
+> Pass 4 is implemented: read `doc/city_generation.md` for APIs/verification and
+> `doc/city_probe.md` for measured outcomes and remaining balance observations.
 > Follow D5 above for basic-tool fallbacks, recovered solar and integrated wood-gas
 > generation. Use acquisition alternatives; guaranteed loot/site coverage is deferred.
 > Implement the accepted package and playtest it before proceeding to hacking.

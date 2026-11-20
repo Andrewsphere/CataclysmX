@@ -67,9 +67,14 @@ struct PatternPoint {
     bool operator==(const PatternPoint&) const = default;
 };
 
+enum class PopulationSpace : std::uint8_t { Interior, Exterior, None };
+enum class SettlementScale : std::uint8_t { Small, Medium, Large };
+enum class BuildingEra : std::uint8_t { Older, Newer };
+
 struct PatternLayer {
     int y = 0;
     Vector<TerrainId> tiles; // Row-major; same width/height as the surface.
+    Vector<PopulationSpace> spaces; // Parallel immutable catalog classification.
     bool operator==(const PatternLayer&) const = default;
 };
 
@@ -83,7 +88,7 @@ struct BasementVariant {
 
 enum class BuildingSite : std::uint8_t { Building, Landmark, Park, Square };
 // Soft neighborhood preference for ordinary building sites, never eligibility.
-enum class BuildingUse : std::uint8_t { Mixed, Residential, Commercial, Industrial };
+enum class BuildingUse : std::uint8_t { Mixed, Residential, Commercial, Industrial, Civic };
 
 struct BuildingPattern {
     String id;
@@ -105,6 +110,10 @@ struct BuildingPattern {
     // JSON default Mixed is neutral. Named family members must agree on use.
     // Generation 6 biases family weights only; versions 1..5 ignore this field.
     BuildingUse use = BuildingUse::Mixed;
+    BuildingEra era = BuildingEra::Older;
+    SettlementScale minSettlementSize = SettlementScale::Small;
+    std::uint8_t occupiedFloors = 1; // Ground counts; roofs and basements do not.
+    Vector<PopulationSpace> spaces; // Parallel to surface tiles; default Interior.
     bool operator==(const BuildingPattern&) const = default;
 };
 

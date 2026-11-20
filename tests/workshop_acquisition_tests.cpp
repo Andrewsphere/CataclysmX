@@ -198,6 +198,7 @@ TEST_CASE("Generated town workshop stock and cold forge have traceable sites",
     ChunkPlacements placements;
     for (std::uint32_t seed = 0; seed < 32; ++seed) {
         const auto plan = GenerateRegionPlan(content, seed, {0,0});
+        Vector<RegionPlan> neighboringPlans;
         for (const auto& building : plan.buildings) {
             const auto& pattern = content.GetBuildingPattern(building.pattern);
             const auto first = ChunkOf(building.bounds.min);
@@ -205,7 +206,19 @@ TEST_CASE("Generated town workshop stock and cold forge have traceable sites",
             for (int y = -1; y <= 0; ++y) {
                 for (int z = first.z; z <= last.z; ++z) {
                     for (int x = first.x; x <= last.x; ++x) {
-                        GenerateChunkPlacements(content, seed, plan, {x,z,y}, placements);
+                        const auto region = RegionOf({x * chunk_size, z * chunk_size});
+                        const RegionPlan* chunkPlan = &plan;
+                        if (region != plan.region) {
+                            chunkPlan = nullptr;
+                            for (const auto& neighbor : neighboringPlans) {
+                                if (neighbor.region == region) { chunkPlan = &neighbor; break; }
+                            }
+                            if (!chunkPlan) {
+                                neighboringPlans.push_back(GenerateRegionPlan(content, seed, region));
+                                chunkPlan = &neighboringPlans.back();
+                            }
+                        }
+                        GenerateChunkPlacements(content, seed, *chunkPlan, {x,z,y}, placements);
                         for (const auto& item : placements.items) {
                             if (!(item.key.owner == building.owner)) { continue; }
                             for (auto& e : evidence) {

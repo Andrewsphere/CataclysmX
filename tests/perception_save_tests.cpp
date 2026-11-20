@@ -149,7 +149,7 @@ TEST_CASE("Remembered terrain resolves stable strings in reordered catalogs", "[
     CHECK(opened->memories == PerceptionSnapshot(*reordered).memories);
 }
 
-TEST_CASE("Remembered furniture stores stable types and reads legacy memory", "[save][perception][object-sprites]") {
+TEST_CASE("Remembered furniture stores stable types and rejects legacy saves", "[save][perception][object-sprites]") {
     PerceptionSaveFile file;
     const auto& content = TestContent();
     auto snapshot = PerceptionSnapshot(content);
@@ -187,7 +187,7 @@ TEST_CASE("Remembered furniture stores stable types and reads legacy memory", "[
         SaveDatabase database(content);
         CHECK(database.Open(file.path.c_str()) == eastl::unexpected(SaveError::InvalidData));
     }
-    SECTION("legacy v11 memory upgrades without inferring unseen identity") {
+    SECTION("legacy v11 memory checkpoint is rejected") {
         {
             MemorySql raw(file.path.c_str());
             raw.Exec("UPDATE world_state SET payload=json_remove(payload,'$.power')");
@@ -201,18 +201,8 @@ TEST_CASE("Remembered furniture stores stable types and reads legacy memory", "[
                 "json_remove(value,'$.session')) FROM json_each(world_state.payload,'$.session.players'))))");
             raw.Exec("UPDATE player_memories SET payload=json_remove(payload,'$.objects[0].type')");
         }
-        snapshot.memories[0].chunks[0].objects[0].appearance.type = {};
-        {
-            SaveDatabase database(content);
-            const auto loaded = database.Open(file.path.c_str());
-            REQUIRE(loaded);
-            CHECK(loaded->memories == snapshot.memories);
-            REQUIRE(database.Begin()); REQUIRE(database.Commit());
-        }
-        SaveDatabase reopened(content);
-        const auto loaded = reopened.Open(file.path.c_str());
-        REQUIRE(loaded);
-        CHECK(loaded->memories == snapshot.memories);
+        SaveDatabase database(content);
+        CHECK(database.Open(file.path.c_str()) == eastl::unexpected(SaveError::UnsupportedVersion));
     }
 }
 

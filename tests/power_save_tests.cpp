@@ -179,42 +179,21 @@ TEST_CASE("Power snapshot retains offscreen holds and consumed interval ledgers"
     CHECK(raw.Version() == save_format_version);
 }
 
-TEST_CASE("Legacy power initialization and checkpoint upgrade are transactional", "[save][power][migration]") {
+TEST_CASE("Legacy power checkpoint is rejected", "[save][power][migration]") {
     PowerSaveFile file;
     PopulatePowerSave(file.path.c_str());
     {
         PowerRawDatabase raw(file.path.c_str());
         raw.Exec("UPDATE world_state SET payload=json_remove(payload,'$.power'); UPDATE metadata SET format_version=14");
-        // Real v14 content had no grid equipment. Keep this artificial legacy
-        // fixture faithful instead of inventing missing source/index state.
-        raw.Exec("UPDATE chunks SET payload=json_set(payload,'$.objects',json('[]'))");
-    }
-    {
-        SaveDatabase database(PowerContent());
-        const auto loaded = database.Open(file.path.c_str());
-        REQUIRE(loaded);
-        SavedPowerState expected;
-        expected.mainsCutoffTick = SeededMainsCutoff(loaded->seed);
-        CHECK(loaded->power == expected);
-        REQUIRE(database.Begin());
-        database.Rollback();
-        {
-            PowerRawDatabase raw(file.path.c_str());
-            CHECK(raw.Version() == 14);
+        SECTION("faithful v14 without grid equipment") {
+            raw.Exec("UPDATE chunks SET payload=json_set(payload,'$.objects',json('[]'))");
         }
-        REQUIRE(database.Begin());
-        REQUIRE(database.Commit());
+        SECTION("current equipment relabeled as legacy") {}
     }
-    SaveDatabase reopened(PowerContent());
-    const auto loaded = reopened.Open(file.path.c_str());
-    REQUIRE(loaded);
-    CHECK(loaded->power.devices.empty());
-    CHECK(loaded->power.grids.empty());
-    CHECK(loaded->power.generatedBindings.empty());
-    CHECK(loaded->power.nextGridId == 1);
-    CHECK(loaded->power.mainsCutoffTick == SeededMainsCutoff(loaded->seed));
+    SaveDatabase database(PowerContent());
+    CHECK(database.Open(file.path.c_str()) == eastl::unexpected(SaveError::UnsupportedVersion));
     PowerRawDatabase raw(file.path.c_str());
-    CHECK(raw.Version() == save_format_version);
+    CHECK(raw.Version() == 14);
 }
 
 TEST_CASE("Power decoding rejects malformed fields and invalid relationships", "[save][power][validation]") {
@@ -261,9 +240,6 @@ TEST_CASE("Power decoding rejects malformed fields and invalid relationships", "
     SECTION("battery hold") { raw.Exec("UPDATE world_state SET payload=json_set(payload,'$.power.devices[0].workshop_hold',json('true'))"); }
     SECTION("battery charging ledger") { raw.Exec("UPDATE world_state SET payload=json_set(payload,'$.power.devices[0].charge_processed',json('true'))"); }
     SECTION("grid machine charging ledger") { raw.Exec("UPDATE world_state SET payload=json_set(payload,'$.power.devices[2].charge_processed',json('true'))"); }
-    SECTION("new equipment relabeled as legacy") {
-        raw.Exec("UPDATE world_state SET payload=json_remove(payload,'$.power'); UPDATE metadata SET format_version=14");
-    }
     SECTION("future interval") { raw.Exec("UPDATE world_state SET payload=json_set(payload,'$.power.grids[0].processed_interval','300')"); }
     SECTION("unaligned charge ledger") { raw.Exec("UPDATE world_state SET payload=json_set(payload,'$.power.devices[1].charge_interval','201')"); }
     SECTION("uninitialized nonzero ledger") { raw.Exec("UPDATE world_state SET payload=json_set(payload,'$.power.grids[0].mains_charge_processed',json('false'))"); }
@@ -372,7 +348,7 @@ TEST_CASE("Solar archive and index corruption is rejected before synchronization
     CHECK(database.Open(file.path.c_str()) == eastl::unexpected(SaveError::InvalidData));
 }
 
-TEST_CASE("Format sixteen power version one migrates without resetting paid resources", "[save][power][migration]") {
+TEST_CASE("Format sixteen power checkpoint is rejected", "[save][power][migration]") {
     PowerSaveFile file;
     PopulatePowerSave(file.path.c_str());
     {
@@ -380,31 +356,9 @@ TEST_CASE("Format sixteen power version one migrates without resetting paid reso
         raw.Exec("UPDATE metadata SET format_version=16;"
             "UPDATE world_state SET payload=json_set(payload,'$.power.version',1)");
     }
-    {
-        SaveDatabase database(PowerContent());
-        const auto loaded = database.Open(file.path.c_str());
-        REQUIRE(loaded);
-        CHECK(loaded->power.version == 1);
-        REQUIRE(database.Begin());
-        database.Rollback();
-        {
-            PowerRawDatabase raw(file.path.c_str());
-            CHECK(raw.Version() == 16);
-        }
-        REQUIRE(database.Begin());
-        REQUIRE(database.Commit());
-    }
     SaveDatabase database(PowerContent());
-    const auto loaded = database.Open(file.path.c_str());
-    REQUIRE(loaded);
-    CHECK(loaded->power == PowerSnapshot().power);
-    const auto chunk = database.ReadChunk({100, -100, 0}, loaded->nextId);
-    REQUIRE(chunk);
-    REQUIRE(*chunk);
-    CHECK((**chunk).objects[1].state.GetUnsigned("energy") == 1777);
-    CHECK((**chunk).objects[1].state.GetUnsigned("generator_output_remaining") == 137);
-    CHECK((**chunk).objects[2].state.GetUnsigned("funded_ticks") == 23);
+    CHECK(database.Open(file.path.c_str()) == eastl::unexpected(SaveError::UnsupportedVersion));
     PowerRawDatabase raw(file.path.c_str());
-    CHECK(raw.Version() == 17);
+    CHECK(raw.Version() == 16);
 }
 }

@@ -15,7 +15,7 @@
     'E.......Egggggg',
     'EEWW+WWEEgggggg',
   ],
-  palette:{E:'wall_brick','#':'wall_plaster',W:'window','.':'floor_tile','+':'closed_door',g:'grass',':':'pavement',
+  palette:{E:'wall_brick','#':'wall_plaster',W:'window','.':'floor_tile','+':'closed_door',g:{terrain:'grass',space:'exterior'},':':{terrain:'pavement',space:'exterior'},
     s:{terrain:'floor_tile',object:'store_shelf',facing:'south'},c:{terrain:'floor_tile',object:'store_counter',facing:'east'},
     r:{terrain:'floor_tile',object:'refrigerator',facing:'south'},l:{terrain:'floor_tile',object:'cellar_lamp'},
     a:{terrain:'floor_tile',object:'store_shelf',facing:'south',loot:[{pool:'loot_food',rolls:3,destination:'furniture'}]},

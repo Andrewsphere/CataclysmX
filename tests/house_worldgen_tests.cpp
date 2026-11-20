@@ -40,7 +40,7 @@ String House(PatternPoint entrance, bool roof, bool extraMarker) {
     text += ",z:";
     std::snprintf(number, sizeof(number), "%d", entrance.z);
     text += number;
-    text += "},layers:[{y:2,rows:";
+    text += "},use:'residential',era:'older',occupied_floors:3,layers:[{y:2,rows:";
     text += Rows('m', false);
     text += '}';
     if (roof) {
@@ -160,67 +160,50 @@ Vector<ChunkCoord> BuildingChunks(const BuildingPlan& building) {
     return chunks;
 }
 
-TEST_CASE("Explicit legacy plans exclude layered and populated patterns without changing draws",
-          "[worldgen][house][legacy]") {
-    const auto baseline = Catalog({9, 0}, false, false, false, false, true);
-    const auto expanded = Catalog({9, 0}, false, false, false, true, true);
-    for (const auto version : {2U, 3U}) {
-        for (std::uint64_t seed = 0; seed < 8; ++seed) {
-            const auto before = GenerateRegionPlan(baseline, seed, {-1, 1}, version);
-            const auto after = GenerateRegionPlan(expanded, seed, {-1, 1}, version);
-            CHECK(after.generationVersion == version);
-            CHECK(after.roads == before.roads);
-            CHECK(after.parcels == before.parcels);
-            REQUIRE(after.buildings.size() == before.buildings.size());
-            for (std::size_t i = 0; i < before.buildings.size(); ++i) {
-                auto comparable = after.buildings[i];
-                CHECK(expanded.GetBuildingPattern(comparable.pattern).id == "legacy");
-                comparable.pattern = before.buildings[i].pattern;
-                CHECK(comparable == before.buildings[i]);
-                for (const auto chunk : BuildingChunks(before.buildings[i])) {
-                    const auto oldTiles = GenerateChunk(baseline, seed, before, chunk);
-                    const auto newTiles = GenerateChunk(expanded, seed, after, chunk);
-                    for (std::size_t j = 0; j < oldTiles.size(); ++j) {
-                        CHECK(baseline.GetTerrain(oldTiles[j].terrain).id
-                            == expanded.GetTerrain(newTiles[j].terrain).id);
-                        CHECK(oldTiles[j].damage == newTiles[j].damage);
-                    }
-                    ChunkPlacements output;
-                    output.items.push_back({});
-                    GenerateChunkPlacements(expanded, seed, after, chunk, output);
-                    CHECK(output == ChunkPlacements{});
-                }
-            }
-        }
-    }
-    const auto onlyNew = Catalog();
-    CHECK(GenerateRegionPlan(onlyNew, 42, {0, 0}, 3).buildings.empty());
-    const auto current = GenerateRegionPlan(onlyNew, 42, {0, 0});
-    CHECK(current.generationVersion == world_generation_version);
-    CHECK(current == GenerateRegionPlan(onlyNew, 42, {0, 0}, world_generation_version));
-    CHECK_FALSE(current.buildings.empty());
+RegionCoord HouseRegion(std::uint64_t seed) {
+    const auto patch = GeneratePlanningPatch(seed, {0, 0});
+    REQUIRE_FALSE(patch.settlements.empty());
+    return RegionOf(patch.settlements.front().center);
 }
 
-TEST_CASE("House layers and once-selected basements rotate together with roof fallback",
+bool EntirelyInRegion(const RegionPlan& plan, const BuildingPlan& building) {
+    return Contains(plan.bounds, building.bounds.min)
+        && Contains(plan.bounds, {building.bounds.max.x - 1, building.bounds.max.z - 1});
+}
+
+TEST_CASE("Current house plans use the supported generation version and footprint roof fallback",
+          "[worldgen][house][roof]") {
+    const auto content = Catalog({9, 0}, false, false, false, false, true);
+    const auto region = HouseRegion(42);
+    const auto current = GenerateRegionPlan(content, 42, region);
+    CHECK(current.generationVersion == world_generation_version);
+    CHECK(current == GenerateRegionPlan(content, 42, region, world_generation_version));
+    unsigned checked = 0;
+    for (const auto& building : current.buildings) {
+        if (!EntirelyInRegion(current, building)) { continue; }
+        const auto& pattern = content.GetBuildingPattern(building.pattern);
+        const auto p = Position(pattern, building, {1, 1, 1});
+        CHECK(At(content, current, p).terrain == content.FindTerrain("floor"));
+        CHECK(At(content, current, {p.x, p.z, 2}).terrain == content.FindTerrain("air"));
+        ++checked;
+    }
+    CHECK(checked > 0);
+}
+
+TEST_CASE("House authored layers and once-selected basements rotate together",
           "[worldgen][house][vertical]") {
-    const auto golden = Catalog();
-    // Pins the string/domain/version seed contract independently of chunk draws.
-    const auto workshop = GenerateRegionPlan(golden, 0, {0, 0}, 4);
-    const auto storage = GenerateRegionPlan(golden, 2, {0, 0}, 4);
-    REQUIRE_FALSE(workshop.buildings.empty());
-    REQUIRE_FALSE(storage.buildings.empty());
-    CHECK(workshop.buildings[0].basementVariant == 2);
-    CHECK(storage.buildings[0].basementVariant == 1);
     bool variants[2] = {};
     bool rotations[4] = {};
     for (const auto entrance : {PatternPoint{9, 0}, {18, 3}}) {
         for (const bool roof : {false, true}) {
             const auto content = Catalog(entrance, roof);
             for (std::uint64_t seed = 0; seed < 4; ++seed) {
-                const auto plan = GenerateRegionPlan(content, seed, {-1, 0}, 4);
-                REQUIRE(plan.buildings.size() == 8);
-                CHECK(plan == GenerateRegionPlan(content, seed, {-1, 0}, 4));
+                const auto region = HouseRegion(seed);
+                const auto plan = GenerateRegionPlan(content, seed, region);
+                REQUIRE_FALSE(plan.buildings.empty());
+                CHECK(plan == GenerateRegionPlan(content, seed, region));
                 for (const auto& building : plan.buildings) {
+                    if (!EntirelyInRegion(plan, building)) { continue; }
                     const auto& pattern = content.GetBuildingPattern(building.pattern);
                     REQUIRE(building.basementVariant >= 1);
                     REQUIRE(building.basementVariant <= 2);
@@ -234,7 +217,7 @@ TEST_CASE("House layers and once-selected basements rotate together with roof fa
                         CheckLayer(content, plan, building, layer.tiles, layer.y);
                     }
                     const auto point = Position(pattern, building, {1, 1, 1});
-                    CHECK(At(content, plan, point).terrain == content.FindTerrain(roof ? "workshop" : "floor"));
+                    CHECK(At(content, plan, point).terrain == content.FindTerrain(roof ? "workshop" : "air"));
                     CHECK(At(content, plan, {point.x, point.z, -2}).terrain == content.FindTerrain("wall"));
                     CHECK(At(content, plan, {point.x, point.z, 3}).terrain == content.FindTerrain("air"));
                     for (int y : {-1, 0}) {
@@ -261,16 +244,17 @@ TEST_CASE("Chunk populations are owned rotated reusable and independent of reque
     for (const auto entrance : {PatternPoint{9, 0}, {18, 3}}) {
         const auto content = Catalog(entrance);
         for (std::uint64_t seed = 0; seed < 8; ++seed) {
-            const auto plan = GenerateRegionPlan(content, seed, {0, -1});
+            const auto plan = GenerateRegionPlan(content, seed, HouseRegion(seed));
             ChunkPlacements scratch;
             scratch.items.reserve(128);
             const auto capacity = scratch.items.capacity();
             for (const auto& building : plan.buildings) {
+                if (!EntirelyInRegion(plan, building)) { continue; }
                 const auto& pattern = content.GetBuildingPattern(building.pattern);
                 const auto chunks = BuildingChunks(building);
                 Vector<ChunkPlacements> forward;
                 for (const auto chunk : chunks) {
-                    GenerateChunkPlacements(content, seed, plan, chunk, scratch);
+                    GenerateChunkPlacements(content, seed, plan, chunk, scratch, PopulationMode::Authored);
                     CHECK(scratch.items.capacity() >= capacity);
                     forward.push_back(scratch);
                     for (const auto& furniture : scratch.furniture) {
@@ -341,7 +325,7 @@ TEST_CASE("Chunk populations are owned rotated reusable and independent of reque
                 sawChanceHit |= chanceHit;
                 sawChanceMiss |= !chanceHit;
                 for (std::size_t i = chunks.size(); i > 0; --i) {
-                    GenerateChunkPlacements(content, seed, plan, chunks[i - 1], scratch);
+                    GenerateChunkPlacements(content, seed, plan, chunks[i - 1], scratch, PopulationMode::Authored);
                     CHECK(scratch == forward[i - 1]);
                 }
             }
@@ -360,15 +344,20 @@ TEST_CASE("Population streams use stable strings and do not consume other marker
     const auto content = Catalog();
     const auto extended = Catalog({9, 0}, false, true, true);
     for (std::uint64_t seed = 0; seed < 4; ++seed) {
-        const auto plan = GenerateRegionPlan(content, seed, {0, 0});
-        const auto other = GenerateRegionPlan(extended, seed, {0, 0});
+        const auto region = HouseRegion(seed);
+        const auto plan = GenerateRegionPlan(content, seed, region);
+        const auto other = GenerateRegionPlan(extended, seed, region);
+        REQUIRE_FALSE(plan.buildings.empty());
         REQUIRE(plan.buildings == other.buildings);
+        unsigned checked = 0;
         for (const auto& building : plan.buildings) {
+            if (!EntirelyInRegion(plan, building)) { continue; }
+            ++checked;
             for (const auto chunk : BuildingChunks(building)) {
                 ChunkPlacements a;
                 ChunkPlacements b;
-                GenerateChunkPlacements(content, seed, plan, chunk, a);
-                GenerateChunkPlacements(extended, seed, other, chunk, b);
+                GenerateChunkPlacements(content, seed, plan, chunk, a, PopulationMode::Authored);
+                GenerateChunkPlacements(extended, seed, other, chunk, b, PopulationMode::Authored);
                 CHECK(a.furniture == b.furniture);
                 std::size_t original = 0;
                 for (const auto& item : b.items) {
@@ -389,10 +378,11 @@ TEST_CASE("Population streams use stable strings and do not consume other marker
                 }
             }
         }
+        CHECK(checked > 0);
     }
 }
 
-TEST_CASE("First-house query selects the globally nearest entrance in its bounded neighborhood",
+TEST_CASE("First-house query selects a usable nearest entrance in a small canonical settlement",
           "[worldgen][house][scenario]") {
     const auto content = Catalog();
     for (const std::uint32_t seed : {0U, 1U, 42U}) {
@@ -404,34 +394,42 @@ TEST_CASE("First-house query selects the globally nearest entrance in its bounde
         REQUIRE(house);
         CHECK(house->entrance == start->entrance);
         CHECK(content.GetBuildingPattern(house->pattern).id == "furnished_house");
-        CHECK(IsRoad(plan, start->playerPosition));
+        const auto outsidePlan = GenerateRegionPlan(content, seed, RegionOf(start->playerPosition));
+        CHECK(IsRoad(outsidePlan, start->playerPosition));
         CHECK_FALSE(Contains(house->bounds, start->playerPosition));
         CHECK(start->playerPosition.y == 0);
         CHECK(std::abs(start->playerPosition.x - start->entrance.x)
             + std::abs(start->playerPosition.z - start->entrance.z) == 1);
-        const auto& floor = content.GetTerrain(At(content, plan, start->playerPosition).terrain);
+        const auto& floor = content.GetTerrain(At(content, outsidePlan, start->playerPosition).terrain);
         CHECK(floor.passable);
         CHECK_FALSE(floor.openSpace);
         ChunkPlacements output;
-        GenerateChunkPlacements(content, seed, plan, ChunkOf(start->playerPosition), output);
+        GenerateChunkPlacements(content, seed, outsidePlan, ChunkOf(start->playerPosition), output,
+            PopulationMode::Authored);
         for (const auto& object : output.furniture) { CHECK(object.position != start->playerPosition); }
         for (const auto& item : output.items) { CHECK(item.position != start->playerPosition); }
         for (const auto& monster : output.monsters) { CHECK(monster.position != start->playerPosition); }
-        const auto distance = [](TileCoord p) { return p.x * p.x + p.z * p.z; };
-        for (int x = -1; x <= 1; ++x) {
-            for (int z = -1; z <= 1; ++z) {
-                const auto candidate = GenerateRegionPlan(content, seed, {x, z});
-                for (const auto& building : candidate.buildings) {
-                    CHECK(distance(start->entrance) <= distance(building.entrance));
-                    if (distance(start->entrance) == distance(building.entrance)) {
-                        CHECK(start->entrance.x <= building.entrance.x);
-                        if (start->entrance.x == building.entrance.x) {
-                            CHECK(start->entrance.z <= building.entrance.z);
-                        }
+        const auto distance = [](TileCoord p) {
+            return std::int64_t{p.x} * p.x + std::int64_t{p.z} * p.z;
+        };
+        const auto patch = GeneratePlanningPatch(seed, RegionOf(start->entrance));
+        bool checked = false;
+        for (const auto& descriptor : patch.settlements) {
+            if (!Contains(descriptor.bounds, start->entrance)) { continue; }
+            CHECK(descriptor.scale == SettlementScale::Small);
+            const auto candidate = GenerateSettlementPlan(content, seed, descriptor);
+            for (const auto& building : candidate.buildings) {
+                CHECK(distance(start->entrance) <= distance(building.entrance));
+                if (distance(start->entrance) == distance(building.entrance)) {
+                    CHECK(start->entrance.x <= building.entrance.x);
+                    if (start->entrance.x == building.entrance.x) {
+                        CHECK(start->entrance.z <= building.entrance.z);
                     }
                 }
             }
+            checked = true;
         }
+        REQUIRE(checked);
     }
     const auto noHouse = Catalog({9, 0}, false, false, false, false, true);
     Diagnostics diagnostics;

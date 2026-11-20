@@ -1,5 +1,5 @@
 {format_version:1, definitions:[{
-  type:'building_pattern', id:'police_station', site:'landmark', weight:1000,
+  type:'building_pattern', id:'police_station', site:'landmark', weight:1000, use:'civic', occupied_floors:3, min_settlement_size:'medium',
   // Holding/evidence, investigations, and records on three connected floors.
   rows:[
     '######################ww###ww###',

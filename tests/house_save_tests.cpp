@@ -1,6 +1,7 @@
 #include "core/save_database.h"
 #include "crafting/crafting_state.h"
 #include "objects/object_behavior.h"
+#include "worldgen/generation_settings.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <atomic>
@@ -53,7 +54,7 @@ ChunkArchive StorageChunk(const ContentCatalog& content, const char* type) {
     return chunk;
 }
 
-void Commit(SaveDatabase& database, const ChunkArchive& chunk, std::uint32_t version = 4) {
+void Commit(SaveDatabase& database, const ChunkArchive& chunk, std::uint32_t version = world_generation_version) {
     REQUIRE(database.Begin());
     REQUIRE(database.WriteChunk(chunk));
     SaveSnapshot snapshot;
@@ -130,9 +131,9 @@ TEST_CASE("Disk validation rejects blocking furniture actor overlap but permits 
     CHECK((**loaded).actors[0].parked);
 }
 
-TEST_CASE("Disk snapshots accept generation versions one through four", "[house][save]") {
+TEST_CASE("Disk snapshots accept the current generation version", "[house][save]") {
     const auto content = StorageContent();
-    for (std::uint32_t version = 1; version <= 4; ++version) {
+    for (const std::uint32_t version : {world_generation_version}) {
         CAPTURE(version);
         HouseSaveFile file;
         {

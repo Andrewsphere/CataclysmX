@@ -1,5 +1,5 @@
 {format_version:1, definitions:[{
-  type:'building_pattern', id:'hospital', site:'landmark', weight:1000,
+  type:'building_pattern', id:'hospital', site:'landmark', weight:1000, use:'civic', occupied_floors:3, min_settlement_size:'medium',
   // Forty-tile-wide hospital: emergency/treatment, wards, then clinical offices.
   rows:[
     '###ww###ww###ww#########ww###ww###ww####',

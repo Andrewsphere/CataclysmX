@@ -165,6 +165,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
     SessionOptions sessionOptions = options.session;
     sessionOptions.settings = settings;
     sessionOptions.scenario = options.scenario;
+    sessionOptions.startSafetyRadius = options.startSafetyRadius;
     sessionOptions.globalSettings = store.Overrides(SettingsScope::Global);
     sessionOptions.worldSettings = store.Overrides(SettingsScope::World);
     sessionOptions.settingsOverridesProvided = true;

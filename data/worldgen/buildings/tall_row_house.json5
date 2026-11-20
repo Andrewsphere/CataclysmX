@@ -1,5 +1,5 @@
 {format_version:1, definitions:[{
-  type:'building_pattern', id:'tall_row_house', weight:1800, family:'row_home', family_weight:1600, use:'residential',
+  type:'building_pattern', id:'tall_row_house', weight:1800, family:'row_home', family_weight:1600, use:'residential', occupied_floors:3, min_settlement_size:'medium',
   // Narrow three-storey townhouse: kitchen, bedrooms, and an attic studio.
   rows:[
     '###w######w###',

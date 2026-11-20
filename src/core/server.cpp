@@ -681,11 +681,20 @@ ContentResult<void> ValidateServerContent(const ContentCatalog& content, Diagnos
 Server::Server(const ContentCatalog& content, std::uint32_t seed)
     : Server(content, seed, NewGameScenario::Demo) {}
 
-Server::Server(const ContentCatalog& content, std::uint32_t seed, NewGameScenario scenario)
+int DefaultStartSafetyRadius(NewGameScenario scenario) {
+    return scenario == NewGameScenario::Town ? 16 : 0;
+}
+
+Server::Server(const ContentCatalog& content, std::uint32_t seed, NewGameScenario scenario,
+    eastl::optional<int> startSafetyRadius)
     : world_(content, seed), rng_state_(seed) {
     Require(ValidateServerContent(content).has_value());
     Require(scenario == NewGameScenario::Demo || scenario == NewGameScenario::FirstHouse
         || scenario == NewGameScenario::Town || scenario == NewGameScenario::ZombieShowcase);
+    GenerationSettings generation;
+    generation.population = scenario == NewGameScenario::Town ? PopulationMode::Urban : PopulationMode::Authored;
+    generation.safetyRadius = startSafetyRadius.value_or(DefaultStartSafetyRadius(scenario));
+    Require(generation.safetyRadius >= 0 && generation.safetyRadius <= maxStartSafetyRadius);
     if (scenario == NewGameScenario::ZombieShowcase) {
         Vector<MonsterTypeId> exhibits;
         for (std::uint32_t value = 1; value <= content.MonsterCount(); ++value) {
@@ -698,6 +707,8 @@ Server::Server(const ContentCatalog& content, std::uint32_t seed, NewGameScenari
         while (static_cast<std::size_t>(side * side) < exhibits.size()) { ++side; }
         const int edge = side * 3 / 2 + 2;
         const TileCoord playerPosition{0, -edge + 1};
+        generation.start = playerPosition;
+        world_.ConfigureGeneration(generation);
         active_radius_ = eastl::max(active_radius_, edge / chunk_size + 1);
         resident_radius_ = eastl::max(resident_radius_, active_radius_);
         active_request_ = Take(world_.RequestChunks({{0, 0}, active_radius_}, LoadMode::active, LoadReason::Player));
@@ -727,6 +738,8 @@ Server::Server(const ContentCatalog& content, std::uint32_t seed, NewGameScenari
         const auto start = scenario == NewGameScenario::FirstHouse
             ? FindFirstHouseStart(content, seed) : FindTownStart(content, seed);
         Require(start.has_value());
+        generation.start = start->playerPosition;
+        world_.ConfigureGeneration(generation);
         active_request_ = Take(world_.RequestChunks({BubbleCenter(start->playerPosition), active_radius_}, LoadMode::active, LoadReason::Player));
         resident_request_ = RequestResident(world_, start->playerPosition, resident_radius_, circleResidency_);
         Require(world_.ReconcileChunks().has_value());
@@ -738,6 +751,7 @@ Server::Server(const ContentCatalog& content, std::uint32_t seed, NewGameScenari
         SynchronizePacing();
         return;
     }
+    world_.ConfigureGeneration(generation);
     active_request_ = Take(world_.RequestChunks({{0, 0}, active_radius_}, LoadMode::active, LoadReason::Player));
     resident_request_ = RequestResident(world_, {0, 0}, resident_radius_, circleResidency_);
     Require(world_.ReconcileChunks().has_value());

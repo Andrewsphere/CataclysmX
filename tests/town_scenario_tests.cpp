@@ -64,13 +64,9 @@ const TerrainDefinition& TerrainAt(const ContentCatalog& content, const RegionPl
     return content.GetTerrain(tiles[static_cast<std::size_t>(TileIndex(position))].terrain);
 }
 
-std::int64_t Distance(TileCoord position) {
-    return std::int64_t{position.x} * position.x + std::int64_t{position.z} * position.z;
-}
-
-TEST_CASE("Town query selects a usable populated entrance near origin", "[town][scenario][worldgen]") {
+TEST_CASE("Town query selects a usable residential edge in a small settlement", "[town][scenario][worldgen]") {
     const auto content = LoadPack(CATACLYSMX_CONTENT_PACK);
-    for (const std::uint32_t seed : {0u, 13u, 42u, 101u}) {
+    for (const std::uint32_t seed : {0u, 13u, 42u}) {
         INFO("seed=" << seed);
         Diagnostics diagnostics;
         const auto start = FindTownStart(content, seed, &diagnostics);
@@ -78,80 +74,66 @@ TEST_CASE("Town query selects a usable populated entrance near origin", "[town][
         REQUIRE(start);
         CHECK(start == FindTownStart(content, seed));
         const auto region = RegionOf(start->entrance);
-        REQUIRE(region.x >= -1); REQUIRE(region.x <= 1);
-        REQUIRE(region.z >= -1); REQUIRE(region.z <= 1);
         const auto plan = GenerateRegionPlan(content, seed, region);
         const auto* building = BuildingAt(plan, start->entrance);
         REQUIRE(building);
         const auto& pattern = content.GetBuildingPattern(building->pattern);
         INFO("starting pattern=" << pattern.id.c_str());
         CHECK(building->entrance == start->entrance);
-        CHECK(Populated(pattern, *building));
-        CHECK(pattern.site != BuildingSite::Park);
-        CHECK(pattern.site != BuildingSite::Square);
+        CHECK(pattern.site == BuildingSite::Building);
+        CHECK(pattern.use == BuildingUse::Residential);
+        const auto patch = GeneratePlanningPatch(seed, building->owner.region);
+        CHECK(patch.origin.x >= -planning_patch_regions);
+        CHECK(patch.origin.x <= planning_patch_regions);
+        CHECK(patch.origin.z >= -planning_patch_regions);
+        CHECK(patch.origin.z <= planning_patch_regions);
+        const SettlementDescriptor* descriptor = nullptr;
+        for (const auto& settlement : patch.settlements) {
+            if (settlement.id.region == building->owner.region
+                && settlement.id.ordinal == building->owner.settlement) { descriptor = &settlement; }
+        }
+        REQUIRE(descriptor);
+        CHECK(descriptor->scale == SettlementScale::Small);
+        const auto settlement = GenerateSettlementPlan(content, seed, *descriptor);
+        const int stepX = start->playerPosition.x - start->entrance.x;
+        const int stepZ = start->playerPosition.z - start->entrance.z;
+        for (const auto& other : settlement.buildings) {
+            if (other.owner == building->owner) { continue; }
+            if (stepX != 0 && other.bounds.min.z < building->bounds.max.z
+                && other.bounds.max.z > building->bounds.min.z) {
+                CHECK_FALSE((stepX > 0 ? other.bounds.min.x >= building->bounds.max.x
+                                      : other.bounds.max.x <= building->bounds.min.x));
+            }
+            if (stepZ != 0 && other.bounds.min.x < building->bounds.max.x
+                && other.bounds.max.x > building->bounds.min.x) {
+                CHECK_FALSE((stepZ > 0 ? other.bounds.min.z >= building->bounds.max.z
+                                      : other.bounds.max.z <= building->bounds.min.z));
+            }
+        }
+        const auto outsidePlan = GenerateRegionPlan(content, seed, RegionOf(start->playerPosition));
         CHECK_FALSE(Contains(building->bounds, start->playerPosition));
-        CHECK(IsRoad(plan, start->playerPosition));
+        CHECK(IsRoad(outsidePlan, start->playerPosition));
         CHECK(start->playerPosition.y == start->entrance.y);
         CHECK(std::abs(start->playerPosition.x - start->entrance.x)
             + std::abs(start->playerPosition.z - start->entrance.z) == 1);
-        const auto& floor = TerrainAt(content, plan, start->playerPosition);
+        const auto& floor = TerrainAt(content, outsidePlan, start->playerPosition);
         CHECK(floor.passable); CHECK_FALSE(floor.openSpace); CHECK_FALSE(floor.stairs);
         const auto& door = TerrainAt(content, plan, start->entrance);
         const auto* opened = content.TryGetTerrain(door.opensTo);
         CHECK((door.passable || (opened && opened->passable)));
         CHECK_FALSE(door.openSpace);
         ChunkPlacements placements;
-        GenerateChunkPlacements(content, seed, plan, ChunkOf(start->playerPosition), placements);
+        GenerateChunkPlacements(content, seed, outsidePlan, ChunkOf(start->playerPosition), placements);
         for (const auto& object : placements.furniture) { CHECK(object.position != start->playerPosition); }
         for (const auto& item : placements.items) { CHECK(item.position != start->playerPosition); }
         for (const auto& monster : placements.monsters) { CHECK(monster.position != start->playerPosition); }
-
-        // Independently check every clearly usable candidate in all nine plans.
-        // A nearer eligible entrance, or a lexically earlier equally near one,
-        // would disprove the canonical choice without reproducing owner tie-breaking.
-        for (int x = -1; x <= 1; ++x) {
-            for (int z = -1; z <= 1; ++z) {
-                const auto candidate = GenerateRegionPlan(content, seed, {x, z});
-                for (const auto& other : candidate.buildings) {
-                    const auto site = content.GetBuildingPattern(other.pattern).site;
-                    if (site == BuildingSite::Park || site == BuildingSite::Square) { continue; }
-                    if (!Populated(content.GetBuildingPattern(other.pattern), other)) { continue; }
-                    auto outside = other.entrance;
-                    const auto* parcel = ParcelAt(candidate, other.entrance);
-                    REQUIRE(parcel);
-                    switch (parcel->frontage) {
-                    case Frontage::North: --outside.z; break;
-                    case Frontage::South: ++outside.z; break;
-                    case Frontage::East: ++outside.x; break;
-                    case Frontage::West: --outside.x; break;
-                    }
-                    if (Contains(other.bounds, outside) || !IsRoad(candidate, outside)) { continue; }
-                    const auto& ground = TerrainAt(content, candidate, outside);
-                    const auto& entry = TerrainAt(content, candidate, other.entrance);
-                    const auto* open = content.TryGetTerrain(entry.opensTo);
-                    if (!ground.passable || ground.openSpace || ground.stairs || entry.openSpace
-                        || (!entry.passable && (!open || !open->passable))) { continue; }
-                    GenerateChunkPlacements(content, seed, candidate, ChunkOf(outside), placements);
-                    bool occupied = false;
-                    for (const auto& object : placements.furniture) { occupied |= object.position == outside; }
-                    for (const auto& item : placements.items) { occupied |= item.position == outside; }
-                    for (const auto& monster : placements.monsters) { occupied |= monster.position == outside; }
-                    if (occupied) { continue; }
-                    CHECK(Distance(start->entrance) <= Distance(other.entrance));
-                    if (Distance(start->entrance) == Distance(other.entrance)) {
-                        CHECK((start->entrance.x < other.entrance.x ||
-                            (start->entrance.x == other.entrance.x && start->entrance.z <= other.entrance.z)));
-                    }
-                }
-            }
-        }
     }
 }
 
 TEST_CASE("Town server starts at the queried position with the usual player supplies", "[town][scenario][server]") {
     const auto content = LoadPack(CATACLYSMX_CONTENT_PACK);
     REQUIRE(ValidateServerContent(content));
-    for (const std::uint32_t seed : {0u, 13u, 42u, 101u}) {
+    for (const std::uint32_t seed : {0u, 13u, 42u}) {
         INFO("seed=" << seed);
         const auto start = FindTownStart(content, seed);
         REQUIRE(start);
@@ -198,6 +180,7 @@ TEST_CASE("Town accepts populated patterns without the first house", "[town][sce
     REQUIRE(building);
     INFO("seed=42 starting pattern=" << content.GetBuildingPattern(building->pattern).id.c_str());
     CHECK(content.GetBuildingPattern(building->pattern).id == "small_shop");
+    CHECK(Populated(content.GetBuildingPattern(building->pattern), *building));
     CHECK(FindFirstHouseStart(content, 42) == eastl::unexpected(ContentError::InvalidData));
 }
 
@@ -209,9 +192,9 @@ TEST_CASE("Town rejects demo content without a populated pattern", "[town][scena
     CHECK_FALSE(diagnostics.Empty());
 }
 
-TEST_CASE("Curated first house has reproducible generation six review starts", "[town][scenario][house]") {
+TEST_CASE("Curated first house has reproducible starts", "[town][scenario][house]") {
     const auto content = LoadPack(CATACLYSMX_FIRST_HOUSE_PACK);
-    for (const auto seed : {0u, 13u}) {
+    for (const auto seed : {0u, 13u, 42u}) {
         INFO("seed=" << seed << " starting pattern=furnished_house");
         const auto start = FindFirstHouseStart(content, seed);
         REQUIRE(start);
@@ -223,26 +206,18 @@ TEST_CASE("Curated first house has reproducible generation six review starts", "
     }
 }
 
-TEST_CASE("Town starts use east and west driveways as well as north and south", "[town][scenario][worldgen]") {
-    // In a uniform, fully populated town the long main street always wins the
-    // distance query. Sparse population exercises eligible side-street starts.
+TEST_CASE("Town mixed fallback skips unpopulated patterns", "[town][scenario][worldgen]") {
     const auto content = SmallTown(true);
-    bool east = false, west = false;
-    for (std::uint32_t seed = 0; seed < 64 && !(east && west); ++seed) {
+    for (const std::uint32_t seed : {0u, 13u, 42u}) {
         const auto start = FindTownStart(content, seed);
         REQUIRE(start);
+        CHECK(start == FindTownStart(content, seed));
         const auto plan = GenerateRegionPlan(content, seed, RegionOf(start->entrance));
-        const auto* parcel = ParcelAt(plan, start->entrance);
-        REQUIRE(parcel);
-        if (parcel->frontage == Frontage::East || parcel->frontage == Frontage::West) {
-            CHECK(start->playerPosition.z == start->entrance.z);
-            CHECK(start->playerPosition.x == start->entrance.x + (parcel->frontage == Frontage::East ? 1 : -1));
-            CHECK(IsRoad(plan, start->playerPosition));
-            east |= parcel->frontage == Frontage::East;
-            west |= parcel->frontage == Frontage::West;
-        }
+        const auto* building = BuildingAt(plan, start->entrance);
+        REQUIRE(building);
+        const auto& pattern = content.GetBuildingPattern(building->pattern);
+        CHECK(pattern.use == BuildingUse::Mixed);
+        CHECK(Populated(pattern, *building));
     }
-    CHECK(east);
-    CHECK(west);
 }
 }

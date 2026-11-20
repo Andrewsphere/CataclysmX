@@ -244,6 +244,18 @@ with the previous catalog before upgrading, or starting a new world.
 
 ## 7. Remaining decisions and recommended order
 
+**Pass 4 is implemented and functionally verified:** I5 and city-specific I6 ship together
+under [the updated city contract](city_identity_design.md#pass-4-implementation-agreement).
+Replace legacy generation without backward-compatibility guarantees; require new
+worlds. Town's initial-hostile exclusion is a scenario-configurable horizontal
+same-floor circle (default 16 tiles, range 0–64, 0 disables), with no LOS clearing.
+FirstHouse defaults to 0 and retains its curated population. The full place/terrain
+roster, supported rewards, measurements and functional checks belong to this pass;
+SDL PNG artwork is a separate effort. See [generation/API verification](city_generation.md)
+and [measured city/runtime outcomes](city_probe.md#pass-4-reference-measurements).
+Expedition playtesting and later advanced-production/hacking capabilities retain
+their own follow-up scope.
+
 Resolve decisions with the first pass that consumes them:
 
 | Decision | Owning next pass |

@@ -183,10 +183,10 @@ TEST_CASE("Learning save rejects corrupt envelopes content identities and pendin
     SECTION("deadline disagreement") { file.Sql("UPDATE chunks SET payload=json_set(payload,'$.actors[0].remaining_ticks','99') WHERE json_array_length(payload,'$.actors')>0"); }
     World world(content); CHECK_FALSE(world.LoadSave(file.path.c_str()));
 }
-TEST_CASE("Version twelve saves migrate to explicit neutral learning envelopes", "[skills][save]") {
-    const auto content = LearningSaveContent(); SaveFile file; PersistentId id = 0;
+TEST_CASE("Version twelve learning checkpoints are rejected", "[skills][save]") {
+    const auto content = LearningSaveContent(); SaveFile file;
     {
-        World world(content); Load(world); const auto actor = Reader(world); id = world.GetActor(actor)->id;
+        World world(content); Load(world); const auto actor = Reader(world);
         REQUIRE(world.CreateSave(file.path.c_str(), Session(world, actor)));
     }
     // Emit a genuine v12 actor: its v2 combat envelope predates the expansion.
@@ -197,14 +197,8 @@ TEST_CASE("Version twelve saves migrate to explicit neutral learning envelopes",
         "json_remove(value,'$.session')) FROM json_each(world_state.payload,'$.session.players'))));"
         "UPDATE world_state SET payload=json_remove(payload,'$.power');"
         "UPDATE metadata SET format_version=12");
-    {
-        World world(content); const auto session = Take(world.LoadSave(file.path.c_str())); Load(world);
-        CHECK(world.GetActor(world.FindActor(id))->learning == LearningState{});
-        REQUIRE(world.Save(session));
-    }
-    // A v13 decoder requires the envelope, so reopening also verifies migration.
-    World world(content); Take(world.LoadSave(file.path.c_str())); Load(world);
-    CHECK(world.GetActor(world.FindActor(id))->learning == LearningState{});
+    SaveDatabase database(content);
+    CHECK(database.Open(file.path.c_str()) == eastl::unexpected(SaveError::UnsupportedVersion));
 }
 TEST_CASE("Persistence rejects simultaneous study and crafting assignments", "[skills][save]") {
     const auto content = LearningSaveContent(); SaveFile file; SaveDatabase database(content);

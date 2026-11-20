@@ -1,5 +1,15 @@
 # Urban content and Town
 
+**Pass 4 / generation 8 supersedes the regional-town behavior below.** The current
+[city contract](city_identity_design.md) and [generation API](city_generation.md)
+cover small/medium/large settlements, old/mixed/new architecture, district-based
+places and population. The expanded pack includes the new residential, civic and
+industrial place families and forty terrain variants. New worlds are required.
+Town starts on a small settlement's residential edge; use
+`--start-safety-radius 0..64` to override its 16-tile same-floor circle.
+SDL PNG artwork is a separate effort. Historical generation-6 measurements below
+are not evidence for the new generation.
+
 The expanded `data/content.json5` pack supplies **32 populated building layouts,
 a neighborhood park and a civic square**, plus the three legacy surface-only
 patterns `compact_house`, `divided_house`, and `long_house` (37 patterns total).

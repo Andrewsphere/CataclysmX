@@ -1,5 +1,5 @@
 {format_version:1, definitions:[{
-  type:'building_pattern', id:'fire_station', site:'landmark', weight:1000,
+  type:'building_pattern', id:'fire_station', site:'landmark', weight:1000, use:'civic', occupied_floors:2,
   // Two floors: deep apparatus hall, equipment wing, upstairs crew dormitory.
   rows:[
     '###WW########WW###########WW######',

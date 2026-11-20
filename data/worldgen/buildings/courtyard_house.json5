@@ -1,5 +1,5 @@
 {format_version:1, definitions:[{
-  type:'building_pattern', id:'courtyard_house', weight:1500, family:'detached_home', family_weight:2200, use:'residential',
+  type:'building_pattern', id:'courtyard_house', weight:1500, family:'detached_home', family_weight:2200, use:'residential', occupied_floors:2,
   // U-shaped home around an open garden; upstairs wings overlook the courtyard.
   rows:[
     '###w########u###',
@@ -18,7 +18,7 @@
     '#.....#gggg#.p.#',
     '###+###gggg#####',
   ],
-  palette:{'#':'wall_wood',I:'wall_plaster','.':'floor','+':'closed_door','>':'stairs',g:'grass',':':'pavement',' ':'air',
+  palette:{'#':'wall_wood',I:'wall_plaster','.':'floor','+':'closed_door','>':'stairs',g:{terrain:'grass',space:'exterior'},':':{terrain:'pavement',space:'exterior'},' ':{terrain:'air',space:'none'},
     w:'window',u:'window_curtained',
     s:{terrain:'floor_tile',object:'kitchen_stove',facing:'north'},
     v:{terrain:'floor_tile',object:'kitchen_sink',facing:'north'},

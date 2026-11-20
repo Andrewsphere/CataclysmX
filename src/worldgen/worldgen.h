@@ -1,16 +1,14 @@
 #pragma once
 
 #include "core/world.h"
-#include "core/static_list.h"
 #include "power/power_types.h"
+#include "worldgen/generation_settings.h"
 
 namespace cataclysmx {
 
 inline constexpr int region_size = 256;
-inline constexpr std::uint32_t world_generation_version = 7;
-// V7 adds building power; v6 terrain/population streams remain unchanged.
-// Street-led profiles and family-first frontage packing; see urban_generation_v6_design.md.
-inline constexpr std::size_t maxRegionRoads = 18; // Legacy 6+12; v6 at most 4 streets+12 connectors.
+inline constexpr int planning_patch_regions = 6;
+inline constexpr int planning_patch_size = region_size * planning_patch_regions;
 
 struct RegionCoord {
     int x = 0;
@@ -56,13 +54,34 @@ struct RoadSegment {
     bool operator==(const RoadSegment&) const = default;
 };
 struct FeatureOwner {
-    RegionCoord region{};
+    RegionCoord region{}; // Canonical planning-patch origin, in region coordinates.
     std::uint32_t parcel = 0;
+    std::uint32_t settlement = 0;
     bool operator==(const FeatureOwner&) const = default;
 };
 // Preserve legacy values; use an explicit switch, not ordinal rotation arithmetic.
 enum class Frontage { North, South, East, West };
 enum class TownProfile : std::uint8_t { LegacyGrid, MainStreet, Crossroads, OffsetNeighborhood };
+enum class SettlementEra : std::uint8_t { Older, Mixed, Newer };
+struct SettlementId {
+    RegionCoord region{}; // Planning-patch origin, each component a multiple of six.
+    std::uint32_t ordinal = 0;
+    bool operator==(const SettlementId&) const = default;
+};
+struct SettlementDescriptor {
+    SettlementId id{};
+    TileRect bounds{};
+    TileCoord center{};
+    SettlementScale scale = SettlementScale::Small;
+    SettlementEra era = SettlementEra::Older;
+    bool operator==(const SettlementDescriptor&) const = default;
+};
+struct PlanningPatch {
+    RegionCoord origin{};
+    Vector<SettlementDescriptor> settlements;
+    Vector<RoadSegment> roads; // Countryside connections; not population coverage.
+    bool operator==(const PlanningPatch&) const = default;
+};
 struct ParcelPlan {
     FeatureOwner owner{};
     TileRect bounds{};
@@ -70,6 +89,8 @@ struct ParcelPlan {
     int streetZ = 0; // Street centerline for North/South; unused for East/West.
     BuildingSite site = BuildingSite::Building;
     int streetX = 0; // Street centerline for East/West; unused for North/South.
+    BuildingUse district = BuildingUse::Mixed;
+    BuildingEra era = BuildingEra::Older;
     bool operator==(const ParcelPlan&) const = default;
 };
 struct BuildingPlan {
@@ -84,27 +105,7 @@ struct BuildingPlan {
     std::uint32_t basementVariant = 0; // 0 none; otherwise 1-based local index.
     bool operator==(const BuildingPlan&) const = default;
 };
-struct RegionPlan {
-    RegionCoord region{};
-    std::uint64_t seed = 0;
-    TileRect bounds{};
-    TileRect townBounds{}; // Legacy nominal 112x112; v6 enclosing envelope, not a paving mask.
-    TileCoord townCenter{};
-    bool hasTown = false; // False when nominal town exceeds world bounds.
-    eastl::array<BoundaryCrossing, 4> boundaries{}; // North, east, south, west.
-    StaticList<RoadSegment, maxRegionRoads> roads;
-    Vector<ParcelPlan> parcels; // Legacy order unchanged; v6 street, side, interval, lot order.
-    Vector<BuildingPlan> buildings; // Same order, omitting ineligible parcels.
-    std::uint32_t generationVersion = world_generation_version;
-    TownProfile townProfile = TownProfile::LegacyGrid;
-    // V6-only surface pavement outside parcels: three-tile service lanes and
-    // their pedestrian connections. Empty in legacy plans; not IsRoad geometry.
-    // Explicit rectangles preserve deliberate shared access without paving the town.
-    Vector<TileRect> serviceAlleys;
-    bool operator==(const RegionPlan&) const = default;
-};
-
-enum class GenerationPlacementKind : std::uint8_t { Furniture, Loot, Monster };
+enum class GenerationPlacementKind : std::uint8_t { Furniture, Loot, Monster, IndoorPopulation, OutdoorPopulation };
 // Transient identity scoped to a seed/catalog/version. Never a PersistentId,
 // runtime handle or saved marker; hashes of these tuples need not be unique.
 struct GenerationKey {
@@ -134,6 +135,37 @@ struct GeneratedMonster {
     TileCoord position{};
     MonsterTypeId type{};
     bool operator==(const GeneratedMonster&) const = default;
+};
+struct SettlementPlan {
+    SettlementDescriptor settlement;
+    Vector<RoadSegment> roads;
+    Vector<ParcelPlan> parcels;
+    Vector<BuildingPlan> buildings;
+    Vector<TileRect> serviceAlleys;
+    Vector<GeneratedMonster> monsters; // Prepared once; deterministic before chunk cropping.
+    std::uint32_t eligibleOutdoorTiles = 0;
+    std::uint64_t indoorExpected = 0; // ratioScale units, before scenario exclusion.
+    bool operator==(const SettlementPlan&) const = default;
+};
+struct RegionPlan {
+    RegionCoord region{};
+    std::uint64_t seed = 0;
+    TileRect bounds{};
+    // Summary of the nearest intersecting settlement for existing debug callers.
+    // Actual membership always uses settlements and explicit developed geometry.
+    TileRect townBounds{};
+    TileCoord townCenter{};
+    bool hasTown = false;
+    eastl::array<BoundaryCrossing, 4> boundaries{};
+    Vector<RoadSegment> roads;
+    Vector<ParcelPlan> parcels;
+    Vector<BuildingPlan> buildings;
+    std::uint32_t generationVersion = world_generation_version;
+    TownProfile townProfile = TownProfile::LegacyGrid;
+    Vector<TileRect> serviceAlleys;
+    Vector<SettlementDescriptor> settlements;
+    Vector<GeneratedMonster> urbanMonsters;
+    bool operator==(const RegionPlan&) const = default;
 };
 struct ChunkPlacements {
     Vector<GeneratedFurniture> furniture;
@@ -174,21 +206,24 @@ ContentResult<void> ValidateWorldgenContent(const ContentCatalog& content,
                                           Diagnostics* diagnostics = nullptr);
 // Environment and regional geometry are horizontal: Y is explicitly ignored.
 EnvironmentSample SampleEnvironment(std::uint64_t seed, TileCoord position);
+// Cheap descriptors: the patch containing region has ten settlements before
+// finite-world clipping (six small, three medium, one large). No content RNG.
+PlanningPatch GeneratePlanningPatch(std::uint64_t seed, RegionCoord region);
+// Full canonical settlement geometry/population, independent of querying region.
+SettlementPlan GenerateSettlementPlan(const ContentCatalog& content,
+    std::uint64_t seed, const SettlementDescriptor& settlement);
 RegionPlan GenerateRegionPlan(const ContentCatalog& content, std::uint64_t seed,
                               RegionCoord region);
-// Explicit legacy/current selection: accepts 2..7. Version 7 preserves v6 terrain
-// and population streams; World adds generated building grids only for v7+.
-// The three-argument call
-// selects world_generation_version; version 1 surface generation stays in World.
+// Only world_generation_version is supported. The explicit version is an
+// invariant guard, not a legacy dispatch mechanism.
 RegionPlan GenerateRegionPlan(const ContentCatalog& content, std::uint64_t seed,
                               RegionCoord region, std::uint32_t generationVersion);
 // Row-major z*16+x. Invalid slots of partial edge chunks are undamaged wall.
-// Surface-only calls permit legacy catalogs without air. Upper-layer generation
+// Surface-only calls permit small catalogs without air. Upper-layer generation
 // requires the 'air' openSpace role; missing/invalid roles are invariant failures.
-// Base Y<0 is solid wall; Y>0 is air. Versions 2..4 have rectangular Y=1 roofs;
-// versions 5..7 leave civic outdoor sites and surface grass/tree/road/pavement open.
-// Versions 4..7 overlay authored layers and a once-selected basement. Taller
-// buildings explicitly author their floors and roof; air cells allow setbacks.
+// Base Y<0 is solid wall; Y>0 is air. Authored layers and the once-selected
+// basement overlay it. Explicit space classification keeps civic sites and
+// courtyards open; taller buildings author their occupied floors and roof.
 // Required floor/wall terrain absence is an invariant failure. Optional grass,
 // tree, road, rubble, pavement fall back to floor, wall, floor, floor, floor.
 // At Y=0 the inclusive legacy demo square [-32,32] x [-32,32] is always floor;
@@ -198,10 +233,11 @@ eastl::array<Tile, chunk_size * chunk_size> GenerateChunk(
     ChunkCoord chunk);
 
 // Pure, chunk-owned placements in canonical feature/authored/leaf order. Clears
-// all outputs while retaining capacity. Versions 2/3 emit nothing. Choices use
+// all outputs while retaining capacity. Choices use
 // local generation streams, never World RNG, handles or persistent entity IDs.
 void GenerateChunkPlacements(const ContentCatalog& content, std::uint64_t seed,
-    const RegionPlan& plan, ChunkCoord chunk, ChunkPlacements& output);
+    const RegionPlan& plan, ChunkCoord chunk, ChunkPlacements& output,
+    PopulationMode population = PopulationMode::Urban);
 
 // Queries are horizontal footprint queries, ignoring Y. Require valid world
 // positions; return false/null outside plan bounds.
@@ -211,19 +247,9 @@ bool IsRoad(const RegionPlan& plan, TileCoord position);
 const ParcelPlan* ParcelAt(const RegionPlan& plan, TileCoord position);
 const BuildingPlan* BuildingAt(const RegionPlan& plan, TileCoord position);
 
-// Design: canonical border keys make neighbors independent; hashes are local
-// unsigned integer mixing, never globally unique feature IDs. Fixed rectilinear
-// routes reserve perpendicular border approaches and avoid town parcels. Versions
-// 2..4 use eight 53x26/27 parcels and two-tile setbacks. Version 5 subdivides
-// 53x25 strips into 2/3 lots with one-tile setbacks, reserving civic sites when
-// present in content. Three-tile rear alleys and gaps between sites are paved.
-// Version 6 uses main-street, crossroads or offset profiles, four-way building-sized
-// frontage lots, family-first weights, front sidewalks, gardens and connected rear
-// pedestrian lanes. The enclosing town bounds are not a pavement fill mask.
-// Weighted fitting templates rotate from any entrance side (corner preference:
-// north, east, south, west). No cache, entities, persistence, or neighbor loads.
-// Version 7 preserves v6 terrain and population, adding World-registered power grids.
-// Generation is deterministic for the same catalog and world_generation_version.
-// World persists that version separately from the save schema. Edge records exist on borders
-// outside the world; their nominal geometry is simply clipped when rasterized.
+// Planning patches own stable settlement identities; settlements own geometry and
+// initial population. Region plans are disposable spatial slices, not city borders.
+// Hashes seed local streams, never substitute for full feature identity tuples.
+// No cache, runtime entities, persistence or neighboring World loads are owned here.
+// World persists the generation version separately from the save schema.
 }

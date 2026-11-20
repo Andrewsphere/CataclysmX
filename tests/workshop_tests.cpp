@@ -372,7 +372,7 @@ TEST_CASE("Station bindings release when only the provider or wrapper becomes in
     REQUIRE(r.world.CheckInvariants());
 }
 
-TEST_CASE("Workshop legacy saves retain paid work without inventing claims", "[workshop][save]") {
+TEST_CASE("Workshop legacy checkpoints are rejected", "[workshop][save]") {
     SaveFile file; Rig r; r.Station("fixture");
     const auto job = r.Start(r.actor).unfinished; REQUIRE(job.value);
     r.Step(30);
@@ -384,17 +384,7 @@ TEST_CASE("Workshop legacy saves retain paid work without inventing claims", "[w
       UPDATE chunks SET payload=replace(payload,'"version":4,"kind"','"version":2,"kind"');
       UPDATE metadata SET format_version=15;)");
     SaveDatabase db(r.content);
-    const auto snapshot = Take(db.Open(file.path.c_str()));
-    const auto chunk = Take(db.ReadChunk({0, 0}, snapshot.nextId)); REQUIRE(chunk);
-    bool found = false;
-    for (const auto& item : chunk->items) {
-        if (item.type != r.content.UnfinishedCraftItem()) { continue; }
-        const auto state = Take(ReadCraftingState(*item.state.Find("crafting_job")));
-        CHECK(state.stations.Empty()); CHECK(state.remaining == 70); CHECK(state.pendingWork == 1000000);
-        found = true;
-    }
-    CHECK(found);
-    REQUIRE(db.Begin()); REQUIRE(db.Commit());
+    CHECK(db.Open(file.path.c_str()) == eastl::unexpected(SaveError::UnsupportedVersion));
 }
 
 TEST_CASE("Workshop job payload validates bindings and migrates version two", "[workshop][save]") {

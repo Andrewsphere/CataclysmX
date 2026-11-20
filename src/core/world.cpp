@@ -553,7 +553,19 @@ public:
     std::uint32_t seed;
     std::uint32_t generationVersion = world_generation_version;
     // A bounded, disposable planning cache; never part of authoritative state.
-    eastl::optional<RegionPlan> generationPlan;
+    Vector<RegionPlan> generationPlans;
+    GenerationSettings generation;
+    bool generationStarted = false;
+    const RegionPlan& GenerationPlan(RegionCoord region) {
+        for (const auto& plan : generationPlans) {
+            if (plan.region == region) { return plan; }
+        }
+        // FIFO ownership, bounded independently of world residency. Callers must
+        // finish using this borrow before asking for a different plan.
+        if (generationPlans.size() == 8) { generationPlans.erase(generationPlans.begin()); }
+        generationPlans.push_back(GenerateRegionPlan(content, seed, region));
+        return generationPlans.back();
+    }
     ChunkPlacements generationPlacements;
     Vector<GeneratedBuildingPower> generationPower;
     Vector<BuildingPowerRegistration> pendingPowerBuildings;
@@ -1441,35 +1453,10 @@ public:
     }
 
     void Generate(Chunk& value) {
-        Require(generationVersion >= 1 && generationVersion <= world_generation_version);
-        // Version 3 retains version 2's surface raster. Older worlds acquire
-        // the layered extension only outside their original surface layer.
-        if (generationVersion != 1 || value.position.y != 0) {
-            const auto region = RegionOf({value.position.x * chunk_size, value.position.z * chunk_size});
-            if (!generationPlan || generationPlan->region != region) {
-                generationPlan = GenerateRegionPlan(content, seed, region, generationVersion == 1 ? 2 : generationVersion);
-            }
-            value.tiles = GenerateChunk(content, seed, *generationPlan, value.position);
-            return;
-        }
-        Require(generationVersion == 1);
-        // Keep version 1 byte-for-byte for unexplored chunks in existing saves.
-        for (int z = 0; z < chunk_size; ++z) {
-            for (int x = 0; x < chunk_size; ++x) {
-                const int global_x = value.position.x * chunk_size + x;
-                const int global_z = value.position.z * chunk_size + z;
-                // Unsigned coordinate mixing is portable, with no RNG state or IDs.
-                std::uint32_t hash = seed ^ (static_cast<std::uint32_t>(global_x) * 0x9e3779b9U)
-                    ^ (static_cast<std::uint32_t>(global_z) * 0x85ebca6bU);
-                hash ^= hash >> 16;
-                hash *= 0x7feb352dU;
-                hash ^= hash >> 15;
-                const bool demo = global_x >= -32 && global_x <= 32
-                    && global_z >= -32 && global_z <= 32;
-                value.tiles[z * chunk_size + x] = {
-                    !demo && hash % 13U == 0 ? wall : floor, 0};
-            }
-        }
+        Require(generationVersion == world_generation_version);
+        generationStarted = true;
+        const auto region = RegionOf({value.position.x * chunk_size, value.position.z * chunk_size});
+        value.tiles = GenerateChunk(content, seed, GenerationPlan(region), value.position);
     }
 
     Archive Capture(const Chunk& value, Vector<ItemHandle>* capturedItems = nullptr) const {
@@ -1958,6 +1945,7 @@ public:
             }
         }
         SaveSnapshot saveSnapshot{seed, generationVersion, next_id, session, skyLight, CaptureMemories()};
+        saveSnapshot.generation = generation;
         saveSnapshot.session.tick = tick;
         saveSnapshot.power = powerSystem.Capture();
         if (auto result = target.WriteSnapshot(saveSnapshot, diagnostics); !result) {
@@ -2143,14 +2131,10 @@ SaveResult<void> World::ReconcileChunksPass(Diagnostics* diagnostics) {
             for (int y = world_min_y; y <= world_max_y; ++y) { incoming.push_back({entry.first.x, entry.first.z, y}); }
         }
         eastl::sort(incoming.begin(), incoming.end(), ChunkLess);
-        if (impl_->generationVersion < 7) { return {}; }
         for (const auto position : incoming) {
             if (position.y != 0) { continue; }
             const auto region = RegionOf({position.x * chunk_size, position.z * chunk_size});
-            if (!impl_->generationPlan || impl_->generationPlan->region != region) {
-                impl_->generationPlan = GenerateRegionPlan(impl_->content, impl_->seed, region, impl_->generationVersion);
-            }
-            GenerateBuildingPower(impl_->content, *impl_->generationPlan, position, impl_->generationPower);
+            GenerateBuildingPower(impl_->content, impl_->GenerationPlan(region), position, impl_->generationPower);
             for (const auto& building : impl_->generationPower) { buildings.push_back({building.origin, building.bounds}); }
         }
         if (!impl_->powerSystem.ValidateBuildings({buildings.data(), buildings.size()})) {
@@ -2364,15 +2348,13 @@ SaveResult<void> World::ReconcileChunksPass(Diagnostics* diagnostics) {
     // New actors start ready (zero deadline); typed objects keep the legacy
     // timer suspended and machine/item work uses relative durations. Population
     // therefore needs no nonzero absolute deadline, even at maximum tick.
-    if (impl_->generationVersion >= 4) {
+    {
         Vector<TileCoord> placedFurniture;
         for (ChunkCoord position : newChunks) {
             const auto region = RegionOf({position.x * chunk_size, position.z * chunk_size});
-            if (!impl_->generationPlan || impl_->generationPlan->region != region) {
-                impl_->generationPlan = GenerateRegionPlan(impl_->content, impl_->seed, region, impl_->generationVersion);
-            }
             auto& placements = impl_->generationPlacements;
-            GenerateChunkPlacements(impl_->content, impl_->seed, *impl_->generationPlan, position, placements);
+            GenerateChunkPlacements(impl_->content, impl_->seed, impl_->GenerationPlan(region), position, placements,
+                impl_->generation.population);
             placedFurniture.clear();
             for (const auto& furniture : placements.furniture) {
                 const auto& definition = impl_->content.GetObject(furniture.type);
@@ -2393,6 +2375,12 @@ SaveResult<void> World::ReconcileChunksPass(Diagnostics* diagnostics) {
                 Require(CreateItem(item.type, location).has_value());
             }
             for (const auto& monster : placements.monsters) {
+                const auto& settings = impl_->generation;
+                const auto dx = std::int64_t{monster.position.x} - settings.start.x;
+                const auto dz = std::int64_t{monster.position.z} - settings.start.z;
+                if (settings.safetyRadius != 0 && monster.position.y == settings.start.y
+                    && dx * dx + dz * dz <= std::int64_t{settings.safetyRadius} * settings.safetyRadius
+                    && Hostile(CombatFaction::Survivors, impl_->content.GetMonster(monster.type).faction)) { continue; }
                 if (ActorAt(monster.position).value || BlocksMovement(monster.position)) { continue; }
                 Require(CreateMonster(monster.type, monster.position).has_value());
             }
@@ -2461,8 +2449,7 @@ SaveResult<SessionState> World::LoadSave(const char* path, Diagnostics* diagnost
         if (diagnostics) { diagnostics->Add("Loading world save"); }
         return eastl::unexpected(snapshot.error());
     }
-    const bool supported = snapshot->generationVersion >= 1
-        && snapshot->generationVersion <= world_generation_version;
+    const bool supported = snapshot->generationVersion == world_generation_version;
     if (!supported || snapshot->nextId == 0) {
         const SaveError error = !supported
             ? SaveError::UnsupportedVersion : SaveError::InvalidData;
@@ -2482,7 +2469,9 @@ SaveResult<SessionState> World::LoadSave(const char* path, Diagnostics* diagnost
     impl_->seed = snapshot->seed;
     impl_->tick = snapshot->session.tick;
     impl_->generationVersion = snapshot->generationVersion;
-    impl_->generationPlan.reset();
+    impl_->generationPlans.clear();
+    impl_->generation = snapshot->generation;
+    impl_->generationStarted = true;
     impl_->next_id = snapshot->nextId;
     impl_->skyLight = snapshot->skyLight;
     Require(impl_->powerSystem.Restore(snapshot->power, snapshot->session.tick).has_value());
@@ -2965,6 +2954,16 @@ void World::CollectChunkResidencyDebug(Vector<ChunkResidencyDebug>& output,
 const ContentCatalog& World::GetContent() const { return impl_->content; }
 std::uint32_t World::GetSeed() const { return impl_->seed; }
 std::uint32_t World::GetGenerationVersion() const { return impl_->generationVersion; }
+
+void World::ConfigureGeneration(GenerationSettings settings) {
+    Require(!impl_->generationStarted && !impl_->database && impl_->requests.empty());
+    Require(settings.population == PopulationMode::Urban || settings.population == PopulationMode::Authored);
+    Require(ValidPosition(settings.start) && settings.safetyRadius >= 0
+        && settings.safetyRadius <= maxStartSafetyRadius);
+    impl_->generation = settings;
+}
+
+const GenerationSettings& World::GetGenerationSettings() const { return impl_->generation; }
 
 std::uint64_t World::GetRevision() const { return impl_->revision; }
 std::uint64_t World::GetMapRevision() const { return impl_->mapRevision; }

@@ -10,6 +10,7 @@ namespace cataclysmx::sdl {
 struct SessionOptions {
     Settings settings;
     NewGameScenario scenario = NewGameScenario::Demo;
+    eastl::optional<int> startSafetyRadius;
     SettingsOverrides globalSettings;
     SettingsOverrides worldSettings;
     bool settingsOverridesProvided = false;

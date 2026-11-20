@@ -26,13 +26,49 @@ void CheckPlan(const ContentCatalog& content, const RegionPlan& plan) {
          Min(z + region_size, world_coordinate_limit + 1)}};
     Require(plan.bounds == expected);
     Require(ValidateWorldgenContent(content).has_value());
-    Require(plan.generationVersion >= 2 && plan.generationVersion <= world_generation_version);
+    Require(plan.generationVersion == world_generation_version);
     // As with GenerateChunk, the remaining plan records must be the unmodified
     // generated plan for this immutable catalog; do not regenerate to verify it.
 }
 
 char OwnerGlyph(const FeatureOwner& owner) {
     return static_cast<char>('A' + owner.parcel % 26);
+}
+
+bool OwnerBefore(const FeatureOwner& a, const FeatureOwner& b) {
+    if (a.region.x != b.region.x) { return a.region.x < b.region.x; }
+    if (a.region.z != b.region.z) { return a.region.z < b.region.z; }
+    if (a.settlement != b.settlement) { return a.settlement < b.settlement; }
+    return a.parcel < b.parcel;
+}
+
+const char* ScaleName(SettlementScale scale) {
+    switch (scale) {
+    case SettlementScale::Small: return "small";
+    case SettlementScale::Medium: return "medium";
+    case SettlementScale::Large: return "large";
+    }
+    std::abort();
+}
+
+const char* EraName(SettlementEra era) {
+    switch (era) {
+    case SettlementEra::Older: return "older";
+    case SettlementEra::Mixed: return "mixed";
+    case SettlementEra::Newer: return "newer";
+    }
+    std::abort();
+}
+
+const char* DistrictName(BuildingUse use) {
+    switch (use) {
+    case BuildingUse::Mixed: return "mixed";
+    case BuildingUse::Residential: return "residential";
+    case BuildingUse::Commercial: return "commercial";
+    case BuildingUse::Industrial: return "industrial/service";
+    case BuildingUse::Civic: return "civic/technical";
+    }
+    std::abort();
 }
 
 TerminalAppearance Glyph(char symbol, RgbColor foreground) {
@@ -60,10 +96,10 @@ TerminalAppearance FeatureCell(const RegionPlan& plan, WorldgenDebugLayer layer,
             road |= IsRoad(plan, p);
             if (layer == WorldgenDebugLayer::Roads) { continue; }
             if (const auto* candidate = ParcelAt(plan, p)) {
-                if (!parcel || candidate->owner.parcel < parcel->owner.parcel) { parcel = candidate; }
+                if (!parcel || OwnerBefore(candidate->owner, parcel->owner)) { parcel = candidate; }
             }
             if (const auto* candidate = BuildingAt(plan, p)) {
-                if (!building || candidate->owner.parcel < building->owner.parcel) { building = candidate; }
+                if (!building || OwnerBefore(candidate->owner, building->owner)) { building = candidate; }
             }
         }
     }
@@ -84,9 +120,11 @@ TerminalAppearance FeatureCell(const RegionPlan& plan, WorldgenDebugLayer layer,
     if (cell.min.z == plan.bounds.min.z || cell.max.z == plan.bounds.max.z) {
         return Glyph('-', {100, 110, 130});
     }
-    const bool town = plan.hasTown && cell.min.x < plan.townBounds.max.x
-        && cell.max.x > plan.townBounds.min.x && cell.min.z < plan.townBounds.max.z
-        && cell.max.z > plan.townBounds.min.z;
+    bool town = false;
+    for (const auto& settlement : plan.settlements) {
+        town |= cell.min.x < settlement.bounds.max.x && cell.max.x > settlement.bounds.min.x
+            && cell.min.z < settlement.bounds.max.z && cell.max.z > settlement.bounds.min.z;
+    }
     return Glyph(town ? '.' : ' ', {80, 120, 80});
 }
 
@@ -239,28 +277,32 @@ Vector<String> WorldgenDebugDetails(const ContentCatalog& content,
             lines.push_back(eastl::move(basement));
         }
     } else { lines.push_back(localization ? localization->Text("debug.details.no_building") : String("Building: none")); }
-    for (const auto& crossing : plan.boundaries) {
-        Require(crossing.key.axis == BorderAxis::X || crossing.key.axis == BorderAxis::Z);
-        std::snprintf(buffer, sizeof(buffer), "Crossing: axis=%c key=%d,%d position=%d,%d width=%d approach=%d",
-            crossing.key.axis == BorderAxis::X ? 'X' : 'Z', crossing.key.border, crossing.key.alongRegion,
-            crossing.position.x, crossing.position.z, crossing.width, crossing.approachLength);
-        lines.push_back(localization ? localization->Format("debug.details.crossing", {
-            {"axis", String(crossing.key.axis == BorderAxis::X ? "X" : "Z")},
-            {"border", NumberText(crossing.key.border)}, {"along", NumberText(crossing.key.alongRegion)},
-            {"x", NumberText(crossing.position.x)}, {"z", NumberText(crossing.position.z)},
-            {"width", NumberText(crossing.width)}, {"approach", NumberText(crossing.approachLength)}}) : String(buffer));
-    }
     std::snprintf(buffer, sizeof(buffer), "Generation version=%u", plan.generationVersion);
     lines.push_back(String(buffer));
-    const char* profile = "legacy grid";
-    switch (plan.townProfile) {
-    case TownProfile::LegacyGrid: break;
-    case TownProfile::MainStreet: profile = "main street"; break;
-    case TownProfile::Crossroads: profile = "crossroads"; break;
-    case TownProfile::OffsetNeighborhood: profile = "offset neighborhood"; break;
+    for (const auto& settlement : plan.settlements) {
+        std::size_t sites = 0;
+        for (const auto& building : plan.buildings) {
+            sites += building.owner.region == settlement.id.region
+                && building.owner.settlement == settlement.id.ordinal;
+        }
+        std::snprintf(buffer, sizeof(buffer),
+            "Settlement %d,%d:%u: %s / %s | selected=%s | envelope=%dx%d | intersecting sites=%zu",
+            settlement.id.region.x, settlement.id.region.z, settlement.id.ordinal,
+            ScaleName(settlement.scale), EraName(settlement.era),
+            Contains(settlement.bounds, selection) ? "yes" : "no",
+            settlement.bounds.max.x - settlement.bounds.min.x,
+            settlement.bounds.max.z - settlement.bounds.min.z, sites);
+        lines.push_back(String(buffer));
     }
-    std::snprintf(buffer, sizeof(buffer), "Town profile: %s | Sites: %zu | Access segments: %zu",
-        profile, plan.buildings.size(), plan.serviceAlleys.size());
+    if (const auto* parcel = ParcelAt(plan, selection)) {
+        std::snprintf(buffer, sizeof(buffer), "District: %s | construction: %s | settlement ordinal=%u",
+            DistrictName(parcel->district), parcel->era == BuildingEra::Newer ? "newer" : "older",
+            parcel->owner.settlement);
+        lines.push_back(String(buffer));
+    }
+    std::snprintf(buffer, sizeof(buffer),
+        "Region slice: %zu settlements | %zu sites | %zu access segments | %zu initial hostiles before scenario exclusion",
+        plan.settlements.size(), plan.buildings.size(), plan.serviceAlleys.size(), plan.urbanMonsters.size());
     lines.push_back(String(buffer));
     return lines;
 }

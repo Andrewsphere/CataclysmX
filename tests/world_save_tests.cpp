@@ -388,52 +388,31 @@ TEST_CASE("World retains unloaded archives until checkpoint then reloads from di
     CHECK(world.GetActor(fresh));
 }
 
-TEST_CASE("Generation version one saves retain legacy terrain for missing rows and subsequent checkpoints",
-          "[world][save][worldgen]") {
+TEST_CASE("World rejects old generator saves without attaching them", "[world][save][worldgen]") {
     SaveDirectory files;
     {
-        SaveDatabase database(TestContent());
-        REQUIRE(database.Create(files.database.c_str()));
-        REQUIRE(database.Begin());
-        SaveSnapshot snapshot;
-        snapshot.seed = 123;
-        snapshot.generationVersion = 1;
-        REQUIRE(database.WriteSnapshot(snapshot));
-        REQUIRE(database.Commit());
+        World world(TestContent());
+        REQUIRE(world.CreateSave(files.database.c_str(), {}));
     }
-    {
-        World world(TestContent(), 999);
-        const auto session = Take(world.LoadSave(files.database.c_str()));
-        Load(world, {21, -13});
-        std::uint32_t checksum = 2166136261U;
-        for (const auto tile : world.GetChunk({21, -13})->tiles) {
-            REQUIRE((tile.terrain == TestTerrain("wall") || tile.terrain == TestTerrain("floor")));
-            CHECK(tile.damage == 0);
-            checksum = (checksum ^ (tile.terrain == TestTerrain("wall") ? 1U : 0U)) * 16777619U;
-        }
-        // Frozen output of generator 1, independent of catalog-local numeric IDs.
-        CHECK(checksum == 3129975097U);
-        REQUIRE(world.Save(session));
-    }
-    SaveDatabase database(TestContent());
-    CHECK(Take(database.Open(files.database.c_str())).generationVersion == 1);
-    World resumed(TestContent(), 999);
-    Take(resumed.LoadSave(files.database.c_str()));
-    Load(resumed, {22, -13});
-    std::uint32_t checksum = 2166136261U;
-    for (const auto tile : resumed.GetChunk({22, -13})->tiles) {
-        REQUIRE((tile.terrain == TestTerrain("wall") || tile.terrain == TestTerrain("floor")));
-        CHECK(tile.damage == 0);
-        checksum = (checksum ^ (tile.terrain == TestTerrain("wall") ? 1U : 0U)) * 16777619U;
-    }
-    CHECK(checksum == 353137884U);
+    sqlite3* raw = nullptr;
+    REQUIRE(sqlite3_open_v2(files.database.c_str(), &raw, SQLITE_OPEN_READWRITE, nullptr) == SQLITE_OK);
+    REQUIRE(sqlite3_exec(raw, "UPDATE world_state SET payload=json_set(payload,'$.generation_version',1)", nullptr, nullptr, nullptr) == SQLITE_OK);
+    REQUIRE(sqlite3_close(raw) == SQLITE_OK);
+    World restored(TestContent());
+    CHECK(restored.LoadSave(files.database.c_str()) == eastl::unexpected(SaveError::UnsupportedVersion));
+    CHECK_FALSE(restored.HasSave());
 }
 
 TEST_CASE("Regional generation saves preserve edits and regenerate neighboring building slices",
           "[world][save][worldgen]") {
     SaveDirectory files;
     constexpr std::uint32_t seed = 42;
-    const auto plan = GenerateRegionPlan(TestContent(), seed, {1, -1});
+    auto plan = GenerateRegionPlan(TestContent(), seed, {1, -1});
+    for (int z = -4; z <= 4 && plan.buildings.empty(); ++z) {
+        for (int x = -4; x <= 4 && plan.buildings.empty(); ++x) {
+            plan = GenerateRegionPlan(TestContent(), seed, {x, z});
+        }
+    }
     REQUIRE_FALSE(plan.buildings.empty());
     const auto building = plan.buildings[0];
     const auto first = ChunkOf(building.bounds.min);
@@ -442,7 +421,8 @@ TEST_CASE("Regional generation saves preserve edits and regenerate neighboring b
     {
         World world(TestContent(), seed);
         const auto request = Load(world, first);
-        CHECK(world.GetChunk(first)->tiles == GenerateChunk(TestContent(), seed, plan, first));
+        CHECK(world.GetChunk(first)->tiles == GenerateChunk(TestContent(), seed,
+            GenerateRegionPlan(TestContent(), seed, RegionOf({first.x * chunk_size, first.z * chunk_size})), first));
         REQUIRE(world.SetTile(building.bounds.min, edit));
         REQUIRE(world.CreateSave(files.database.c_str(), {}));
         REQUIRE(world.ReleaseRequest(request));
@@ -461,7 +441,8 @@ TEST_CASE("Regional generation saves preserve edits and regenerate neighboring b
         for (int x = last.x; x >= first.x; --x) {
             const ChunkCoord chunk{x, z};
             Load(restored, chunk);
-            auto expected = GenerateChunk(TestContent(), seed, plan, chunk);
+            auto expected = GenerateChunk(TestContent(), seed,
+                GenerateRegionPlan(TestContent(), seed, RegionOf({x * chunk_size, z * chunk_size})), chunk);
             if (chunk == first) { expected[TileIndex(building.bounds.min)] = edit; }
             CHECK(restored.GetChunk(chunk)->tiles == expected);
         }
@@ -553,9 +534,10 @@ TEST_CASE("World save rejects invalid attachment state and session without mutat
     CHECK_FALSE(pristine.LoadSave((files.directory / "missing.sqlite").string().c_str()));
     CHECK_FALSE(pristine.HasSave());
     CheckSession(Take(pristine.LoadSave(files.database.c_str())), session);
+    const Tile originalTile = *world.GetTile({0, 0});
     CHECK(world.SetTile({0, 0}, {TerrainId{UINT32_MAX}, 0})
         == eastl::unexpected(WorldError::invalid_request));
-    CHECK(*world.GetTile({0, 0}) == Tile{TestTerrain("floor"), 0});
+    CHECK(*world.GetTile({0, 0}) == originalTile);
     REQUIRE(world.ReleaseRequest(request));
     REQUIRE(world.ReconcileChunks());
     REQUIRE(world.Save(session)); // Player may be archived or already evicted to disk.
@@ -796,50 +778,25 @@ ChunkArchive ActorChunk(ChunkCoord position, PersistentId id) {
     return chunk;
 }
 
-TEST_CASE("Saved generation four and five worlds keep their planner and populate missing chunks",
-          "[world][save][worldgen][house]") {
-    auto content = Take(LoadContentPack(CATACLYSMX_FIRST_HOUSE_PACK));
-    for (const std::uint32_t version : {4u, 5u}) {
-        INFO("generation=" << version);
-        SaveDirectory files;
-        const auto plan = GenerateRegionPlan(content, 0, {1, 1}, version);
-        CHECK(plan.parcels.size() == (version == 4 ? 8 : 20));
-        TileCoord position{};
-        bool found = false;
-        ChunkPlacements expected;
-        for (const auto& building : plan.buildings) {
-            if (building.pattern != content.FindBuildingPattern("furnished_house")) { continue; }
-            position = building.bounds.min;
-            GenerateChunkPlacements(content, 0, plan, ChunkOf(position), expected);
-            if (!expected.furniture.empty()) { found = true; break; }
-        }
-        REQUIRE(found);
-        {
-            SaveDatabase database(content);
-            REQUIRE(database.Create(files.database.c_str()));
-            REQUIRE(database.Begin());
-            SaveSnapshot snapshot;
-            snapshot.seed = 0;
-            snapshot.generationVersion = version;
-            REQUIRE(database.WriteSnapshot(snapshot));
-            REQUIRE(database.Commit());
-        }
-        {
-            World world(content, 999);
-            const auto session = Take(world.LoadSave(files.database.c_str()));
-            CHECK(world.GetGenerationVersion() == version);
-            Load(world, ChunkOf(position));
-            CHECK(world.GetChunk(ChunkOf(position))->tiles == GenerateChunk(content, 0, plan, ChunkOf(position)));
-            for (const auto& marker : expected.furniture) {
-                const auto object = world.ObjectAt(marker.position);
-                REQUIRE(world.GetObject(object));
-                CHECK(world.GetObject(object)->type == marker.type);
-            }
-            REQUIRE(world.Save(session));
-        }
-        SaveDatabase database(content);
-        CHECK(Take(database.Open(files.database.c_str())).generationVersion == version);
+TEST_CASE("Current world generation settings survive checkpoints", "[world][save][worldgen]") {
+    SaveDirectory files;
+    GenerationSettings settings;
+    settings.start = {123, -45};
+    settings.safetyRadius = 7;
+    settings.population = PopulationMode::Authored;
+    {
+        World world(TestContent(), 123);
+        world.ConfigureGeneration(settings);
+        REQUIRE(world.CreateSave(files.database.c_str(), {}));
+        REQUIRE(world.Save({}));
     }
+    World restored(TestContent(), 999);
+    const auto session = Take(restored.LoadSave(files.database.c_str()));
+    CHECK(restored.GetGenerationVersion() == world_generation_version);
+    CHECK(restored.GetGenerationSettings().start == settings.start);
+    CHECK(restored.GetGenerationSettings().safetyRadius == settings.safetyRadius);
+    CHECK(restored.GetGenerationSettings().population == settings.population);
+    REQUIRE(restored.Save(session));
 }
 
 // Generic objects have no dynamic behavior state and remain warm-cache eligible.

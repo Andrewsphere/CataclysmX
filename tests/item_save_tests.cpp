@@ -91,11 +91,13 @@ void Populate(const ContentCatalog& content, const char* path) {
     SaveSnapshot snapshot; snapshot.nextId = 10;
     REQUIRE(database.WriteSnapshot(snapshot)); REQUIRE(database.Commit());
 }
-void WritePayload(const char* path, const std::string& text) {
+void WritePayload(const char* path, const std::string& text, bool preserveActors = false) {
     sqlite3* db = nullptr;
     REQUIRE(sqlite3_open_v2(path, &db, SQLITE_OPEN_READWRITE, nullptr) == SQLITE_OK);
     sqlite3_stmt* statement = nullptr;
-    REQUIRE(sqlite3_prepare_v2(db, "UPDATE chunks SET payload=?1", -1, &statement, nullptr) == SQLITE_OK);
+    REQUIRE(sqlite3_prepare_v2(db, preserveActors
+        ? "UPDATE chunks SET payload=json_set(?1,'$.actors',json_extract(payload,'$.actors'))"
+        : "UPDATE chunks SET payload=?1", -1, &statement, nullptr) == SQLITE_OK);
     REQUIRE(sqlite3_bind_text(statement, 1, text.data(), static_cast<int>(text.size()), SQLITE_TRANSIENT) == SQLITE_OK);
     REQUIRE(sqlite3_step(statement) == SQLITE_DONE);
     REQUIRE(sqlite3_finalize(statement) == SQLITE_OK); REQUIRE(sqlite3_close(db) == SQLITE_OK);
@@ -114,7 +116,7 @@ void Mutate(const char* path, const char* before, const char* after) {
     WritePayload(path, text);
 }
 
-TEST_CASE("Explicit V7 item payload loads without rewriting its state", "[save][item-save]") {
+TEST_CASE("Explicit item payload loads and rewrites without changing its state", "[save][item-save]") {
     const auto original = Catalog();
     const auto expanded = Catalog(true);
     ItemSaveFile file;
@@ -128,14 +130,9 @@ TEST_CASE("Explicit V7 item payload loads without rewriting its state", "[save][
         payload += R"({"terrain":"floor","damage":0})";
     }
     payload += R"(],"actors":[{"id":"1","position":{"x":0,"z":0,"y":0},"player":true,"parked":false,"turns":"0","speed":100,"remaining_ticks":"0","carry_capacity_g":"18446744073709551615","light":{"intensity":0,"range":0},"inventory":[{"id":"2","type":"bag","state":{},"installation":"","contents":[]}]}],"objects":[],"ground_items":[{"id":"3","type":"device","state":{"charger":{"version":1,"enabled":true,"remainder":87},"power":{"version":1,"energy":800},"timer":{"version":2,"armed":true,"remaining_ticks":123,"target":{"x":{"$i64":"1"},"z":{"$i64":"0"},"y":{"$i64":"0"}}}},"installation":"","contents":[{"id":"4","type":"battery","state":{"cell":{"version":1,"energy":17}},"installation":"charger","contents":[]}],"position":{"x":0,"z":0,"y":0}}]})";
-    WritePayload(file.path.c_str(), payload);
-    {
-        sqlite3* db = nullptr;
-        REQUIRE(sqlite3_open_v2(file.path.c_str(), &db, SQLITE_OPEN_READWRITE, nullptr) == SQLITE_OK);
-        REQUIRE(sqlite3_exec(db, "UPDATE world_state SET payload=json_remove(payload,'$.power','$.session.circle_residency');"
-            "UPDATE metadata SET format_version=7", nullptr, nullptr, nullptr) == SQLITE_OK);
-        REQUIRE(sqlite3_close(db) == SQLITE_OK);
-    }
+    // Keep the current actor envelope; the explicit ground item state remains
+    // independent of the current item writer.
+    WritePayload(file.path.c_str(), payload, true);
     SaveDatabase database(expanded);
     auto opened = database.Open(file.path.c_str()); REQUIRE(opened);
     auto loaded = database.ReadChunk({}, opened->nextId); REQUIRE(loaded); REQUIRE(*loaded);
@@ -157,7 +154,8 @@ TEST_CASE("Explicit V7 item payload loads without rewriting its state", "[save][
     }
     CHECK((**loaded).actors[0].carryCapacityGrams == UINT64_MAX);
     REQUIRE(database.Begin());
-    REQUIRE(database.Commit()); // Full legacy chunk rewrite preserves item state.
+    REQUIRE(database.WriteChunk(**loaded));
+    REQUIRE(database.Commit());
     auto migrated = database.ReadChunk({}, opened->nextId);
     REQUIRE(migrated);
     REQUIRE(*migrated);

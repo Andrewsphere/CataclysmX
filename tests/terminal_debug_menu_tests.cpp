@@ -173,9 +173,9 @@ TEST_CASE("Worldgen debug modal consumes gameplay events and never mutates the s
     CHECK(closed == 3);
 }
 
-TEST_CASE("Worldgen debug menu uses saved seed and refuses a regional preview for legacy saves",
+TEST_CASE("Worldgen debug menu uses saved seed and current generation version",
           "[terminal][worldgen-debug][save]") {
-    for (const std::uint32_t version : {1U, world_generation_version}) {
+    for (const std::uint32_t version : {world_generation_version}) {
         DebugSaveDirectory file;
         {
             SaveDatabase database(TestContent());
@@ -194,22 +194,9 @@ TEST_CASE("Worldgen debug menu uses saved seed and refuses a regional preview fo
         int closed = 0;
         auto menu = CreateWorldgenDebugMenu(world, {0, 0}, [&] { ++closed; });
         Has(menu, "Seed: 1707 | Generation version: " + std::to_string(version));
-        if (version == 1) {
-            Has(menu, "Generated preview unavailable");
-            Key(menu, 'a');
-            Has(menu, "Live resident map");
-            Key(menu, 'a');
-            Has(menu, "Generated preview unavailable");
-            CHECK(Draw(menu).find("Layer: Roads") == std::string::npos);
-            for (const char key : std::string("12345+")) { Key(menu, key); }
-            CHECK(menu->OnEvent(ftxui::Event::ArrowDown));
-            CHECK(menu->OnEvent(ftxui::Event::Special("\x1b[1;2C")));
-            Has(menu, "Generated preview unavailable");
-        } else {
-            Has(menu, "Layer: Roads");
-            Key(menu, '5');
-            Has(menu, "Layer: Terrain");
-        }
+        Has(menu, "Layer: Roads");
+        Key(menu, '5');
+        Has(menu, "Layer: Terrain");
         CHECK(world.LoadedChunks().empty());
         CHECK(world.ArchivedChunkCount() == 0);
         CHECK(closed == 0);

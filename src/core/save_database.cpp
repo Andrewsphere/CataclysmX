@@ -505,6 +505,10 @@ SaveResult<void> ValidateEntityState(const ContentCatalog& content, const ChunkA
 }
 
 bool ValidSnapshot(const SaveSnapshot& snapshot) {
+    if (!ValidPosition(snapshot.generation.start) || snapshot.generation.safetyRadius < 0
+        || snapshot.generation.safetyRadius > maxStartSafetyRadius
+        || (snapshot.generation.population != PopulationMode::Urban
+            && snapshot.generation.population != PopulationMode::Authored)) { return false; }
     const auto& session = snapshot.session;
     if (!ValidPowerState(snapshot.power, session.tick)) { return false; }
     for (const auto& device : snapshot.power.devices) {
@@ -1013,6 +1017,11 @@ String EncodeSnapshot(const SaveSnapshot& snapshot) {
     auto* root = writer.Object();
     writer.Integer(root, "seed", snapshot.seed);
     writer.Integer(root, "generation_version", snapshot.generationVersion);
+    auto* generation = writer.Object();
+    writer.Position(generation, snapshot.generation.start);
+    writer.Integer(generation, "safety_radius", snapshot.generation.safetyRadius);
+    writer.Integer(generation, "population", static_cast<int>(snapshot.generation.population));
+    writer.Add(root, "generation", generation);
     writer.Counter(root, "next_id", snapshot.nextId);
     writer.Integer(root, "sky_light", snapshot.skyLight);
     auto* session = writer.Object();
@@ -1059,9 +1068,17 @@ SaveResult<SaveSnapshot> DecodeSnapshot(const char* text, std::size_t length,
         return Failure(SaveError::InvalidData, "Invalid world_state JSON", diagnostics);
     }
     auto* root = yyjson_doc_get_root(document.value);
-    const bool rootFields = formatVersion >= 15
-        ? Fields(root, {"seed", "generation_version", "next_id", "sky_light", "session", "power"})
-        : Fields(root, {"seed", "generation_version", "next_id", "sky_light", "session"});
+    // Reject obsolete generators before schema validation: an old world is not
+    // malformed current data and must never acquire different unexplored terrain.
+    if (Unsigned32(Get(root, "generation_version"), snapshot.generationVersion)
+        && snapshot.generationVersion != world_generation_version) {
+        return Failure(SaveError::UnsupportedVersion, "Unsupported generation version", diagnostics);
+    }
+    if (formatVersion < 18) {
+        return Failure(SaveError::UnsupportedVersion, "Unsupported generation settings format", diagnostics);
+    }
+    const bool rootFields = Fields(root, {"seed", "generation_version", "generation",
+        "next_id", "sky_light", "session", "power"});
     if (!rootFields
         || !Byte(Get(root, "sky_light"), snapshot.skyLight)
         || !Unsigned32(Get(root, "seed"), snapshot.seed)
@@ -1069,9 +1086,21 @@ SaveResult<SaveSnapshot> DecodeSnapshot(const char* text, std::size_t length,
         || !Counter(Get(root, "next_id"), snapshot.nextId)) {
         return Failure(SaveError::InvalidData, "Invalid world_state fields", diagnostics);
     }
-    if (snapshot.generationVersion < 1 || snapshot.generationVersion > world_generation_version) {
+    if (snapshot.generationVersion != world_generation_version) {
         return Failure(SaveError::UnsupportedVersion, "Unsupported generation version", diagnostics);
     }
+    auto* generation = Get(root, "generation");
+    int population = 0;
+    if (!Fields(generation, {"position", "safety_radius", "population"})
+        || !Position(Get(generation, "position"), snapshot.generation.start)
+        || !Integer(Get(generation, "safety_radius"), snapshot.generation.safetyRadius)
+        || snapshot.generation.safetyRadius < 0 || snapshot.generation.safetyRadius > maxStartSafetyRadius
+        || !Integer(Get(generation, "population"), population)
+        || population < static_cast<int>(PopulationMode::Urban)
+        || population > static_cast<int>(PopulationMode::Authored)) {
+        return Failure(SaveError::InvalidData, "Invalid generation settings", diagnostics);
+    }
+    snapshot.generation.population = static_cast<PopulationMode>(population);
     auto* session = Get(root, "session");
     auto& state = snapshot.session;
     auto* pacing = Get(session, "pacing");
@@ -2076,7 +2105,7 @@ SaveResult<void> SaveDatabase::Create(const char* path, Diagnostics* diagnostics
         "BEGIN IMMEDIATE;"
         "CREATE TABLE metadata(singleton INTEGER PRIMARY KEY CHECK(singleton=1),"
         "format_version INTEGER NOT NULL,game_version TEXT NOT NULL);"
-        "INSERT INTO metadata VALUES(1,17,'0.1.0');"
+        "INSERT INTO metadata VALUES(1,18,'0.1.0');"
         "CREATE TABLE world_state(singleton INTEGER PRIMARY KEY CHECK(singleton=1),payload TEXT NOT NULL);"
         "CREATE TABLE chunks(x INTEGER NOT NULL,z INTEGER NOT NULL,y INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(x,z,y));"
         "CREATE TABLE player_memories(player_id TEXT NOT NULL,x INTEGER NOT NULL,z INTEGER NOT NULL,y INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(player_id,x,z,y));"
@@ -2250,7 +2279,7 @@ SaveResult<void> SaveDatabase::Begin(Diagnostics* diagnostics) {
         if (code == SQLITE_OK) { code = sqlite3_step(statement.value); }
         if (code != SQLITE_DONE) { return impl_->WriteFailure(code, diagnostics); }
     }
-    auto upgraded = Execute(db, "UPDATE metadata SET format_version=17 WHERE singleton=1", diagnostics);
+    auto upgraded = Execute(db, "UPDATE metadata SET format_version=18 WHERE singleton=1", diagnostics);
     if (!upgraded) { impl_->Rollback(); return upgraded; }
     impl_->effectiveVersion = save_format_version;
     return {};
@@ -2290,7 +2319,7 @@ SaveResult<void> SaveDatabase::WriteChunk(const ChunkArchive& chunk, Diagnostics
 SaveResult<void> SaveDatabase::WriteSnapshot(const SaveSnapshot& snapshot, Diagnostics* diagnostics) {
     if (!impl_) { return Failure(SaveError::NotOpen, "Database is not open", diagnostics); }
     if (!impl_->transaction) { return Failure(SaveError::InvalidState, "No active transaction", diagnostics); }
-    const bool supported = snapshot.generationVersion >= 1 && snapshot.generationVersion <= world_generation_version;
+    const bool supported = snapshot.generationVersion == world_generation_version;
     if (!supported || !ValidSnapshot(snapshot) || !ValidMemories(content_, snapshot, diagnostics)) {
         impl_->Rollback();
         return Failure(!supported ? SaveError::UnsupportedVersion : SaveError::InvalidData,

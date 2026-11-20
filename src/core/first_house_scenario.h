@@ -19,16 +19,19 @@ struct FirstHouseStart {
 // Same value layout for either scenario; preserve FirstHouseStart source usage.
 using BuildingStart = FirstHouseStart;
 
-// Pure bounded plan query over the 3x3 region neighborhood of origin. Failure
+// Pure bounded plan query over the 3x3 planning-patch neighborhood of origin.
+// Searches small settlements for the named furnished_house. Failure
 // is InvalidData, with optional diagnostic context; no World/residency mutation.
 ContentResult<FirstHouseStart> FindFirstHouseStart(const ContentCatalog& content,
     std::uint32_t seed, Diagnostics* diagnostics = nullptr);
 
-// Pure query over all nine origin-neighborhood region plans, independent of any
-// named pattern. Parks and squares are excluded. Eligible buildings have authored population in their common
-// pattern or selected basement (furniture, loot, or monster markers).
-// Select the usable entrance nearest horizontal origin by squared distance;
-// ties: entrance x,z, owner region x,z, parcel. playerPosition is the adjacent
+// Ranks cheap small-settlement descriptors in the origin 3x3 planning patches
+// by nearest-bound distance, then patch x,z and settlement ordinal; builds full
+// plans lazily until the nearest usable settlement is found. Selects residential
+// edge houses (no building behind them) with supported driveway/street retreat.
+// Custom catalogs with no residential patterns may use populated Mixed patterns.
+// Within that settlement select the usable entrance nearest horizontal origin;
+// ties: entrance x,z, owner patch x,z, settlement, parcel. playerPosition is the adjacent
 // exterior driveway tile: passable supported non-stair road, free of generated
 // placements. Entrance terrain must be passable or openable to passable terrain,
 // and not open space. Returns InvalidData if validation fails or none qualifies,

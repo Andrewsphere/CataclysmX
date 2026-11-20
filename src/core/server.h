@@ -14,6 +14,7 @@
 namespace cataclysmx {
 
 enum class NewGameScenario { Demo, FirstHouse, Town, ZombieShowcase };
+int DefaultStartSafetyRadius(NewGameScenario scenario);
 
 enum class CommandKind {
     wait, move, pick_up, drop, interact, use_item, store_item, attack, combat_style, interact_action,
@@ -266,7 +267,8 @@ public:
     // FirstHouse/Town require successful FindFirstHouseStart/FindTownStart
     // validation at the application boundary using the same catalog and seed.
     // The existing constructor retains Demo behavior.
-    Server(const ContentCatalog& content, std::uint32_t seed, NewGameScenario scenario);
+    Server(const ContentCatalog& content, std::uint32_t seed, NewGameScenario scenario,
+        eastl::optional<int> startSafetyRadius = eastl::nullopt);
     // While busy, retain one intent; the latest valid command replaces it.
     CommandResult Send(Command command);
     // Real elapsed time is supplied by the application; no clock is read here.

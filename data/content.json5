@@ -42,4 +42,9 @@
   'worldgen/buildings/courtyard_house.json5', 'worldgen/buildings/tall_row_house.json5',
   'worldgen/buildings/office_annex.json5', 'worldgen/buildings/corner_store.json5',
   'worldgen/buildings/apartment_walkup.json5',
+  'terrain/city.json5', 'objects/city.json5',
+  'worldgen/loot/city_industry.json5',
+  'worldgen/buildings/city_residential.json5',
+  'worldgen/buildings/city_civic.json5',
+  'worldgen/buildings/city_industry.json5',
 ]}

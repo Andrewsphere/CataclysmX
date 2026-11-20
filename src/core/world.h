@@ -18,6 +18,7 @@
 #include "objects/object_behavior.h"
 #include "objects/object_movement.h"
 #include "power/power_types.h"
+#include "worldgen/generation_settings.h"
 
 #include <EASTL/array.h>
 #include <EASTL/expected.h>
@@ -205,6 +206,9 @@ public:
     const ContentCatalog& GetContent() const;
     std::uint32_t GetSeed() const;
     std::uint32_t GetGenerationVersion() const;
+    // New-world setup only: call before requesting/materializing any chunks.
+    void ConfigureGeneration(GenerationSettings settings);
+    const GenerationSettings& GetGenerationSettings() const;
     // Conservative presentation tokens, owned by mutations (including admin edits).
     std::uint64_t GetRevision() const;
     std::uint64_t GetMapRevision() const;

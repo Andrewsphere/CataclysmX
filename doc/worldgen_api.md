@@ -1,5 +1,11 @@
 # World generation slice
 
+**Generation 8 replaces the generator described below.** Use
+[continuous cities](city_generation.md) for the current API, catalog metadata,
+ownership, scenario safety and save compatibility. The remainder of this page
+records the pre-pass-4 implementation for historical context; versions 1–7 are
+no longer supported.
+
 `worldgen/worldgen.h` is a deterministic planning and materialization API, not a
 world manager. It owns no entities, cache, persistence, or shared RNG. Callers
 provide an immutable `ContentCatalog`, seed, and coordinates. The same catalog,

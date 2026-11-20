@@ -775,10 +775,12 @@ TEST_CASE("Planned generated coverage preflights adjacent-area source dependenci
     SaveDirectory files;
     auto content = PowerWorldContent(true);
     World initial(content);
-    const auto plan = GenerateRegionPlan(content, initial.GetSeed(), {1, 1}, initial.GetGenerationVersion());
     TileCoord playerPosition{}, sourcePosition{};
     bool found = false;
-    for (const auto& building : plan.buildings) {
+    const auto patch = GeneratePlanningPatch(initial.GetSeed(), {0, 0});
+    for (const auto& descriptor : patch.settlements) {
+      const auto settlement = GenerateSettlementPlan(content, initial.GetSeed(), descriptor);
+      for (const auto& building : settlement.buildings) {
         const auto coverage = DescribeBuildingPower(content.GetBuildingPattern(building.pattern),
             building.bounds, building.basementVariant);
         if (!coverage) { continue; }
@@ -790,6 +792,8 @@ TEST_CASE("Planned generated coverage preflights adjacent-area source dependenci
         playerPosition = candidate;
         sourcePosition = {coverage->bounds.max.x, coverage->bounds.max.z};
         found = true; break;
+      }
+      if (found) { break; }
     }
     REQUIRE(found);
     const auto home = ChunkOf(playerPosition);
