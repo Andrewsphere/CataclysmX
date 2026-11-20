@@ -3,6 +3,8 @@
 #include "client/text.h"
 #include "client/combat_menu.h"
 #include "client/power_view.h"
+#include "client/digital_commands.h"
+#include "client/crafting_menu.h"
 #include "network/network.h"
 
 #include <charconv>
@@ -45,6 +47,7 @@ bool ParseCombatCommand(const std::string& text, const ContentCatalog& content, 
     }
     if (!count) { return false; }
     const auto name = words[0];
+    if (ParseDigitalCommand({words.data(), count}, command)) { return true; }
     if (name == "load-forge" && count == 3) {
         command.kind = CommandKind::load_forge;
         return Number(words[1], command.target) && command.target && Number(words[2], command.item) && command.item;
@@ -137,6 +140,15 @@ bool BindAbility(Command& command, const WorldView& view, const ContentCatalog& 
     return true;
 }
 void PrintCombat(const WorldView& view, const ContentCatalog& content, eastl::string_view inspection) {
+    if (inspection == "machines" || inspection == "information" || inspection == "crafting") {
+        Localization localization;
+        Vector<CraftingMenuRow> rows;
+        CollectCraftingMenu(view, content, localization, rows);
+        for (const auto& row : rows) std::puts(row.label.c_str());
+        Vector<String> lines; CollectLearningSummary(view, content, lines);
+        for (const auto& line : lines) std::puts(line.c_str());
+        return;
+    }
     if (inspection == "power") {
         PowerWorkshop workshop; workshop.Open(view);
         Vector<String> lines; workshop.Describe(view, content, lines);
@@ -230,7 +242,8 @@ int RunLan(Server& server, const ContentCatalog& content, const LanOptions& opti
     struct PlannedCommand { Command command; String inspection; };
     Vector<PlannedCommand> commands;
     for (const auto& text : options.commands) {
-        if (text == "combat" || text == "styles" || text == "abilities" || text == "stations" || text == "power") {
+        if (text == "combat" || text == "styles" || text == "abilities" || text == "stations" || text == "power"
+            || text == "machines" || text == "information" || text == "crafting") {
             commands.push_back({{}, text.c_str()}); continue;
         }
         Command command;

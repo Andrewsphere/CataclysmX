@@ -1,0 +1,9 @@
+{format_version:1, definitions:[
+  {type:'loot_pool',id:'loot_printer_filament_large',entries:[{item:'polymer_filament',count:{min:100,max:200}}]},
+  {type:'loot_pool',id:'loot_printer_filament_small',entries:[{item:'polymer_filament',count:{min:50,max:100}}]},
+  {type:'loot_pool',id:'loot_packed_home_printer',entries:[{item:'home_polymer_printer'}]},
+  {type:'loot_pool',id:'loot_digital_office',entries:[{item:'usb_data_stick',weight:5},{item:'legacy_laptop',weight:1}]},
+  {type:'loot_pool',id:'loot_digital_electronics',entries:[{item:'usb_data_stick',weight:5},{item:'phone',weight:4},{item:'legacy_laptop',weight:1}]},
+  {type:'loot_pool',id:'loot_digital_residential',entries:[{item:'phone',weight:1}]},
+  {type:'loot_pool',id:'loot_digital_hobby',entries:[{item:'legacy_laptop',weight:1}]},
+]}

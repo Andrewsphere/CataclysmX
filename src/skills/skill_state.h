@@ -66,6 +66,10 @@ bool MeetsSkillRequirements(const LearningState& state, eastl::span<const SkillR
 std::uint64_t SkillXpRequired(const SkillDefinition& definition, std::uint8_t currentLevel);
 SkillAward TrainSkill(LearningState& state, const ContentCatalog& content,
     const SkillTraining& training, SkillActivity activity, std::uint64_t fixedWork);
+// Authored nominal XP in ratioScale units, independent of elapsed work.
+// Applies the same boosts, ceilings and theory/practice accounting as training.
+SkillAward AwardSkillXp(LearningState& state, const ContentCatalog& content,
+    SkillId skill, std::uint8_t trainingLevel, SkillActivity activity, std::uint64_t fixedXp);
 bool CanStudyBook(const LearningState& state, const ContentCatalog& content, BookId book);
 // Applies all eligible benefits once, including clipping; never memorizes recipes.
 bool CompleteBookStudy(LearningState& state, const ContentCatalog& content, BookId book);

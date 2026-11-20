@@ -1,7 +1,38 @@
 # D3: digital information and fabrication
 
-**Status: Home-printer scope, ordinary information handling, machine libraries,
-job capture and production learning accepted; implementation pending.**
+**Status: Pass 3 implemented and functionally verified.** Home-printer scope,
+ordinary information handling, machine libraries, job capture and production
+learning are accepted. See [runtime APIs](digital_runtime.md) and
+[content/evidence](pass3_content.md). D3-C remains deferred.
+
+### Pass 3 implementation decisions
+
+Pass 3 delivers W4 + D3-A/B and the accepted home-printer roster. The user accepted:
+
+- Three ordinary carriers: USB data stick, phone, and legacy laptop. USB is passive;
+  phones/laptops are readers and transfer hosts. Printer controllers directly
+  import/export through USB. Connection is implicit in the transfer action.
+- Portable participants must be carried and accessible; machine access is adjacent
+  on the same layer. Office/school/electronics loot supplies sticks, residential/
+  electronics loot phones, and less-common office/electronics/hobby loot laptops.
+- One named-package transfer costs 100 base work, scaled by actor speed, and no XP.
+  Active handhelds need positive local charge and controllers need available grid
+  supply. Like current electronic reading, availability is checked without an
+  additional energy debit. Loss of access/power before completion aborts the copy;
+  existing data remains intact and spent time is lost. Already-present packages
+  are free no-ops.
+- Supplied designs/software are exportable and deletable. The original protected
+  equipment item owns the installed machine's sole library. Defaults materialize
+  only at creation; an explicitly empty saved library stays empty.
+- Setup Stop finishes its paid actor slice, then pauses. Processing Stop freezes
+  prepaid machine ticks immediately.
+
+Runtime ownership uses nullable per-device information storage and allocated
+machine behavior state, with two explicit job phases. Captured budgets and actual
+reserved originals belong to the job. Completion preflights archived recipient
+storage before publishing output and XP, and retries storage failures without
+additional work or electricity. Exact APIs and verification are documented as
+implementation is integrated in [digital runtime](digital_runtime.md).
 
 This document develops D3-A/B from the
 [crafting delivery plan](crafting_delivery_plan.md), using the accepted
@@ -9,9 +40,9 @@ This document develops D3-A/B from the
 [W4 machine contract](workshop_design.md#7-autonomous-machine-contract-for-d3).
 D3-C is deferred to a separate later hacking design; only its future integration
 direction is recorded here.
-The rules below are design decisions, not implemented or verified mechanics.
-The implementation pass chooses schemas, APIs, persistence/network representation
-and versions, and concrete action costs within the accepted gameplay direction.
+The rules below remain the gameplay contract. The runtime document records the
+implemented schemas, APIs, persistence/network representation and action costs;
+verification evidence is recorded separately from deferred design directions.
 Return for review if an implementation choice needs a gameplay-contract change.
 
 The [accepted home-printing contract](home_printing_design.md) groups the first roster,
@@ -62,8 +93,8 @@ Copies preserve information identity independently of the physical carrier.
 Copying or importing does not itself memorize recipes, award study benefits or
 reset once-per-character book use. Human-readable material follows the existing
 book/reference learning model, including shared identity across equivalent copies.
-Ordinary copying/importing should be quick, low-overhead and XP-free; exact time
-and power costs remain to be specified.
+Ordinary copying/importing costs 100 speed-scaled base work, awards no XP and
+uses non-draining availability checks as specified in the pass-3 decisions above.
 
 ### Device roles and ordinary transfers
 
@@ -292,9 +323,11 @@ readable information, without a temporary crafting-based acquisition substitute.
 | Complete an advanced commissioned recipe | Initial 80% budget applies for training level 5+; a learned-level-5+ recipient gets practice, subject to shared theory/reserve/ceiling rules |
 | Copy/import ordinary files | No XP; information and once-per-character learning identities remain intact |
 
-These are future acceptance scenarios, not test results.
+These are acceptance requirements. Implemented first-slice verification is
+recorded separately in [pass-3 evidence](pass3_content.md); later acquired-design
+and hacking extensions retain their deferred scope.
 
-## 7. Implementation handoff and later gameplay designs
+## 7. Implemented first slice and later gameplay designs
 
 - **D3-A:** concrete carrier/package representation and identity, device access,
   compatibility, transfer power/time and interruption implementation,
@@ -305,8 +338,8 @@ These are future acceptance scenarios, not test results.
   feedstock, operating and learning budgets in the
   [accepted first-slice contract](home_printing_design.md).
 
-These technical choices belong to the implementation pass, not another gameplay
-design review.
+These first-slice interfaces and persistence choices are implemented in
+[digital runtime](digital_runtime.md).
 
 **Deferred to the later hacking effort:** D3-C source access/protection/recovery,
 design/schematic extraction, hacking laptop modifications and supporting

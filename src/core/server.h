@@ -6,6 +6,7 @@
 #include "core/inventory.h"
 #include "skills/learning_types.h"
 #include "power/power_types.h"
+#include "digital/digital_types.h"
 
 #include <EASTL/optional.h>
 #include <EASTL/span.h>
@@ -20,7 +21,8 @@ enum class CommandKind {
     wield_item, transfer_item, study_book, pause_study,
     equipment, select_combat_style, use_ability, study_art, pause_art_study, new_character,
     wire_grid, place_power_object, place_station, pack_station,
-    load_forge, ignite_forge, extinguish_forge, discard_forge_fuel
+    load_forge, ignite_forge, extinguish_forge, discard_forge_fuel,
+    begin_machine, machine_action, copy_information, remove_information, cancel_information
 };
 struct Command {
     CommandKind kind = CommandKind::wait;
@@ -50,6 +52,13 @@ struct Command {
     CombatArtId art{};
     PowerBounds powerBounds{}; // wire_grid: inclusive rectangle on the actor's layer.
     TileCoord position{}; // place_power_object: absolute destination.
+    MachineRecipeId machineRecipe{};
+    std::uint16_t quantity = 0;
+    MachineAction machineAction = MachineAction::Stop;
+    InformationEndpoint informationSource;
+    InformationEndpoint informationDestination;
+    InformationId information{};
+    PersistentId informationHost = 0;
 };
 bool ValidCommandShape(const Command& command);
 enum class Outcome {
@@ -63,7 +72,8 @@ enum class Outcome {
     object_moved, grabbed, released, nothing_to_grab, grab_lost, grab_blocked,
     wielded, unwielded, transferred, inventory_refused, study_started, study_paused, study_refused,
     equipment_changed, ability_used, combat_refused, art_study_started, art_study_paused,
-    character_dead, character_created, power_changed, power_refused, station_changed, station_refused
+    character_dead, character_created, power_changed, power_refused, station_changed, station_refused,
+    machine_changed, machine_refused, information_changed, information_refused
 };
 const char* OutcomeMessage(Outcome outcome);
 // The demo requires floor, wall, and closed_door; floor must be passable.
@@ -87,6 +97,8 @@ struct CommandResult {
     CombatRefusal combatReason = CombatRefusal::None;
     PowerActionOutcome powerOutcome = PowerActionOutcome::Unavailable;
     StationActionOutcome stationOutcome = StationActionOutcome::Unavailable;
+    MachineOutcome machineOutcome = MachineOutcome::Unavailable;
+    InformationOutcome informationOutcome = InformationOutcome::InvalidDevice;
 };
 String CommandResultMessage(const CommandResult& result);
 
@@ -243,6 +255,8 @@ struct WorldView {
     eastl::optional<PowerInspection> currentPower;
     PowerSettings powerSettings;
     Vector<StationView> stations;
+    Vector<MachineView> machines;
+    Vector<InformationDeviceView> informationDevices;
 };
 
 // Authoritative deterministic endpoint. No transport or clock access.

@@ -1,0 +1,17 @@
+@text-art 1
+@color frame #74828C
+@color screen #344E5C
+@color glow #8FC2C6
+@default frame
+---
+      ╭────────────╮
+      │   ──────   │
+      │ <screen>┌────────┐ <frame>│
+      │ <screen>│<glow> .  .   <screen>│ <frame>│
+      │ <screen>│        │ <frame>│
+      │ <screen>│<glow> ────── <screen>│ <frame>│
+      │ <screen>│<glow> ────   <screen>│ <frame>│
+      │ <screen>│        │ <frame>│
+      │ <screen>└────────┘ <frame>│
+      │     .      │
+      ╰────────────╯

@@ -1,0 +1,13 @@
+@text-art 1
+@color edge #506575
+@color body #A1B8C2
+@color shadow #344853
+@default edge
+---
+    ╭──────────────────╮
+   ╱<body>  ╭────────────╮  <edge>╱│
+  ╔══════════════════╗ │
+  ║<body>  │<shadow> .  .  . <body>│  <edge>║ │
+  ║<body>  ╰────────────╯  <edge>║ │
+  ║ <shadow> ━━━━━━━━━━━━━━  <edge>║╱
+  ╚══════════════════╝

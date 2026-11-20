@@ -5,6 +5,7 @@
 #include "worldgen/worldgen.h"
 
 #include <catch2/catch_test_macros.hpp>
+#include <EASTL/algorithm.h>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -127,6 +128,29 @@ TEST_CASE("Item expansion recipes have reachable current prerequisites and bound
                 ready &= found;
             }
             if (ready) { reachable[recipe.result.item.value] = true; changed = true; }
+        }
+        for (std::uint32_t i = 1; i <= content.MachineRecipeCount(); ++i) {
+            const MachineRecipeId id{i};
+            const auto& recipe = content.GetMachineRecipe(id);
+            if (reachable[recipe.result.item.value] || !Current(content, recipe.result.item)) { continue; }
+            bool ready = true;
+            for (const auto& input : recipe.inputs) { ready &= reachable[input.Item().value]; }
+            bool supported = false;
+            for (std::uint32_t j = 1; ready && j <= content.ObjectCount(); ++j) {
+                const auto& machine = content.GetObject({j});
+                if (!machine.packingItem.value || !reachable[machine.packingItem.value]
+                    || eastl::find(machine.selectableRecipes.begin(), machine.selectableRecipes.end(), id)
+                        == machine.selectableRecipes.end()) { continue; }
+                bool design = false;
+                bool software = !recipe.requiredSoftware.value;
+                for (auto package : content.GetItem(machine.packingItem).suppliedInformation) {
+                    const auto& information = content.GetInformation(package);
+                    design |= eastl::find(information.designs.begin(), information.designs.end(), id) != information.designs.end();
+                    software |= package == recipe.requiredSoftware;
+                }
+                supported |= design && software;
+            }
+            if (ready && supported) { reachable[recipe.result.item.value] = true; changed = true; }
         }
     }
     for (const char* name : {"wooden_club", "quarterstaff", "salvaged_machete", "steel_spear"}) {

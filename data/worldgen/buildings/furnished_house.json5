@@ -6,7 +6,7 @@
     '#KPS..#.#Bt#',
     '#q.cTE#.#v.#',
     '#s....+.#+##',
-    '#..l..#..l.#',
+    '#..l..#Y.l.#',
     '#k....#a.ob#',
     '#..>..#..rL#',
     '###+########',
@@ -39,6 +39,9 @@
     C:{terrain:'floor',object:'cellar_chest',facing:'south',loot:[{pool:'house_storage',rolls:2,destination:'furniture'}]},
     p:{terrain:'floor',object:'kitchen_cabinet',facing:'west',loot:[{pool:'loot_dry_staples',rolls:2,destination:'furniture'}]},
     d:{terrain:'floor',object:'bedroom_cabinet',facing:'east',loot:[{pool:'loot_computer_parts',chance:4500,destination:'furniture'}]},
+    X:{terrain:'floor',loot:[{pool:'loot_packed_home_printer',chance:3000,destination:'ground'},
+      {pool:'loot_printer_filament_small',destination:'ground'}]},
+    Y:{terrain:'floor',loot:[{pool:'loot_digital_residential',chance:3000,destination:'ground'}]},
     H:{terrain:'floor',object:'bathroom_cabinet',loot:[{pool:'house_household_supplies',rolls:2,destination:'furniture'}]},
     W:{terrain:'floor',object:'workshop_bench',facing:'south',loot:[{pool:'house_hammer',destination:'furniture'},{pool:'house_workshop',rolls:3,destination:'furniture'}]},
     h:{terrain:'floor',object:'cellar_chest',facing:'east',loot:[{pool:'house_household_supplies',destination:'furniture'},{pool:'loot_electrical_parts',chance:5000,destination:'furniture'}]},
@@ -54,7 +57,7 @@
     ]},
     // Bench/tool room and household/bulk-storage landing.
     {id:'workshop_cellar',weight:1,rows:[
-      '############','#WF....C..Z#','#........M.#','#..........#',
+      '############','#WF....C..Z#','#..X.....M.#','#..........#',
       '####+#######','#h..l......#','#..>......D#','############',
     ]},
   ],

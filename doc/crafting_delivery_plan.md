@@ -1,6 +1,6 @@
 # Crafting progression: dependencies and delivery
 
-**Status: Delivery direction accepted; W3A/W3B, I1 catalog organization and pass-2 renewable power functionally verified.**
+**Status: Delivery direction accepted; W3A/W3B, I1, pass-2 renewable power and pass-3 W4/D3-A/B functionally verified.**
 The [framework](crafting_progression.md) records skill bands, capability families
 and acquisition roles. This document consolidates their dependencies and proposes
 bounded mechanics/content passes. The user accepted ordinary accessible/shared
@@ -39,7 +39,7 @@ below identify proposed follow-on slices, not new implemented subsystems.
 - Crafting protection uses ordinary accessible tool traits, including existing
   handheld-tool sharing. Correct use during the job is implicit; this is supported
   by existing selection and paid-work mechanics.
-- W4 selectable machine jobs have a design contract, not a completed implementation.
+- W4 selectable machine jobs are implemented with the first home printer.
   Its present scope is one explicitly started job, bounded consumed inputs, one
   output type and positive grid demand. Thermal processing and repeating jobs are
   later contract questions.
@@ -103,7 +103,7 @@ focused verification. API shapes and version numbers belong to its design.
 | --- | --- | --- |
 | **M-Bench: powered manual stations** | [Implemented contract](powered_manual_stations_design.md): station-local grid costs, provider-owned rates, atomic station/handheld/heat payment and crafting-area source residency | Builds on D1/W1/W2; useful connector production demonstrated with a powered fixture. Shipped station content is selected separately |
 | **M-Skills: split and ceiling** | [Implemented contract](skill_caps_and_split_design.md): per-skill maximum, Cooking/Chemistry split, validation/presentation and versioned migration of existing progress | Available for content using separate identities. Cooking stops at 5; other default ceilings remain 10; shared learning model preserved |
-| **W4: selectable grid machines** | Implement the existing single-job reservation, output-capacity, paid-slice and recovery contract after a bounded D3 interface review | Reuses D1 ownership/residency. Demonstrate one selectable input/output conversion, interruption and offscreen completion before extending process types |
+| **W4: selectable grid machines** | Implemented single-job reservation, output-capacity, setup/processing, paid-slice and durable recovery contract | Reuses D1 ownership/residency; [pass-3 evidence](pass3_content.md) covers shared use, interruption, offscreen completion and persistence |
 
 M-Worn is retired: the [accepted protection rule](crafting_progression.md#welding-protection)
 uses existing tool traits. M-Bench is required only when a selected provider is a
@@ -117,8 +117,8 @@ at 5. Book/recipe identities and paid work are preserved.
 
 ## 4. Digital-production slices
 
-These are subdivisions of D3/I4, sharing one information model. The current design
-effort covers D3-A/B; D3-C is explicitly deferred to the later hacking effort.
+These are subdivisions of D3/I4, sharing one information model. Pass 3 implements
+D3-A/B; D3-C is explicitly deferred to the later hacking effort.
 
 | Slice | Bounded scope | What it enables |
 | --- | --- | --- |
@@ -153,8 +153,8 @@ military interfaces and recovery outcomes belong to the later hacking design.
 The [accepted home-printing contract](home_printing_design.md) covers six supplied
 prints, seven new physical item identities, three existing-product assembly
 consumers, feedstock/costs, setup and batch ownership, and acquisition together.
-The user accepted the package. Concrete schemas, APIs, saves and networking belong
-to implementation; a separate technical-design iteration is not a prerequisite.
+The accepted package is implemented; [runtime APIs](digital_runtime.md) and
+[functional evidence](pass3_content.md) record schemas, saves and networking.
 Hacking and extraction retain their later gameplay scope.
 
 ## 5. Energy implementation and later independent feature designs

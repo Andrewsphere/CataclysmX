@@ -1,9 +1,14 @@
 # LAN networking API
 
-## Current protocol 27
+## Current protocol 28
 
-The current protocol constant is `0x43584e1b`. Peers need matching builds and
-content. Protocol 27 adds separate solar output/counts to meter snapshots and
+The current protocol constant is `0x43584e1c`. Peers need matching builds and
+content. Protocol 28 adds selectable machine commands, information transfer and
+deletion, typed receipts, and owned machine/library views. Digital device,
+information-package and machine-recipe definitions participate in content
+fingerprints. See [digital runtime](digital_runtime.md) for APIs and commands.
+
+Protocol 27 added separate solar output/counts to meter snapshots and
 derived daylight/exposure to object inspection. Catalog-aware decoding checks
 solar's canonical empty fuel/job fields, interval allowance, clock-derived
 daylight and run state. Solar definitions and behavior semantics participate in

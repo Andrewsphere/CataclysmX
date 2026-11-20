@@ -230,6 +230,17 @@ DataObject WriteCombatContent(const ContentCatalog& catalog) {
     for (std::uint32_t i = 1; i <= catalog.ItemCount(); ++i) {
         const auto& item = catalog.GetItem({i}); DataObject entry; entry.SetString("id", item.id);
         entry.SetBoolean("grid_meter", item.gridMeter);
+        if (item.digitalDevice != DigitalDeviceKind::None) {
+            switch (item.digitalDevice) {
+            case DigitalDeviceKind::None: std::abort();
+            case DigitalDeviceKind::Storage: entry.SetString("digital_device", "storage"); break;
+            case DigitalDeviceKind::Reader: entry.SetString("digital_device", "reader"); break;
+            case DigitalDeviceKind::Controller: entry.SetString("digital_device", "controller"); break;
+            }
+            DataObject supplied = DataObject::List();
+            for (auto id : item.suppliedInformation) { supplied.Append(DataObject::Text(catalog.GetInformation(id).id)); }
+            entry.Set("supplied_information", eastl::move(supplied));
+        }
         entry.SetUnsigned("wiring_tiles_per_material", item.wiringTilesPerMaterial);
         if (item.wiringMaterial.value) {
             entry.SetString("wiring_material", catalog.GetItem(item.wiringMaterial).id);
@@ -305,6 +316,13 @@ DataObject WriteCombatContent(const ContentCatalog& catalog) {
         light.SetUnsigned("range", object.light.range);
         entry.Set("light", eastl::move(light));
         switch (object.behavior) {
+        case ObjectBehaviorKind::SelectableMachine: {
+            entry.SetString("behavior", "selectable_machine");
+            DataObject supported = DataObject::List();
+            for (auto id : object.selectableRecipes) { supported.Append(DataObject::Text(catalog.GetMachineRecipe(id).id)); }
+            entry.Set("selectable_recipes", eastl::move(supported));
+            break;
+        }
         case ObjectBehaviorKind::None:
             entry.SetString("behavior", "none");
             break;
@@ -388,6 +406,48 @@ DataObject WriteCombatContent(const ContentCatalog& catalog) {
         recipes.Append(eastl::move(entry));
     }
     out.Set("recipes", eastl::move(recipes));
+    DataObject information = DataObject::List();
+    for (std::uint32_t i = 1; i <= catalog.InformationCount(); ++i) {
+        const auto& definition = catalog.GetInformation({i});
+        DataObject entry;
+        entry.SetString("type", "information");
+        entry.SetString("id", definition.id);
+        entry.SetString("name", definition.name);
+        entry.SetBoolean("software", definition.software);
+        DataObject readable = DataObject::List();
+        for (auto id : definition.books) { readable.Append(DataObject::Text(catalog.GetBook(id).id)); }
+        entry.Set("books", eastl::move(readable));
+        DataObject designs = DataObject::List();
+        for (auto id : definition.designs) { designs.Append(DataObject::Text(catalog.GetMachineRecipe(id).id)); }
+        entry.Set("designs", eastl::move(designs));
+        information.Append(eastl::move(entry));
+    }
+    out.Set("information", eastl::move(information));
+    DataObject machineRecipes = DataObject::List();
+    for (std::uint32_t i = 1; i <= catalog.MachineRecipeCount(); ++i) {
+        const auto& recipe = catalog.GetMachineRecipe({i});
+        DataObject entry;
+        entry.SetString("type", "machine_recipe");
+        entry.SetString("id", recipe.id);
+        entry.SetString("name", recipe.name);
+        entry.Set("inputs", WriteRecipeInputs(recipe.inputs, catalog));
+        entry.Set("result", WriteRecipeOutput(recipe.result, catalog));
+        entry.SetUnsigned("duration", recipe.duration);
+        entry.SetUnsigned("energy_per_tick", recipe.energyPerTick);
+        entry.SetUnsigned("setup_work", recipe.setupWork);
+        entry.SetUnsigned("setup_work_per_unit", recipe.setupWorkPerUnit);
+        entry.Set("skills", WriteRecipeSkills({recipe.skills.data(), recipe.skills.size()}, catalog));
+        DataObject learning;
+        learning.SetString("skill", catalog.GetSkill(recipe.learning.skill).id);
+        learning.SetUnsigned("level", recipe.learning.level);
+        learning.SetUnsigned("xp_per_execution", recipe.learning.xpPerExecution);
+        entry.Set("learning", eastl::move(learning));
+        if (recipe.requiredSoftware.value) {
+            entry.SetString("required_software", catalog.GetInformation(recipe.requiredSoftware).id);
+        }
+        machineRecipes.Append(eastl::move(entry));
+    }
+    out.Set("machine_recipes", eastl::move(machineRecipes));
     DataObject recyclers = DataObject::List();
     for (std::uint32_t i = 1; i <= catalog.RecyclingRecipeCount(); ++i) {
         const auto& recipe = catalog.GetRecyclingRecipe({i});

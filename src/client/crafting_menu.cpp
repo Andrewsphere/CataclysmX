@@ -109,12 +109,102 @@ String BookLabel(const BookStudyView& book, const ContentCatalog& content) {
 bool SameCraftingChoice(const Command& left, const Command& right) {
     return left.kind == right.kind && left.item == right.item && left.recipe == right.recipe && left.book == right.book
         && left.combatStyle == right.combatStyle && left.art == right.art && left.ability == right.ability
-        && left.equipment == right.equipment;
+        && left.equipment == right.equipment && left.target == right.target
+        && left.machineRecipe == right.machineRecipe && left.quantity == right.quantity && left.machineAction == right.machineAction
+        && left.informationSource == right.informationSource && left.informationDestination == right.informationDestination
+        && left.information == right.information && left.informationHost == right.informationHost;
 }
 
 void CollectCraftingMenu(const WorldView& view, const ContentCatalog& content,
     const Localization& localization, Vector<CraftingMenuRow>& rows) {
     rows.clear();
+    for (const auto& machine : view.machines) {
+        const String identity = " machine #" + UnsignedText(machine.object);
+        String progress = identity + (!machine.hasJob ? " [idle]" : machine.setup ? " [setup]" : machine.running ? " [processing]" : " [stopped]");
+        progress += " | setup " + UnsignedText(machine.setupCompleted) + "/" + UnsignedText(machine.setupWork);
+        progress += " | remaining " + UnsignedText(machine.remainingTicks) + " paid " + UnsignedText(machine.fundedTicks);
+        progress += " | reserved " + UnsignedText(machine.reservedVolumeMl) + " ml | expected nominal XP "
+            + FixedText(machine.learningXp) + " (recipient boosts/caps apply)";
+        progress += " | initiator #" + UnsignedText(machine.initiator) + " worker #" + UnsignedText(machine.worker);
+        if (machine.pauseRequested) { progress += " [pause requested]"; }
+        if (machine.completionPending) { progress += " [completion storage pending]"; }
+        for (auto action : {MachineAction::Stop, MachineAction::Resume, MachineAction::Cancel, MachineAction::Collect}) {
+            Command command; command.kind = CommandKind::machine_action; command.target = machine.object; command.machineAction = action;
+            const char* label = action == MachineAction::Stop ? "Stop" : action == MachineAction::Resume ? "Resume"
+                : action == MachineAction::Cancel ? "Cancel" : "Collect";
+            rows.push_back({command, String(label) + progress});
+        }
+        for (const auto& preview : machine.recipes) {
+            const auto* recipe = content.TryGetMachineRecipe(preview.recipe);
+            if (!recipe) { continue; }
+            // Each explicit quantity is a stable choice; stale requests are never reduced.
+            const unsigned maximum = preview.maximumQuantity ? preview.maximumQuantity : 1;
+            for (unsigned quantity = 1; quantity <= maximum; ++quantity) {
+                Command command; command.kind = CommandKind::begin_machine; command.target = machine.object;
+                command.machineRecipe = preview.recipe; command.quantity = static_cast<std::uint16_t>(quantity);
+                String label = "Begin" + identity + " " + recipe->name + " x" + UnsignedText(quantity)
+                    + " [range 1-" + UnsignedText(preview.maximumQuantity) + "; " + MachineOutcomeText(preview.availability) + "]";
+                label += " | setup " + UnsignedText(recipe->setupWork + std::uint64_t{recipe->setupWorkPerUnit} * quantity);
+                label += " | processing " + UnsignedText(recipe->duration * quantity) + " ticks | energy "
+                    + UnsignedText(recipe->duration * quantity * recipe->energyPerTick);
+                label += " | nominal XP " + FixedText(std::uint64_t{recipe->learning.xpPerExecution} * quantity
+                    * (recipe->learning.level >= 5 ? 8000 : ratioScale))
+                    + " (recipient boosts/caps apply)";
+                if (!recipe->skills.empty()) { label += " | requires learned:"; Requirements(label, content, recipe->skills); }
+                if (const auto* skill = content.TryGetSkill(recipe->learning.skill)) {
+                    label += " | " + skill->name + " training ceiling "
+                        + UnsignedText(eastl::min<unsigned>(recipe->learning.level + 1, skill->maxLevel));
+                }
+                std::uint64_t inputVolume = 0;
+                for (const auto& input : recipe->inputs) {
+                    label += " | " + localization.ItemName(content, input.Item()) + " x" + UnsignedText(input.Count() * quantity);
+                    inputVolume += std::uint64_t{content.GetItem(input.Item()).volumeMl} * input.Count() * quantity;
+                }
+                const auto outputVolume = std::uint64_t{content.GetItem(recipe->result.item).volumeMl} * recipe->result.count * quantity;
+                label += " | capacity reservation " + UnsignedText(eastl::max(inputVolume, outputVolume)) + " ml";
+                rows.push_back({command, eastl::move(label)});
+            }
+        }
+    }
+    const auto deviceName = [](const InformationDeviceView& device) {
+        return String(device.endpoint.object ? "controller #" : "device #")
+            + UnsignedText(device.endpoint.object ? device.endpoint.object : device.endpoint.item);
+    };
+    for (const auto& source : view.informationDevices) {
+        for (auto package : source.packages) {
+            const auto* definition = content.TryGetInformation(package);
+            if (!definition) { continue; }
+            if (source.writable) {
+                Command command; command.kind = CommandKind::remove_information;
+                command.informationDestination = source.endpoint; command.information = package;
+                rows.push_back({command, "Delete " + definition->name + " from " + deviceName(source)});
+            }
+            for (const auto& destination : view.informationDevices) {
+                if (!destination.writable || destination.endpoint == source.endpoint) { continue; }
+                const auto addCopy = [&](PersistentId host) {
+                    Command command; command.kind = CommandKind::copy_information;
+                    command.informationSource = source.endpoint; command.informationDestination = destination.endpoint;
+                    command.information = package; command.informationHost = host;
+                    String label = source.endpoint.object ? "Export " : destination.endpoint.object ? "Import " : "Copy ";
+                    label += definition->name + " from " + deviceName(source) + " to " + deviceName(destination);
+                    label += host ? " via host #" + UnsignedText(host) : " (direct)";
+                    label += " | 100 base work, no XP";
+                    if (!source.powered || !destination.powered) label += " [check device/host power]";
+                    if (source.transferring || destination.transferring) label += " [transfer active]";
+                    rows.push_back({command, eastl::move(label)});
+                };
+                addCopy(0);
+                for (const auto& host : view.informationDevices) {
+                    if (host.endpoint.item && host.reader && host.powered) { addCopy(host.endpoint.item); }
+                }
+            }
+        }
+        if (source.transferring) {
+            Command command; command.kind = CommandKind::cancel_information;
+            rows.push_back({command, "Cancel information transfer | remaining " + UnsignedText(source.remainingTicks)
+                + " ticks (no time refund)"});
+        }
+    }
     if (view.learning.activeBook.value) {
         Command command; command.kind = CommandKind::pause_study;
         const auto* book = content.TryGetBook(view.learning.activeBook);
@@ -192,6 +282,22 @@ void CollectCraftingMenu(const WorldView& view, const ContentCatalog& content,
 
 void CollectLearningSummary(const WorldView& view, const ContentCatalog& content, Vector<String>& lines) {
     lines.clear();
+    for (const auto& device : view.informationDevices) {
+        String line = String(device.endpoint.object ? "Controller #" : "Information device #")
+            + UnsignedText(device.endpoint.object ? device.endpoint.object : device.endpoint.item);
+        line += device.powered ? " [powered]" : " [unpowered]";
+        line += device.writable ? " [writable]" : " [read only]";
+        if (device.reader) { line += " [reader/transfer host]"; }
+        if (device.transferring) { line += " | copy remaining " + UnsignedText(device.remainingTicks) + " ticks"; }
+        line += " | packages:";
+        if (device.packages.empty()) { line += " empty"; }
+        for (auto package : device.packages) {
+            if (const auto* definition = content.TryGetInformation(package)) {
+                line += " #" + UnsignedText(package.value) + " " + definition->name;
+            }
+        }
+        lines.push_back(eastl::move(line));
+    }
     for (const auto& skill : view.learning.skills) {
         const auto& p = skill.progress;
         const auto* definition = content.TryGetSkill(p.skill);

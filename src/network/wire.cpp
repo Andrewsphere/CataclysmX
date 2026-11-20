@@ -7,6 +7,99 @@
 namespace cataclysmx::network::wire {
 namespace {
 inline constexpr std::size_t combatEventWireSize = 133;
+bool ValidDigitalResult(const CommandResult& v) {
+    if (v.machineOutcome > MachineOutcome::CompletionPending || v.informationOutcome > InformationOutcome::Busy) return false;
+    if (v.outcome == Outcome::machine_changed) {
+        if (v.machineOutcome > MachineOutcome::Collected) return false;
+    } else if (v.outcome == Outcome::machine_refused) {
+        if (v.machineOutcome <= MachineOutcome::Collected || v.advanced || v.cost) return false;
+    } else if (v.machineOutcome != MachineOutcome::Unavailable) return false;
+    if (v.outcome == Outcome::information_changed) {
+        if (v.informationOutcome > InformationOutcome::AlreadyPresent) return false;
+        if ((v.informationOutcome == InformationOutcome::AlreadyPresent || v.informationOutcome == InformationOutcome::Cancelled)
+            && (v.advanced || v.cost)) return false;
+    } else if (v.outcome == Outcome::information_refused) {
+        if (v.informationOutcome <= InformationOutcome::AlreadyPresent || v.advanced || v.cost) return false;
+    } else if (v.informationOutcome != InformationOutcome::InvalidDevice) return false;
+    return true;
+}
+bool ValidDigital(const WorldView& view, const ContentCatalog* content = nullptr) {
+    if (view.machines.size() > 289 || view.informationDevices.size() > maxItemEntries + 289) return false;
+    std::size_t budget = 4 + 87 * view.machines.size() + 36 * view.informationDevices.size();
+    PersistentId previous = 0;
+    for (const auto& m : view.machines) {
+        if (m.object <= previous || m.quantity > 255 || m.setupCompleted > m.setupWork || m.recipes.size() > maxPacket / 7
+            || (m.hasJob != (m.recipe.value != 0)) || (m.hasJob != (m.quantity != 0))
+            || (!m.hasJob && (m.setup || m.running || m.pauseRequested || m.completionPending || m.initiator
+                || m.worker || m.setupWork || m.setupCompleted || m.remainingTicks || m.fundedTicks || m.reservedVolumeMl || m.learningXp))
+             || (content && m.recipe.value && !content->TryGetMachineRecipe(m.recipe))) return false;
+        // Captured job budgets are authoritative values, not recomputed from
+        // today's recipe. Validate only the phase's structural invariants.
+        if (m.hasJob) {
+            if (!m.initiator) return false;
+            if (m.setup) {
+                if (m.fundedTicks || m.remainingTicks > 100 || m.completionPending
+                    || m.running != (m.worker != 0)) return false;
+            } else {
+                if (m.worker || m.pauseRequested || m.setupCompleted != m.setupWork
+                    || m.fundedTicks > m.remainingTicks
+                    || (m.completionPending && (m.remainingTicks || m.fundedTicks))) return false;
+            }
+        }
+        previous = m.object;
+        budget += m.recipes.size() * 7;
+        if (budget > maxPacket) return false;
+        std::uint32_t recipe = 0;
+        for (const auto& r : m.recipes) {
+            if (r.recipe.value <= recipe || r.maximumQuantity > 255 || r.availability > MachineOutcome::CompletionPending
+                || ((r.availability == MachineOutcome::Started) != (r.maximumQuantity != 0))
+                || (content && !content->TryGetMachineRecipe(r.recipe))) return false;
+            recipe = r.recipe.value;
+        }
+    }
+    for (std::size_t i = 0; i < view.informationDevices.size(); ++i) {
+        const auto& d = view.informationDevices[i];
+        if ((d.endpoint.item != 0) == (d.endpoint.object != 0) || !d.type.value || d.packages.size() > maxPacket / 4
+            || d.remainingTicks > UINT32_MAX || (!d.transferring && d.remainingTicks)
+            || (content && !content->TryGetItem(d.type))) return false;
+        if (content) {
+            const auto& definition = content->GetItem(d.type);
+            const bool legacy = definition.digitalDevice == DigitalDeviceKind::None
+                && definition.readingPower.value && !definition.books.empty();
+            if ((definition.digitalDevice == DigitalDeviceKind::None && !legacy)
+                || (d.endpoint.object && definition.digitalDevice != DigitalDeviceKind::Controller)
+                || d.writable != (definition.digitalDevice != DigitalDeviceKind::None)
+                || (d.reader != (definition.digitalDevice == DigitalDeviceKind::Reader || legacy))) return false;
+        }
+        budget += d.packages.size() * 4;
+        if (budget > maxPacket) return false;
+        for (std::size_t j = 0; j < i; ++j) if (view.informationDevices[j].endpoint == d.endpoint) return false;
+        std::uint32_t package = 0;
+        for (auto p : d.packages) {
+            if (p.value <= package || (content && !content->TryGetInformation(p))) return false;
+            package = p.value;
+        }
+    }
+    return true;
+}
+void WriteDigital(Writer& w, const WorldView& view) {
+    w.U16(static_cast<std::uint16_t>(view.machines.size()));
+    for (const auto& m : view.machines) {
+        w.U64(m.object); w.U32(m.recipe.value); w.U16(m.quantity);
+        w.U8(m.hasJob); w.U8(m.setup); w.U8(m.running); w.U8(m.pauseRequested); w.U8(m.completionPending);
+        w.U64(m.initiator); w.U64(m.worker); w.U64(m.setupWork); w.U64(m.setupCompleted);
+        w.U64(m.remainingTicks); w.U64(m.fundedTicks); w.U64(m.reservedVolumeMl); w.U64(m.learningXp);
+        w.U32(static_cast<std::uint32_t>(m.recipes.size()));
+        for (const auto& r : m.recipes) { w.U32(r.recipe.value); w.U8(static_cast<std::uint8_t>(r.availability)); w.U16(r.maximumQuantity); }
+    }
+    w.U16(static_cast<std::uint16_t>(view.informationDevices.size()));
+    for (const auto& d : view.informationDevices) {
+        w.U64(d.endpoint.item); w.U64(d.endpoint.object); w.U32(d.type.value);
+        w.U8(d.powered); w.U8(d.writable); w.U8(d.reader); w.U8(d.transferring); w.U64(d.remainingTicks);
+        w.U32(static_cast<std::uint32_t>(d.packages.size()));
+        for (auto p : d.packages) w.U32(p.value);
+    }
+}
 bool ValidStationResult(const CommandResult& v) {
     if (v.stationOutcome > StationActionOutcome::HasFuel) return false;
     const bool success = v.stationOutcome == StationActionOutcome::Placed || v.stationOutcome == StationActionOutcome::Packed
@@ -844,6 +937,7 @@ bool ValidCombatDefinitions(const WorldView& view, const ContentCatalog& content
 }
 
 bool ValidItemDefinitions(const WorldView& view, const ContentCatalog& content) {
+    if (!ValidDigital(view, &content)) return false;
     if (!ValidStations(view) || !ValidLists(view) || !ValidCraftingJobs(view.craftingJobs) || !ValidLearningDefinitions(view, content)
         || !ValidCombatDefinitions(view, content)) return false;
     for (const auto& station : view.stations) {
@@ -867,7 +961,8 @@ bool ValidItemDefinitions(const WorldView& view, const ContentCatalog& content) 
         for (const auto& entry : *entries) {
             const auto* definition = content.TryGetItem(entry.type);
             if (!definition || (!definition->unfinishedCraft && entry.volumeMl != definition->volumeMl)) return false;
-            if (entry.stackable && (!definition->capabilities.empty() || definition->unfinishedCraft)) return false;
+            if (entry.stackable && (!definition->capabilities.empty() || definition->unfinishedCraft
+                || definition->digitalDevice != DigitalDeviceKind::None)) return false;
             const auto* container = ItemContainer(*definition);
             if (definition->unfinishedCraft) {
                 if (!container || entry.volumeMl > container->capacityVolumeMl || entry.contained_items
@@ -957,11 +1052,15 @@ bool Writer::CommandValue(const Command& v) {
     I32(v.powerBounds.min.x); I32(v.powerBounds.min.z); I32(v.powerBounds.min.y);
     I32(v.powerBounds.max.x); I32(v.powerBounds.max.z); I32(v.powerBounds.max.y);
     I32(v.position.x); I32(v.position.z); I32(v.position.y);
+    U32(v.machineRecipe.value); U16(v.quantity); U8(static_cast<std::uint8_t>(v.machineAction));
+    U64(v.informationSource.item); U64(v.informationSource.object);
+    U64(v.informationDestination.item); U64(v.informationDestination.object);
+    U32(v.information.value); U64(v.informationHost);
     return bytes.size() <= maxPacket;
 }
 bool Writer::Result(const PlayerCommandResult& v) {
     if (!v.player || !v.sequence || !v.opportunity || v.result.outcome < Outcome::waited ||
-        v.result.outcome > Outcome::station_refused || !ValidStationResult(v.result) || !ValidPowerResult(v.result) || v.result.combatReason > CombatRefusal::InvalidDefinition || !ValidCraftingResult(v.result) || !ValidInventoryResult(v.result) || !ValidStudyResult(v.result) ||
+        v.result.outcome > Outcome::information_refused || !ValidDigitalResult(v.result) || !ValidStationResult(v.result) || !ValidPowerResult(v.result) || v.result.combatReason > CombatRefusal::InvalidDefinition || !ValidCraftingResult(v.result) || !ValidInventoryResult(v.result) || !ValidStudyResult(v.result) ||
         (v.result.storageError && (*v.result.storageError < SaveError::Io || *v.result.storageError > SaveError::NotOpen)) ||
         !ValidItemUseReason(v.result.itemOutcome, v.result.itemReason)) return false;
     U64(v.player); U64(v.sequence); U64(v.opportunity);
@@ -978,9 +1077,12 @@ bool Writer::Result(const PlayerCommandResult& v) {
     U8(static_cast<std::uint8_t>(v.result.combatReason));
     U8(static_cast<std::uint8_t>(v.result.powerOutcome));
     U8(static_cast<std::uint8_t>(v.result.stationOutcome));
+    U8(static_cast<std::uint8_t>(v.result.machineOutcome));
+    U8(static_cast<std::uint8_t>(v.result.informationOutcome));
     return bytes.size() <= maxPacket;
 }
 bool Writer::View(const WorldView& v, bool inspection) {
+    if (!ValidDigital(v)) return false;
     if (!ValidStations(v) || !ValidPowerView(v) || !ValidViewBounds(v, inspection) ||
         v.cells.size() != static_cast<std::size_t>(v.width * v.height) ||
         !ValidLists(v) || !ValidCraftingJobs(v.craftingJobs) || !ValidLearning(v.learning) || v.players.size() > 32 ||
@@ -1067,6 +1169,7 @@ bool Writer::View(const WorldView& v, bool inspection) {
         U8(station.enabled); U8(station.broken); U64(station.worker); U8(static_cast<std::uint8_t>(station.packing));
         U64(station.forge.fuel); U8(station.forge.ready);
     }
+    WriteDigital(*this, v);
     return bytes.size() <= maxPacket;
 }
 bool Reader::U8(std::uint8_t& v) { if (offset >= bytes.size()) return false; v = bytes[offset++]; return true; }
@@ -1084,7 +1187,7 @@ bool Reader::Text(String& v, std::size_t limit) {
 bool Reader::CommandValue(Command& v) {
     std::uint8_t kind, style, interactionKind, objectAction;
     v = {};
-    if (bytes.size() > maxPacket || !U8(kind) || kind > static_cast<std::uint8_t>(CommandKind::discard_forge_fuel) ||
+    if (bytes.size() > maxPacket || !U8(kind) || kind > static_cast<std::uint8_t>(CommandKind::cancel_information) ||
         !I32(v.dx) || !I32(v.dz) || !U64(v.item) || !U32(v.waitCost) ||
         !U16(v.capability.value) || v.capability.value > maxItemCapabilities ||
         !Text(v.itemAction, maxItemActionName) || !U64(v.otherItem) || !I32(v.dy) ||
@@ -1108,13 +1211,17 @@ bool Reader::CommandValue(Command& v) {
     if (!I32(v.powerBounds.min.x) || !I32(v.powerBounds.min.z) || !I32(v.powerBounds.min.y)
         || !I32(v.powerBounds.max.x) || !I32(v.powerBounds.max.z) || !I32(v.powerBounds.max.y)
         || !I32(v.position.x) || !I32(v.position.z) || !I32(v.position.y)) return false;
+    if (!U32(v.machineRecipe.value) || !U16(v.quantity) || !ReadEnum(*this, v.machineAction, MachineAction::Collect)
+        || !U64(v.informationSource.item) || !U64(v.informationSource.object)
+        || !U64(v.informationDestination.item) || !U64(v.informationDestination.object)
+        || !U32(v.information.value) || !U64(v.informationHost)) return false;
     return (v.itemAction.empty() || ValidItemActionId(v.itemAction)) && ValidCommandShape(v);
 }
 bool Reader::Result(PlayerCommandResult& v) {
     std::uint8_t outcome, advanced;
     if (bytes.size() > maxPacket || !U64(v.player) || !v.player || !U64(v.sequence) || !v.sequence ||
         !U64(v.opportunity) || !v.opportunity || !U8(outcome) ||
-        outcome > static_cast<std::uint8_t>(Outcome::station_refused) || !U8(advanced) || advanced > 1 ||
+        outcome > static_cast<std::uint8_t>(Outcome::information_refused) || !U8(advanced) || advanced > 1 ||
         !U64(v.result.tick) || !U64(v.result.cost)) return false;
     std::uint8_t hasError;
     if (!U8(hasError) || hasError > 1) return false;
@@ -1142,7 +1249,9 @@ bool Reader::Result(PlayerCommandResult& v) {
     if (!ReadEnum(*this, v.result.combatReason, CombatRefusal::InvalidDefinition)) return false;
     if (!ReadEnum(*this, v.result.powerOutcome, PowerActionOutcome::NoNewCoverage)) return false;
     if (!ReadEnum(*this, v.result.stationOutcome, StationActionOutcome::HasFuel)) return false;
-    return ValidStationResult(v.result) && ValidPowerResult(v.result) && ValidCraftingResult(v.result) && ValidInventoryResult(v.result) && ValidStudyResult(v.result);
+    if (!ReadEnum(*this, v.result.machineOutcome, MachineOutcome::CompletionPending)
+        || !ReadEnum(*this, v.result.informationOutcome, InformationOutcome::Busy)) return false;
+    return ValidDigitalResult(v.result) && ValidStationResult(v.result) && ValidPowerResult(v.result) && ValidCraftingResult(v.result) && ValidInventoryResult(v.result) && ValidStudyResult(v.result);
 }
 bool Reader::View(WorldView& v, bool inspection) {
     if (bytes.size() > maxPacket) return false;
@@ -1275,7 +1384,42 @@ bool Reader::View(WorldView& v, bool inspection) {
             || !U64(station.forge.fuel) || !ReadBool(*this, station.forge.ready)) return false;
         v.stations.push_back(station);
     }
-    return ValidStations(v) && ValidPowerView(v);
+    if (!U16(count) || count > 289) return false;
+    v.machines.clear();
+    for (unsigned i = 0; i < count; ++i) {
+        MachineView m;
+        if (!U64(m.object) || !U32(m.recipe.value) || !U16(m.quantity)
+            || !ReadBool(*this, m.hasJob) || !ReadBool(*this, m.setup) || !ReadBool(*this, m.running)
+            || !ReadBool(*this, m.pauseRequested) || !ReadBool(*this, m.completionPending)
+            || !U64(m.initiator) || !U64(m.worker) || !U64(m.setupWork) || !U64(m.setupCompleted)
+            || !U64(m.remainingTicks) || !U64(m.fundedTicks) || !U64(m.reservedVolumeMl) || !U64(m.learningXp)) return false;
+        std::uint32_t size;
+        if (!U32(size) || size > (bytes.size() - offset) / 7) return false;
+        for (std::uint32_t j = 0; j < size; ++j) {
+            MachineRecipeView recipe;
+            if (!U32(recipe.recipe.value) || !ReadEnum(*this, recipe.availability, MachineOutcome::CompletionPending)
+                || !U16(recipe.maximumQuantity)) return false;
+            m.recipes.push_back(recipe);
+        }
+        v.machines.push_back(eastl::move(m));
+    }
+    if (!U16(count) || count > maxItemEntries + 289) return false;
+    v.informationDevices.clear();
+    for (unsigned i = 0; i < count; ++i) {
+        InformationDeviceView d;
+        if (!U64(d.endpoint.item) || !U64(d.endpoint.object) || !U32(d.type.value)
+            || !ReadBool(*this, d.powered) || !ReadBool(*this, d.writable) || !ReadBool(*this, d.reader)
+            || !ReadBool(*this, d.transferring) || !U64(d.remainingTicks)) return false;
+        std::uint32_t size;
+        if (!U32(size) || size > (bytes.size() - offset) / 4) return false;
+        for (std::uint32_t j = 0; j < size; ++j) {
+            InformationId package;
+            if (!U32(package.value)) return false;
+            d.packages.push_back(package);
+        }
+        v.informationDevices.push_back(eastl::move(d));
+    }
+    return ValidDigital(v) && ValidStations(v) && ValidPowerView(v);
 }
 
 namespace {

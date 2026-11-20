@@ -136,8 +136,9 @@ TEST_CASE("Power view codec preserves meter inspection and rejects unauthorized 
     CHECK(decoded.currentPower->generatorOutputAvailable == 25); CHECK(decoded.currentPower->unloadedDevices == 5);
     CHECK(decoded.currentPower->solarOutputAvailable == 33); CHECK(decoded.currentPower->runningSolar == 2);
     CHECK(decoded.cells == view.cells);
+    REQUIRE(view.stations.empty()); REQUIRE(view.machines.empty()); REQUIRE(view.informationDevices.empty());
     auto bad = writer.bytes;
-    bad[bad.size() - 68] = 255; // Strict presence boolean, followed by meter data and the empty station count.
+    bad[bad.size() - 72] = 255; // Presence, 65-byte meter data, then three empty U16 counts.
     wire::Reader invalidPresence{{bad.data(), bad.size()}};
     CHECK_FALSE(invalidPresence.View(decoded));
     wire::Reader truncated{{writer.bytes.data(), writer.bytes.size() - 1}};
@@ -173,15 +174,16 @@ TEST_CASE("Power view settings accept the named maximum and reject out of range 
     WorldView decoded; wire::Reader reader{{writer.bytes.data(), writer.bytes.size()}};
     REQUIRE(reader.View(decoded)); REQUIRE(reader.Done());
     CHECK(decoded.powerSettings == view.powerSettings);
+    REQUIRE(view.stations.empty()); REQUIRE(view.machines.empty()); REQUIRE(view.informationDevices.empty());
     for (const int invalid : {0, maxPowerWiringExtent + 1}) {
         auto bad = view; bad.powerSettings.maxWiringWidth = invalid;
         wire::Writer badWidth; CHECK_FALSE(badWidth.View(bad));
         bad = view; bad.powerSettings.maxWiringDepth = invalid;
         wire::Writer badDepth; CHECK_FALSE(badDepth.View(bad));
-        // No meter/stations: width I32, depth I32, presence boolean, station count U16.
-        auto bytes = writer.bytes; bytes[bytes.size() - 8] = static_cast<std::uint8_t>(invalid);
+        // No meter: width I32, depth I32, presence, then three empty U16 counts.
+        auto bytes = writer.bytes; bytes[bytes.size() - 12] = static_cast<std::uint8_t>(invalid);
         wire::Reader widthReader{{bytes.data(), bytes.size()}}; CHECK_FALSE(widthReader.View(decoded));
-        bytes = writer.bytes; bytes[bytes.size() - 4] = static_cast<std::uint8_t>(invalid);
+        bytes = writer.bytes; bytes[bytes.size() - 8] = static_cast<std::uint8_t>(invalid);
         wire::Reader depthReader{{bytes.data(), bytes.size()}}; CHECK_FALSE(depthReader.View(decoded));
     }
 }

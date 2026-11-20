@@ -1,5 +1,6 @@
 #include "skills/learning_system.h"
 #include "core/world.h"
+#include "digital/information_system.h"
 #include "objects/storage_access.h"
 #include <EASTL/algorithm.h>
 #include <EASTL/array.h>
@@ -37,20 +38,17 @@ bool Nearby(const World& world, TileCoord from, TileCoord to, unsigned radius) {
     }
     return false;
 }
-bool CarriesBook(const World& world, ItemHandle handle, BookId book) {
-    const auto& definition = world.GetContent().GetItem(world.GetItem(handle)->type);
-    if (eastl::find(definition.books.begin(), definition.books.end(), book) == definition.books.end()) { return false; }
-    if (!definition.readingPower.value) { return true; }
-    const auto energy = world.GetItemEnergy(handle, definition.readingPower);
-    return energy && energy->energy > 0;
+bool CarriesBook(const World& world, ItemHandle handle, BookId book, eastl::span<const ItemHandle> accessible) {
+    return world.Information().HasBook(handle, book, accessible);
 }
 bool ReferencesRecipe(const World& world, eastl::span<const ItemHandle> references, CraftingRecipeId recipe) {
     const auto& content = world.GetContent();
     for (auto item : references) {
-        for (auto book : content.GetItem(world.GetItem(item)->type).books) {
+        for (std::size_t i = 1; i <= content.BookCount(); ++i) {
+            const BookId book{static_cast<std::uint32_t>(i)};
             const auto& recipes = content.GetBook(book).recipes;
             if (eastl::find(recipes.begin(), recipes.end(), recipe) != recipes.end()
-                && CarriesBook(world, item, book)) { return true; }
+                && CarriesBook(world, item, book, references)) { return true; }
         }
     }
     return false;
@@ -93,7 +91,7 @@ void LearningSystem::GatherReferences(ActorHandle handle, unsigned radius) const
 bool LearningSystem::HasBookReference(ActorHandle actor, BookId book) const {
     if (!world_.GetContent().TryGetBook(book)) { return false; }
     GatherReferences(actor, world_.GetCraftingSettings().nearbyRadius);
-    for (auto item : references_) { if (CarriesBook(world_, item, book)) { return true; } }
+    for (auto item : references_) { if (CarriesBook(world_, item, book, references_)) { return true; } }
     return false;
 }
 bool LearningSystem::HasRecipeReference(ActorHandle actor, CraftingRecipeId recipe) const {
@@ -154,7 +152,7 @@ WorldResult<StudyResult> LearningSystem::Study(ActorHandle handle, BookId book) 
     auto* actor = world_.MutableActor(handle);
     if (!actor || actor->combat.life != ActorLifeState::Alive || actor->parked
         || !world_.IsActive(actor->position)) { return StudyResult{StudyOutcome::ActorUnavailable}; }
-    if (Busy(handle) || CraftingBusy(handle) || actor->actionDeadline.Remaining(world_.GetTick())
+    if (Busy(handle) || CraftingBusy(handle) || world_.DigitalBusy(handle) || actor->actionDeadline.Remaining(world_.GetTick())
         || actor->combat.action.kind != ActorActionKind::None) { return StudyResult{StudyOutcome::ActorBusy}; }
     const auto* progress = FindBookProgress(actor->learning, book);
     if (progress && progress->used) { return StudyResult{StudyOutcome::AlreadyUsed}; }
@@ -276,7 +274,7 @@ void LearningSystem::CollectView(ActorHandle handle, LearningView& output) const
         const BookId id{static_cast<std::uint32_t>(i)};
         const auto* progress = FindBookProgress(state, id);
         bool accessible = false;
-        for (auto item : references_) { accessible |= CarriesBook(world_, item, id); }
+        for (auto item : references_) { accessible |= CarriesBook(world_, item, id, references_); }
         if (!accessible && !progress) { continue; }
         BookStudyView view{id, accessible, progress && progress->used, CanStudyBook(state, content, id), progress ? progress->work : 0};
         if (view.eligible) { for (const auto& benefit : content.GetBook(id).benefits) {

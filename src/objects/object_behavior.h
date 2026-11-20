@@ -4,6 +4,7 @@
 #include "core/data_object.h"
 #include "core/world_result.h"
 #include "objects/workshop_types.h"
+#include "objects/machine_job.h"
 
 #include <EASTL/optional.h>
 #include <EASTL/unique_ptr.h>
@@ -76,6 +77,7 @@ public:
     WorldResult<void> ConsumeInputs(ActorHandle actor, ItemTypeId type, std::uint32_t count);
     WorldResult<void> Produce(ItemTypeId type, std::uint32_t count);
     WorldResult<void> CollectContents(ActorHandle actor);
+    SaveResult<void> CompleteMachineJob();
     void RequestDestroy();
 private:
     friend class World;
@@ -104,6 +106,10 @@ public:
     virtual WorldResult<void> FundGridWork(Tick ticks);
     // Only forge behavior accepts this state. World preflights complete transactions.
     virtual WorldResult<void> SetForgeState(ForgeState state);
+    virtual MachineJobState* MutableMachineJob();
+    virtual const MachineJobState* MachineJob() const;
+    virtual WorldResult<void> SetMachineJob(MachineJobState state);
+    virtual void ClearMachineJob();
 };
 
 // The immutable definition must outlive the returned behavior.

@@ -2,6 +2,7 @@
 
 #include "items/item_types.h"
 #include "content/crafting_definition.h"
+#include "content/digital_definition.h"
 #include "core/object_appearance.h"
 #include "core/light_types.h"
 
@@ -9,7 +10,7 @@
 
 namespace cataclysmx {
 
-enum class ObjectBehaviorKind { None, CraftingMachine, Generator, GridBattery, Forge, Solar };
+enum class ObjectBehaviorKind { None, CraftingMachine, Generator, GridBattery, Forge, Solar, SelectableMachine };
 
 struct CraftingMachineDefinition {
     ItemTypeId input{};
@@ -69,6 +70,7 @@ struct ObjectDefinition {
     ItemTypeId packingItem{}; // Protected original equipment; zero denotes a fixed fixture.
     ForgeDefinition forge;
     SolarDefinition solar;
+    Vector<MachineRecipeId> selectableRecipes;
     bool operator==(const ObjectDefinition&) const = default;
 };
 

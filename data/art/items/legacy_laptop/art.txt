@@ -1,0 +1,18 @@
+@text-art 1
+@color case #87939D
+@color screen #344954
+@color key #BAC3C5
+@color glow #84BFC7
+@default case
+---
+     ╭──────────────────╮
+     │<screen> ┌──────────────┐ <case>│
+     │<screen> │<glow> ──────────── <screen>│ <case>│
+     │<screen> │<glow> ────────     <screen>│ <case>│
+     │<screen> │              │ <case>│
+     │<screen> └──────────────┘ <case>│
+     ╰──────────────────╯
+   ╱<key> . . . . . . . . <case>╲
+  ╱<key> . . . . . . . . . <case>╲
+ ╱<key> ──────────  ──────  <case>╲
+ ╰────────────────────────╯

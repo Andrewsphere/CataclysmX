@@ -3,6 +3,10 @@
 #include "content/content.h"
 #include "core/world_archive.h"
 #include "crafting/crafting_state.h"
+#include "core/item_state.h"
+#include "objects/object_behavior.h"
+#include "skills/skill_state.h"
+#include "combat/combat_persistence.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -79,6 +83,39 @@ eastl::optional<ItemEnergyView> ItemSnapshotContext::Energy(PersistentId item, I
 StateResult<void> ValidateItemSnapshot(const ContentCatalog& content, const ChunkArchive& chunk,
     Diagnostics* diagnostics) {
     const ItemSnapshotContext context(content, chunk);
+    Vector<PersistentId> workers;
+    const auto claimWorker = [&workers](PersistentId worker) {
+        if (!worker) { return true; }
+        for (auto previous : workers) { if (previous == worker) { return false; } }
+        workers.push_back(worker);
+        return true;
+    };
+    const auto validDigitalTiming = [&chunk, &content](PersistentId worker, Tick remaining) {
+        if (!worker) { return true; } // Retained paid setup can be unassigned.
+        for (const auto& actor : chunk.actors) {
+            if (actor.id != worker) { continue; }
+            const auto combat = ReadCombatState(actor.combat, content);
+            return combat && combat->life == ActorLifeState::Alive
+                && combat->action.kind == ActorActionKind::None && actor.remainingTicks == remaining;
+        }
+        return true; // A worker in another chunk is checked by the global boundary.
+    };
+    for (const auto& actor : chunk.actors) {
+        const auto learning = ReadLearningState(actor.learning, content, diagnostics);
+        const auto combat = ReadCharacterCombat(actor.characterCombat, content, diagnostics);
+        if (!learning) { return eastl::unexpected(learning.error()); }
+        if (!combat) { return eastl::unexpected(combat.error()); }
+        if (learning->study.active && !claimWorker(actor.id)) {
+            return Invalid(actor.id, "work", "Worker has conflicting activities", diagnostics);
+        }
+        if (*combat) {
+            for (const auto& manual : (*combat)->manuals) {
+                if (manual.active && !claimWorker(actor.id)) {
+                    return Invalid(actor.id, "work", "Worker has conflicting activities", diagnostics);
+                }
+            }
+        }
+    }
     for (const auto& object : chunk.objects) {
         const auto* definition = content.TryGetObject(object.type);
         if (!definition || !definition->packingItem.value) {
@@ -112,8 +149,27 @@ StateResult<void> ValidateItemSnapshot(const ContentCatalog& content, const Chun
         }
         if (item.state.Type() != DataType::Object
             || item.state.Size() != definition->energyStores.size() + definition->behaviors.size()
-                + (definition->unfinishedCraft ? 1 : 0)) {
+                + (definition->unfinishedCraft ? 1 : 0)
+                + (definition->digitalDevice != DigitalDeviceKind::None ? 1 : 0)) {
             return Invalid(item.id, "state", "Expected exactly the energy and behavior state entries", diagnostics);
+        }
+        if (definition->digitalDevice != DigitalDeviceKind::None) {
+            const auto parsed = ReadItemState(content, *definition, item.state, diagnostics);
+            if (!parsed) { return eastl::unexpected(parsed.error()); }
+            const auto* transfer = item.state.Find("information_library")->Find("transfer");
+            if (transfer) {
+                // The catalog-aware reader validates identity shape and package.
+                // The source/host can disappear while work is funded; runtime
+                // rechecks access and aborts rather than resurrecting anything.
+                const auto worker = *transfer->GetUnsigned("worker");
+                const auto remaining = *transfer->GetUnsigned("remaining_ticks");
+                if (remaining > UINT32_MAX || !claimWorker(worker)) {
+                    return Invalid(item.id, "transfer", "Invalid transfer timing or conflicting worker", diagnostics);
+                }
+                if (!validDigitalTiming(worker, remaining)) {
+                    return Invalid(item.id, "transfer", "Transfer timing or action differs from worker", diagnostics);
+                }
+            }
         }
         if (definition->unfinishedCraft) {
             const auto* payload = item.state.Find("crafting_job");
@@ -121,6 +177,9 @@ StateResult<void> ValidateItemSnapshot(const ContentCatalog& content, const Chun
             auto state = ReadCraftingState(*payload);
             if (!state) { return eastl::unexpected(state.error()); }
             if (!ResolveCraftingState(content, *state)) { return Invalid(item.id, "state", "Invalid crafting recipe or work", diagnostics); }
+            if (!claimWorker(state->worker)) {
+                return Invalid(item.id, "state", "Worker has conflicting activities", diagnostics);
+            }
             for (auto station : state->stations) {
                 for (auto previous : claimedStations) {
                     if (station == previous) { return Invalid(item.id, "stations", "Station claimed by multiple jobs", diagnostics); }
@@ -303,6 +362,92 @@ StateResult<void> ValidateItemSnapshot(const ContentCatalog& content, const Chun
         const auto* container = ItemContainer(context.Definition(item.id));
         if (volume && (!container || (item.type != content.CorpseItem() && volume > container->capacityVolumeMl))) {
             return Invalid(item.id, "contents", "Container volume capacity exceeded", diagnostics);
+        }
+    }
+    Vector<std::uint64_t> externalVolumes(chunk.items.size(), 0);
+    for (std::size_t i = chunk.items.size(); i > 0;) {
+        --i;
+        const auto& item = chunk.items[i];
+        if (!context.Definition(item.id).unfinishedCraft) {
+            externalVolumes[i] = context.Definition(item.id).volumeMl;
+            continue;
+        }
+        for (std::size_t j = i + 1; j < chunk.items.size(); ++j) {
+            if (chunk.items[j].location != LocationKind::item || chunk.items[j].owner != item.id) { continue; }
+            if (externalVolumes[j] > UINT64_MAX - externalVolumes[i]) {
+                return Invalid(item.id, "contents", "External volume overflow", diagnostics);
+            }
+            externalVolumes[i] += externalVolumes[j];
+        }
+    }
+    for (const auto& object : chunk.objects) {
+        const auto* definition = content.TryGetObject(object.type);
+        if (!definition || definition->behavior != ObjectBehaviorKind::SelectableMachine) { continue; }
+        const auto valid = ValidateObjectBehaviorState(*definition, object.state, diagnostics);
+        if (!valid) { return eastl::unexpected(valid.error()); }
+        const auto* payload = object.state.Find("job");
+        if (!payload) { continue; }
+        const auto job = ReadMachineJobState(*payload, diagnostics);
+        if (!job || !ValidateCapturedMachineJob(content, *job)) {
+            return Invalid(object.id, "job", "Invalid captured machine job", diagnostics);
+        }
+        const auto recipe = content.FindMachineRecipe(job->recipeName);
+        bool supported = false;
+        for (auto candidate : definition->selectableRecipes) { supported |= candidate == recipe; }
+        if (!supported || !claimWorker(job->worker)) {
+            return Invalid(object.id, "job", "Unsupported recipe or conflicting worker", diagnostics);
+        }
+        if (!validDigitalTiming(job->worker, job->remainingSetupTicks)) {
+            return Invalid(object.id, "job", "Setup timing or action differs from worker", diagnostics);
+        }
+        StaticList<ItemOutput, maxRecipeInputs> counts;
+        for (const auto& input : job->inputs) {
+            if (!counts.PushBack({content.FindItem(input.itemName), input.count})) { std::abort(); }
+        }
+        std::uint64_t inputVolume = 0;
+        for (auto id : job->reservedInputs) {
+            const auto* item = context.FindItem(id);
+            if (!item || id == object.equipment || item->location != LocationKind::object
+                || item->owner != object.id || item->installation.value
+                || context.Definition(id).unfinishedCraft) {
+                return Invalid(object.id, "job", "Reserved original is not an owned leaf input", diagnostics);
+            }
+            for (const auto& child : chunk.items) {
+                if (child.location == LocationKind::item && child.owner == id) {
+                    return Invalid(object.id, "job", "Reserved original has children", diagnostics);
+                }
+            }
+            bool matched = false;
+            for (auto& count : counts) {
+                if (count.item == item->type && count.count) { --count.count; matched = true; break; }
+            }
+            const auto volume = context.Definition(id).volumeMl;
+            if (!matched || volume > UINT64_MAX - inputVolume) {
+                return Invalid(object.id, "job", "Reserved original types or volume differ from capture", diagnostics);
+            }
+            inputVolume += volume;
+        }
+        for (const auto& count : counts) {
+            if (count.count) { return Invalid(object.id, "job", "Missing captured inputs", diagnostics); }
+        }
+        const auto outputVolume = std::uint64_t{content.GetItem(content.FindItem(job->outputName)).volumeMl}
+            * job->outputCount;
+        if (inputVolume > job->reservedVolumeMl || outputVolume > job->reservedVolumeMl
+            || !definition->capacityVolumeMl || job->reservedVolumeMl > *definition->capacityVolumeMl) {
+            return Invalid(object.id, "job", "Captured reservation cannot contain inputs or outputs", diagnostics);
+        }
+        auto occupied = job->reservedVolumeMl;
+        for (std::size_t i = 0; i < chunk.items.size(); ++i) {
+            const auto& item = chunk.items[i];
+            if (item.location != LocationKind::object || item.owner != object.id || item.id == object.equipment) { continue; }
+            bool reserved = false;
+            for (auto id : job->reservedInputs) { reserved |= id == item.id; }
+            if (reserved) { continue; }
+            const auto volume = externalVolumes[i];
+            if (volume > *definition->capacityVolumeMl - occupied) {
+                return Invalid(object.id, "job", "Public contents exceed captured reservation allowance", diagnostics);
+            }
+            occupied += volume;
         }
     }
     // Only fully validated trees reach relational behavior validation.

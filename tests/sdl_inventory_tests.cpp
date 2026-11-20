@@ -390,7 +390,7 @@ TEST_CASE("SDL item pilot renders five authored assets at compact and wide sizes
     }
 }
 
-TEST_CASE("SDL item slice expansion and workshop render through the item browser", "[item-slice][item-expansion][workshop][w3][sdl][inventory][render]") {
+TEST_CASE("SDL item slice expansion workshop and digital devices render through the item browser", "[item-slice][item-expansion][workshop][w3][digital][sdl][inventory][render]") {
     Diagnostics diagnostics;
     auto loaded = LoadContentPack(CATACLYSMX_CONTENT_PACK, &diagnostics);
     INFO(FormatDiagnostics(diagnostics).c_str()); REQUIRE(loaded);
@@ -414,6 +414,11 @@ TEST_CASE("SDL item slice expansion and workshop render through the item browser
         "recovered_gasoline_engine", "generator_alternator", "generator_drive_assembly",
         "woodgas_processing_assembly", "woodgas_generator_kit", "prepared_wood"
     };
+    constexpr const char* digitalIds[] = {
+        "home_polymer_printer", "polymer_filament", "plastic_cup", "small_parts_case",
+        "plastic_buckle_set", "printed_machete_grip", "printed_electronics_case",
+        "usb_data_stick", "phone", "legacy_laptop"
+    };
     for (const auto type : browser.Frame().matches) {
         CHECK(type != content.CorpseItem());
         CHECK_FALSE(content.GetItem(type).unfinishedCraft);
@@ -435,6 +440,7 @@ TEST_CASE("SDL item slice expansion and workshop render through the item browser
         unsigned expansionRendered = 0;
         unsigned workshopRendered = 0;
         unsigned renewableRendered = 0;
+        unsigned digitalRendered = 0;
         for (std::size_t index = 0; index < browser.Frame().matches.size(); ++index) {
             const auto type = browser.Frame().matches[index];
             const auto& item = content.GetItem(type);
@@ -461,8 +467,10 @@ TEST_CASE("SDL item slice expansion and workshop render through the item browser
             for (const char* id : workshopIds) { workshop |= item.id == id; }
             bool renewable = false;
             for (const char* id : renewableIds) { renewable |= item.id == id; }
+            bool digital = false;
+            for (const char* id : digitalIds) { digital |= item.id == id; }
             CAPTURE(item.id.c_str());
-            if (renewable) { REQUIRE_FALSE(item.art.lines.empty()); }
+            if (renewable || digital) { REQUIRE_FALSE(item.art.lines.empty()); }
             browser.Frame().selected = index;
             browser.Handle({"e"}, keys, content, localization);
             REQUIRE(browser.Frame().screen == ItemBrowserScreen::Examine);
@@ -475,7 +483,8 @@ TEST_CASE("SDL item slice expansion and workshop render through the item browser
             };
             draw();
             const auto top = SurfaceHash(display.surface);
-            const char* previewVariable = renewable ? "CATACLYSMX_RENEWABLE_PREVIEW"
+            const char* previewVariable = digital ? "CATACLYSMX_DIGITAL_PREVIEW"
+                : renewable ? "CATACLYSMX_RENEWABLE_PREVIEW"
                 : workshop ? "CATACLYSMX_WORKSHOP_PREVIEW"
                 : expansion ? "CATACLYSMX_ITEM_EXPANSION_PREVIEW" : "CATACLYSMX_ITEM_SLICE_PREVIEW";
             if (const char* prefix = std::getenv(previewVariable)) {
@@ -487,7 +496,7 @@ TEST_CASE("SDL item slice expansion and workshop render through the item browser
             frame.examination.art = &item.art;
             frame.examination.scroll = 9999; draw();
             CHECK(frame.examination.scroll >= 0); CHECK(frame.examination.scroll < 9999);
-            if (size.x == 480 && !expansion && !workshop && !renewable) { CHECK(frame.examination.scroll > 0); }
+            if (size.x == 480 && !expansion && !workshop && !renewable && !digital) { CHECK(frame.examination.scroll > 0); }
             frame.examination.scroll = 0; draw();
             CHECK(SurfaceHash(display.surface) == top);
             browser.Handle({"Escape"}, keys, content, localization);
@@ -496,6 +505,7 @@ TEST_CASE("SDL item slice expansion and workshop render through the item browser
             if (expansion) { ++expansionRendered; }
             else if (workshop) { ++workshopRendered; }
             else if (renewable) { ++renewableRendered; }
+            else if (digital) { ++digitalRendered; }
             else if (item.id == "workshop_primer_print" || item.id == "salvage_notes_print"
                 || item.id == "workshop_ebook_reader") { ++learningRendered; }
             else if (item.id == "wiring_kit" || item.id == "portable_fuel_generator"
@@ -506,6 +516,7 @@ TEST_CASE("SDL item slice expansion and workshop render through the item browser
         CHECK(expansionRendered == 80);
         CHECK(workshopRendered == 22);
         CHECK(renewableRendered == 9);
+        CHECK(digitalRendered == 10);
         CHECK(learningRendered == 3);
         CHECK(powerRendered == 3);
         CHECK(combatListed == 6);

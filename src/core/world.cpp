@@ -19,6 +19,9 @@
 #include "worldgen/worldgen.h"
 #include "objects/storage_access.h"
 #include "power/power_system.h"
+#include "digital/machine_system.h"
+#include "digital/information_system.h"
+#include "objects/machine_job.h"
 
 #include <EASTL/algorithm.h>
 #include <EASTL/numeric_limits.h>
@@ -155,6 +158,7 @@ eastl::optional<PowerDeviceKind> PowerRole(const ObjectDefinition* definition) {
     case ObjectBehaviorKind::Generator: return PowerDeviceKind::Generator;
     case ObjectBehaviorKind::Solar: return PowerDeviceKind::Solar;
     case ObjectBehaviorKind::GridBattery: return PowerDeviceKind::Battery;
+    case ObjectBehaviorKind::SelectableMachine: return PowerDeviceKind::Machine;
     case ObjectBehaviorKind::CraftingMachine:
         if (definition->machine.gridPowered) { return PowerDeviceKind::Machine; }
         break;
@@ -192,6 +196,11 @@ bool ValidPowerArchive(const PowerSystem& power, const ContentCatalog& content, 
         view.generatorIntervalStart = object.state.GetUnsigned("generator_interval_start").value_or(0);
         view.generatorIntervalInitialized = object.state.GetBoolean("generator_interval_initialized").value_or(false);
         const auto* definition = content.TryGetObject(object.type);
+        if (definition && definition->behavior == ObjectBehaviorKind::SelectableMachine) {
+            const auto* job = object.state.Find("job");
+            view.runRequested = job && job->GetUnsigned("phase").value_or(0) == 1
+                && job->GetBoolean("run_requested").value_or(false);
+        }
         if (definition && definition->behavior == ObjectBehaviorKind::Solar) {
             view.generatorIntervalStart = object.state.GetUnsigned("interval_start").value_or(0);
             view.generatorIntervalInitialized = object.state.GetBoolean("interval_initialized").value_or(false);
@@ -618,6 +627,8 @@ public:
     ItemSystem itemSystem;
     CraftingSystem craftingSystem;
     LearningSystem learningSystem;
+    MachineSystem machineSystem;
+    InformationSystem informationSystem;
     PowerSystem powerSystem;
     Vector<ColumnCoord> workshopDemand;
     Vector<ColumnCoord> playerPowerDemand;
@@ -961,7 +972,8 @@ public:
 
     explicit Impl(World& world, const ContentCatalog& catalog, std::uint32_t value)
         : owner(world), content(catalog), floor(catalog.FindTerrain("floor")),
-          wall(catalog.FindTerrain("wall")), seed(value), itemSystem(world), craftingSystem(world), learningSystem(world), powerSystem(world, value), combatSystem(world) {
+          wall(catalog.FindTerrain("wall")), seed(value), itemSystem(world), craftingSystem(world), learningSystem(world),
+          machineSystem(world), informationSystem(world), powerSystem(world, value), combatSystem(world) {
         Require(floor.value != 0 && wall.value != 0);
     }
 
@@ -1085,9 +1097,12 @@ public:
     }
 
     std::uint64_t ObjectVolume(ObjectHandle handle) const {
-        std::uint64_t result = 0;
-        for (ItemHandle child : Live(objects, handle)->contents) {
-            if (child == Live(objects, handle)->equipment) { continue; }
+        const auto* object = Live(objects, handle);
+        const auto* job = object->behavior_ ? object->behavior_->MachineJob() : nullptr;
+        std::uint64_t result = job ? job->reservedVolumeMl : 0;
+        for (ItemHandle child : object->contents) {
+            if (child == object->equipment || (job && eastl::binary_search(job->reservedInputs.begin(),
+                job->reservedInputs.end(), Live(items, child)->id))) { continue; }
             result = CheckedAdd(result, ExternalVolume(child));
         }
         return result;
@@ -1103,7 +1118,7 @@ public:
 
     eastl::optional<Tick> ObjectEventDelay(ObjectHandle handle) const {
         const auto* object = Live(objects, handle);
-        if (!object->enabled || !GetChunk(ChunkOf(object->position))->active) { return eastl::nullopt; }
+        if (!object->enabled || object->broken || !GetChunk(ChunkOf(object->position))->active) { return eastl::nullopt; }
         const auto delay = object->behavior_ ? object->behavior_->NextEventIn()
             : object->type.value ? eastl::optional<Tick>{} : eastl::optional<Tick>{object->updateDeadline.Remaining(tick)};
         const auto* definition = content.TryGetObject(object->type);
@@ -1183,9 +1198,12 @@ public:
             if (objectDefinition && objectDefinition->capacityVolumeMl && (!moving.value || moving != object->equipment)) {
                 const auto inserted = moving.value ? ExternalVolume(moving)
                     : (definition.unfinishedCraft ? 0 : definition.volumeMl);
-                std::uint64_t used = 0;
+                const auto* job = object->behavior_ ? object->behavior_->MachineJob() : nullptr;
+                std::uint64_t used = job ? job->reservedVolumeMl : 0;
                 for (ItemHandle child : object->contents) {
                     if (child != moving && child != object->equipment) {
+                        if (job && eastl::binary_search(job->reservedInputs.begin(), job->reservedInputs.end(),
+                            Live(items, child)->id)) { continue; }
                         used = CheckedAdd(used, ProjectedVolume(child, moving, location, inserted));
                     }
                 }
@@ -1507,10 +1525,28 @@ public:
     }
 
     void Unload(const Chunk& value) {
-        for (auto actor : value.actors) { craftingSystem.ReleaseWorkerStations(Live(actors, actor)->id); }
-        for (auto object : value.objects) { craftingSystem.ReleaseStation(Live(objects, object)->id); }
+        for (auto actor : value.actors) {
+            craftingSystem.ReleaseWorkerStations(Live(actors, actor)->id);
+            owner.ReleaseDigitalWorker(actor);
+        }
+        for (auto object : value.objects) {
+            craftingSystem.ReleaseStation(Live(objects, object)->id);
+            if (auto* job = owner.MutableMachineJob(object); job && job->worker) {
+                job->worker = 0;
+                job->pauseRequested = false;
+            }
+        }
         Vector<ItemHandle> pending;
         Archive saved = Capture(value, &pending);
+        // Unloading the destination loses access even if its worker remains in
+        // another chunk. Do not leave a detached copy claiming that actor.
+        for (std::size_t i = 0; i < pending.size(); ++i) {
+            auto* library = itemSystem.MutableInformation(pending[i]);
+            if (library && library->transfer) {
+                library->transfer.reset();
+                saved.items[i].state = itemSystem.Capture(pending[i]);
+            }
+        }
         // First capture all values; then retire every runtime key. Do not reset
         // the central slot maps, even when the last chunk is unloaded.
         for (ItemHandle handle : pending) {
@@ -1523,6 +1559,7 @@ public:
             actors.erase(dod::slot_map64<Actor>::key{handle.value});
         }
         for (ObjectHandle handle : value.objects) {
+            machineSystem.Detach(handle);
             objects.erase(dod::slot_map64<InteractiveObject>::key{handle.value});
         }
         ForgetWarm(value.position);
@@ -1606,6 +1643,7 @@ public:
             const auto key = objects.emplace(eastl::move(restored));
             value.objects.push_back({key.raw});
             powerSystem.SyncObject({key.raw});
+            machineSystem.Attach({key.raw});
         }
         // Parents precede descendants, so every persistent owner is already live.
         for (const SavedItem& item : saved.items) {
@@ -1824,6 +1862,58 @@ public:
         auto result = apply(**saved);
         if (!result) { return eastl::unexpected(result.error()); }
         if (!*result) { return SaveFailure(SaveError::InvalidData, "Recipe contributor disappeared", diagnostics); }
+        Require(archives.try_emplace(**position, eastl::move(**saved)).second);
+        return {};
+    }
+
+    SaveResult<void> ApplyMachineLearning(World& world, const MachineJobState& job) {
+        if (job.learningSkillName.empty() || !job.learningXp) { return {}; }
+        const auto skill = content.FindSkill(job.learningSkillName);
+        const auto amount = std::uint64_t{job.learningXp} * (job.learningLevel >= 5 ? 8000u : ratioScale);
+        const auto award = [&](LearningState& learning) {
+            AwardSkillXp(learning, content, skill, job.learningLevel, SkillActivity::Craft, amount);
+        };
+        if (const auto handle = FindActor(job.initiator); handle.value) {
+            auto* actor = Live(actors, handle);
+            if (actor->combat.life == ActorLifeState::Alive) {
+                award(actor->learning);
+                world.ActorChanged(handle);
+            }
+            return {};
+        }
+        const auto apply = [&](Archive& archive) -> SaveResult<bool> {
+            for (auto& actor : archive.actors) {
+                if (actor.id != job.initiator) { continue; }
+                const auto combat = ReadCombatState(actor.combat, content);
+                if (!combat) { return eastl::unexpected(SaveError::InvalidData); }
+                if (combat->life == ActorLifeState::Dead) { return true; }
+                auto learning = ReadLearningState(actor.learning, content);
+                if (!learning) { return eastl::unexpected(SaveError::InvalidData); }
+                award(*learning);
+                auto staged = CaptureLearningState(*learning, content);
+                actor.learning = eastl::move(staged);
+                MarkDirty(archive.position, false);
+                return true;
+            }
+            return false;
+        };
+        for (auto& entry : archives) {
+            const auto result = apply(entry.second);
+            if (!result) { return eastl::unexpected(result.error()); }
+            if (*result) { return {}; }
+        }
+        if (!database) { return {}; }
+        const auto position = database->FindActorChunk(job.initiator);
+        if (!position) { return eastl::unexpected(position.error()); }
+        if (!*position) { return {}; }
+        // Current RAM ownership supersedes stale disk rows, including destruction.
+        if (GetChunk(**position) || archives.contains(**position) || warmArchives.contains(**position)) { return {}; }
+        auto saved = database->ReadChunk(**position, next_id);
+        if (!saved) { return eastl::unexpected(saved.error()); }
+        if (!*saved) { return eastl::unexpected(SaveError::InvalidData); }
+        const auto result = apply(**saved);
+        if (!result) { return eastl::unexpected(result.error()); }
+        if (!*result) { return eastl::unexpected(SaveError::InvalidData); }
         Require(archives.try_emplace(**position, eastl::move(**saved)).second);
         return {};
     }
@@ -2431,6 +2521,67 @@ SaveResult<void> World::Save(const SessionState& session, Diagnostics* diagnosti
 bool World::HasSave() const { return impl_->database != nullptr; }
 PowerSystem& World::Power() { return impl_->powerSystem; }
 const PowerSystem& World::Power() const { return impl_->powerSystem; }
+MachineSystem& World::Machines() { return impl_->machineSystem; }
+const MachineSystem& World::Machines() const { return impl_->machineSystem; }
+InformationSystem& World::Information() { return impl_->informationSystem; }
+const InformationSystem& World::Information() const { return impl_->informationSystem; }
+bool World::DigitalBusy(ActorHandle actor) const {
+    return impl_->machineSystem.Busy(actor) || impl_->informationSystem.Busy(actor);
+}
+bool World::CraftingBusy(ActorHandle actor) const { return impl_->craftingSystem.Busy(actor); }
+void World::ReleaseDigitalWorker(ActorHandle actor) {
+    const auto* value = GetActor(actor);
+    if (!value) { return; }
+    const auto id = value->id;
+    Require(impl_->informationSystem.Cancel(actor).has_value());
+    for (auto& entry : impl_->objects.items()) {
+        const ObjectHandle handle{entry.first.raw};
+        auto* job = MutableMachineJob(handle);
+        if (!job || job->worker != id) { continue; }
+        job->worker = 0;
+        job->pauseRequested = false;
+        MachineChanged(handle);
+    }
+}
+WorldResult<void> World::CollectMachineContents(ActorHandle actor, ObjectHandle machine) {
+    Impl::ObjectCallbackScope scope(*this);
+    return CollectObjectContents(actor, machine);
+}
+const InformationLibrary* World::GetInformationLibrary(ItemHandle item) const {
+    return impl_->itemSystem.Information(item);
+}
+InformationLibrary* World::MutableInformationLibrary(ItemHandle item) {
+    return impl_->itemSystem.MutableInformation(item);
+}
+void World::AttachInformation(ItemHandle item) { impl_->informationSystem.Attach(item); }
+void World::DetachInformation(ItemHandle item) { impl_->informationSystem.Detach(item); }
+const MachineJobState* World::GetMachineJob(ObjectHandle handle) const {
+    const auto* object = GetObject(handle);
+    return object && object->behavior_ ? object->behavior_->MachineJob() : nullptr;
+}
+MachineJobState* World::MutableMachineJob(ObjectHandle handle) {
+    auto* object = Live(impl_->objects, handle);
+    return object && object->behavior_ ? object->behavior_->MutableMachineJob() : nullptr;
+}
+WorldResult<void> World::SetMachineJob(ObjectHandle handle, MachineJobState job) {
+    auto* object = Live(impl_->objects, handle);
+    if (!object || !object->behavior_) { return eastl::unexpected(WorldError::invalid_handle); }
+    auto result = object->behavior_->SetMachineJob(eastl::move(job));
+    if (result) { MachineChanged(handle); }
+    return result;
+}
+void World::ClearMachineJob(ObjectHandle handle) {
+    auto* object = Live(impl_->objects, handle);
+    Require(object && object->behavior_);
+    object->behavior_->ClearMachineJob();
+    MachineChanged(handle);
+}
+void World::MachineChanged(ObjectHandle handle) {
+    const auto* object = GetObject(handle);
+    Require(object != nullptr);
+    impl_->MarkDirty(ChunkOf(object->position), false);
+    impl_->powerSystem.SyncObject(handle);
+}
 void World::PowerChanged() {
     ++impl_->revision;
     ++impl_->mapRevision;
@@ -2455,7 +2606,7 @@ PowerActionResult World::WireGrid(ActorHandle actorHandle, ItemHandle kit, Power
     const auto* actor = GetActor(actorHandle);
     if (!actor || !IsActorAlive(actorHandle) || actor->parked || !IsActive(actor->position)
         || actor->actionDeadline.Remaining(impl_->tick) || actor->combat.action.kind != ActorActionKind::None
-        || impl_->craftingSystem.Busy(actorHandle) || impl_->learningSystem.Busy(actorHandle)) { return {}; }
+        || impl_->craftingSystem.Busy(actorHandle) || impl_->learningSystem.Busy(actorHandle) || DigitalBusy(actorHandle)) { return {}; }
     const auto* item = GetItem(kit);
     if (!item || !CarriedPowerItem(*this, actorHandle, kit)) { return {PowerActionOutcome::InvalidEquipment}; }
     const auto& definition = impl_->content.GetItem(item->type);
@@ -2493,7 +2644,7 @@ PowerActionResult World::PlacePowerObject(ActorHandle actorHandle, ItemHandle eq
     const auto* actor = GetActor(actorHandle);
     if (!actor || !IsActorAlive(actorHandle) || actor->parked || !IsActive(actor->position)
         || actor->actionDeadline.Remaining(impl_->tick) || actor->combat.action.kind != ActorActionKind::None
-        || impl_->craftingSystem.Busy(actorHandle) || impl_->learningSystem.Busy(actorHandle)) { return {}; }
+        || impl_->craftingSystem.Busy(actorHandle) || impl_->learningSystem.Busy(actorHandle) || DigitalBusy(actorHandle)) { return {}; }
     const auto* item = GetItem(equipment);
     if (!item || !CarriedPowerItem(*this, actorHandle, equipment) || !item->contents.empty()) {
         return {PowerActionOutcome::InvalidEquipment};
@@ -2579,7 +2730,7 @@ WorldResult<StationActionResult> World::PlaceStation(ActorHandle actorHandle, It
     if (!ValidPosition(position)) { return eastl::unexpected(WorldError::invalid_request); }
     if (!IsActorAlive(actorHandle) || actor->parked || !IsActive(actor->position)
         || actor->actionDeadline.Remaining(impl_->tick) || actor->combat.action.kind != ActorActionKind::None
-        || impl_->craftingSystem.Busy(actorHandle) || impl_->learningSystem.Busy(actorHandle)
+        || impl_->craftingSystem.Busy(actorHandle) || impl_->learningSystem.Busy(actorHandle) || DigitalBusy(actorHandle)
         || ActionTicks(400, actor->speed) > UINT64_MAX - impl_->tick) { return StationActionResult{}; }
     const auto& definition = impl_->content.GetItem(item->type);
     const auto* station = impl_->content.TryGetObject(definition.placedObject);
@@ -2600,13 +2751,16 @@ StationActionOutcome World::QueryPackStation(ActorHandle actorHandle, ObjectHand
     const auto* object = GetObject(handle);
     if (!actor || !object || !IsActorAlive(actorHandle) || actor->parked || !IsActive(actor->position)
         || actor->actionDeadline.Remaining(impl_->tick) || actor->combat.action.kind != ActorActionKind::None
-        || impl_->craftingSystem.Busy(actorHandle) || impl_->learningSystem.Busy(actorHandle)
+        || impl_->craftingSystem.Busy(actorHandle) || impl_->learningSystem.Busy(actorHandle) || DigitalBusy(actorHandle)
         || ActionTicks(400, actor->speed) > UINT64_MAX - impl_->tick) { return StationActionOutcome::Unavailable; }
     if (!CanReachStation(*this, actor->position, handle, 1)) { return StationActionOutcome::OutOfReach; }
     const auto* definition = impl_->content.TryGetObject(object->type);
     if (!definition || !definition->packingItem.value) { return StationActionOutcome::FixedFixture; }
     if (object->broken) { return StationActionOutcome::Broken; }
-    if (StationWorker(handle)) { return StationActionOutcome::StationBusy; }
+    if (StationWorker(handle) || GetMachineJob(handle)) { return StationActionOutcome::StationBusy; }
+    if (const auto* library = GetInformationLibrary(object->equipment); library && library->transfer) {
+        return StationActionOutcome::StationBusy;
+    }
     if (definition->behavior == ObjectBehaviorKind::Forge) {
         const auto state = DescribeObjectState(handle)->forge;
         if (state.ready) { return StationActionOutcome::MustExtinguish; }
@@ -2660,12 +2814,12 @@ StationActionOutcome World::QueryForgeAction(ActorHandle actorHandle, ObjectHand
     const auto* actor = GetActor(actorHandle);
     const auto* object = GetObject(handle);
     const auto* definition = object ? impl_->content.TryGetObject(object->type) : nullptr;
-    const Tick cost = action == ForgeAction::Ignite ? 400 : 100;
+    const std::uint32_t cost = action == ForgeAction::Ignite ? 400 : 100;
     if (!actor || !object || !definition || definition->behavior != ObjectBehaviorKind::Forge
         || action > ForgeAction::DiscardFuel || (action != ForgeAction::LoadFuel && fuel.value)
         || !IsActorAlive(actorHandle) || actor->parked || !IsActive(actor->position)
         || actor->actionDeadline.Remaining(impl_->tick) || actor->combat.action.kind != ActorActionKind::None
-        || impl_->craftingSystem.Busy(actorHandle) || impl_->learningSystem.Busy(actorHandle)
+        || impl_->craftingSystem.Busy(actorHandle) || impl_->learningSystem.Busy(actorHandle) || DigitalBusy(actorHandle)
         || ActionTicks(cost, actor->speed) > UINT64_MAX - impl_->tick) { return StationActionOutcome::Unavailable; }
     if (!CanReachStation(*this, actor->position, handle, 1)) { return StationActionOutcome::OutOfReach; }
     if (object->broken) { return StationActionOutcome::Broken; }
@@ -3247,7 +3401,10 @@ WorldResult<void> World::SetActorParked(ActorHandle handle, bool parked) {
     value->parked = parked;
     impl_->OccupyActorTile(handle);
     impl_->RefreshSchedule(*value);
-    if (parked) { impl_->craftingSystem.ReleaseUnavailableStations(); }
+    if (parked) {
+        impl_->craftingSystem.ReleaseUnavailableStations();
+        ReleaseDigitalWorker(handle);
+    }
     if (value->light.intensity) { impl_->MarkLightingDirty(ChunkOf(value->position)); }
     impl_->MarkDirty(ChunkOf(value->position));
     impl_->QueueGravity(value->position);
@@ -3273,6 +3430,7 @@ WorldResult<void> World::DestroyActor(ActorHandle handle) {
     if (!value) {
         return eastl::unexpected(WorldError::invalid_handle);
     }
+    ReleaseDigitalWorker(handle);
     const TileCoord position = value->position;
     impl_->QueueGravity(position);
     while (!value->inventory.empty()) {
@@ -3299,6 +3457,7 @@ bool World::IsActorAlive(ActorHandle handle) const {
 void World::MarkActorDead(ActorHandle handle, PersistentId killer) {
     auto* actor = MutableActor(handle);
     if (!actor || (actor->combat.life == ActorLifeState::Dead && actor->combat.corpse)) { return; }
+    ReleaseDigitalWorker(handle);
     const bool newlyDead = actor->combat.life != ActorLifeState::Dead;
     const auto position = actor->position;
     const auto id = actor->id;
@@ -3469,7 +3628,7 @@ InventoryResult World::WieldItem(ActorHandle handle, ItemHandle selected) {
     auto* actor = MutableActor(handle);
     if (!actor || actor->parked || !IsActive(actor->position)) { return {InventoryOutcome::Inaccessible}; }
     if (GetActorRemainingTicks(handle) || actor->combat.action.kind != ActorActionKind::None
-        || impl_->learningSystem.Busy(handle)) { return {InventoryOutcome::Busy}; }
+        || impl_->learningSystem.Busy(handle) || DigitalBusy(handle)) { return {InventoryOutcome::Busy}; }
     if (!IsActorAlive(handle)) { return {InventoryOutcome::Inaccessible}; }
     const auto old = actor->wieldedItem;
     if (old == selected) { return {InventoryOutcome::AlreadyThere}; }
@@ -3619,7 +3778,10 @@ bool World::IsReservedItem(ItemHandle handle) const {
     }
     if (item && item->location.kind == LocationKind::object) {
         const auto* object = GetObject(item->location.object);
-        return object && object->equipment.value && GetItem(object->equipment) == item;
+        if (!object) { return false; }
+        if (object->equipment.value && GetItem(object->equipment) == item) { return true; }
+        const auto* job = GetMachineJob(item->location.object);
+        return job && eastl::binary_search(job->reservedInputs.begin(), job->reservedInputs.end(), item->id);
     }
     return false;
 }
@@ -3726,7 +3888,9 @@ void World::EndCraftingMutation() {
 WorldResult<void> World::SetCraftingSettings(CraftingSettings settings) { return impl_->craftingSystem.SetSettings(settings); }
 LearningSystem& World::Learning() { return impl_->learningSystem; }
 const LearningSystem& World::Learning() const { return impl_->learningSystem; }
-bool LearningSystem::CraftingBusy(ActorHandle actor) const { return world_.impl_->craftingSystem.Busy(actor); }
+bool LearningSystem::CraftingBusy(ActorHandle actor) const {
+    return world_.impl_->craftingSystem.Busy(actor) || world_.DigitalBusy(actor);
+}
 void World::LearnRecipe(PersistentId actor, CraftingRecipeId recipe, std::uint64_t points) {
     Require(impl_->content.TryGetCraftingRecipe(recipe) != nullptr);
     if (!actor || !points) { return; }
@@ -3736,19 +3900,19 @@ void World::LearnRecipe(PersistentId actor, CraftingRecipeId recipe, std::uint64
 CraftingSettings World::GetCraftingSettings() const { return impl_->craftingSystem.Settings(); }
 WorldResult<CraftingResult> World::StartCrafting(ActorHandle actor, CraftingRecipeId recipe) {
     if (GetActor(actor) && !IsActorAlive(actor)) { return CraftingResult{CraftingOutcome::ActorUnavailable}; }
-    if (impl_->learningSystem.Busy(actor)) { return CraftingResult{CraftingOutcome::ActorBusy}; }
+    if (impl_->learningSystem.Busy(actor) || DigitalBusy(actor)) { return CraftingResult{CraftingOutcome::ActorBusy}; }
     Impl::GravityBatch batch(*this); BeginCraftingMutation();
     auto result = impl_->craftingSystem.Start(actor, recipe); EndCraftingMutation(); return result;
 }
 WorldResult<CraftingResult> World::StartRecycling(ActorHandle actor, ItemHandle target, RecyclingRecipeId recipe) {
     if (GetActor(actor) && !IsActorAlive(actor)) { return CraftingResult{CraftingOutcome::ActorUnavailable}; }
-    if (impl_->learningSystem.Busy(actor)) { return CraftingResult{CraftingOutcome::ActorBusy}; }
+    if (impl_->learningSystem.Busy(actor) || DigitalBusy(actor)) { return CraftingResult{CraftingOutcome::ActorBusy}; }
     Impl::GravityBatch batch(*this); BeginCraftingMutation();
     auto result = impl_->craftingSystem.Recycle(actor, target, recipe); EndCraftingMutation(); return result;
 }
 WorldResult<CraftingResult> World::ResumeCrafting(ActorHandle actor, ItemHandle item) {
     if (GetActor(actor) && !IsActorAlive(actor)) { return CraftingResult{CraftingOutcome::ActorUnavailable}; }
-    if (impl_->learningSystem.Busy(actor)) { return CraftingResult{CraftingOutcome::ActorBusy}; }
+    if (impl_->learningSystem.Busy(actor) || DigitalBusy(actor)) { return CraftingResult{CraftingOutcome::ActorBusy}; }
     Impl::GravityBatch batch(*this); BeginCraftingMutation();
     auto result = impl_->craftingSystem.Resume(actor, item); EndCraftingMutation(); return result;
 }
@@ -3822,6 +3986,7 @@ WorldResult<ObjectHandle> World::CreateTypedObject(ObjectTypeId type, TileCoord 
     impl_->MarkGeometryDirty(ChunkOf(position));
     impl_->MarkLightingDirty(ChunkOf(position));
     impl_->powerSystem.SyncObject(handle);
+    impl_->machineSystem.Attach(handle);
     return handle;
 }
 
@@ -3891,7 +4056,7 @@ ObjectMoveResult World::QueryObjectMove(ActorHandle actorHandle, ObjectHandle ha
     if (!actor || !IsActorAlive(actorHandle) || !object || actor->parked || !IsActive(actor->position) || !IsActive(object->position)
         || (kind != ObjectMoveKind::Push && kind != ObjectMoveKind::Pull)) { return {}; }
     if (actor->actionDeadline.Remaining(impl_->tick) || actor->combat.action.kind != ActorActionKind::None
-        || impl_->craftingSystem.Busy(actorHandle) || impl_->learningSystem.Busy(actorHandle)
+        || impl_->craftingSystem.Busy(actorHandle) || impl_->learningSystem.Busy(actorHandle) || DigitalBusy(actorHandle)
         || ActionTicks(ticks_per_turn, actor->speed) > UINT64_MAX - impl_->tick) {
         return {ObjectMoveOutcome::NotReady};
     }
@@ -3900,7 +4065,7 @@ ObjectMoveResult World::QueryObjectMove(ActorHandle actorHandle, ObjectHandle ha
     if (a.y != o.y || std::abs(dx) + std::abs(dz) != 1) { return {ObjectMoveOutcome::OutOfReach}; }
     const auto* definition = impl_->content.TryGetObject(object->type);
     if (!definition || !definition->movable) { return {ObjectMoveOutcome::Immovable}; }
-    if (StationWorker(handle)) { return {ObjectMoveOutcome::Occupied}; }
+    if (StationWorker(handle) || GetMachineJob(handle)) { return {ObjectMoveOutcome::Occupied}; }
     const TileCoord actorDestination = kind == ObjectMoveKind::Push ? o : TileCoord{a.x - dx, a.z - dz, a.y};
     const TileCoord objectDestination = kind == ObjectMoveKind::Push ? TileCoord{o.x + dx, o.z + dz, o.y} : a;
     for (TileCoord destination : {actorDestination, objectDestination}) {
@@ -3937,14 +4102,14 @@ ObjectMoveResult World::QueryObjectStep(ActorHandle actorHandle, ObjectHandle ha
         || direction.y != 0 || direction.x < -1 || direction.x > 1 || direction.z < -1 || direction.z > 1
         || (direction.x == 0 && direction.z == 0)) { return {}; }
     if (actor->actionDeadline.Remaining(impl_->tick) || actor->combat.action.kind != ActorActionKind::None
-        || impl_->craftingSystem.Busy(actorHandle) || impl_->learningSystem.Busy(actorHandle)) { return {ObjectMoveOutcome::NotReady}; }
+        || impl_->craftingSystem.Busy(actorHandle) || impl_->learningSystem.Busy(actorHandle) || DigitalBusy(actorHandle)) { return {ObjectMoveOutcome::NotReady}; }
     const TileCoord a = actor->position, o = object->position;
     if (a.y != o.y || a == o || eastl::max(std::abs(o.x - a.x), std::abs(o.z - a.z)) > 1) {
         return {ObjectMoveOutcome::OutOfReach};
     }
     const auto* definition = impl_->content.TryGetObject(object->type);
     if (!definition || !definition->movable) { return {ObjectMoveOutcome::Immovable}; }
-    if (StationWorker(handle)) { return {ObjectMoveOutcome::Occupied}; }
+    if (StationWorker(handle) || GetMachineJob(handle)) { return {ObjectMoveOutcome::Occupied}; }
     const TileCoord actorDestination{a.x + direction.x, a.z + direction.z, a.y};
     const TileCoord objectDestination{o.x + direction.x, o.z + direction.z, o.y};
     // The pair may enter each other's vacated tile, but cannot displace a third occupant.
@@ -4168,6 +4333,76 @@ WorldResult<void> World::ProduceObjectOutputs(ObjectHandle handle, ItemTypeId ty
     return {};
 }
 
+SaveResult<void> World::CompleteMachineJob(ObjectHandle handle) {
+    Require(impl_->objectCallback);
+    const auto* object = GetObject(handle);
+    const auto* current = GetMachineJob(handle);
+    if (!object || !current || current->phase != MachineJobPhase::Processing
+        || current->remainingWork || !ValidateCapturedMachineJob(impl_->content, *current)) {
+        return eastl::unexpected(SaveError::InvalidData);
+    }
+    const auto& machine = impl_->content.GetObject(object->type);
+    const auto output = impl_->content.FindItem(current->outputName);
+    if (!machine.capacityVolumeMl || GetObjectUsedVolume(handle) > *machine.capacityVolumeMl
+        || std::uint64_t{impl_->content.GetItem(output).volumeMl} * current->outputCount > current->reservedVolumeMl) {
+        return eastl::unexpected(SaveError::InvalidData);
+    }
+    StaticList<ItemOutput, maxRecipeInputs> expected;
+    for (const auto& input : current->inputs) {
+        Require(expected.PushBack({impl_->content.FindItem(input.itemName), input.count}));
+    }
+    struct RetainedEnergy { ItemTypeId type; ItemCapabilityId capability; std::uint32_t energy; };
+    Vector<RetainedEnergy> energy;
+    std::uint64_t inputVolume = 0;
+    for (auto id : current->reservedInputs) {
+        const auto item = FindItem(id);
+        const auto* original = GetItem(item);
+        if (!original || item == object->equipment || original->location != ItemLocation::Stored(handle)
+            || !original->contents.empty()) { return eastl::unexpected(SaveError::InvalidData); }
+        bool matched = false;
+        for (auto& input : expected) {
+            if (input.item == original->type && input.count) { --input.count; matched = true; break; }
+        }
+        if (!matched) { return eastl::unexpected(SaveError::InvalidData); }
+        inputVolume = CheckedAdd(inputVolume, GetItemVolume(item));
+        for (const auto& store : impl_->content.GetItem(original->type).energyStores) {
+            energy.push_back({original->type, store.capability, GetItemEnergy(item, store.capability)->energy});
+        }
+    }
+    for (const auto& input : expected) {
+        if (input.count) { return eastl::unexpected(SaveError::InvalidData); }
+    }
+    if (inputVolume > current->reservedVolumeMl) { return eastl::unexpected(SaveError::InvalidData); }
+    // All recoverable work ends here. Learning changes remain in the same RAM
+    // authority/checkpoint transaction as the machine and its output.
+    const MachineJobState job = *current;
+    const auto awarded = impl_->ApplyMachineLearning(*this, job);
+    if (!awarded) { return awarded; }
+    BeginCraftingMutation();
+    ClearMachineJob(handle);
+    for (auto id : job.reservedInputs) { Require(DestroyItem(FindItem(id)).has_value()); }
+    const auto& definition = impl_->content.GetItem(output);
+    for (std::uint32_t i = 0; i < job.outputCount; ++i) {
+        const auto made = CreateItem(output, ItemLocation::Stored(handle));
+        Require(made.has_value());
+        for (const auto& store : definition.energyStores) {
+            Require(SetItemEnergy(*made, store.capability, 0).has_value());
+            std::uint32_t charge = 0;
+            for (auto& source : energy) {
+                const auto& sourceDefinition = *ItemEnergyStore(impl_->content.GetItem(source.type), source.capability);
+                if (!sourceDefinition.batteryClass.empty() && !store.config.batteryClass.empty()
+                    && sourceDefinition.batteryClass != store.config.batteryClass) { continue; }
+                const auto amount = eastl::min(source.energy, store.config.capacityEnergy - charge);
+                charge += amount;
+                source.energy -= amount;
+            }
+            Require(SetItemEnergy(*made, store.capability, charge).has_value());
+        }
+    }
+    EndCraftingMutation();
+    return {};
+}
+
 WorldResult<void> World::CollectObjectContents(ActorHandle actorHandle, ObjectHandle handle) {
     Require(impl_->objectCallback);
     if (!CanUseObject(actorHandle, handle)) { return eastl::unexpected(WorldError::blocked); }
@@ -4187,6 +4422,7 @@ WorldResult<void> World::CollectObjectContents(ActorHandle actorHandle, ObjectHa
     return {};
 }
 
+SaveResult<void> ObjectMutationContext::CompleteMachineJob() { return world_.CompleteMachineJob(self_); }
 ObjectMutationContext::ObjectMutationContext(World& world, ObjectHandle self) : world_(world), self_(self) {}
 const World& ObjectMutationContext::GetWorld() const { return world_; }
 ObjectHandle ObjectMutationContext::Self() const { return self_; }
@@ -4212,6 +4448,8 @@ WorldResult<void> World::DestroyObject(ObjectHandle handle) {
     const TileCoord position = value->position;
     impl_->craftingSystem.ReleaseStation(value->id);
     value->equipment = {}; // Destruction releases the original item to the ground.
+    if (value->behavior_) { value->behavior_->ClearMachineJob(); }
+    impl_->machineSystem.Detach(handle);
     impl_->QueueGravity(position);
     while (!value->contents.empty()) {
         Require(TransferItem(value->contents.back(), ItemLocation::Ground(position)).has_value());
@@ -4442,7 +4680,8 @@ WorldResult<void> World::ScheduleActorAction(ActorHandle handle, std::uint32_t b
     if (!value) { return eastl::unexpected(WorldError::invalid_handle); }
     if (!IsActorAlive(handle) || !IsActive(value->position) || value->parked) { return eastl::unexpected(WorldError::chunk_unavailable); }
     if (baseCost == 0 || value->actionDeadline.Remaining(impl_->tick) != 0
-        || value->combat.action.kind != ActorActionKind::None || impl_->craftingSystem.Busy(handle) || impl_->learningSystem.Busy(handle)) {
+        || value->combat.action.kind != ActorActionKind::None || impl_->craftingSystem.Busy(handle)
+        || impl_->learningSystem.Busy(handle) || DigitalBusy(handle)) {
         return eastl::unexpected(WorldError::invalid_request);
     }
     Require(value->speed != 0);
@@ -4506,6 +4745,8 @@ void World::ElapseSegment(Tick elapsed) {
     impl_->itemSystem.Elapse(elapsed);
     impl_->craftingSystem.Elapse(elapsed);
     impl_->learningSystem.Elapse(elapsed);
+    impl_->machineSystem.Elapse(elapsed);
+    impl_->informationSystem.Elapse(elapsed);
     impl_->combatSystem.Elapse(elapsed);
     for (Actor& actor : impl_->actors) {
         if (actor.combat.life == ActorLifeState::Alive && !actor.player && !actor.parked && actor.controller_ && IsActive(actor.position)) {
@@ -4513,7 +4754,7 @@ void World::ElapseSegment(Tick elapsed) {
         }
     }
     for (InteractiveObject& object : impl_->objects) {
-        if (!object.enabled || !IsActive(object.position)) { continue; }
+        if (!object.enabled || object.broken || !IsActive(object.position)) { continue; }
         if (object.behavior_) {
             const auto delay = object.behavior_->NextEventIn();
             if (!delay || *delay == 0) { continue; }
@@ -4553,7 +4794,7 @@ void World::CollectReadyPlayers(Vector<ActorHandle>& output) const {
         const Actor& actor = entry.second.get();
         if (actor.combat.life == ActorLifeState::Alive && actor.player && !actor.actionDeadline.suspended && actor.actionDeadline.dueTick <= impl_->tick
             && actor.combat.action.kind == ActorActionKind::None && !impl_->craftingSystem.Busy({entry.first.raw})
-            && !impl_->learningSystem.Busy({entry.first.raw})) {
+            && !impl_->learningSystem.Busy({entry.first.raw}) && !DigitalBusy({entry.first.raw})) {
             output.push_back({entry.first.raw});
         }
     }
@@ -4572,7 +4813,7 @@ void World::ProcessNpcActions(std::uint32_t& rng) {
         if (actor.combat.life == ActorLifeState::Alive && !actor.player && !actor.parked && actor.controller_ && IsActive(actor.position)
             && actor.actionDeadline.dueTick <= impl_->tick
             && actor.combat.action.kind == ActorActionKind::None && !impl_->craftingSystem.Busy({entry.first.raw})
-            && !impl_->learningSystem.Busy({entry.first.raw})) { due.push_back({actor.id, {entry.first.raw}}); }
+            && !impl_->learningSystem.Busy({entry.first.raw}) && !DigitalBusy({entry.first.raw})) { due.push_back({actor.id, {entry.first.raw}}); }
     }
     eastl::sort(due.begin(), due.end(), [](const auto& a, const auto& b) { return a.id < b.id; });
     for (const auto record : due) {
@@ -4580,7 +4821,7 @@ void World::ProcessNpcActions(std::uint32_t& rng) {
         if (!actor || actor->combat.life == ActorLifeState::Dead || actor->id != record.id || actor->player || actor->parked || !actor->controller_
             || !IsActive(actor->position) || actor->actionDeadline.dueTick > impl_->tick
             || actor->combat.action.kind != ActorActionKind::None || impl_->craftingSystem.Busy(record.handle)
-            || impl_->learningSystem.Busy(record.handle)) { continue; }
+            || impl_->learningSystem.Busy(record.handle) || DigitalBusy(record.handle)) { continue; }
         const ActorIntent intent = actor->controller_->ChooseAction(ActorReadContext(*this, record.handle), rng);
         Require(intent.baseCost > 0);
         Require(intent.kind == ActorIntentKind::Wait || intent.kind == ActorIntentKind::Move
@@ -4617,6 +4858,12 @@ eastl::optional<Tick> World::NextActorEventIn() const {
         const Actor& actor = entry.second.get();
         const ActorHandle handle{entry.first.raw};
         if (actor.combat.life == ActorLifeState::Dead) { continue; }
+        if (DigitalBusy(handle)) {
+            for (const auto delay : {impl_->machineSystem.ActorEventIn(handle), impl_->informationSystem.ActorEventIn(handle)}) {
+                if (delay && (!next || *delay < *next)) { next = *delay; }
+            }
+            continue;
+        }
         if (impl_->learningSystem.Busy(handle)) {
             const auto delay = impl_->learningSystem.ActorEventIn(handle);
             if (delay && (!next || *delay < *next)) { next = *delay; }
@@ -5013,17 +5260,75 @@ bool World::CheckInvariants() const {
             return false;
         }
     }
+    struct WorkerTiming { PersistentId id; Tick remaining; bool available; };
+    Vector<PersistentId> workers;
+    Vector<WorkerTiming> actorTimings;
+    Vector<WorkerTiming> digitalTimings;
+    const auto collectWorkers = [&](const Archive& archive) {
+        for (const auto& actor : archive.actors) {
+            const auto combat = ReadCombatState(actor.combat, state.content);
+            const auto learning = ReadLearningState(actor.learning, state.content);
+            const auto character = ReadCharacterCombat(actor.characterCombat, state.content);
+            if (!combat || !learning || !character) { return false; }
+            actorTimings.push_back({actor.id, actor.remainingTicks,
+                combat->life == ActorLifeState::Alive && combat->action.kind == ActorActionKind::None});
+            if (learning->study.active) { workers.push_back(actor.id); }
+            if (*character) {
+                for (const auto& manual : (*character)->manuals) {
+                    if (manual.active) { workers.push_back(actor.id); }
+                }
+            }
+        }
+        for (const auto& object : archive.objects) {
+            const auto* definition = state.content.TryGetObject(object.type);
+            if (!definition || definition->behavior != ObjectBehaviorKind::SelectableMachine) { continue; }
+            const auto* payload = object.state.Find("job");
+            if (!payload) { continue; }
+            const auto job = ReadMachineJobState(*payload);
+            if (!job) { return false; }
+            if (job->worker) {
+                workers.push_back(job->worker);
+                digitalTimings.push_back({job->worker, job->remainingSetupTicks, true});
+            }
+        }
+        for (const auto& item : archive.items) {
+            if (const auto* payload = item.state.Find("crafting_job")) {
+                const auto job = ReadCraftingState(*payload);
+                if (!job) { return false; }
+                if (job->worker) { workers.push_back(job->worker); }
+            }
+            if (const auto* library = item.state.Find("information_library")) {
+                if (const auto* transfer = library->Find("transfer")) {
+                    const auto id = transfer->GetUnsigned("worker");
+                    const auto remaining = transfer->GetUnsigned("remaining_ticks");
+                    if (!id || !remaining) { return false; }
+                    workers.push_back(*id);
+                    digitalTimings.push_back({*id, *remaining, true});
+                }
+            }
+        }
+        return true;
+    };
     for (const auto& column : state.columns_) {
         for (const Chunk& chunk : column.second.layers) {
             Vector<PersistentId> checkedIds;
-            if (!ValidateArchive(state.content, state.Capture(chunk), state.next_id, checkedIds)) { return false; }
+            const auto archive = state.Capture(chunk);
+            if (!ValidateArchive(state.content, archive, state.next_id, checkedIds)
+                || !collectWorkers(archive)) { return false; }
         }
     }
     for (const auto& entry : state.archives) {
         const Archive& archive = entry.second;
         Vector<PersistentId> checkedIds;
         if (!ValidateArchive(state.content, archive, state.next_id, checkedIds)
-            || !ValidPowerArchive(state.powerSystem, state.content, archive, state.tick)) { return false; }
+            || !ValidPowerArchive(state.powerSystem, state.content, archive, state.tick)
+            || !collectWorkers(archive)) { return false; }
+    }
+    if (!UniqueIds(workers)) { return false; }
+    for (const auto& worker : digitalTimings) {
+        for (const auto& actor : actorTimings) {
+            if (actor.id == worker.id && (!actor.available || actor.remaining != worker.remaining)) { return false; }
+        }
     }
     if (state.warmArchives.size() > Impl::maxWarmEntries
         || state.warmOrder.size() != state.warmArchives.size()) { return false; }

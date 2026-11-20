@@ -109,6 +109,10 @@ void Replace(std::string& text, const char* before, const char* after) {
 
 void StripV14Fields(RawDatabase& raw) {
     raw.Exec("UPDATE world_state SET payload=json_remove(payload,'$.power')");
+    // Legacy objects predate protected station equipment. Strip the newer field
+    // as well, so strict legacy schemas are exercised rather than extended rows.
+    raw.Exec("UPDATE chunks SET payload=json_set(payload,'$.objects',json((SELECT "
+        "json_group_array(json_remove(value,'$.equipment')) FROM json_each(chunks.payload,'$.objects'))))");
     // Restore an actual v2 combat envelope, rather than relabeling v3 as legacy.
     raw.Exec("UPDATE chunks SET payload=json_set(payload,'$.actors',json((SELECT json_group_array("
         "json_remove(CASE WHEN json_extract(value,'$.combat.version')=3 THEN "
@@ -548,7 +552,10 @@ TEST_CASE("Save database rejects unknown versions and incomplete or extended sch
     Populate(file.path.c_str());
     {
         RawDatabase raw(file.path.c_str());
-        SECTION("future version") { raw.Exec("UPDATE metadata SET format_version=17"); }
+        SECTION("future version") {
+            const auto sql = "UPDATE metadata SET format_version=" + std::to_string(save_format_version + 1);
+            raw.Exec(sql.c_str());
+        }
         SECTION("previous v6 format") { raw.Exec("UPDATE metadata SET format_version=6"); }
         SECTION("previous v5 format") { raw.Exec("UPDATE metadata SET format_version=5"); }
         SECTION("previous v4 format") { raw.Exec("UPDATE metadata SET format_version=4"); }

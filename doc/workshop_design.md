@@ -1,6 +1,6 @@
 # Workshop stations and fueled metalworking
 
-**Status: Accepted gameplay contract; W1/W2 and W3A/W3B functionally verified.** D2 of the
+**Status: Accepted gameplay contract; W1/W2, W3A/W3B and W4 functionally verified.** D2 of the
 [urban workshop progression plan](urban_workshop_progression.md). The user accepted
 the proposed defaults and both progression branches. D1's
 [electrical accounting](power_design.md) is implemented.
@@ -392,7 +392,8 @@ independently of collection, including offscreen completion and save/load.
 Continuous production earns no ongoing XP. This supersedes the earlier blanket
 no-passive-operator-XP rule. Batch cancellation/destruction grants no completion
 award; pause/resume preserves it. Nominal learning scales with recipe executions,
-not Start count or elapsed machine time; detailed award integration remains for W4/D3.
+not Start count or elapsed machine time; [W4/D3 runtime](digital_runtime.md) implements
+captured awards and atomic completion, including archived recipients.
 
 Selected intricate printer recipes also require usable schematics distinct from
 the control software. The first D3 example instead uses a contemporary home
@@ -507,7 +508,7 @@ machine remains stopped, and restoration grants no initial fuel, charge or outpu
 | W1 Station foundation — verified | Object traits, provider selection, claims, placement/packing, saved/LAN inspection | Occupancy/recovery accepted. Thirteen focused tests cover tiers/reach, contention, atomic refusal, recovery, inactivity/death, save migration and LAN/UI. |
 | W2 Fueled manual work — verified | Forge state/actions, heat rates and atomic combined payment | Verified conservation, speed independence, failed mixed power/heat payment, partial fuel, pause/reignite, source loss, elapsed partitions, paid-work reassignment, disk/LAN and shared controls. |
 | W3 Playable metalworking | [W3A/W3B implementation](workshop_rosters.md) follows [accepted progression](crafting_progression.md) and the [delivery plan](crafting_delivery_plan.md) | 11 + 11 new items, 8 existing-definition upgrades, 17 new crafting recipes and 5 objects. W3A uses W1/W2; W3B uses D1 and ordinary protection traits. See the roster for budgets, affected-save policy and current verification. |
-| W4 Selectable machines | Recipe selection, reserved originals/output space, cancel, D1 integration | Review D3 boundary. Test shared supply, capacity while stopped, no duplicate output, destruction, offscreen completion and disk/LAN round-trips. |
+| W4 Selectable machines | Implemented recipe selection, reserved originals/output space, cancel, D1 integration and durable completion learning | [Pass-3 content/evidence](pass3_content.md); seeded integrated balance playtesting remains. |
 
 Each implemented slice includes its player commands/status and relevant
 serialization; it is not complete as an isolated backend feature.

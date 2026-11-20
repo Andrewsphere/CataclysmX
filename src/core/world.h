@@ -33,6 +33,10 @@ struct VisibilityMask;
 class CombatSystem;
 class LearningSystem;
 class PowerSystem;
+class MachineSystem;
+class InformationSystem;
+struct MachineJobState;
+struct InformationLibrary;
 
 // Authoritative server state captured in the same transaction as chunk values.
 struct SavedPlayer {
@@ -104,6 +108,7 @@ struct Item {
 private:
     friend class ItemSystem;
     friend class CraftingSystem;
+    friend class InformationSystem;
     ItemRuntime runtime_;
 };
 struct Chunk {
@@ -237,6 +242,13 @@ public:
     const LearningSystem& Learning() const;
     PowerSystem& Power();
     const PowerSystem& Power() const;
+    MachineSystem& Machines();
+    const MachineSystem& Machines() const;
+    InformationSystem& Information();
+    const InformationSystem& Information() const;
+    // Manual digital setup/transfer work owns actor readiness through existing events.
+    bool DigitalBusy(ActorHandle actor) const;
+    bool CraftingBusy(ActorHandle actor) const;
     PowerActionResult WireGrid(ActorHandle actor, ItemHandle kit, PowerBounds bounds);
     PowerActionResult PlacePowerObject(ActorHandle actor, ItemHandle equipment,
         ItemHandle wiringKit, TileCoord position);
@@ -424,6 +436,20 @@ private:
     WorldResult<void> SpendForgeHeat(ObjectHandle forge, std::uint64_t heat);
     friend class LearningSystem;
     friend class PowerSystem;
+    friend class MachineSystem;
+    friend class InformationSystem;
+    WorldResult<void> CollectMachineContents(ActorHandle actor, ObjectHandle machine);
+    void ReleaseDigitalWorker(ActorHandle actor);
+    const MachineJobState* GetMachineJob(ObjectHandle machine) const;
+    MachineJobState* MutableMachineJob(ObjectHandle machine);
+    WorldResult<void> SetMachineJob(ObjectHandle machine, MachineJobState job);
+    void ClearMachineJob(ObjectHandle machine);
+    void MachineChanged(ObjectHandle machine);
+    SaveResult<void> CompleteMachineJob(ObjectHandle machine);
+    const InformationLibrary* GetInformationLibrary(ItemHandle item) const;
+    InformationLibrary* MutableInformationLibrary(ItemHandle item);
+    void AttachInformation(ItemHandle item);
+    void DetachInformation(ItemHandle item);
     void PowerChanged();
     SaveResult<void> ReconcileChunksPass(Diagnostics* diagnostics);
     WorldResult<void> PrepareGeneratorInterval(ObjectHandle object, Tick now);

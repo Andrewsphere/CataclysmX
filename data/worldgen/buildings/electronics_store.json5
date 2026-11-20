@@ -4,7 +4,7 @@
   rows:[
     'EEEEEEEEEEEEEE',
     'E........#.a.E',
-    'E.bc.....#.>.E',
+    'E.bc..P..#.>.E',
     'W........#...E',
     'E...d.e..+.d.E',
     'W.....f..#..gE',
@@ -34,9 +34,12 @@
     p:{terrain:'floor_tile',monsters:[{group:'monsters_workshop',chance:4000}]},
     q:{terrain:'floor_tile',object:'industrial_workbench',facing:'north',loot:[{pool:'loot_tools',chance:10000,rolls:2,destination:'furniture'},{pool:'loot_electronics',chance:10000,rolls:3,destination:'furniture'}]},
     r:{terrain:'floor_tile',object:'warehouse_crate',facing:'west',loot:[{pool:'loot_electronics',chance:10000,rolls:3,destination:'furniture'}]},
+    P:{terrain:'floor_tile',object:'home_polymer_printer_station'},
   },
   entrance:{x:2,z:11},
-  loot:[{x:10,z:3,y:0,pool:'loot_workshop_electrical_ground',chance:8000,rolls:3,destination:'ground'}],
+  loot:[{x:10,z:3,y:0,pool:'loot_workshop_electrical_ground',chance:8000,rolls:3,destination:'ground'},
+        {x:5,z:2,y:0,pool:'loot_printer_filament_large',rolls:2,destination:'ground'},
+        {x:4,z:2,y:0,pool:'loot_digital_electronics',chance:6000,destination:'ground'}],
   basements:[{
     id:'electrical_spares', weight:1,
     rows:[

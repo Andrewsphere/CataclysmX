@@ -59,6 +59,7 @@ bool ItemDefinition::operator==(const ItemDefinition& other) const {
         || behaviors.size() != other.behaviors.size() || toolTraits != other.toolTraits
         || craftingPower != other.craftingPower || craftingEnergyPerWork != other.craftingEnergyPerWork
         || books != other.books || readingPower != other.readingPower
+        || digitalDevice != other.digitalDevice || suppliedInformation != other.suppliedInformation
         || recoveryAllowed != other.recoveryAllowed || unfinishedCraft != other.unfinishedCraft
         || armor != other.armor || craftingGridPower != other.craftingGridPower
         || wiringMaterial != other.wiringMaterial || wiringTilesPerMaterial != other.wiringTilesPerMaterial

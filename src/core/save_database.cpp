@@ -825,6 +825,13 @@ bool ValidateChunk(const ContentCatalog& content, const ChunkArchive& chunk,
             if (object.position == chunk.objects[j].position) { return false; }
         }
         const auto* definition = content.TryGetObject(object.type);
+        if (definition && definition->behavior == ObjectBehaviorKind::SelectableMachine) {
+            if (const auto* job = object.state.Find("job")) {
+                const auto initiator = job->GetUnsigned("initiator");
+                const auto worker = job->GetUnsigned("worker");
+                if (!initiator || !worker || *initiator >= nextId || *worker >= nextId) { return false; }
+            }
+        }
         if (definition && definition->blocksMovement) {
             for (const auto& actor : chunk.actors) {
                 const auto combat = ReadCombatState(actor.combat, content);
@@ -871,6 +878,14 @@ bool ValidateChunk(const ContentCatalog& content, const ChunkArchive& chunk,
     }
     for (const auto& item : chunk.items) {
         if (!addId(item.id)) { return false; }
+        if (const auto* library = item.state.Find("information_library")) {
+            if (const auto* transfer = library->Find("transfer")) {
+                for (auto name : {"worker", "source_item", "source_object", "host_item"}) {
+                    const auto id = transfer->GetUnsigned(name);
+                    if (!id || *id >= nextId) { return false; }
+                }
+            }
+        }
     }
     if (!Unique(localIds)) { return false; }
     ids.insert(ids.end(), localIds.begin(), localIds.end());
@@ -1801,6 +1816,10 @@ SaveResult<void> ValidateDatabase(const ContentCatalog& content, sqlite3* db,
     Vector<PersistentId> memoryOwners;
     Vector<PersistentId> studyingActors;
     Vector<PersistentId> craftingWorkers;
+    struct PaidWorker { PersistentId id; Tick remaining; };
+    struct ActorTiming { PersistentId id; Tick remaining; bool available; };
+    Vector<PaidWorker> digitalWorkers;
+    Vector<ActorTiming> actorTimings;
     Vector<PersistentId> claimedStations;
     Vector<PersistentId> stationIds;
     std::size_t powerDevicesFound = 0;
@@ -1843,6 +1862,8 @@ SaveResult<void> ValidateDatabase(const ContentCatalog& content, sqlite3* db,
             if (learning->study.active) { studyingActors.push_back(actor.id); }
             if (actor.player) { memoryOwners.push_back(actor.id); }
             const auto combat = ReadCombatState(actor.combat, content);
+            actorTimings.push_back({actor.id, actor.remainingTicks,
+                combat->life == ActorLifeState::Alive && combat->action.kind == ActorActionKind::None});
             const bool validHostOccupancy = !actor.parked || combat->life == ActorLifeState::Dead;
             if (actor.id == snapshot.session.player && actor.player
                 && validHostOccupancy && actor.position == snapshot.session.playerPosition) {
@@ -1867,6 +1888,17 @@ SaveResult<void> ValidateDatabase(const ContentCatalog& content, sqlite3* db,
         }
         for (const auto& object : chunk->objects) {
             ids.push_back(object.id);
+            if (const auto* payload = object.state.Find("job")) {
+                const auto* definition = content.TryGetObject(object.type);
+                if (definition && definition->behavior == ObjectBehaviorKind::SelectableMachine) {
+                    const auto job = ReadMachineJobState(*payload, diagnostics);
+                    if (!job) { return Failure(SaveError::InvalidData, "Invalid machine job", diagnostics); }
+                    if (job->worker) {
+                        craftingWorkers.push_back(job->worker);
+                        digitalWorkers.push_back({job->worker, job->remainingSetupTicks});
+                    }
+                }
+            }
             const auto* station = content.TryGetObject(object.type);
             if (station && !station->toolTraits.Empty() && object.enabled && !object.broken) { stationIds.push_back(object.id); }
             const auto device = eastl::lower_bound(snapshot.power.devices.begin(), snapshot.power.devices.end(), object.id,
@@ -1879,6 +1911,7 @@ SaveResult<void> ValidateDatabase(const ContentCatalog& content, sqlite3* db,
                 case ObjectBehaviorKind::Generator: kind = PowerDeviceKind::Generator; break;
                 case ObjectBehaviorKind::Solar: kind = PowerDeviceKind::Solar; break;
                 case ObjectBehaviorKind::GridBattery: kind = PowerDeviceKind::Battery; break;
+                case ObjectBehaviorKind::SelectableMachine: kind = PowerDeviceKind::Machine; break;
                 case ObjectBehaviorKind::CraftingMachine:
                     if (definition->machine.gridPowered) { kind = PowerDeviceKind::Machine; }
                     break;
@@ -1896,7 +1929,11 @@ SaveResult<void> ValidateDatabase(const ContentCatalog& content, sqlite3* db,
             const bool generator = *kind == PowerDeviceKind::Generator;
             const bool solar = *kind == PowerDeviceKind::Solar;
             const bool battery = *kind == PowerDeviceKind::Battery;
-            const bool requested = !battery && *object.state.GetBoolean("run_requested");
+            const auto* job = definition->behavior == ObjectBehaviorKind::SelectableMachine
+                ? object.state.Find("job") : nullptr;
+            const bool requested = definition->behavior == ObjectBehaviorKind::SelectableMachine
+                ? job && job->GetUnsigned("phase").value_or(0) == 1 && job->GetBoolean("run_requested").value_or(false)
+                : !battery && *object.state.GetBoolean("run_requested");
             const bool hasWork = generator || solar || (!battery && *object.state.GetBoolean("has_job"));
             const bool hold = object.enabled && !object.broken && requested && hasWork;
             if (device->position != object.position || device->kind != *kind || device->workshopHold != hold) {
@@ -1918,6 +1955,12 @@ SaveResult<void> ValidateDatabase(const ContentCatalog& content, sqlite3* db,
         }
         for (const auto& item : chunk->items) {
             ids.push_back(item.id);
+            if (const auto* library = item.state.Find("information_library")) {
+                if (const auto* transfer = library->Find("transfer")) {
+                    craftingWorkers.push_back(*transfer->GetUnsigned("worker"));
+                    digitalWorkers.push_back({*transfer->GetUnsigned("worker"), *transfer->GetUnsigned("remaining_ticks")});
+                }
+            }
             if (content.GetItem(item.type).unfinishedCraft) {
                 const auto job = ReadCraftingState(*item.state.Find("crafting_job"));
                 if (job->worker) { craftingWorkers.push_back(job->worker); }
@@ -1936,10 +1979,20 @@ SaveResult<void> ValidateDatabase(const ContentCatalog& content, sqlite3* db,
     if (powerDevicesFound != snapshot.power.devices.size()) {
         return Failure(SaveError::InvalidData, "Power device is not a durable object", diagnostics);
     }
+    if (!Unique(craftingWorkers) || !Unique(studyingActors)) {
+        return Failure(SaveError::InvalidData, "Worker assigned to multiple activities", diagnostics);
+    }
+    for (const auto& worker : digitalWorkers) {
+        for (const auto& actor : actorTimings) {
+            if (actor.id == worker.id && (!actor.available || actor.remaining != worker.remaining)) {
+                return Failure(SaveError::InvalidData, "Digital work conflicts with durable actor timing or action", diagnostics);
+            }
+        }
+    }
     eastl::sort(studyingActors.begin(), studyingActors.end());
     for (auto worker : craftingWorkers) {
         if (eastl::binary_search(studyingActors.begin(), studyingActors.end(), worker)) {
-            return Failure(SaveError::InvalidData, "Study actor also assigned to crafting job", diagnostics);
+            return Failure(SaveError::InvalidData, "Study actor also assigned to another activity", diagnostics);
         }
     }
     if (!Unique(ids) || !playerFound || rosterFound.size() != snapshot.session.players.size()

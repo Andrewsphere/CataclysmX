@@ -1,6 +1,8 @@
 #include <cstdlib>
 
 #include "core/server.h"
+#include "digital/machine_system.h"
+#include "digital/information_system.h"
 #include "power/power_system.h"
 #include "core/first_house_scenario.h"
 #include "actors/movement.h"
@@ -202,7 +204,7 @@ void AppendItemTreeDescription(const World& world, ActorHandle actor, ItemHandle
     entry.heldHands = static_cast<HandMask>((equipment.hands[0].item == handle ? 1 : 0)
         | (equipment.hands[1].item == handle ? 2 : 0));
     entry.stackable = !entry.worn && entry.heldHands == HandMask::None && !item->location.installation.value && item->contents.empty() && !definition.unfinishedCraft
-        && definition.capabilities.empty();
+        && definition.capabilities.empty() && definition.digitalDevice == DigitalDeviceKind::None;
     if (item->location.kind == LocationKind::item) {
         entry.parent = world.GetItem(item->location.item)->id;
         entry.installation = item->location.installation;
@@ -252,6 +254,16 @@ bool Ready(const World& world, ActorHandle handle) {
 
 bool ActiveWorkInterrupt(const World& world, ActorHandle actor, const Command& command) {
     if (!world.IsActorAlive(actor)) { return false; }
+    if (command.kind == CommandKind::cancel_information) { return world.Information().Busy(actor); }
+    if (command.kind == CommandKind::machine_action
+        && (command.machineAction == MachineAction::Stop || command.machineAction == MachineAction::Cancel)) {
+        Vector<MachineView> machines;
+        world.Machines().Collect(actor, machines);
+        const auto* worker = world.GetActor(actor);
+        for (const auto& machine : machines) {
+            if (machine.object == command.target && machine.setup && machine.worker == worker->id) { return true; }
+        }
+    }
     if (command.kind == CommandKind::pause_art_study) {
         const auto* worker = world.GetActor(actor);
         return worker->characterCombat && eastl::any_of(worker->characterCombat->manuals.begin(),
@@ -348,6 +360,16 @@ bool ValidCommandShape(const Command& command) {
     // Transport and local submissions share this admission policy; catalog,
     // ownership and ability-grant authority are checked at execution.
     const auto kind = command.kind;
+    const bool beginMachine = kind == CommandKind::begin_machine;
+    const bool machine = beginMachine || kind == CommandKind::machine_action;
+    const bool copy = kind == CommandKind::copy_information;
+    const bool remove = kind == CommandKind::remove_information;
+    const auto endpoint = [](InformationEndpoint value) { return (value.item != 0) != (value.object != 0); };
+    if ((!beginMachine && (command.machineRecipe.value || command.quantity))
+        || (kind != CommandKind::machine_action && command.machineAction != MachineAction::Stop)
+        || (!copy && command.informationSource != InformationEndpoint{})
+        || (!copy && !remove && (command.informationDestination != InformationEndpoint{} || command.information.value))
+        || (!copy && command.informationHost)) { return false; }
     const bool forge = kind == CommandKind::load_forge || kind == CommandKind::ignite_forge
         || kind == CommandKind::extinguish_forge || kind == CommandKind::discard_forge_fuel;
     if (kind != CommandKind::wire_grid && command.powerBounds != PowerBounds{}) { return false; }
@@ -364,7 +386,7 @@ bool ValidCommandShape(const Command& command) {
         || (kind != CommandKind::wait && command.waitCost != ticks_per_turn)
         || (kind != CommandKind::use_item && (command.capability.value || !command.itemAction.empty()))
         || (kind != CommandKind::use_item && kind != CommandKind::store_item && kind != CommandKind::place_power_object && command.otherItem)
-        || (kind != CommandKind::attack && kind != CommandKind::pack_station && !forge && command.target)
+        || (kind != CommandKind::attack && kind != CommandKind::pack_station && !forge && !machine && command.target)
         || (kind != CommandKind::combat_style && command.style != CombatStyle::Balanced)
         || (kind != CommandKind::interact_action && command.interaction != InteractionRequest{})
         || (kind != CommandKind::craft && command.recipe.value)
@@ -428,6 +450,12 @@ bool ValidCommandShape(const Command& command) {
             && (command.kind == CommandKind::study_book ? command.book.value != 0 : command.book.value == 0);
     }
     if (command.book.value != 0) { return false; }
+    if (beginMachine) { return command.target && command.machineRecipe.value && command.quantity && command.quantity <= 255; }
+    if (kind == CommandKind::machine_action) { return command.target && command.machineAction <= MachineAction::Collect; }
+    if (copy) { return endpoint(command.informationSource) && endpoint(command.informationDestination)
+        && command.informationSource != command.informationDestination && command.information.value; }
+    if (remove) { return endpoint(command.informationDestination) && command.information.value; }
+    if (kind == CommandKind::cancel_information) { return true; }
     if (kind == CommandKind::wire_grid) {
         const auto bounds = command.powerBounds;
         return command.item != 0 && ValidPowerBounds(bounds) && bounds.min.y == bounds.max.y
@@ -504,6 +532,10 @@ const char* OutcomeMessage(Outcome outcome) {
     case Outcome::power_refused: return "Power installation refused.";
     case Outcome::station_changed: return "Workshop equipment changed.";
     case Outcome::station_refused: return "Workshop action refused.";
+    case Outcome::machine_changed: return "Machine changed.";
+    case Outcome::machine_refused: return "Machine action refused.";
+    case Outcome::information_changed: return "Information action completed.";
+    case Outcome::information_refused: return "Information action refused.";
     case Outcome::study_started: return "You start studying.";
     case Outcome::study_paused: return "You pause studying after the funded work finishes.";
     case Outcome::study_refused: return "You cannot study that book.";
@@ -561,6 +593,12 @@ const char* OutcomeMessage(Outcome outcome) {
 }
 
 String CommandResultMessage(const CommandResult& result) {
+    if (result.outcome == Outcome::machine_changed || result.outcome == Outcome::machine_refused) {
+        return MachineOutcomeText(result.machineOutcome);
+    }
+    if (result.outcome == Outcome::information_changed || result.outcome == Outcome::information_refused) {
+        return InformationOutcomeText(result.informationOutcome);
+    }
     if (result.outcome == Outcome::station_changed || result.outcome == Outcome::station_refused) {
         return StationActionMessage(result.stationOutcome);
     }
@@ -867,6 +905,57 @@ CommandResult Server::Execute(ActorHandle handle, PlayerSlot& slot, Command comm
     if (command.kind >= CommandKind::craft && command.kind <= CommandKind::cancel_craft) {
         return CraftingCommand(world_, handle, command);
     }
+    if (command.kind == CommandKind::begin_machine || command.kind == CommandKind::machine_action) {
+        const bool setupStop = command.kind == CommandKind::machine_action
+            && command.machineAction == MachineAction::Stop && ActiveWorkInterrupt(world_, handle, command);
+        if (!setupStop && (world_.DigitalBusy(handle) || world_.CraftingBusy(handle) || world_.Learning().Busy(handle))) {
+            auto result = failed(Outcome::machine_refused);
+            result.machineOutcome = MachineOutcome::ActorBusy;
+            return result;
+        }
+        const auto action = command.kind == CommandKind::begin_machine
+            ? world_.Machines().Start(handle, world_.FindObject(command.target), command.machineRecipe, command.quantity)
+            : world_.Machines().Use(handle, world_.FindObject(command.target), command.machineAction);
+        auto result = failed(Outcome::machine_refused);
+        if (!action) { return result; }
+        result.machineOutcome = action->outcome;
+        const bool success = action->outcome <= MachineOutcome::Collected;
+        if (!success) { return result; }
+        result.outcome = Outcome::machine_changed;
+        result.advanced = action->baseCost != 0 || action->outcome == MachineOutcome::Started
+            || action->outcome == MachineOutcome::Resumed;
+        if (action->baseCost) {
+            result.cost = ActionTicks(action->baseCost, world_.GetActor(handle)->speed);
+            Require(world_.ScheduleActorAction(handle, action->baseCost).has_value());
+        } else if (action->outcome == MachineOutcome::Started || action->outcome == MachineOutcome::Resumed) {
+            result.cost = world_.GetActorRemainingTicks(handle);
+        }
+        world_.UpdatePlayerObservations();
+        return result;
+    }
+    if (command.kind == CommandKind::copy_information || command.kind == CommandKind::remove_information
+        || command.kind == CommandKind::cancel_information) {
+        const auto action = command.kind == CommandKind::copy_information
+            ? world_.Information().Copy(handle, command.informationSource, command.informationDestination,
+                command.information, world_.FindItem(command.informationHost))
+            : command.kind == CommandKind::remove_information
+                ? world_.Information().Remove(handle, command.informationDestination, command.information)
+                : world_.Information().Cancel(handle);
+        auto result = failed(Outcome::information_refused);
+        if (!action) { return result; }
+        result.informationOutcome = action->outcome;
+        if (action->outcome > InformationOutcome::AlreadyPresent) { return result; }
+        result.outcome = Outcome::information_changed;
+        result.advanced = action->baseCost != 0 || action->outcome == InformationOutcome::Started
+            || action->outcome == InformationOutcome::Removed;
+        if (action->baseCost) {
+            result.cost = ActionTicks(action->baseCost, world_.GetActor(handle)->speed);
+            Require(world_.ScheduleActorAction(handle, action->baseCost).has_value());
+        } else if (action->outcome == InformationOutcome::Started || action->outcome == InformationOutcome::Removed) {
+            result.cost = world_.GetActorRemainingTicks(handle);
+        }
+        return result;
+    }
     const auto attack = [this, handle](ActorHandle target) {
         const auto result = world_.Combat().Attack(handle, target, rng_state_);
         world_.FinalizeActorDeaths();
@@ -877,6 +966,12 @@ CommandResult Server::Execute(ActorHandle handle, PlayerSlot& slot, Command comm
         return command;
     };
     Outcome outcome = Outcome::invalid_command;
+    // Readiness alone does not imply that a work subsystem has released its
+    // actor. Reject before inventory/object/map mutations; the final scheduler
+    // rejects these states too. Explicit work interrupts were dispatched above.
+    if (world_.DigitalBusy(handle) || world_.CraftingBusy(handle) || world_.Learning().Busy(handle)) {
+        return failed(Outcome::not_ready);
+    }
     StationActionOutcome stationOutcome = StationActionOutcome::Unavailable;
     std::uint32_t baseCost = command.kind == CommandKind::wait ? command.waitCost : ticks_per_turn;
     switch (command.kind) {
@@ -1515,7 +1610,8 @@ CommandResult Server::Submit(PersistentId id, PlayerInput input) {
     if (!Ready(world_, actor) && ActiveWorkInterrupt(world_, actor, input.command)) {
         const auto result = Execute(actor, *slot, input.command);
         if (result.outcome == Outcome::craft_paused || result.outcome == Outcome::craft_cancelled
-            || result.outcome == Outcome::study_paused || result.outcome == Outcome::art_study_paused) {
+            || result.outcome == Outcome::study_paused || result.outcome == Outcome::art_study_paused
+            || result.outcome == Outcome::machine_changed || result.outcome == Outcome::information_changed) {
             slot->pending.reset();
             Require(slot->opportunity != eastl::numeric_limits<std::uint64_t>::max());
             ++slot->opportunity;
@@ -1972,6 +2068,8 @@ WorldView Server::ViewForPlayerAtLayer(PersistentId id, int radius, int layerY) 
             job.fundedTicksRemaining, job.pauseRequested, job.stations});
     }
     world_.CollectStations(player, result.stations);
+    world_.Machines().Collect(player, result.machines);
+    world_.Information().Collect(player, result.informationDevices);
     if (observing) { result.groundItems = DescribeItems(world_, player, world_.ItemsAt(actor->position)); }
     result.carriedMassGrams = world_.GetCarriedMass(player);
     result.carryCapacityGrams = actor->carryCapacityGrams;

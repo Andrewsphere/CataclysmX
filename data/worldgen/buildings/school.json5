@@ -3,7 +3,7 @@
   // Two classrooms flank a straight central hall; rear wall holds teaching desks.
   rows:[
     '##ww##########ww####',
-    '#..a...I....I...b..#',
+    '#..a.P.I....I...b..#',
     '#..c...I....I...c..#',
     'w...d..I..e.I......w',
     'w......+....+......w',
@@ -33,7 +33,10 @@
     l:{terrain:'floor_wood',object:'school_desk',facing:'north'},
     m:{terrain:'floor_wood',object:'bookcase',facing:'east',loot:[{pool:'loot_reading_room_supplies',rolls:4,destination:'furniture'}]},
     n:{terrain:'floor_wood',object:'bookcase',facing:'west',loot:[{pool:'loot_reading_room_supplies',rolls:4,destination:'furniture'}]},
+    P:{terrain:'floor_wood',object:'home_polymer_printer_station'},
   },
   entrance:{x:9,z:14},
+  loot:[{x:6,z:1,y:0,pool:'loot_printer_filament_large',destination:'ground'},
+        {x:2,z:1,y:0,pool:'loot_digital_office',chance:4000,destination:'ground'}],
   // Pupils face the teaching wall; side aisles and the central hall remain open.
 }]}

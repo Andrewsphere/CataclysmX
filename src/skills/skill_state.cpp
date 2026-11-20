@@ -217,13 +217,28 @@ SkillAward TrainSkill(LearningState& state, const ContentCatalog& content,
     auto& progress = EnsureSkillProgress(state, training.skill);
     // Quotient/remainder decomposition avoids overflowing even UINT64_MAX work.
     const auto fraction = (fixedWork % ratioScale) * training.xpPerWork + progress.workRemainder;
-    auto amount = (fixedWork / ratioScale) * training.xpPerWork + fraction / ratioScale;
+    const auto amount = (fixedWork / ratioScale) * training.xpPerWork + fraction / ratioScale;
     const auto ceiling = eastl::min<unsigned>(training.level + 1, definition.maxLevel);
     if (progress.level >= ceiling || (Advanced(definition, progress) && activity == SkillActivity::Combat)) {
         award.capped = amount;
         return award;
     }
     progress.workRemainder = static_cast<std::uint32_t>(fraction % ratioScale);
+    return AwardSkillXp(state, content, training.skill, training.level, activity, amount);
+}
+
+SkillAward AwardSkillXp(LearningState& state, const ContentCatalog& content,
+    SkillId skill, std::uint8_t trainingLevel, SkillActivity activity, std::uint64_t amount) {
+    const auto& definition = content.GetSkill(skill);
+    if (trainingLevel > definition.maxLevel) { std::abort(); }
+    SkillAward award;
+    if (!amount && !FindSkillProgress(state, skill)) { return award; }
+    auto& progress = EnsureSkillProgress(state, skill);
+    const auto ceiling = eastl::min<unsigned>(trainingLevel + 1, definition.maxLevel);
+    if (progress.level >= ceiling || (Advanced(definition, progress) && activity == SkillActivity::Combat)) {
+        award.capped = amount;
+        return award;
+    }
     if (Advanced(definition, progress)) {
         const auto reserve = activity == SkillActivity::Disassembly ? progress.theory : progress.practice;
         const auto capacity = SkillXpRequired(definition, progress.level) - progress.xp - reserve;

@@ -6,8 +6,8 @@
 
 namespace cataclysmx::network::wire {
 
-// Version 27 adds solar source inspection and separate grid supply totals.
-inline constexpr std::uint32_t protocol = 0x43584e1b;
+// Version 28 adds commissioned machines and ordinary information transfers.
+inline constexpr std::uint32_t protocol = 0x43584e1c;
 inline constexpr int maxViewRadius = maxPresentationRadius;
 inline constexpr int maxViewDimension = 2 * maxViewRadius + 1;
 static_assert(maxViewDimension <= UINT8_MAX && maxViewDimension * maxViewDimension <= UINT16_MAX);

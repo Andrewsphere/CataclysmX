@@ -44,6 +44,7 @@
     x:{terrain:'floor_tile',object:'utility_cabinet',facing:'north',loot:[{pool:'loot_utility',rolls:3,destination:'furniture'}]},
   },
   entrance:{x:9,z:14},
+  loot:[{x:6,z:7,y:0,pool:'loot_digital_office',chance:4000,destination:'ground'}],
   // Conference seating faces the central table; reception faces the entry.
   basements:[
     {id:'records_archive',weight:1,rows:[

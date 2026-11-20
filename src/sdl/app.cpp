@@ -1087,7 +1087,8 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                     const auto outcome = reply.result.outcome;
                     if (outcome == Outcome::craft_started || outcome == Outcome::recycling_started
                         || outcome == Outcome::craft_resumed || outcome == Outcome::craft_paused || outcome == Outcome::craft_cancelled
-                        || outcome == Outcome::study_started || outcome == Outcome::study_paused) {
+                        || outcome == Outcome::study_started || outcome == Outcome::study_paused
+                        || outcome == Outcome::machine_changed || outcome == Outcome::information_changed) {
                         modal.Closed(); frame.visible = false;
                     } else if (submit(RequestKind::Pause)) { modal.BeginOpen(Screen::Crafting); }
                 }

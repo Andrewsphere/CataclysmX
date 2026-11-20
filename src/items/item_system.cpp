@@ -30,7 +30,7 @@ ItemSystem::~ItemSystem() = default;
 StateResult<void> ItemSystem::Initialize(Item& item, const DataObject* archive, Diagnostics* diagnostics) {
     const auto& definition = world_.GetContent().GetItem(item.type);
     if (archive) {
-        auto state = ReadItemState(definition, *archive, diagnostics);
+        auto state = ReadItemState(world_.GetContent(), definition, *archive, diagnostics);
         if (!state) { return eastl::unexpected(state.error()); }
         item.runtime_ = eastl::move(*state);
         if (item.runtime_.crafting_) {
@@ -43,7 +43,7 @@ StateResult<void> ItemSystem::Initialize(Item& item, const DataObject* archive, 
 DataObject ItemSystem::Capture(ItemHandle handle) const {
     DataObject result;
     const Item* item = world_.GetItem(handle);
-    if (item) { WriteItemState(world_.GetContent().GetItem(item->type), item->runtime_, result); }
+    if (item) { WriteItemState(world_.GetContent(), world_.GetContent().GetItem(item->type), item->runtime_, result); }
     return result;
 }
 ItemBehavior* ItemSystem::Behavior(ItemHandle item, ItemCapabilityId capability) {
@@ -52,6 +52,49 @@ ItemBehavior* ItemSystem::Behavior(ItemHandle item, ItemCapabilityId capability)
         if (behavior->Capability() == capability) { return behavior.get(); }
     } }
     return nullptr;
+}
+const InformationLibrary* ItemSystem::Information(ItemHandle handle) const {
+    const auto* item = world_.GetItem(handle);
+    return item ? item->runtime_.information_.get() : nullptr;
+}
+InformationLibrary* ItemSystem::MutableInformation(ItemHandle handle) {
+    auto* item = world_.MutableItem(handle);
+    return item ? item->runtime_.information_.get() : nullptr;
+}
+void ItemSystem::CollectInformation(ItemHandle handle, Vector<InformationId>& output) const {
+    output.clear();
+    if (const auto* library = Information(handle)) {
+        output.assign(library->packages.begin(), library->packages.end());
+    }
+}
+bool ItemSystem::HasInformation(ItemHandle handle, InformationId information) const {
+    const auto* library = Information(handle);
+    return library && eastl::find(library->packages.begin(), library->packages.end(), information) != library->packages.end();
+}
+WorldResult<void> ItemSystem::AddInformation(ItemHandle handle, InformationId information) {
+    if (!world_.GetItem(handle)) { return eastl::unexpected(WorldError::invalid_handle); }
+    auto* library = MutableInformation(handle);
+    if (!library || !world_.GetContent().TryGetInformation(information)) {
+        return eastl::unexpected(WorldError::invalid_request);
+    }
+    const auto position = eastl::lower_bound(library->packages.begin(), library->packages.end(), information,
+        [](auto a, auto b) { return a.value < b.value; });
+    if (position != library->packages.end() && *position == information) { return {}; }
+    library->packages.insert(position, information);
+    world_.MarkItemDirty(handle);
+    return {};
+}
+WorldResult<void> ItemSystem::RemoveInformation(ItemHandle handle, InformationId information) {
+    if (!world_.GetItem(handle)) { return eastl::unexpected(WorldError::invalid_handle); }
+    auto* library = MutableInformation(handle);
+    if (!library || !world_.GetContent().TryGetInformation(information)) {
+        return eastl::unexpected(WorldError::invalid_request);
+    }
+    const auto position = eastl::find(library->packages.begin(), library->packages.end(), information);
+    if (position == library->packages.end()) { return {}; }
+    library->packages.erase(position);
+    world_.MarkItemDirty(handle);
+    return {};
 }
 const ItemBehavior* ItemSystem::Behavior(ItemHandle item, ItemCapabilityId capability) const {
     const Item* value = world_.GetItem(item);
@@ -220,9 +263,14 @@ void ItemSystem::Refresh(ItemHandle handle) {
         return left < right || (left == right && a.capability.value < b.capability.value);
     });
 }
-void ItemSystem::Attach(ItemHandle item) { Refresh(item); world_.AttachCrafting(item); }
+void ItemSystem::Attach(ItemHandle item) {
+    Refresh(item);
+    world_.AttachCrafting(item);
+    if (const auto* library = Information(item); library && library->transfer) { world_.AttachInformation(item); }
+}
 void ItemSystem::Detach(ItemHandle item) {
     world_.DetachCrafting(item);
+    world_.DetachInformation(item);
     eastl::erase_if(scheduled_, [item](const auto& entry) { return entry.item == item; });
     eastl::erase_if(changes_, [item](const auto& entry) { return entry.item == item; });
     eastl::erase(destruction_, item);
@@ -373,6 +421,16 @@ bool ItemSystem::CheckInvariants() const {
         for (std::size_t i = 0; i < pending.size(); ++i) {
             const auto handle = pending[i];
             const auto* item = world_.GetItem(handle);
+            const auto& definition = world_.GetContent().GetItem(item->type);
+            const auto* library = Information(handle);
+            if ((definition.digitalDevice != DigitalDeviceKind::None) != (library != nullptr)) { return false; }
+            if (library) {
+                std::uint32_t previous = 0;
+                for (auto package : library->packages) {
+                    if (package.value <= previous || !world_.GetContent().TryGetInformation(package)) { return false; }
+                    previous = package.value;
+                }
+            }
             for (auto child : item->contents) { pending.push_back(child); }
             for (const auto& behavior : item->runtime_.behaviors_) {
                 const bool active = behavior->NextEventIn(ItemReadContext(*this, handle)).has_value();

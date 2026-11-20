@@ -1,0 +1,18 @@
+@text-art 1
+@color frame #8797A5
+@color dark #394650
+@color accent #6DB7C2
+@default frame
+---
+        <dark>╭──────╮
+        │ <accent>OOOO <dark>│
+        ╰──┬───╯
+  ╔════════╧════════╗
+  ║  ┌──────────┐  ║
+  ║  │    <accent>v     <dark>│  ║
+  ║  │   <frame>╱╲     <dark>│  ║
+  ║  │  <frame>╱──╲    <dark>│  ║
+  ║  └──────────┘  ║
+  ║   <frame>══════════   <dark>║
+  ╚════════════════╝
+   ╲____<accent>╬  .<dark>_______╱

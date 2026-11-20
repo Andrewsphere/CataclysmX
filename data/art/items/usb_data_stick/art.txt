@@ -1,0 +1,10 @@
+@text-art 1
+@color metal #B6C1C6
+@color shell #536F80
+@color highlight #A2CDD0
+@default shell
+---
+  ╭──────────────╮<metal>┌──────┐
+  <shell>│ <highlight>───────────  <shell>│<metal>│ .  . │
+  <shell>│              │<metal>│      │
+  <shell>╰──────────────╯<metal>└──────┘

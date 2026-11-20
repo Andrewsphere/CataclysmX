@@ -1,0 +1,8 @@
+{format_version:1, definitions:[
+  {type:'information',id:'home_printer_software',name:'Home printer operating software',software:true},
+  {type:'information',id:'home_printer_designs',name:'Home printer supplied designs',designs:[
+    'print_plastic_cup','print_small_parts_case','print_plastic_storage_box',
+    'print_plastic_buckle_set','print_machete_grip','print_electronics_case']},
+  {type:'information',id:'digital_workshop_primer',name:'The Neighborhood Workshop',books:['workshop_primer_text']},
+  {type:'information',id:'digital_salvage_notes',name:'Notes from the Salvage Bench',books:['salvage_notes_text']},
+]}

@@ -18,6 +18,12 @@ public:
     ItemPresentation Describe(ActorHandle actor, ItemHandle item) const;
     eastl::optional<ItemEnergyView> Energy(ItemHandle item, ItemCapabilityId store) const;
     WorldResult<void> SetEnergy(ItemEnergyRef store, std::uint32_t energy);
+    void CollectInformation(ItemHandle item, Vector<InformationId>& output) const;
+    bool HasInformation(ItemHandle item, InformationId information) const;
+    WorldResult<void> AddInformation(ItemHandle item, InformationId information);
+    WorldResult<void> RemoveInformation(ItemHandle item, InformationId information);
+    const InformationLibrary* Information(ItemHandle item) const;
+    InformationLibrary* MutableInformation(ItemHandle item);
     eastl::optional<Tick> NextEventIn() const;
     void Elapse(Tick elapsed);
     void ProcessEvents();

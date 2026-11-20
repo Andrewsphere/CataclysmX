@@ -1,5 +1,25 @@
 # Save format
 
+## Digital fabrication payloads (format 17)
+
+Pass 3 adds version-1 `information_library` item state and version-1 selectable
+machine object/job state within the existing structured payload columns. No
+actor column or database format increment is required. Supplied packages are
+creation defaults; an explicit empty saved library stays empty.
+
+Libraries persist stable package names and any destination-owned pending transfer.
+Machine jobs persist stable identities, captured batch/setup/processing/learning
+budgets, paid ticks, capacity claims and the persistent IDs of actual reserved
+originals. Validation checks supported recipes, leaf ownership, matching input
+counts, current volumes against the captured claim, and actor activity/timing
+conflicts across chunks. Missing transfer sources are historical references:
+runtime access validation aborts copying rather than recreating them.
+
+Completion stages archived-recipient access before consuming originals or
+publishing output and learning. Recoverable storage failures retain a pending
+completion with a 100-tick retry. Dirty machine and recipient chunks enter the
+same ordinary checkpoint transaction. See [digital runtime](digital_runtime.md).
+
 CataclysmX saves are SQLite database files. The strict v17 format is governed by
 one authoritative `metadata.format_version = 17` for both SQL and JSON. The
 `metadata` columns are `singleton INTEGER PRIMARY KEY CHECK(singleton=1)`,

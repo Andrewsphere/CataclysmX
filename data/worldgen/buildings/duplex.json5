@@ -4,7 +4,7 @@
   // Each bedroom has a door into a private, enclosed bath in its outer corner.
   rows:[
     '###w###########w###',
-    '#bcsk...I.I...ksdb#',
+    '#bcsk..RI.I...ksdb#',
     '#.....e.I>I.e.....#',
     '#..fg.i.I.I.i.gj..#',
     '#.......+.+.......#',
@@ -51,6 +51,10 @@
     G:{terrain:'floor_wood',object:'bookcase',facing:'west',loot:[{pool:'loot_reading_room_supplies',rolls:3,destination:'furniture'}]},
     H:{terrain:'floor_wood',object:'store_shelf',loot:[{pool:'loot_pantry',rolls:4,destination:'furniture'}]},
     J:{terrain:'floor_wood',object:'warehouse_crate',loot:[{pool:'loot_outdoors',rolls:3,destination:'furniture'}]},
+    P:{terrain:'floor_wood',object:'home_polymer_printer_station'},
+    Q:{terrain:'floor_wood',loot:[{pool:'loot_printer_filament_small',destination:'ground'},
+       {pool:'loot_digital_hobby',chance:1500,destination:'ground'}]},
+    R:{terrain:'floor_wood',loot:[{pool:'loot_digital_residential',chance:3000,destination:'ground'}]},
   },
   entrance:{x:9,z:11},
   basements:[
@@ -71,8 +75,8 @@
     {id:'hobby_pantry',weight:1,rows:[
       '###################',
       '#.............D...#',
-      '#E.......>....F..G#',
-      '#..j.g........g...#',
+      '#E..P....>....F..G#',
+      '#..jQg........g...#',
       '#.................#',
       '#.................#',
       '####+#########+####',

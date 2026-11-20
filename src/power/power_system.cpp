@@ -159,7 +159,8 @@ void PowerSystem::SyncObject(ObjectHandle handle) {
     if (definition && definition->behavior == ObjectBehaviorKind::Generator) { kind = PowerDeviceKind::Generator; }
     else if (definition && definition->behavior == ObjectBehaviorKind::Solar) { kind = PowerDeviceKind::Solar; }
     else if (definition && definition->behavior == ObjectBehaviorKind::GridBattery) { kind = PowerDeviceKind::Battery; }
-    else if (definition && definition->behavior == ObjectBehaviorKind::CraftingMachine && definition->machine.gridPowered) {
+    else if (definition && (definition->behavior == ObjectBehaviorKind::SelectableMachine
+        || (definition->behavior == ObjectBehaviorKind::CraftingMachine && definition->machine.gridPowered))) {
         kind = PowerDeviceKind::Machine;
     } else { UnregisterObject(object->id); return; }
     auto entry = eastl::lower_bound(state_.devices.begin(), state_.devices.end(), object->id,

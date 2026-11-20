@@ -1,5 +1,8 @@
 {format_version: 1, files: [
   'flags/core.json5',
+  'items/digital_fabrication.json5', 'objects/digital_fabrication.json5',
+  'crafting/digital_fabrication.json5', 'information/digital_fabrication.json5',
+  'worldgen/loot/digital_fabrication.json5',
   'items/power.json5', 'objects/power.json5', 'crafting/power.json5',
   'skills/core.json5', 'books/starter.json5', 'items/learning.json5',
   'combat/core.json5', 'items/combat.json5',

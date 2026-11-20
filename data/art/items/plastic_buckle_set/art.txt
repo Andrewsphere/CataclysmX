@@ -1,0 +1,13 @@
+@text-art 1
+@color edge #737F83
+@color face #B7C5C6
+@default edge
+---
+  ╔══════╗   ╔══════╗
+  ║ <face>╔══╗ <edge>╟───╢ <face>╔══╗ <edge>║
+  ╚═╣  ╠═╝   ╚═╣  ╠═╝
+    ╚══╝       ╚══╝
+  ╔══════╗   ╔══════╗
+  ║ <face>╔══╗ <edge>╟───╢ <face>╔══╗ <edge>║
+  ╚═╣  ╠═╝   ╚═╣  ╠═╝
+    ╚══╝       ╚══╝

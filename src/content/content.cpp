@@ -403,6 +403,22 @@ struct PendingBook {
     Context context;
 };
 
+struct PendingInformation {
+    InformationDefinition definition;
+    Vector<String> books, designs;
+    std::size_t inputOrder = 0;
+    Context context;
+};
+struct PendingMachineRecipe {
+    MachineRecipeDefinition definition;
+    SmallVector<PendingInput, 2> inputs;
+    PendingOutput result;
+    Vector<PendingSkillEntry> skills;
+    String learningSkill, requiredSoftware;
+    std::size_t inputOrder = 0;
+    Context context;
+};
+
 bool ParseSkillEntries(yyjson_val* array, Vector<PendingSkillEntry>& output,
                        const Context& context, bool training, std::uint32_t minimum) {
     if (!array) { return true; }
@@ -640,6 +656,71 @@ bool ParseRecipeName(yyjson_val* object, String& name, const String& id, const C
     return !value || ReadString(value, name, context.Child("name"));
 }
 
+bool ParseInformation(yyjson_val* object, PendingInformation& pending) {
+    auto& d = pending.definition;
+    const auto& c = pending.context;
+    if (!CheckObject(object, {"type", "id", "name", "books", "designs", "software"}, c)
+        || !ReadId(yyjson_obj_get(object, "id"), d.id, c.Child("id"))
+        || !ReadString(yyjson_obj_get(object, "name"), d.name, c.Child("name"))
+        || !ParseUniqueIds(yyjson_obj_get(object, "books"), pending.books, c.Child("books"))
+        || !ParseUniqueIds(yyjson_obj_get(object, "designs"), pending.designs, c.Child("designs"))) { return false; }
+    if (auto* value = yyjson_obj_get(object, "software")) {
+        if (!ReadBool(value, d.software, c.Child("software"))) { return false; }
+    }
+    return d.software || !pending.books.empty() || !pending.designs.empty()
+        || c.Fail("information must contain books, designs, or software");
+}
+
+bool ParseMachineRecipe(yyjson_val* object, PendingMachineRecipe& pending) {
+    auto& d = pending.definition;
+    const auto& c = pending.context;
+    if (!CheckObject(object, {"type", "id", "name", "inputs", "result", "duration", "energy_per_tick",
+            "setup_work", "setup_work_per_unit", "skills", "learning", "required_software"}, c)
+        || !ReadId(yyjson_obj_get(object, "id"), d.id, c.Child("id"))
+        || !ParseRecipeName(object, d.name, d.id, c)
+        || !ParseInputs(yyjson_obj_get(object, "inputs"), pending.inputs, c.Child("inputs"), true)
+        || !ParseOutput(yyjson_obj_get(object, "result"), pending.result, c.Child("result"))
+        || !ReadBoundedInteger(yyjson_obj_get(object, "energy_per_tick"), 1, UINT32_MAX,
+            d.energyPerTick, c.Child("energy_per_tick"))
+        || !ParseSkillEntries(yyjson_obj_get(object, "skills"), pending.skills, c.Child("skills"), false, 1)) { return false; }
+    if (pending.inputs.empty()) { return c.Child("inputs").Fail("expected consumed inputs"); }
+    for (const auto& input : pending.inputs) {
+        if (input.flags != RecipeInputFlags::None) { return c.Child("inputs").Fail("machine inputs must be ordinary consumed inputs"); }
+    }
+    auto* duration = yyjson_obj_get(object, "duration");
+    if (!yyjson_is_uint(duration) || yyjson_get_uint(duration) == 0
+        || yyjson_get_uint(duration) > static_cast<std::uint64_t>(std::numeric_limits<Tick>::max()) / 255) {
+        return c.Child("duration").Fail("expected positive batch-safe tick duration");
+    }
+    d.duration = static_cast<Tick>(yyjson_get_uint(duration));
+    if (static_cast<std::uint64_t>(d.duration) > UINT64_MAX / 255 / d.energyPerTick) {
+        return c.Child("energy_per_tick").Fail("expanded energy budget overflows");
+    }
+    if (auto* value = yyjson_obj_get(object, "setup_work")) {
+        if (!ReadBoundedInteger(value, 0, UINT32_MAX, d.setupWork, c.Child("setup_work"))) { return false; }
+    }
+    if (auto* value = yyjson_obj_get(object, "setup_work_per_unit")) {
+        if (!ReadBoundedInteger(value, 0, UINT32_MAX, d.setupWorkPerUnit, c.Child("setup_work_per_unit"))) { return false; }
+    }
+    if (!d.setupWork && !d.setupWorkPerUnit) { return c.Fail("setup work must be positive"); }
+    if (static_cast<std::uint64_t>(d.setupWork) + 255ull * d.setupWorkPerUnit > UINT32_MAX) {
+        return c.Fail("expanded setup work overflows");
+    }
+    if (auto* value = yyjson_obj_get(object, "required_software")) {
+        if (!ReadId(value, pending.requiredSoftware, c.Child("required_software"))) { return false; }
+    }
+    auto* learning = yyjson_obj_get(object, "learning");
+    const auto child = c.Child("learning");
+    std::uint32_t level = 0;
+    if (!CheckObject(learning, {"skill", "level", "xp_per_execution"}, child)
+        || !ReadId(yyjson_obj_get(learning, "skill"), pending.learningSkill, child.Child("skill"))
+        || !ReadBoundedInteger(yyjson_obj_get(learning, "level"), 0, maximumSkillLevel, level, child.Child("level"))
+        || !ReadBoundedInteger(yyjson_obj_get(learning, "xp_per_execution"), 1, UINT32_MAX / 255,
+            d.learning.xpPerExecution, child.Child("xp_per_execution"))) { return false; }
+    d.learning.level = static_cast<std::uint8_t>(level);
+    return true;
+}
+
 bool ParseRecycling(yyjson_val* object, PendingRecycling& pending, bool generated) {
     const auto& context = pending.context;
     auto& definition = pending.definition;
@@ -731,6 +812,7 @@ struct PendingItem {
     String wiringMaterial;
     String placedObject;
     Vector<String> books;
+    Vector<String> suppliedInformation;
     String readingPower;
     String handlingSkill;
     std::size_t inputOrder = 0;
@@ -827,6 +909,7 @@ struct PendingObject {
         std::uint64_t heat = 0;
     };
     Vector<ForgeFuel> forgeFuels;
+    Vector<String> selectableRecipes;
     std::size_t inputOrder = 0;
     Context context;
 };
@@ -869,7 +952,7 @@ bool ParseObject(yyjson_val* object, PendingObject& pending) {
     const auto& context = pending.context;
     auto& definition = pending.definition;
     if (!CheckObject(object, {"id", "name", "behavior", "machine", "generator", "solar", "forge", "capacity_volume_ml", "kind",
-                              "blocks_movement", "blocks_sight", "movable", "move_cost", "light", "tool_traits", "packing_item", "crafting_power"}, context)
+                              "blocks_movement", "blocks_sight", "movable", "move_cost", "light", "tool_traits", "packing_item", "crafting_power", "selectable_recipes"}, context)
         || !ReadId(yyjson_obj_get(object, "id"), definition.id, context.Child("id"))
         || !ReadString(yyjson_obj_get(object, "name"), definition.name, context.Child("name"))
         || !ParseTraits(yyjson_obj_get(object, "tool_traits"), pending.traits, context.Child("tool_traits"))) { return false; }
@@ -936,10 +1019,20 @@ bool ParseObject(yyjson_val* object, PendingObject& pending) {
     if (behaviorName != "forge" && yyjson_obj_get(object, "forge")) {
         return context.Child("forge").Fail("forge config requires forge behavior");
     }
+    if (behaviorName != "selectable_machine" && yyjson_obj_get(object, "selectable_recipes")) {
+        return context.Child("selectable_recipes").Fail("selectable recipes require selectable_machine behavior");
+    }
     bool hasForgeHeat = false;
     for (const auto& trait : pending.traits) { hasForgeHeat |= trait.id == "forge_heat"; }
     if (hasForgeHeat != (behaviorName == "forge")) {
         return context.Child("tool_traits").Fail("forge_heat must be supplied by every forge and only by forges");
+    }
+    if (behaviorName == "selectable_machine") {
+        definition.behavior = ObjectBehaviorKind::SelectableMachine;
+        if (!ParseUniqueIds(yyjson_obj_get(object, "selectable_recipes"), pending.selectableRecipes,
+                context.Child("selectable_recipes"))) { return false; }
+        return (!pending.selectableRecipes.empty() && !pending.packingItem.empty() && definition.capacityVolumeMl)
+            || context.Fail("selectable machine requires recipes, packing item and positive capacity");
     }
     if (behaviorName == "forge") {
         definition.behavior = ObjectBehaviorKind::Forge;
@@ -1340,7 +1433,7 @@ bool ParseItemMelee(yyjson_val* object, MeleeProfile& profile, const Context& co
 bool ParseItem(yyjson_val* object, PendingItem& item, const ItemBehaviorRegistry& registry) {
     const auto& context = item.context;
     auto& definition = item.definition;
-    if (!CheckObject(object, {"type", "id", "name", "description", "art", "flags", "melee", "armor", "mass_g", "volume_ml", "capabilities", "tool_traits", "recovery_allowed", "crafting_power", "books", "reading_power", "wiring_material", "wiring_tiles_per_material", "placed_object", "grid_meter"}, context)
+    if (!CheckObject(object, {"type", "id", "name", "description", "art", "flags", "melee", "armor", "mass_g", "volume_ml", "capabilities", "tool_traits", "recovery_allowed", "crafting_power", "books", "reading_power", "wiring_material", "wiring_tiles_per_material", "placed_object", "grid_meter", "digital_device", "supplied_information"}, context)
         || !ReadId(yyjson_obj_get(object, "id"), definition.id, context.Child("id"))
         || !ReadString(yyjson_obj_get(object, "name"), definition.name, context.Child("name"))
         || !ReadItemInteger(object, "mass_g", 0, definition.massGrams, context)
@@ -1412,9 +1505,31 @@ bool ParseItem(yyjson_val* object, PendingItem& item, const ItemBehaviorRegistry
         if (!ReadBool(meter, definition.gridMeter, context.Child("grid_meter"))) { return false; }
     }
     if (!ParseUniqueIds(yyjson_obj_get(object, "books"), item.books, context.Child("books"))) { return false; }
+    if (auto* value = yyjson_obj_get(object, "digital_device")) {
+        if (!yyjson_is_str(value)) { return context.Child("digital_device").Fail("expected device role"); }
+        const auto role = JsonString(value);
+        if (role == "storage") { item.definition.digitalDevice = DigitalDeviceKind::Storage; }
+        else if (role == "reader") { item.definition.digitalDevice = DigitalDeviceKind::Reader; }
+        else if (role == "controller") { item.definition.digitalDevice = DigitalDeviceKind::Controller; }
+        else { return context.Child("digital_device").Fail("expected storage, reader, or controller"); }
+    }
+    if (!ParseUniqueIds(yyjson_obj_get(object, "supplied_information"), item.suppliedInformation,
+            context.Child("supplied_information"))) { return false; }
+    if (yyjson_obj_get(object, "supplied_information") && item.definition.digitalDevice == DigitalDeviceKind::None) {
+        return context.Child("supplied_information").Fail("supplied information requires a digital device");
+    }
     if (auto* power = yyjson_obj_get(object, "reading_power")) {
         if (!ReadId(power, item.readingPower, context.Child("reading_power"))) { return false; }
-        if (item.books.empty()) { return context.Child("reading_power").Fail("reading power requires books"); }
+        if (item.books.empty() && item.definition.digitalDevice != DigitalDeviceKind::Reader) {
+            return context.Child("reading_power").Fail("reading power requires books or a digital reader");
+        }
+    }
+    if (definition.digitalDevice == DigitalDeviceKind::Reader && item.readingPower.empty()) {
+        return context.Child("reading_power").Fail("digital readers require an energy store");
+    }
+    if ((definition.digitalDevice == DigitalDeviceKind::Storage || definition.digitalDevice == DigitalDeviceKind::Controller)
+        && !item.readingPower.empty()) {
+        return context.Child("reading_power").Fail("storage and controllers do not use handheld reading power");
     }
     auto* capabilities = yyjson_obj_get(object, "capabilities");
     if (!capabilities) {
@@ -1435,6 +1550,9 @@ bool ParseItem(yyjson_val* object, PendingItem& item, const ItemBehaviorRegistry
         if (!ReadId(yyjson_obj_get(value, "id"), capability.definition.id, capability.context.Child("id"))
             || !ReadId(yyjson_obj_get(value, "type"), capability.definition.type, capability.context.Child("type"))
             || !ReadContentData(value, capability.definition.config, capability.context)) { return false; }
+        if (capability.definition.id == "information_library") {
+            return capability.context.Child("id").Fail("reserved information state key");
+        }
         pending.push_back(eastl::move(capability));
     }
     eastl::sort(pending.begin(), pending.end(), [](const PendingCapability& left, const PendingCapability& right) {
@@ -1931,7 +2049,9 @@ ContentResult<bool> ParseSource(const ContentSource& source, Vector<PendingTerra
                                 Vector<PendingToolTrait>& traits,
                                 PendingSpawns& spawns, Vector<PendingFlag>& flags,
                                 Vector<PendingSkill>& skills, Vector<PendingBook>& books,
-                                Vector<PendingCombat>& combat, const ItemBehaviorRegistry& registry, Diagnostics* diagnostics) {
+                                Vector<PendingCombat>& combat, Vector<PendingInformation>& information,
+                                Vector<PendingMachineRecipe>& machineRecipes,
+                                const ItemBehaviorRegistry& registry, Diagnostics* diagnostics) {
     Context context{diagnostics, source.name, {}};
     yyjson_alc allocator{JsonMalloc, JsonRealloc, JsonFree, nullptr};
     yyjson_read_err error{};
@@ -2053,6 +2173,20 @@ ContentResult<bool> ParseSource(const ContentSource& source, Vector<PendingTerra
                 book.inputOrder = terrain.inputOrder;
                 if (!ParseBook(value, book)) { return eastl::unexpected(ContentError::InvalidData); }
                 books.push_back(eastl::move(book));
+                continue;
+            } else if (JsonString(type) == "information") {
+                PendingInformation entry;
+                entry.context = definitionContext;
+                entry.inputOrder = terrain.inputOrder + information.size() + machineRecipes.size();
+                if (!ParseInformation(value, entry)) { return eastl::unexpected(ContentError::InvalidData); }
+                information.push_back(eastl::move(entry));
+                continue;
+            } else if (JsonString(type) == "machine_recipe") {
+                PendingMachineRecipe entry;
+                entry.context = definitionContext;
+                entry.inputOrder = terrain.inputOrder + information.size() + machineRecipes.size();
+                if (!ParseMachineRecipe(value, entry)) { return eastl::unexpected(ContentError::InvalidData); }
+                machineRecipes.push_back(eastl::move(entry));
                 continue;
             } else if (JsonString(type) == "flag") {
                 PendingFlag flag;
@@ -2326,7 +2460,8 @@ bool CheckDefinitionIds(const Vector<PendingTerrain>& terrains, const Vector<Pen
                           const Vector<PendingAiProfile>& aiProfiles, const Vector<PendingCrafting>& recipes,
                           const Vector<PendingRecycling>& recyclers, const Vector<PendingToolTrait>& traits,
                           const PendingSpawns& spawns, const Vector<PendingSkill>& skills, const Vector<PendingBook>& books,
-                          const Vector<PendingCombat>& combat, Diagnostics* diagnostics) {
+                          const Vector<PendingCombat>& combat, const Vector<PendingInformation>& information,
+                          const Vector<PendingMachineRecipe>& machineRecipes, Diagnostics* diagnostics) {
     Vector<DefinitionIdentity> identities;
     identities.reserve(terrains.size() + patterns.size() + items.size() + objects.size() + aiProfiles.size());
     for (const auto& terrain : terrains) {
@@ -2349,6 +2484,8 @@ bool CheckDefinitionIds(const Vector<PendingTerrain>& terrains, const Vector<Pen
     for (const auto& trait : traits) { identities.push_back({View(trait.definition.id), &trait.context, trait.inputOrder, false, false, false, false, true}); }
     for (const auto& skill : skills) { identities.push_back({View(skill.definition.id), &skill.context, skill.inputOrder, false, false, false, false, true}); }
     for (const auto& book : books) { identities.push_back({View(book.definition.id), &book.context, book.inputOrder, false, false, false, false, true}); }
+    for (const auto& entry : information) { identities.push_back({View(entry.definition.id), &entry.context, entry.inputOrder, false, false, false, false, true}); }
+    for (const auto& entry : machineRecipes) { identities.push_back({View(entry.definition.id), &entry.context, entry.inputOrder, false, false, false, false, true}); }
     for (const auto& pool : spawns.pools) { identities.push_back({View(pool.definition.id), &pool.context, pool.inputOrder, false, false, false, false, false, true}); }
     for (const auto& monster : spawns.monsters) { identities.push_back({View(monster.definition.id), &monster.context, monster.inputOrder, false, false, false, false, false, true}); }
     for (const auto& group : spawns.groups) { identities.push_back({View(group.definition.id), &group.context, group.inputOrder, false, false, false, false, false, true}); }
@@ -3226,6 +3363,31 @@ const BookDefinition& ContentCatalog::GetBook(BookId id) const {
 }
 std::size_t ContentCatalog::BookCount() const { return books_.size(); }
 
+InformationId ContentCatalog::FindInformation(eastl::string_view id) const {
+    return {static_cast<std::uint32_t>(FindDefinition(information_, id))};
+}
+const InformationDefinition* ContentCatalog::TryGetInformation(InformationId id) const {
+    return id.value && id.value <= information_.size() ? &information_[id.value - 1] : nullptr;
+}
+const InformationDefinition& ContentCatalog::GetInformation(InformationId id) const {
+    const auto* definition = TryGetInformation(id);
+    if (!definition) { std::abort(); }
+    return *definition;
+}
+std::size_t ContentCatalog::InformationCount() const { return information_.size(); }
+MachineRecipeId ContentCatalog::FindMachineRecipe(eastl::string_view id) const {
+    return {static_cast<std::uint32_t>(FindDefinition(machineRecipes_, id))};
+}
+const MachineRecipeDefinition* ContentCatalog::TryGetMachineRecipe(MachineRecipeId id) const {
+    return id.value && id.value <= machineRecipes_.size() ? &machineRecipes_[id.value - 1] : nullptr;
+}
+const MachineRecipeDefinition& ContentCatalog::GetMachineRecipe(MachineRecipeId id) const {
+    const auto* definition = TryGetMachineRecipe(id);
+    if (!definition) { std::abort(); }
+    return *definition;
+}
+std::size_t ContentCatalog::MachineRecipeCount() const { return machineRecipes_.size(); }
+
 FlagId ContentCatalog::FindFlag(eastl::string_view id) const {
     return {static_cast<std::uint32_t>(FindDefinition(flags_, id))};
 }
@@ -3314,10 +3476,12 @@ ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sourc
     Vector<PendingFlag> flags;
     Vector<PendingSkill> skills;
     Vector<PendingBook> books;
+    Vector<PendingInformation> information;
+    Vector<PendingMachineRecipe> machineRecipes;
     PendingSpawns spawns;
     Vector<PendingCombat> combat;
     for (const auto& source : sources) {
-        auto result = ParseSource(source, pending, patterns, items, objects, aiProfiles, recipes, recyclers, traits, spawns, flags, skills, books, combat, registry, diagnostics);
+        auto result = ParseSource(source, pending, patterns, items, objects, aiProfiles, recipes, recyclers, traits, spawns, flags, skills, books, combat, information, machineRecipes, registry, diagnostics);
         if (!result) {
             Context{diagnostics, source.name, {}}.Fail("could not load content source");
             return eastl::unexpected(result.error());
@@ -3368,7 +3532,8 @@ ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sourc
         || aiProfiles.size() > std::numeric_limits<std::uint32_t>::max()
         || recipes.size() > UINT32_MAX || recyclers.size() > UINT32_MAX || traits.size() > 255 || flags.size() > UINT32_MAX
         || skills.size() > UINT32_MAX || books.size() > UINT32_MAX
-        || ((!recipes.empty() || !recyclers.empty()) && items.size() > maxRecipeItemId)) {
+        || information.size() > UINT32_MAX || machineRecipes.size() > UINT32_MAX
+        || ((!recipes.empty() || !recyclers.empty() || !machineRecipes.empty()) && items.size() > maxRecipeItemId)) {
         Context{diagnostics, {}, {}}.Fail("too many content definitions");
         Context{diagnostics, {}, {}}.Fail("could not load content catalog");
         return eastl::unexpected(ContentError::InvalidData);
@@ -3378,7 +3543,7 @@ ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sourc
         if (left.definition.id == right.definition.id) { return left.inputOrder < right.inputOrder; }
         return left.definition.id < right.definition.id;
     });
-    if (!CheckDefinitionIds(pending, patterns, items, objects, aiProfiles, recipes, recyclers, traits, spawns, skills, books, combat, diagnostics)) { return eastl::unexpected(ContentError::InvalidData); }
+    if (!CheckDefinitionIds(pending, patterns, items, objects, aiProfiles, recipes, recyclers, traits, spawns, skills, books, combat, information, machineRecipes, diagnostics)) { return eastl::unexpected(ContentError::InvalidData); }
     if (!CheckPatternFamilies(patterns, diagnostics)) { return eastl::unexpected(ContentError::InvalidData); }
     if (!Resolve(pending)) {
         Context{diagnostics, {}, {}}.Fail("could not load content catalog");
@@ -3461,6 +3626,26 @@ ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sourc
     eastl::sort(books.begin(), books.end(), [](const PendingBook& a, const PendingBook& b) { return a.definition.id < b.definition.id; });
     // Publish book identities before resolving carriers; recipe references resolve after recipes.
     for (const auto& book : books) { catalog.books_.push_back(book.definition); }
+    eastl::sort(information.begin(), information.end(), [](const auto& a, const auto& b) { return a.definition.id < b.definition.id; });
+    eastl::sort(machineRecipes.begin(), machineRecipes.end(), [](const auto& a, const auto& b) { return a.definition.id < b.definition.id; });
+    for (const auto& entry : information) { catalog.information_.push_back(entry.definition); }
+    for (const auto& entry : machineRecipes) { catalog.machineRecipes_.push_back(entry.definition); }
+    for (std::size_t i = 0; i < information.size(); ++i) {
+        const auto& entry = information[i];
+        auto& definition = catalog.information_[i];
+        for (const auto& name : entry.books) {
+            const auto id = catalog.FindBook(View(name));
+            if (!id.value) { entry.context.Child("books").Fail("unknown book"); return eastl::unexpected(ContentError::InvalidData); }
+            definition.books.push_back(id);
+        }
+        for (const auto& name : entry.designs) {
+            const auto id = catalog.FindMachineRecipe(View(name));
+            if (!id.value) { entry.context.Child("designs").Fail("unknown machine recipe"); return eastl::unexpected(ContentError::InvalidData); }
+            definition.designs.push_back(id);
+        }
+        eastl::sort(definition.books.begin(), definition.books.end(), [](auto a, auto b) { return a.value < b.value; });
+        eastl::sort(definition.designs.begin(), definition.designs.end(), [](auto a, auto b) { return a.value < b.value; });
+    }
     eastl::sort(flags.begin(), flags.end(), [](const PendingFlag& left, const PendingFlag& right) {
         if (left.definition.id == right.definition.id) { return left.inputOrder < right.inputOrder; }
         return left.definition.id < right.definition.id;
@@ -3499,6 +3684,13 @@ ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sourc
             }
         }
         if (!ResolveItemFlags(item, catalog)) { return eastl::unexpected(ContentError::InvalidData); }
+        for (const auto& name : item.suppliedInformation) {
+            const auto id = catalog.FindInformation(View(name));
+            if (!id.value) { item.context.Child("supplied_information").Fail("unknown information"); return eastl::unexpected(ContentError::InvalidData); }
+            item.definition.suppliedInformation.push_back(id);
+        }
+        eastl::sort(item.definition.suppliedInformation.begin(), item.definition.suppliedInformation.end(),
+            [](auto a, auto b) { return a.value < b.value; });
         for (std::size_t i = 0; i < item.books.size(); ++i) {
             const auto book = catalog.FindBook(View(item.books[i]));
             if (!book.value) {
@@ -3522,6 +3714,32 @@ ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sourc
         catalog.items_.push_back(eastl::move(item.definition));
     }
     catalog.corpseItem_ = catalog.FindItem("combat_corpse");
+    for (std::size_t i = 0; i < machineRecipes.size(); ++i) {
+        auto& pendingRecipe = machineRecipes[i];
+        auto& d = catalog.machineRecipes_[i];
+        const auto& c = pendingRecipe.context;
+        if (!ResolveInputs(pendingRecipe.inputs, d.inputs, catalog, c.Child("inputs"))
+            || !ResolveItem(pendingRecipe.result.item, d.result.item, catalog, c.Child("result").Child("item"))
+            || !ResolveSkillRequirements(pendingRecipe.skills, d.skills, catalog, c.Child("skills"))) {
+            return eastl::unexpected(ContentError::InvalidData);
+        }
+        d.result.count = pendingRecipe.result.count;
+        d.learning.skill = catalog.FindSkill(View(pendingRecipe.learningSkill));
+        const auto* skill = catalog.TryGetSkill(d.learning.skill);
+        if (!skill || skill->category != SkillCategory::Noncombat
+            || !ValidateSkillMaximum(d.learning.level, *skill, c.Child("learning").Child("level"))) {
+            c.Child("learning").Fail("expected valid noncombat learning source");
+            return eastl::unexpected(ContentError::InvalidData);
+        }
+        if (!pendingRecipe.requiredSoftware.empty()) {
+            d.requiredSoftware = catalog.FindInformation(View(pendingRecipe.requiredSoftware));
+            const auto* package = catalog.TryGetInformation(d.requiredSoftware);
+            if (!package || !package->software) {
+                c.Child("required_software").Fail("expected software information package");
+                return eastl::unexpected(ContentError::InvalidData);
+            }
+        }
+    }
     for (std::size_t i = 0; i < items.size(); ++i) {
         if (items[i].wiringMaterial.empty()) { continue; }
         const auto material = catalog.FindItem(View(items[i].wiringMaterial));
@@ -3581,6 +3799,34 @@ ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource> sourc
                 object.context.Child("packing_item").Fail("expected an ordinary packing item without tool traits");
                 return eastl::unexpected(ContentError::InvalidData);
             }
+        }
+        if (object.definition.behavior == ObjectBehaviorKind::SelectableMachine) {
+            const auto* backing = catalog.TryGetItem(object.definition.packingItem);
+            if (!backing || backing->digitalDevice != DigitalDeviceKind::Controller) {
+                object.context.Child("packing_item").Fail("selectable machine requires a controller backing item");
+                return eastl::unexpected(ContentError::InvalidData);
+            }
+            for (const auto& name : object.selectableRecipes) {
+                const auto id = catalog.FindMachineRecipe(View(name));
+                const auto* recipe = catalog.TryGetMachineRecipe(id);
+                if (!recipe) {
+                    object.context.Child("selectable_recipes").Fail("unknown machine recipe");
+                    return eastl::unexpected(ContentError::InvalidData);
+                }
+                std::uint64_t inputVolume = 0;
+                for (const auto& input : recipe->inputs) {
+                    inputVolume += static_cast<std::uint64_t>(catalog.GetItem(input.Item()).volumeMl) * input.Count();
+                }
+                const auto outputVolume = static_cast<std::uint64_t>(catalog.GetItem(recipe->result.item).volumeMl)
+                    * recipe->result.count;
+                if (inputVolume > *object.definition.capacityVolumeMl || outputVolume > *object.definition.capacityVolumeMl) {
+                    object.context.Child("selectable_recipes").Fail("one execution must fit machine storage");
+                    return eastl::unexpected(ContentError::InvalidData);
+                }
+                object.definition.selectableRecipes.push_back(id);
+            }
+            eastl::sort(object.definition.selectableRecipes.begin(), object.definition.selectableRecipes.end(),
+                [](auto a, auto b) { return a.value < b.value; });
         }
         if (object.definition.behavior == ObjectBehaviorKind::Generator) {
             object.definition.generator.fuelItem = catalog.FindItem(View(object.fuelItem));

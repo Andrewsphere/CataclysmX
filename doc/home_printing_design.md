@@ -1,14 +1,14 @@
 # Home printing: accepted first playable slice
 
-**Status: Gameplay/content contract accepted; implementation pending.**
+**Status: Pass 3 implemented and functionally verified; seeded balance playtesting remains.**
 
 The user accepted the first printer, useful products, feedstock, costs,
 acquisition and setup/batch behavior together, building on the
 [D3 foundations](digital_fabrication_design.md). Numerical budgets are accepted
-initial tuning targets; implementation and playtesting evidence remain pending.
-The implementation pass owns content schemas, APIs, save/network representation
-and version choices. They do not require a separate player-facing design pass;
-surface any necessary change to the accepted gameplay contract.
+initial tuning targets. [Runtime APIs](digital_runtime.md) and the
+[content/evidence record](pass3_content.md) describe the implementation, save
+payloads, protocol 28 and verification. Seeded balance playtesting remains part
+of the integrated workshop/city package.
 
 ## 1. Accepted delivery target
 

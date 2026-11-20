@@ -1,0 +1,15 @@
+@text-art 1
+@color edge #53636D
+@color strand #8CB9BE
+@color light #C3D8D8
+@default edge
+---
+       ╭──────────╮
+    ╭──╯<strand> ╭────╮ <edge>╰──╮
+   ╱  <strand>╭──╯    ╰──╮  <edge>╲
+  │  <strand>│  ╭────╮  │  <edge>│
+  │  <strand>│  │<light>    <strand>│  │  <edge>│
+  │  <strand>│  ╰────╯  │  <edge>│
+   ╲  <strand>╰────────╯  <edge>╱
+    ╰──────────────╯
+              <strand>╲________

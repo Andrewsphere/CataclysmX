@@ -5,6 +5,7 @@
 #include "headless/lan.h"
 #include "client/settings.h"
 #include "client/crafting_menu.h"
+#include "client/digital_commands.h"
 #include "client/combat_menu.h"
 #include "client/power_view.h"
 
@@ -163,11 +164,16 @@ bool Execute(eastl::unique_ptr<Server>& ownedServer, eastl::string_view line, bo
         for (const auto& text : lines) { std::puts(text.c_str()); }
         return true;
     }
-    if ((name == "recipes" || name == "crafting") && count == 1) {
+    if ((name == "recipes" || name == "crafting" || name == "machines" || name == "information") && count == 1) {
         Vector<CraftingMenuRow> rows;
         CollectCraftingMenu(server.View(0), server.GetWorld().GetContent(), Localization{}, rows);
         for (const auto& row : rows) {
-            if (name == "crafting" || row.command.kind == CommandKind::craft) { std::puts(row.label.c_str()); }
+            if (name != "recipes" || row.command.kind == CommandKind::craft) { std::puts(row.label.c_str()); }
+        }
+        if (name == "machines" || name == "information") {
+            Vector<String> lines;
+            CollectLearningSummary(server.View(0), server.GetWorld().GetContent(), lines);
+            for (const auto& summary : lines) std::puts(summary.c_str());
         }
         return true;
     }
@@ -313,7 +319,9 @@ bool Execute(eastl::unique_ptr<Server>& ownedServer, eastl::string_view line, bo
         return true;
     }
     Command command;
-    if (name == "load-forge" && count == 3) {
+    if (ParseDigitalCommand({words.data(), count}, command)) {
+        // Shared structured digital command, submitted through the ordinary path.
+    } else if (name == "load-forge" && count == 3) {
         command.kind = CommandKind::load_forge;
         if (!Number(words[1], command.target) || !command.target || !Number(words[2], command.item) || !command.item) return false;
     } else if ((name == "ignite-forge" || name == "extinguish-forge" || name == "discard-forge-fuel") && count == 2) {
@@ -525,6 +533,7 @@ int main(int argc, char** argv) {
             std::fputs("Usage: cataclysmx_headless [--content path] [--user-dir path] [--world-dir path] [--save path | --load path] [--script | --host | --join address[:port] | --discover] [--port n] [--discovery-port n] [--discovery-address address] [--name name] [--profile path] [--new-character] [--run-for ms] [--command 'move e'] | --probe | --fail-log\nMovement: move n/s/e/w, move down or move < (downstairs), move up or move > (upstairs).\nCombat: attack [persistentId], style balanced|aggressive|defensive.\n", stderr);
             std::fputs("Content: --content <single definition file> | --content-pack <manifest>. New game: --scenario demo|first-house|town|zombie-showcase (default town) --seed <uint32>.\nGrab (local --script): grab n/ne/e/se/s/sw/w/nw, move in any of those directions, ungrab.\nCrafting (local --script): recipes, crafting, craft ID, recycle ITEM_ID, resume-craft JOB_ID, pause-craft JOB_ID, cancel-craft JOB_ID.\nLearning (local --script): skills, study BOOK_ID, pause-study.\nCombat (local --script): combat, styles, style ID, hold ITEM_ID left|right [two], releasehand left|right, regrip left|right one|two, wear ITEM_ID, remove ITEM_ID, abilities, use ability ID [self|tile X Z|north|east|south|west], study-art BOOK ART, pause-art, new-character.\n", stderr);
             std::fputs("Workshop (local --script and LAN --command): stations, place-station ITEM X Z Y, pack-station OBJECT, load-forge OBJECT ITEM, ignite-forge OBJECT, extinguish-forge OBJECT, discard-forge-fuel OBJECT.\n", stderr);
+            std::fputs("Digital (local --script and LAN --command): machines, information, begin-machine OBJECT RECIPE QUANTITY, stop-machine OBJECT, resume-machine OBJECT, cancel-machine OBJECT, collect-machine OBJECT, copy-information SOURCE DESTINATION PACKAGE [HOST_ITEM], import-information SOURCE DESTINATION PACKAGE [HOST_ITEM], export-information SOURCE DESTINATION PACKAGE [HOST_ITEM], delete-information DESTINATION PACKAGE, cancel-information. Endpoints: item:ID or object:ID.\n", stderr);
             return 2;
         }
     }

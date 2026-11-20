@@ -234,6 +234,9 @@ std::uint64_t ContentFingerprint(const ContentCatalog& content) {
         HashNumber(hash, item.books.size());
         for (const auto book : item.books) HashNumber(hash, book.value);
         HashNumber(hash, item.readingPower.value);
+        HashNumber(hash, static_cast<unsigned>(item.digitalDevice));
+        HashNumber(hash, item.suppliedInformation.size());
+        for (auto package : item.suppliedInformation) HashString(hash, content.GetInformation(package).id);
         HashNumber(hash, item.capabilities.size());
         for (std::size_t c = 0; c < item.capabilities.size(); ++c) {
             const auto& capability = item.capabilities[c];
@@ -271,6 +274,11 @@ std::uint64_t ContentFingerprint(const ContentCatalog& content) {
             HashNumber(hash, object.light.intensity); HashNumber(hash, object.light.range);
             HashNumber(hash, static_cast<std::uint64_t>(object.behavior));
             switch (object.behavior) {
+            case ObjectBehaviorKind::SelectableMachine:
+                HashNumber(hash, 1);
+                HashNumber(hash, object.selectableRecipes.size());
+                for (auto recipe : object.selectableRecipes) HashString(hash, content.GetMachineRecipe(recipe).id);
+                break;
             case ObjectBehaviorKind::None:
                 HashNumber(hash, 0); // No behavior implementation.
                 break;
@@ -313,6 +321,33 @@ std::uint64_t ContentFingerprint(const ContentCatalog& content) {
         }
     }
     HashNumber(hash, content.ToolTraitCount());
+    HashNumber(hash, content.InformationCount());
+    for (std::size_t i = 1; i <= content.InformationCount(); ++i) {
+        const auto& package = content.GetInformation({static_cast<std::uint32_t>(i)});
+        HashString(hash, package.id); HashString(hash, package.name); HashNumber(hash, package.software);
+        HashNumber(hash, package.books.size());
+        for (auto book : package.books) HashString(hash, content.GetBook(book).id);
+        HashNumber(hash, package.designs.size());
+        for (auto recipe : package.designs) HashString(hash, content.GetMachineRecipe(recipe).id);
+    }
+    HashNumber(hash, content.MachineRecipeCount());
+    for (std::size_t i = 1; i <= content.MachineRecipeCount(); ++i) {
+        const auto& recipe = content.GetMachineRecipe({static_cast<std::uint32_t>(i)});
+        HashString(hash, recipe.id); HashString(hash, recipe.name);
+        HashNumber(hash, recipe.inputs.Size());
+        for (const auto& input : recipe.inputs) {
+            HashString(hash, content.GetItem(input.Item()).id); HashNumber(hash, input.Count());
+            HashNumber(hash, input.Retained()); HashNumber(hash, input.NoRecovery());
+        }
+        HashString(hash, content.GetItem(recipe.result.item).id); HashNumber(hash, recipe.result.count);
+        HashNumber(hash, recipe.duration); HashNumber(hash, recipe.energyPerTick);
+        HashNumber(hash, recipe.setupWork); HashNumber(hash, recipe.setupWorkPerUnit);
+        HashNumber(hash, recipe.skills.size());
+        for (const auto& skill : recipe.skills) { HashString(hash, content.GetSkill(skill.skill).id); HashNumber(hash, skill.level); }
+        HashNumber(hash, recipe.learning.skill.value);
+        HashNumber(hash, recipe.learning.level); HashNumber(hash, recipe.learning.xpPerExecution);
+        HashNumber(hash, recipe.requiredSoftware.value);
+    }
     for (std::size_t i = 0; i < content.ToolTraitCount(); ++i) {
         const auto& trait = content.GetToolTrait({static_cast<std::uint8_t>(i + 1)});
         HashString(hash, trait.id); HashString(hash, trait.name);

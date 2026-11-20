@@ -1,0 +1,13 @@
+@text-art 1
+@color rim #D4E2E0
+@color body #8CB7B3
+@color shade #5D8A88
+@default body
+---
+   <rim>╭──────────────────╮
+   ╰──────────────────╯
+    <body>╲                <shade>╱
+     <body>│              <shade>│
+     <body>│              <shade>│
+      <body>╲            <shade>╱
+       <body>╲__________<shade>╱

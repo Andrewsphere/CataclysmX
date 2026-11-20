@@ -5,6 +5,8 @@
 #include "combat/combat_system.h"
 #include "skills/learning_system.h"
 #include "power/power_system.h"
+#include "digital/machine_system.h"
+#include "digital/information_system.h"
 
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
 #error Engine must compile without exceptions
@@ -39,6 +41,8 @@ SimulationResult AdvanceUntilInput(World& world, Tick& tick,
         effectsCompleted |= world.Power().ProcessEvents();
         effectsCompleted |= world.ProcessCraftingEvents();
         effectsCompleted |= world.Learning().ProcessEvents();
+        effectsCompleted |= world.Machines().ProcessEvents();
+        effectsCompleted |= world.Information().ProcessEvents();
         const auto combatEvent = world.Combat().NextEventIn();
         if (combatEvent && *combatEvent == 0) {
             world.Combat().ProcessEvents(rngState);

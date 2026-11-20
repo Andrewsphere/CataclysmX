@@ -175,6 +175,14 @@ public:
     const BookDefinition* TryGetBook(BookId id) const;
     const BookDefinition& GetBook(BookId id) const;
     std::size_t BookCount() const;
+    InformationId FindInformation(eastl::string_view id) const;
+    const InformationDefinition* TryGetInformation(InformationId id) const;
+    const InformationDefinition& GetInformation(InformationId id) const;
+    std::size_t InformationCount() const;
+    MachineRecipeId FindMachineRecipe(eastl::string_view id) const;
+    const MachineRecipeDefinition* TryGetMachineRecipe(MachineRecipeId id) const;
+    const MachineRecipeDefinition& GetMachineRecipe(MachineRecipeId id) const;
+    std::size_t MachineRecipeCount() const;
     CombatMoveId FindCombatMove(eastl::string_view id) const;
     const CombatMoveDefinition* TryGetCombatMove(CombatMoveId id) const;
     const CombatMoveDefinition& GetCombatMove(CombatMoveId id) const;
@@ -216,6 +224,8 @@ private:
     ItemTypeId unfinishedCraftItem_{};
     Vector<SkillDefinition> skills_;
     Vector<BookDefinition> books_;
+    Vector<InformationDefinition> information_;
+    Vector<MachineRecipeDefinition> machineRecipes_;
     friend ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource>, Diagnostics*);
     friend ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource>, const ItemBehaviorRegistry&, Diagnostics*);
     friend ContentResult<ContentCatalog> LoadContent(eastl::span<const ContentSource>, const ItemBehaviorRegistry&,

@@ -1,0 +1,6 @@
+{format_version:1, objects:[
+  {id:'home_polymer_printer_station',name:'home polymer printer',behavior:'selectable_machine',
+   blocks_movement:true,capacity_volume_ml:12000,packing_item:'home_polymer_printer',
+   selectable_recipes:['print_plastic_cup','print_small_parts_case','print_plastic_storage_box',
+     'print_plastic_buckle_set','print_machete_grip','print_electronics_case']},
+]}

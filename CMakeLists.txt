@@ -99,6 +99,11 @@ add_library(cataclysmx_engine STATIC
     src/content/crafting_definition.h src/core/static_list.h src/core/ratio.h
     src/crafting/crafting_types.h src/crafting/crafting_state.cpp src/crafting/crafting_state.h
     src/crafting/crafting_system.cpp src/crafting/crafting_system.h
+    src/content/digital_definition.h
+    src/digital/digital_types.h src/digital/information_state.h
+    src/digital/information_system.cpp src/digital/information_system.h
+    src/digital/machine_system.cpp src/digital/machine_system.h
+    src/objects/machine_job.cpp src/objects/machine_job.h
     src/power/power_system.cpp src/power/power_system.h
     src/power/power_state.cpp src/power/power_types.h
     src/skills/skill_types.h src/skills/skill_state.cpp src/skills/skill_state.h
@@ -167,6 +172,7 @@ add_library(cataclysmx_client STATIC src/client/text.cpp src/client/text.h
     src/client/item_ui.cpp src/client/item_ui.h
     src/client/item_browser.cpp src/client/item_browser.h
     src/client/crafting_menu.cpp src/client/crafting_menu.h
+    src/client/digital_commands.h
     src/client/power_view.cpp src/client/power_view.h
     src/client/message_history.cpp src/client/message_history.h
     src/client/tile_inspection.cpp src/client/tile_inspection.h
@@ -321,6 +327,13 @@ if(CATACLYSMX_BUILD_TESTS)
         tests/crafting_content_tests.cpp tests/crafting_world_tests.cpp tests/crafting_save_tests.cpp
         tests/crafting_server_tests.cpp tests/crafting_network_tests.cpp tests/crafting_ui_tests.cpp
         tests/crafting_demo_tests.cpp
+        tests/digital_content_tests.cpp tests/information_item_state_tests.cpp
+        tests/information_tests.cpp tests/machine_job_tests.cpp tests/machine_world_tests.cpp
+        tests/printer_pack_tests.cpp
+        tests/digital_save_tests.cpp tests/digital_completion_tests.cpp
+        tests/digital_lifecycle_tests.cpp
+        tests/digital_server_tests.cpp tests/digital_network_tests.cpp tests/digital_ui_tests.cpp
+        tests/digital_lan_tests.cpp
         tests/power_tests.cpp tests/power_content_tests.cpp tests/worldgen_power_tests.cpp
         tests/power_crafting_tests.cpp tests/power_save_tests.cpp
         tests/workshop_tests.cpp

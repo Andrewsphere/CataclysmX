@@ -11,7 +11,21 @@ bool ValidObjectDefinition(const ObjectDefinition& definition) {
         || !ValidLightEmission(definition.light)) { return false; }
     if ((!definition.toolTraits.Empty() || definition.packingItem.value)
         && definition.behavior != ObjectBehaviorKind::None
-        && definition.behavior != ObjectBehaviorKind::Forge) { return false; }
+        && definition.behavior != ObjectBehaviorKind::Forge
+        && definition.behavior != ObjectBehaviorKind::SelectableMachine) { return false; }
+    if (definition.behavior == ObjectBehaviorKind::SelectableMachine) {
+        if (!definition.packingItem.value || !definition.capacityVolumeMl || definition.selectableRecipes.empty()
+            || !definition.toolTraits.Empty() || definition.craftingEnergyPerWork
+            || definition.machine != CraftingMachineDefinition{} || definition.generator != GeneratorDefinition{}
+            || definition.forge != ForgeDefinition{} || definition.solar != SolarDefinition{}) { return false; }
+        std::uint32_t previousRecipe = 0;
+        for (auto recipe : definition.selectableRecipes) {
+            if (recipe.value <= previousRecipe) { return false; }
+            previousRecipe = recipe.value;
+        }
+        return true;
+    }
+    if (!definition.selectableRecipes.empty()) { return false; }
     if (definition.craftingEnergyPerWork
         && (definition.behavior != ObjectBehaviorKind::None || definition.toolTraits.Empty())) { return false; }
     if (definition.behavior == ObjectBehaviorKind::Solar) {

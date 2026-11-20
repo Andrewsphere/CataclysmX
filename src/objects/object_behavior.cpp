@@ -202,6 +202,106 @@ ObjectUseResult MutationFailure(WorldError error, ObjectUseReason fallback) {
     }
 }
 
+StateResult<eastl::optional<MachineJobState>> ReadSelectableState(const ObjectDefinition& definition,
+    const DataObject& input, Diagnostics* diagnostics) {
+    StateReader reader(input, diagnostics);
+    if (!ValidObjectDefinition(definition)) { return reader.Invalid("definition", "invalid selectable machine"); }
+    const auto version = reader.GetUnsignedOrError("version");
+    const auto hasJob = reader.GetBooleanOrError("has_job");
+    if (!reader.Result()) { return eastl::unexpected(reader.Result().error()); }
+    if (version != 1) { return reader.Invalid("version", "unsupported selectable machine state", StateError::UnsupportedVersion); }
+    if (input.Size() != (hasJob ? 3u : 2u)) { return reader.Invalid({}, "unexpected selectable machine fields"); }
+    if (!hasJob) { return eastl::optional<MachineJobState>{}; }
+    const auto* job = reader.GetObjectOrError("job");
+    if (!reader.Result()) { return eastl::unexpected(reader.Result().error()); }
+    auto parsed = ReadMachineJobState(*job, diagnostics);
+    if (!parsed) { return eastl::unexpected(parsed.error()); }
+    return eastl::optional<MachineJobState>{eastl::move(*parsed)};
+}
+
+class SelectableMachineBehavior final : public ObjectBehavior {
+public:
+    explicit SelectableMachineBehavior(eastl::optional<MachineJobState> job)
+        : job_(eastl::move(job)) {}
+    eastl::optional<Tick> NextEventIn() const override {
+        if (!job_ || job_->phase != MachineJobPhase::Processing || !job_->runRequested) { return eastl::nullopt; }
+        if (!job_->remainingWork) { return job_->completionRetryTicks; }
+        if (!job_->fundedTicks) { return eastl::nullopt; }
+        return job_->fundedTicks;
+    }
+    void Elapse(Tick elapsed) override {
+        if (!job_ || job_->phase != MachineJobPhase::Processing || !job_->runRequested) { return; }
+        if (!job_->remainingWork) {
+            job_->completionRetryTicks -= eastl::min(elapsed, job_->completionRetryTicks);
+            return;
+        }
+        const auto work = eastl::min(elapsed, eastl::min(job_->remainingWork, job_->fundedTicks));
+        job_->remainingWork -= work;
+        job_->fundedTicks -= work;
+    }
+    void ProcessEvent(ObjectMutationContext& context) override {
+        if (!job_ || job_->phase != MachineJobPhase::Processing || !job_->runRequested
+            || job_->remainingWork || job_->completionRetryTicks) { return; }
+        const auto completed = context.CompleteMachineJob();
+        if (completed) { job_.reset(); }
+        else {
+            job_->waitingError = completed.error();
+            job_->completionRetryTicks = machineCompletionRetryTicks;
+        }
+    }
+    void QueryActions(const ObjectReadContext& context, ActorHandle actor, Vector<ObjectActionInfo>& output) const override {
+        output.push_back({ObjectAction::Collect, context.CheckCollect(actor)});
+    }
+    ObjectUseResult Use(ObjectMutationContext& context, ActorHandle actor, ObjectAction action) override {
+        if (action != ObjectAction::Collect) { return {}; }
+        const auto collected = context.CollectContents(actor);
+        if (!collected) { return MutationFailure(collected.error(), ObjectUseReason::NoContents); }
+        return {ObjectUseOutcome::Succeeded, 100, ObjectUseReason::None};
+    }
+    DataObject SaveState() const override {
+        DataObject out;
+        out.SetUnsigned("version", 1);
+        out.SetBoolean("has_job", job_.has_value());
+        if (job_) { out.Set("job", WriteMachineJobState(*job_)); }
+        return out;
+    }
+    ObjectStateView Describe() const override {
+        ObjectStateView out;
+        out.behavior = ObjectBehaviorKind::SelectableMachine;
+        out.gridPowered = true;
+        if (job_) {
+            out.hasJob = true;
+            out.duration = job_->duration;
+            out.remainingWork = job_->remainingWork;
+            out.energyPerTick = job_->energyPerTick;
+            out.outputCount = job_->outputCount;
+            out.runRequested = job_->phase == MachineJobPhase::Processing && job_->runRequested;
+            out.fundedTicks = job_->fundedTicks;
+            out.running = out.runRequested && out.fundedTicks != 0;
+        }
+        return out;
+    }
+    WorldResult<void> SetEnergy(std::uint64_t) override { return eastl::unexpected(WorldError::invalid_request); }
+    WorldResult<void> FundGridWork(Tick ticks) override {
+        if (!job_ || job_->phase != MachineJobPhase::Processing || !job_->runRequested
+            || job_->fundedTicks || !ticks || ticks > job_->remainingWork) {
+            return eastl::unexpected(WorldError::invalid_request);
+        }
+        job_->fundedTicks = ticks;
+        return {};
+    }
+    MachineJobState* MutableMachineJob() override { return job_ ? &*job_ : nullptr; }
+    const MachineJobState* MachineJob() const override { return job_ ? &*job_ : nullptr; }
+    WorldResult<void> SetMachineJob(MachineJobState state) override {
+        if (!ValidMachineJobState(state)) { return eastl::unexpected(WorldError::invalid_request); }
+        job_ = eastl::move(state);
+        return {};
+    }
+    void ClearMachineJob() override { job_.reset(); }
+private:
+    eastl::optional<MachineJobState> job_;
+};
+
 class CraftingMachineBehavior final : public ObjectBehavior {
 public:
     CraftingMachineBehavior(const ObjectDefinition& definition, MachineState state)
@@ -559,6 +659,12 @@ private:
 }
 
 ObjectBehavior::~ObjectBehavior() = default;
+MachineJobState* ObjectBehavior::MutableMachineJob() { return nullptr; }
+const MachineJobState* ObjectBehavior::MachineJob() const { return nullptr; }
+WorldResult<void> ObjectBehavior::SetMachineJob(MachineJobState) {
+    return eastl::unexpected(WorldError::invalid_request);
+}
+void ObjectBehavior::ClearMachineJob() {}
 
 WorldResult<void> ObjectBehavior::SetForgeState(ForgeState) {
     return eastl::unexpected(WorldError::invalid_request);
@@ -582,6 +688,11 @@ WorldResult<void> ObjectBehavior::FundGridWork(Tick) {
 
 StateResult<void> ValidateObjectBehaviorState(const ObjectDefinition& definition, const DataObject& state,
     Diagnostics* diagnostics) {
+    if (definition.behavior == ObjectBehaviorKind::SelectableMachine) {
+        const auto parsed = ReadSelectableState(definition, state, diagnostics);
+        if (!parsed) { return eastl::unexpected(parsed.error()); }
+        return {};
+    }
     if (definition.behavior == ObjectBehaviorKind::Solar) {
         const auto parsed = ReadSolarState(definition, state, diagnostics);
         if (!parsed) { return eastl::unexpected(parsed.error()); }
@@ -599,6 +710,18 @@ StateResult<void> ValidateObjectBehaviorState(const ObjectDefinition& definition
 
 StateResult<eastl::unique_ptr<ObjectBehavior>> MakeObjectBehavior(const ObjectDefinition& definition,
     const DataObject* state, Diagnostics* diagnostics) {
+    if (definition.behavior == ObjectBehaviorKind::SelectableMachine) {
+        if (!ValidObjectDefinition(definition)) {
+            return cataclysmx::InvalidState(diagnostics, {}, "definition", "invalid selectable machine");
+        }
+        eastl::optional<MachineJobState> job;
+        if (state) {
+            auto saved = ReadSelectableState(definition, *state, diagnostics);
+            if (!saved) { return eastl::unexpected(saved.error()); }
+            job = eastl::move(*saved);
+        }
+        return eastl::unique_ptr<ObjectBehavior>(new SelectableMachineBehavior(eastl::move(job)));
+    }
     if (definition.behavior == ObjectBehaviorKind::Solar) {
         if (!ValidObjectDefinition(definition)) {
             return cataclysmx::InvalidState(diagnostics, {}, "definition", "invalid solar definition");

@@ -3,6 +3,7 @@
 #include "core/data_object.h"
 #include "core/object_appearance.h"
 #include "content/crafting_definition.h"
+#include "content/digital_definition.h"
 #include "content/text_art.h"
 #include "content/definition_flags.h"
 #include "combat/melee_profile.h"
@@ -74,6 +75,8 @@ struct ItemDefinition {
     std::uint16_t wiringTilesPerMaterial = 16;
     ObjectTypeId placedObject{};
     bool gridMeter = false;
+    DigitalDeviceKind digitalDevice = DigitalDeviceKind::None;
+    Vector<InformationId> suppliedInformation;
     bool operator==(const ItemDefinition& other) const;
 };
 

@@ -1,0 +1,14 @@
+@text-art 1
+@color edge #425151
+@color body #819C91
+@color pin #D1C6A2
+@default edge
+---
+   ╭──────────────────╮
+  ╱ <body>─── <pin>o <body>──── <pin>o <body>───── <edge>╲
+  ╲ <body>───────────────── <edge>╱
+   ╰──────────────────╯
+      ╭──────────────────╮
+     ╱ <body>─── <pin>o <body>──── <pin>o <body>───── <edge>╲
+     ╲ <body>───────────────── <edge>╱
+      ╰──────────────────╯

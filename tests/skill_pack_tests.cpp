@@ -111,9 +111,14 @@ TEST_CASE("Town skill pack supplies progression and equivalent reading carriers"
     REQUIRE(notes.recipes.size() == 1);
     CHECK(primer.recipes[0] == spearId);
     CHECK(notes.recipes[0] == spearId);
-    REQUIRE(primer.benefits.size() == 1);
+    REQUIRE(primer.benefits.size() == 3);
     REQUIRE(notes.benefits.size() == 1);
-    CHECK(primer.benefits[0] == SkillBookBenefit{fabrication, 1, 3, 20, 100, 20000});
+    for (const auto benefit : {
+            SkillBookBenefit{fabrication, 1, 3, 20, 100, 20000},
+            SkillBookBenefit{content.FindSkill("electronics"), 1, 3, 20, 0, 15000},
+            SkillBookBenefit{content.FindSkill("mechanics"), 1, 4, 20, 0, 15000}}) {
+        CHECK(eastl::find(primer.benefits.begin(), primer.benefits.end(), benefit) != primer.benefits.end());
+    }
     CHECK(notes.benefits[0] == SkillBookBenefit{fabrication, 1, 10, 15, 100, 15000});
     CHECK(primer.studyWork > 0);
     CHECK(notes.studyWork > 0);
