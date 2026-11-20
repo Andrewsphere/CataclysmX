@@ -409,6 +409,11 @@ TEST_CASE("SDL item slice expansion and workshop render through the item browser
         "arc_welder", "welding_electrode_packet", "welded_workshop_rack_kit",
         "workshop_battery_pack"
     };
+    constexpr const char* renewableIds[] = {
+        "recovered_pv_panel", "solar_charge_controller", "solar_generator_kit",
+        "recovered_gasoline_engine", "generator_alternator", "generator_drive_assembly",
+        "woodgas_processing_assembly", "woodgas_generator_kit", "prepared_wood"
+    };
     for (const auto type : browser.Frame().matches) {
         CHECK(type != content.CorpseItem());
         CHECK_FALSE(content.GetItem(type).unfinishedCraft);
@@ -429,6 +434,7 @@ TEST_CASE("SDL item slice expansion and workshop render through the item browser
         unsigned combatListed = 0;
         unsigned expansionRendered = 0;
         unsigned workshopRendered = 0;
+        unsigned renewableRendered = 0;
         for (std::size_t index = 0; index < browser.Frame().matches.size(); ++index) {
             const auto type = browser.Frame().matches[index];
             const auto& item = content.GetItem(type);
@@ -453,7 +459,10 @@ TEST_CASE("SDL item slice expansion and workshop render through the item browser
             for (const char* id : expansionItemIds) { expansion |= item.id == id; }
             bool workshop = false;
             for (const char* id : workshopIds) { workshop |= item.id == id; }
+            bool renewable = false;
+            for (const char* id : renewableIds) { renewable |= item.id == id; }
             CAPTURE(item.id.c_str());
+            if (renewable) { REQUIRE_FALSE(item.art.lines.empty()); }
             browser.Frame().selected = index;
             browser.Handle({"e"}, keys, content, localization);
             REQUIRE(browser.Frame().screen == ItemBrowserScreen::Examine);
@@ -466,7 +475,8 @@ TEST_CASE("SDL item slice expansion and workshop render through the item browser
             };
             draw();
             const auto top = SurfaceHash(display.surface);
-            const char* previewVariable = workshop ? "CATACLYSMX_WORKSHOP_PREVIEW"
+            const char* previewVariable = renewable ? "CATACLYSMX_RENEWABLE_PREVIEW"
+                : workshop ? "CATACLYSMX_WORKSHOP_PREVIEW"
                 : expansion ? "CATACLYSMX_ITEM_EXPANSION_PREVIEW" : "CATACLYSMX_ITEM_SLICE_PREVIEW";
             if (const char* prefix = std::getenv(previewVariable)) {
                 const auto output = String(prefix) + "_" + item.id + "_" + NumberText(size.x) + ".png";
@@ -477,7 +487,7 @@ TEST_CASE("SDL item slice expansion and workshop render through the item browser
             frame.examination.art = &item.art;
             frame.examination.scroll = 9999; draw();
             CHECK(frame.examination.scroll >= 0); CHECK(frame.examination.scroll < 9999);
-            if (size.x == 480 && !expansion && !workshop) { CHECK(frame.examination.scroll > 0); }
+            if (size.x == 480 && !expansion && !workshop && !renewable) { CHECK(frame.examination.scroll > 0); }
             frame.examination.scroll = 0; draw();
             CHECK(SurfaceHash(display.surface) == top);
             browser.Handle({"Escape"}, keys, content, localization);
@@ -485,6 +495,7 @@ TEST_CASE("SDL item slice expansion and workshop render through the item browser
             // sixty-item slice coverage independently of the catalog additions.
             if (expansion) { ++expansionRendered; }
             else if (workshop) { ++workshopRendered; }
+            else if (renewable) { ++renewableRendered; }
             else if (item.id == "workshop_primer_print" || item.id == "salvage_notes_print"
                 || item.id == "workshop_ebook_reader") { ++learningRendered; }
             else if (item.id == "wiring_kit" || item.id == "portable_fuel_generator"
@@ -494,6 +505,7 @@ TEST_CASE("SDL item slice expansion and workshop render through the item browser
         CHECK(rendered == 60);
         CHECK(expansionRendered == 80);
         CHECK(workshopRendered == 22);
+        CHECK(renewableRendered == 9);
         CHECK(learningRendered == 3);
         CHECK(powerRendered == 3);
         CHECK(combatListed == 6);

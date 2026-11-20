@@ -143,8 +143,10 @@ namespace cataclysmx {
         const auto& p = *view.currentPower;
         lines.push_back("Worker's current grid: " + UnsignedText(p.grid ? p.grid->value : 0) + " | Mains: " + String(p.mainsAvailable ? "available" : "unavailable"));
         lines.push_back("Battery energy " + UnsignedText(p.batteryEnergy) + "/" + UnsignedText(p.batteryCapacity)
-            + " | Generator output " + UnsignedText(p.generatorOutputAvailable));
-        lines.push_back("Batteries " + NumberText(p.batteries) + " | Running generators " + NumberText(p.runningGenerators)
+            + " | Solar output " + UnsignedText(p.solarOutputAvailable)
+            + " | Fueled output " + UnsignedText(p.generatorOutputAvailable));
+        lines.push_back("Batteries " + NumberText(p.batteries) + " | Running solar " + NumberText(p.runningSolar)
+            + " | Running fueled generators " + NumberText(p.runningGenerators)
             + " | Machines running/waiting " + NumberText(p.runningMachines) + "/" + NumberText(p.waitingMachines)
             + " | Unloaded devices " + NumberText(p.unloadedDevices));
         lines.push_back("Coverage on view layer: @ player, . unwired, 0-9/A-Z grid ID modulo 36; exact IDs below");

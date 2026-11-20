@@ -1,0 +1,20 @@
+@text-art 1
+@color case #8B9998
+@color edge #566566
+@color display #72958A
+@color terminal #B49A69
+@color light #BAC2B6
+@default case
+---
+<light>      __________________
+     /_________________/|
+    |  ┌────────────┐  | |
+    |  │ <display>▒▒▒▒▒▒▒▒▒▒<case> │  | |
+    |  └────────────┘  | |
+    |   o    o    o    | |
+    |  ──────────────  | |
+    |  ┌─┬─┬─┬─┬─┬─┐  | |
+    |  │<terminal>o<case>│<terminal>o<case>│<terminal>o<case>│<terminal>o<case>│<terminal>o<case>│<terminal>o<case>│  | /
+    |__└─┴─┴─┴─┴─┴─┘__|/
+<edge>       │ │ │ │ │ │
+       └─┘ └─┘ └─┘

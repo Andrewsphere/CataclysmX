@@ -20,6 +20,7 @@ const ContentCatalog& PowerContent() {
           {type:'item',id:'part',name:'Part',mass_g:1,volume_ml:1}
         ],objects:[
           {id:'battery',name:'Battery station',behavior:'grid_battery'},
+          {id:'solar',name:'Solar installation',behavior:'solar',solar:{peak_output_per_tick:1}},
           {id:'generator',name:'Generator',behavior:'generator',generator:{fuel_item:'part',
            fuel_capacity:6000,energy_per_fuel:2000,output_per_tick:4}},
           {id:'machine',name:'Machine',behavior:'crafting_machine',machine:{input:'part',input_count:1,
@@ -69,7 +70,7 @@ struct PowerRawDatabase {
     }
 };
 
-SaveSnapshot PowerSnapshot() {
+SaveSnapshot PowerSnapshot(bool solar = false) {
     SaveSnapshot snapshot;
     snapshot.seed = 123;
     snapshot.nextId = 5;
@@ -92,12 +93,16 @@ SaveSnapshot PowerSnapshot() {
     power.devices.push_back({1, {1600, -1600, 0}, PowerDeviceKind::Battery, false, 0, false});
     power.devices.push_back({2, {1601, -1600, 0}, PowerDeviceKind::Generator, true, 100, true});
     power.devices.push_back({3, {1602, -1600, 0}, PowerDeviceKind::Machine, true, 0, false});
+    if (solar) {
+        snapshot.nextId = 6;
+        power.devices.push_back({5, {1603, -1600, 0}, PowerDeviceKind::Solar, true, 200, true});
+    }
     power.generatedBindings.push_back({{1600, -1600, 0}, grid.id});
     return snapshot;
 }
 
-void PopulatePowerSave(const char* path) {
-    const auto snapshot = PowerSnapshot();
+void PopulatePowerSave(const char* path, bool solar = false) {
+    const auto snapshot = PowerSnapshot(solar);
     REQUIRE(ValidPowerState(snapshot.power, snapshot.session.tick));
     ChunkArchive chunk{};
     chunk.position = {100, -100, 0};
@@ -122,6 +127,14 @@ void PopulatePowerSave(const char* path) {
             object.state.SetBoolean("has_job", true);
             object.state.SetUnsigned("remaining_work", 73);
             object.state.SetUnsigned("funded_ticks", 23);
+            break;
+        case PowerDeviceKind::Solar:
+            object.type = PowerContent().FindObject("solar");
+            object.state.SetUnsigned("version", 1);
+            object.state.SetBoolean("run_requested", true);
+            object.state.SetBoolean("interval_initialized", true);
+            object.state.SetUnsigned("interval_start", 200);
+            object.state.SetUnsigned("output_remaining", SolarIntervalAllowance(200, 1) - 3);
             break;
         }
         chunk.objects.push_back(eastl::move(object));
@@ -216,7 +229,7 @@ TEST_CASE("Power decoding rejects malformed fields and invalid relationships", "
     SECTION("numeric counter") { raw.Exec("UPDATE world_state SET payload=json_set(payload,'$.power.next_grid_id',5)"); }
     SECTION("noncanonical counter") { raw.Exec("UPDATE world_state SET payload=json_set(payload,'$.power.next_grid_id','05')"); }
     SECTION("overflow counter") { raw.Exec("UPDATE world_state SET payload=json_set(payload,'$.power.next_grid_id','18446744073709551616')"); }
-    SECTION("unsupported envelope") { raw.Exec("UPDATE world_state SET payload=json_set(payload,'$.power.version',2)"); }
+    SECTION("unsupported envelope") { raw.Exec("UPDATE world_state SET payload=json_set(payload,'$.power.version',3)"); }
     SECTION("invalid settings") { raw.Exec("UPDATE world_state SET payload=json_set(payload,'$.power.settings.max_wiring_width',65)"); }
     SECTION("invalid cutoff") { raw.Exec("UPDATE world_state SET payload=json_set(payload,'$.power.mains_cutoff_tick','0')"); }
     SECTION("nonboolean hold") { raw.Exec("UPDATE world_state SET payload=json_set(payload,'$.power.devices[1].workshop_hold',1)"); }
@@ -240,6 +253,9 @@ TEST_CASE("Power decoding rejects malformed fields and invalid relationships", "
     SECTION("generator disabled behind hold") { raw.Exec("UPDATE chunks SET payload=json_set(payload,'$.objects[1].enabled',json('false'))"); }
     SECTION("machine broken behind hold") { raw.Exec("UPDATE chunks SET payload=json_set(payload,'$.objects[2].broken',json('true'))"); }
     SECTION("future generator budget interval") { raw.Exec("UPDATE chunks SET payload=json_set(payload,'$.objects[1].state.generator_interval_start',300)"); }
+    SECTION("charge marker newer than source budget") {
+        raw.Exec("UPDATE chunks SET payload=json_set(payload,'$.objects[1].state.generator_interval_start',0)");
+    }
     SECTION("unaligned generator budget interval") { raw.Exec("UPDATE chunks SET payload=json_set(payload,'$.objects[1].state.generator_interval_start',201)"); }
     SECTION("invalid generator budget") { raw.Exec("UPDATE chunks SET payload=json_set(payload,'$.objects[1].state.generator_output_remaining',401)"); }
     SECTION("battery hold") { raw.Exec("UPDATE world_state SET payload=json_set(payload,'$.power.devices[0].workshop_hold',json('true'))"); }
@@ -305,5 +321,90 @@ TEST_CASE("Invalid power checkpoint rolls back earlier writes", "[save][power][d
     REQUIRE(restoredChunk);
     REQUIRE(*restoredChunk);
     CHECK((**restoredChunk).tiles[0].damage == 0);
+}
+
+TEST_CASE("Solar allowance and offscreen intent survive durable checkpoints", "[save][power][solar]") {
+    PowerSaveFile file;
+    PopulatePowerSave(file.path.c_str(), true);
+    SaveDatabase database(PowerContent());
+    const auto loaded = database.Open(file.path.c_str());
+    REQUIRE(loaded);
+    CHECK(loaded->power == PowerSnapshot(true).power);
+    const auto chunk = database.ReadChunk({100, -100, 0}, loaded->nextId);
+    REQUIRE(chunk);
+    REQUIRE(*chunk);
+    const auto& state = (**chunk).objects[3].state;
+    CHECK(state.GetUnsigned("version") == 1);
+    CHECK(state.GetBoolean("run_requested") == true);
+    CHECK(state.GetBoolean("interval_initialized") == true);
+    CHECK(state.GetUnsigned("interval_start") == 200);
+    CHECK(state.GetUnsigned("output_remaining") == SolarIntervalAllowance(200, 1) - 3);
+    CHECK(state.Size() == 5);
+    REQUIRE(database.Begin());
+    REQUIRE(database.WriteSnapshot(*loaded));
+    REQUIRE(database.Commit());
+}
+
+TEST_CASE("Solar archive and index corruption is rejected before synchronization", "[save][power][solar][validation]") {
+    PowerSaveFile file;
+    PopulatePowerSave(file.path.c_str(), true);
+    PowerRawDatabase raw(file.path.c_str());
+    SECTION("legacy power cannot contain solar") {
+        raw.Exec("UPDATE world_state SET payload=json_set(payload,'$.power.version',1)");
+    }
+    SECTION("missing index") { raw.Exec("UPDATE world_state SET payload=json_remove(payload,'$.power.devices[3]')"); }
+    SECTION("wrong role") { raw.Exec("UPDATE world_state SET payload=json_set(payload,'$.power.devices[3].kind',1)"); }
+    SECTION("wrong position") { raw.Exec("UPDATE world_state SET payload=json_set(payload,'$.power.devices[3].position.x',1604)"); }
+    SECTION("lost hold") { raw.Exec("UPDATE world_state SET payload=json_set(payload,'$.power.devices[3].workshop_hold',json('false'))"); }
+    SECTION("future interval") { raw.Exec("UPDATE chunks SET payload=json_set(payload,'$.objects[3].state.interval_start',300)"); }
+    SECTION("unaligned interval") { raw.Exec("UPDATE chunks SET payload=json_set(payload,'$.objects[3].state.interval_start',201)"); }
+    SECTION("excess daylight allowance") { raw.Exec("UPDATE chunks SET payload=json_set(payload,'$.objects[3].state.output_remaining',100)"); }
+    SECTION("uninitialized charged source") {
+        raw.Exec("UPDATE chunks SET payload=json_set(payload,'$.objects[3].state.interval_initialized',json('false'),"
+            "'$.objects[3].state.interval_start',0,'$.objects[3].state.output_remaining',0)");
+    }
+    SECTION("charging newer than source interval") {
+        raw.Exec("UPDATE chunks SET payload=json_set(payload,'$.objects[3].state.interval_start',100)");
+    }
+    SECTION("stopped with allowance") { raw.Exec("UPDATE chunks SET payload=json_set(payload,'$.objects[3].state.run_requested',json('false'))"); }
+    SECTION("fuel is not a solar state field") { raw.Exec("UPDATE chunks SET payload=json_set(payload,'$.objects[3].state.energy',100)"); }
+    SaveDatabase database(PowerContent());
+    CHECK(database.Open(file.path.c_str()) == eastl::unexpected(SaveError::InvalidData));
+}
+
+TEST_CASE("Format sixteen power version one migrates without resetting paid resources", "[save][power][migration]") {
+    PowerSaveFile file;
+    PopulatePowerSave(file.path.c_str());
+    {
+        PowerRawDatabase raw(file.path.c_str());
+        raw.Exec("UPDATE metadata SET format_version=16;"
+            "UPDATE world_state SET payload=json_set(payload,'$.power.version',1)");
+    }
+    {
+        SaveDatabase database(PowerContent());
+        const auto loaded = database.Open(file.path.c_str());
+        REQUIRE(loaded);
+        CHECK(loaded->power.version == 1);
+        REQUIRE(database.Begin());
+        database.Rollback();
+        {
+            PowerRawDatabase raw(file.path.c_str());
+            CHECK(raw.Version() == 16);
+        }
+        REQUIRE(database.Begin());
+        REQUIRE(database.Commit());
+    }
+    SaveDatabase database(PowerContent());
+    const auto loaded = database.Open(file.path.c_str());
+    REQUIRE(loaded);
+    CHECK(loaded->power == PowerSnapshot().power);
+    const auto chunk = database.ReadChunk({100, -100, 0}, loaded->nextId);
+    REQUIRE(chunk);
+    REQUIRE(*chunk);
+    CHECK((**chunk).objects[1].state.GetUnsigned("energy") == 1777);
+    CHECK((**chunk).objects[1].state.GetUnsigned("generator_output_remaining") == 137);
+    CHECK((**chunk).objects[2].state.GetUnsigned("funded_ticks") == 23);
+    PowerRawDatabase raw(file.path.c_str());
+    CHECK(raw.Version() == 17);
 }
 }

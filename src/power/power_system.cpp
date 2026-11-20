@@ -157,6 +157,7 @@ void PowerSystem::SyncObject(ObjectHandle handle) {
     const auto view = world_.DescribeObjectState(handle);
     PowerDeviceKind kind;
     if (definition && definition->behavior == ObjectBehaviorKind::Generator) { kind = PowerDeviceKind::Generator; }
+    else if (definition && definition->behavior == ObjectBehaviorKind::Solar) { kind = PowerDeviceKind::Solar; }
     else if (definition && definition->behavior == ObjectBehaviorKind::GridBattery) { kind = PowerDeviceKind::Battery; }
     else if (definition && definition->behavior == ObjectBehaviorKind::CraftingMachine && definition->machine.gridPowered) {
         kind = PowerDeviceKind::Machine;
@@ -168,7 +169,7 @@ void PowerSystem::SyncObject(ObjectHandle handle) {
     }
     entry->position = object->position; entry->kind = kind;
     entry->workshopHold = object->enabled && !object->broken && view && view->runRequested && kind != PowerDeviceKind::Battery
-        && (kind == PowerDeviceKind::Generator || view->hasJob);
+        && (kind == PowerDeviceKind::Generator || kind == PowerDeviceKind::Solar || view->hasJob);
     Invalidate();
 }
 void PowerSystem::UnregisterObject(PersistentId object) {
@@ -220,19 +221,33 @@ std::uint64_t PowerSystem::GeneratorAvailable(ObjectHandle handle) const {
         ? view->generatorOutputRemaining : std::uint64_t{view->energyPerTick} * PowerIntervalRemaining(now);
     return eastl::min(view->energy, allowance);
 }
+std::uint64_t PowerSystem::SolarAvailable(ObjectHandle handle) const {
+    const auto* object = world_.GetObject(handle);
+    const auto view = world_.DescribeObjectState(handle);
+    const auto now = world_.GetTick();
+    if (!object || !object->enabled || object->broken || !world_.IsActive(object->position)
+        || !view || view->behavior != ObjectBehaviorKind::Solar || !view->runRequested
+        || !view->solarExposed || !IsSolarDaytime(now)) { return 0; }
+    const auto interval = PowerIntervalStart(now);
+    if (view->generatorIntervalInitialized && view->generatorIntervalStart > interval) { return 0; }
+    return view->generatorIntervalInitialized && view->generatorIntervalStart == interval
+        ? view->generatorOutputRemaining : SolarIntervalAllowance(now, view->energyPerTick);
+}
 void PowerSystem::GatherSources() const {
     sources_.clear();
-    // Stable source priority: generators then batteries, each in persistent-ID order.
-    for (auto kind : {PowerDeviceKind::Generator, PowerDeviceKind::Battery}) {
+    // Mains is handled by Plan; each finite source class retains persistent-ID order.
+    for (auto kind : {PowerDeviceKind::Solar, PowerDeviceKind::Generator, PowerDeviceKind::Battery}) {
         for (const auto& device : state_.devices) {
             ++counters_.sourceScans;
             if (device.kind != kind) { continue; }
             const auto grid = GridAt(device.position);
             if (!grid) { continue; }
             Source source;
-            if (kind == PowerDeviceKind::Generator) {
+            source.kind = kind;
+            if (kind == PowerDeviceKind::Generator || kind == PowerDeviceKind::Solar) {
                 source.object = world_.FindObject(device.object); source.id = device.object;
-                source.generator = true; source.available = GeneratorAvailable(source.object);
+                source.available = kind == PowerDeviceKind::Solar
+                    ? SolarAvailable(source.object) : GeneratorAvailable(source.object);
             } else if (!Battery(device, source)) { continue; }
             source.grid = *grid;
             sources_.push_back(source);
@@ -262,7 +277,10 @@ PowerOutcome PowerSystem::CanSupply(eastl::span<const PowerDemand> demands) cons
 void PowerSystem::CommitPlan() {
     for (const auto source : sources_) {
         if (!source.spent) { continue; }
-        if (source.generator) {
+        if (source.kind == PowerDeviceKind::Solar) {
+            Require(world_.PrepareSolarInterval(source.object, world_.GetTick()).has_value());
+            Require(world_.SpendSolarEnergy(source.object, source.spent).has_value());
+        } else if (source.kind == PowerDeviceKind::Generator) {
             Require(world_.PrepareGeneratorInterval(source.object, world_.GetTick()).has_value());
             Require(world_.SpendGeneratorEnergy(source.object, source.spent).has_value());
         } else {
@@ -282,7 +300,8 @@ PowerOutcome PowerSystem::TrySupply(eastl::span<const PowerDemand> demands) {
 }
 bool PowerSystem::HasWork() const {
     for (const auto& device : state_.devices) {
-        if (device.workshopHold) { return true; }
+        if (device.workshopHold
+            && (device.kind != PowerDeviceKind::Solar || IsSolarDaytime(world_.GetTick()))) { return true; }
         // Mains charging also runs when a player loads an idle installed battery.
         if (device.kind == PowerDeviceKind::Battery && world_.IsActive(device.position)) {
             const auto grid = GridAt(device.position);
@@ -295,10 +314,20 @@ bool PowerSystem::HasWork() const {
     }
     return false;
 }
+bool PowerSystem::HasSolarHold() const {
+    for (const auto& device : state_.devices) {
+        if (device.kind == PowerDeviceKind::Solar && device.workshopHold) { return true; }
+    }
+    return false;
+}
 eastl::optional<Tick> PowerSystem::NextEventIn() const {
     if (dirty_) { return Tick{0}; }
-    if (!HasWork()) { return eastl::nullopt; }
     const auto now = world_.GetTick();
+    if (!HasWork()) {
+        if (!HasSolarHold()) { return eastl::nullopt; }
+        const auto dawn = TicksUntilSolarDawn(now);
+        return dawn <= UINT64_MAX - now ? eastl::optional<Tick>{dawn} : eastl::nullopt;
+    }
     if (!eventProcessed_ || PowerIntervalStart(lastEventTick_) != PowerIntervalStart(now)) { return Tick{0}; }
     const auto delay = SliceLimit(now);
     return delay ? eastl::optional<Tick>{delay} : eastl::nullopt;
@@ -315,12 +344,16 @@ bool PowerSystem::ProcessEvents() {
     // Prepare before any paid slices. Hooks may SyncObject, but must not change topology.
     for (std::size_t i = 0; i < state_.devices.size(); ++i) {
         const auto device = state_.devices[i];
-        if (device.kind != PowerDeviceKind::Generator) { continue; }
+        if (device.kind != PowerDeviceKind::Generator && device.kind != PowerDeviceKind::Solar) { continue; }
         const auto handle = world_.FindObject(device.object);
         const auto* object = world_.GetObject(handle);
         const auto view = world_.DescribeObjectState(handle);
         if (object && object->enabled && !object->broken && world_.IsActive(object->position) && view && view->runRequested) {
-            Require(world_.PrepareGeneratorInterval(handle, now).has_value());
+            if (device.kind == PowerDeviceKind::Solar) {
+                Require(world_.PrepareSolarInterval(handle, now).has_value());
+            } else {
+                Require(world_.PrepareGeneratorInterval(handle, now).has_value());
+            }
         }
     }
     bool changed = false;
@@ -369,26 +402,7 @@ bool PowerSystem::ProcessEvents() {
 void PowerSystem::ChargeSurplus() {
     const auto interval = PowerIntervalStart(world_.GetTick());
     for (auto& grid : state_.grids) {
-        const bool mains = Mains(grid) && (!grid.mainsChargeProcessed || grid.mainsChargeInterval != interval);
-        // Each generator gets one surplus pass per interval, including a late first start.
-        for (std::size_t sourceIndex = 0; sourceIndex <= state_.devices.size(); ++sourceIndex) {
-            const bool mainsPass = sourceIndex == state_.devices.size();
-            ObjectHandle generator{};
-            std::uint64_t available = UINT64_MAX;
-            if (mainsPass) {
-                if (!mains) { continue; }
-                grid.mainsChargeInterval = interval; grid.mainsChargeProcessed = true;
-            } else {
-                const auto device = state_.devices[sourceIndex];
-                if (Mains(grid) || device.kind != PowerDeviceKind::Generator
-                    || GridAt(device.position) != eastl::optional<PowerGridId>{grid.id}
-                    || (device.chargeProcessed && device.chargeInterval == interval)) { continue; }
-                generator = world_.FindObject(device.object);
-                available = GeneratorAvailable(generator);
-                if (!available) { continue; }
-                state_.devices[sourceIndex].chargeInterval = interval;
-                state_.devices[sourceIndex].chargeProcessed = true;
-            }
+        const auto charge = [&](ObjectHandle source, PowerDeviceKind kind, std::uint64_t available) {
             for (std::size_t batteryIndex = 0; batteryIndex < state_.devices.size() && available; ++batteryIndex) {
                 const auto device = state_.devices[batteryIndex];
                 if (device.kind != PowerDeviceKind::Battery || GridAt(device.position) != eastl::optional<PowerGridId>{grid.id}) { continue; }
@@ -398,14 +412,42 @@ void PowerSystem::ChargeSurplus() {
                 Require(energy.has_value());
                 const auto amount = eastl::min<std::uint64_t>(available, energy->capacity - energy->energy);
                 if (!amount) { continue; }
-                if (!mainsPass) {
-                    Require(world_.PrepareGeneratorInterval(generator, world_.GetTick()).has_value());
-                    Require(world_.SpendGeneratorEnergy(generator, amount).has_value());
+                if (source.value) {
+                    if (kind == PowerDeviceKind::Solar) {
+                        Require(world_.PrepareSolarInterval(source, world_.GetTick()).has_value());
+                        Require(world_.SpendSolarEnergy(source, amount).has_value());
+                    } else {
+                        Require(world_.PrepareGeneratorInterval(source, world_.GetTick()).has_value());
+                        Require(world_.SpendGeneratorEnergy(source, amount).has_value());
+                    }
                 }
                 Require(world_.SetItemEnergy(battery.battery, battery.store,
                     energy->energy + static_cast<std::uint32_t>(amount)).has_value());
                 available -= amount;
                 counters_.chargedEnergy = SaturatingAdd(counters_.chargedEnergy, amount);
+            }
+        };
+        if (Mains(grid)) {
+            if (!grid.mainsChargeProcessed || grid.mainsChargeInterval != interval) {
+                grid.mainsChargeInterval = interval; grid.mainsChargeProcessed = true;
+                charge({}, PowerDeviceKind::Battery, UINT64_MAX);
+            }
+            continue;
+        }
+        // Priority applies to charging too; an older fueled source cannot preempt solar.
+        for (const auto kind : {PowerDeviceKind::Solar, PowerDeviceKind::Generator}) {
+            for (std::size_t sourceIndex = 0; sourceIndex < state_.devices.size(); ++sourceIndex) {
+                const auto device = state_.devices[sourceIndex];
+                if (device.kind != kind
+                    || GridAt(device.position) != eastl::optional<PowerGridId>{grid.id}
+                    || (device.chargeProcessed && device.chargeInterval == interval)) { continue; }
+                const auto source = world_.FindObject(device.object);
+                const auto available = kind == PowerDeviceKind::Solar
+                    ? SolarAvailable(source) : GeneratorAvailable(source);
+                if (!available) { continue; }
+                state_.devices[sourceIndex].chargeInterval = interval;
+                state_.devices[sourceIndex].chargeProcessed = true;
+                charge(source, kind, available);
             }
         }
     }
@@ -431,7 +473,7 @@ eastl::optional<SavedPowerDevice> PowerSystem::FindDevice(PersistentId id) const
 WorldResult<void> PowerSystem::Restore(const SavedPowerState& state, Tick now) {
     if (!ValidPowerState(state, now)) { return eastl::unexpected(WorldError::invalid_request); }
     Require(!processing_);
-    state_ = state; sources_.clear(); contenders_.clear();
+    state_ = state; state_.version = 2; sources_.clear(); contenders_.clear();
     lastEventTick_ = now; eventProcessed_ = true;
     Invalidate();
     return {};
@@ -512,7 +554,10 @@ void PowerSystem::Inspect(TileCoord position, PowerInspection& output) const {
         } else {
             const auto view = world_.DescribeObjectState(handle);
             if (!view || !view->runRequested) { continue; }
-            if (device.kind == PowerDeviceKind::Generator) {
+            if (device.kind == PowerDeviceKind::Solar) {
+                if (object->enabled && !object->broken) { ++output.runningSolar; }
+                output.solarOutputAvailable = SaturatingAdd(output.solarOutputAvailable, SolarAvailable(handle));
+            } else if (device.kind == PowerDeviceKind::Generator) {
                 if (object->enabled && !object->broken) { ++output.runningGenerators; }
                 output.generatorOutputAvailable = SaturatingAdd(output.generatorOutputAvailable, GeneratorAvailable(handle));
             } else if (view->hasJob && view->remainingWork) {

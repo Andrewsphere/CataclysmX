@@ -31,6 +31,13 @@ bool PowerConnects(PowerBounds a, PowerBounds b); // Overlap or shared tile face
 Tick PowerIntervalStart(Tick now);
 Tick PowerIntervalRemaining(Tick now);
 Tick SeededMainsCutoff(std::uint32_t seed);
+// Tick zero is 08:00; daylight rises linearly from 06:00 to noon and falls to 18:00.
+std::uint32_t SolarDaylightRatio(Tick now);
+bool IsSolarDaytime(Tick now);
+// Integrated, integer-rounded energy over the remaining absolute power interval.
+std::uint64_t SolarIntervalAllowance(Tick now, std::uint32_t peakOutputPerTick);
+// Positive delay to the next dawn; callers separately decide whether it is needed.
+Tick TicksUntilSolarDawn(Tick now);
 
 struct PowerSettings {
     int maxWiringWidth = 16;
@@ -38,7 +45,7 @@ struct PowerSettings {
     bool operator==(const PowerSettings&) const = default;
 };
 bool ValidPowerSettings(PowerSettings settings);
-enum class PowerDeviceKind : std::uint8_t { Battery, Generator, Machine };
+enum class PowerDeviceKind : std::uint8_t { Battery, Generator, Machine, Solar };
 enum class PowerOutcome : std::uint8_t { Supplied, NoGrid, InsufficientPower };
 struct PowerDemand {
     TileCoord position{};
@@ -110,7 +117,7 @@ struct SavedBuildingGridBinding {
     bool operator==(const SavedBuildingGridBinding&) const = default;
 };
 struct SavedPowerState {
-    std::uint32_t version = 1;
+    std::uint32_t version = 2;
     std::uint64_t nextGridId = 1;
     Tick mainsCutoffTick = SeededMainsCutoff(42);
     PowerSettings settings;
@@ -132,6 +139,8 @@ struct PowerInspection {
     std::uint32_t runningMachines = 0;
     std::uint32_t waitingMachines = 0;
     std::uint32_t unloadedDevices = 0;
+    std::uint64_t solarOutputAvailable = 0;
+    std::uint32_t runningSolar = 0;
 };
 struct PowerGridDebug {
     PowerGridId id;

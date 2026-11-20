@@ -100,7 +100,7 @@ the suspended legacy `updateDeadline`, and leave `type` zero and `behavior_` nul
 `World`, a friend, installs or invokes its private owned behavior.
 
 `ObjectDefinition` is a value with a closed `ObjectBehaviorKind` and typed
-`CraftingMachineDefinition` / `GeneratorDefinition` / `ForgeDefinition` configurations. The enum
+`CraftingMachineDefinition` / `GeneratorDefinition` / `SolarDefinition` / `ForgeDefinition` configurations. The enum
 appends `Generator` and `GridBattery`, preserving the values of `None` and
 `CraftingMachine`. `MakeObjectBehavior(definition, state,
 diagnostics)` uses explicit dispatch to create at most one behavior; `None`
@@ -122,10 +122,12 @@ be moved, replaced, or structurally mutated while objects exist.
 | `SetEnergy(uint64_t)` | Rejects over-capacity values without mutation; may pause a running job. |
 | `PrepareGeneratorInterval(Tick now)` | Claims the remaining allowance in an absolute 100-tick generator interval; never burns fuel. |
 | `SpendGeneratorEnergy(uint64_t)` | Atomically subtracts generator fuel and allowance; rejects insufficient fuel/allowance or absent intent. |
+| `PrepareSolarInterval(Tick now, uint64_t allowance)` | Claims one remaining-interval grant computed by World from daylight and direct exposure, including a zero grant under cover. |
+| `SpendSolarEnergy(uint64_t)` | Subtracts only the solar interval allowance; no fuel or stored electricity. |
 | `FundGridWork(Tick)` | Grants prepaid grid-machine work; requires an intended job, no outstanding paid ticks, and a positive amount no greater than remaining work. |
 | `SetForgeState(ForgeState)` | Forge-only mutation after World's transaction preflight; checks capacity and positive fuel when Ready. |
 
-The three power methods default to `WorldError::invalid_request` for unrelated
+The power methods default to `WorldError::invalid_request` for unrelated
 behaviors. World owns access and scheduling; power-system integration invokes
 these methods through World's private wrappers.
 
@@ -171,6 +173,27 @@ The product subtracted by Elapse cannot overflow: elapsed work is bounded by
 remaining, the machine pauses immediately and has no event left to process.
 At completion, output remains due until ProcessEvent, including when energy
 has simultaneously reached zero.
+
+## Solar installations
+
+`behavior:'solar'` requires `solar:{peak_output_per_tick:N}` with an integer
+`N` in `[1,UINT32_MAX]`. Other behavior configurations and packing are forbidden.
+The dedicated behavior holds only run intent and a claimed interval's remaining
+output. It has no fuel, storage, job, elapsed work or private scheduled event.
+This keeps per-source accounting out of unrelated item/object instances.
+
+World's `HasDirectSkyExposure(position)` checks resident cells above the support
+tile through the top world layer. Solid floors and sight-blocking overhead
+terrain/objects shade the panel; absent geometry is conservatively covered.
+The supporting tile itself is not an obstruction. Rendered sky intensity,
+artificial light and indirect skylight do not enter this query.
+
+World derives `ObjectStateView::solarDaylight`, `solarExposed` and `running`;
+the behavior's existing generator-named interval fields carry its source ledger.
+`IsSolarDaytime` uses exact dawn/dusk boundaries independently of the rounded
+daylight ratio. Power separately gates enabled/broken/active status.
+Preparation and spending use private World wrappers; previews are read-only.
+See [renewable accounting and state validation](renewable_power_design.md).
 
 ## Grid machines and generators
 

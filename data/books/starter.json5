@@ -7,7 +7,9 @@
    benefits:[{skill:'melee',first_level:1,last_level:3,multiplier:11000}]},
   {type:'book',id:'workshop_primer_text',name:'The Neighborhood Workshop',study_work:100,
    recipes:['make_coil_spear'],benefits:[
-     {skill:'fabrication',first_level:1,last_level:3,direct_xp:20,theory_xp:100,multiplier:20000},
+      {skill:'fabrication',first_level:1,last_level:3,direct_xp:20,theory_xp:100,multiplier:20000},
+      {skill:'electronics',first_level:1,last_level:3,direct_xp:20,multiplier:15000},
+      {skill:'mechanics',first_level:1,last_level:4,direct_xp:20,multiplier:15000},
    ]},
   {type:'book',id:'salvage_notes_text',name:'Notes from the Salvage Bench',study_work:100,
    recipes:['make_coil_spear'],benefits:[

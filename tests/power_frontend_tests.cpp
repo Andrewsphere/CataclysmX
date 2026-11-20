@@ -1,8 +1,11 @@
 #include "client/power_view.h"
+#include "client/tile_inspection.h"
+#include "core/ratio.h"
 #include "network/wire.h"
 #include "power/power_system.h"
 #include <catch2/catch_test_macros.hpp>
 #include <EASTL/utility.h>
+#include <initializer_list>
 
 namespace {
 using namespace cataclysmx;
@@ -17,6 +20,77 @@ const ContentCatalog& PowerContent() {
 }
 ItemTypeId PowerItem(eastl::string_view id) {
     const auto item = PowerContent().FindItem(id); REQUIRE(item.value != 0); return item;
+}
+
+TEST_CASE("Solar kits use ordinary power workshop placement without packing", "[power][ui][solar]") {
+    Server server(PowerContent()); auto& world = server.GetWorld();
+    const auto kit = Take(world.CreateItem(PowerItem("solar_generator_kit"), ItemLocation::Carried(server.GetPlayer())));
+    const auto view = server.View(1);
+    PowerWorkshop workshop; workshop.Open(view);
+    workshop.Handle({"p"}, view, PowerContent());
+    const auto place = workshop.Handle({"Enter"}, view, PowerContent()); REQUIRE(place);
+    CHECK(place->kind == CommandKind::place_power_object);
+    CHECK(place->item == world.GetItem(kit)->id); CHECK(place->otherItem == 0);
+    CHECK(ValidCommandShape(*place));
+    const auto& definition = PowerContent().GetObject(PowerContent().GetItem(PowerItem("solar_generator_kit")).placedObject);
+    CHECK(definition.behavior == ObjectBehaviorKind::Solar);
+    CHECK(definition.packingItem.value == 0); CHECK_FALSE(definition.movable);
+}
+
+TEST_CASE("Solar inspection and grid presentation share owned local and LAN values", "[power][ui][network][solar]") {
+    const auto& content = PowerContent();
+    const auto type = content.FindObject("solar_generator_station"); REQUIRE(type.value != 0);
+    const auto peak = content.GetObject(type).solar.peakOutputPerTick;
+    Server server(content); PlayerInspection inspection;
+    inspection.requestId = 1; inspection.view = server.View(0); inspection.cursor = inspection.view.player_position;
+    inspection.mapItems.resize(1);
+    auto& cell = inspection.view.cells[0];
+    cell.object = 123; cell.objectAppearance.kind = ObjectKind::Generic; cell.objectAppearance.type = type;
+    cell.overlayVisibility = Visibility::Visible;
+    auto& d = inspection.details;
+    d.object = cell.object; d.objectType = type; d.objectKind = ObjectKind::Generic;
+    d.enabled = true; d.machine = true;
+    for (const unsigned state : {0u, 1u, 2u, 3u, 4u, 5u, 6u}) {
+        inspection.view.tick = state == 2 ? powerDayTicks * 10 / 24 : state == 4 ? powerDayTicks * 22 / 24 : 0;
+        d.runRequested = state != 0; d.solarExposed = state != 1;
+        d.enabled = state != 5; d.broken = state == 6;
+        d.solarDaylight = SolarDaylightRatio(inspection.view.tick);
+        d.running = d.runRequested && d.solarExposed && IsSolarDaytime(inspection.view.tick);
+        Vector<String> local;
+        DescribeTile(content, inspection.view, inspection.cursor, d, local);
+        const char* status = state == 0 ? "Stopped" : state == 1 ? "Covered" : state == 2 ? "Nighttime"
+            : state == 5 ? "Disabled" : state == 6 ? "Broken" : "Generating";
+        bool statusShown = false, factorShown = false, currentShown = false;
+        for (const auto& line : local) {
+            statusShown |= line.find(String("Solar: ") + status + " | Peak " + UnsignedText(peak)) != String::npos;
+            factorShown |= line.find("Daylight " + UnsignedText(d.solarDaylight) + "/" + UnsignedText(ratioScale)) != String::npos;
+            currentShown |= line.find("Current " + UnsignedText(d.enabled && !d.broken && d.running
+                ? std::uint64_t{peak} * d.solarDaylight : 0)
+                + "/" + UnsignedText(ratioScale) + " EU/tick") != String::npos;
+            CHECK(line.find("Energy 0/0") == String::npos);
+        }
+        CHECK(statusShown); CHECK(factorShown); CHECK(currentShown);
+        namespace wire = cataclysmx::network::wire;
+        wire::Writer writer; REQUIRE(writer.Inspection(inspection));
+        PlayerInspection decoded; wire::Reader reader{{writer.bytes.data(), writer.bytes.size()}};
+        REQUIRE(reader.Inspection(decoded)); REQUIRE(reader.Done());
+        CHECK(wire::ValidInspectionDefinitions(decoded, content));
+        Vector<String> remote;
+        DescribeTile(content, decoded.view, decoded.cursor, decoded.details, remote);
+        CHECK(remote == local);
+    }
+    auto& view = inspection.view;
+    view.currentPower.emplace();
+    view.currentPower->grid = PowerGridId{7};
+    view.currentPower->solarOutputAvailable = 33; view.currentPower->generatorOutputAvailable = 44;
+    view.currentPower->runningSolar = 2; view.currentPower->runningGenerators = 3;
+    PowerWorkshop workshop; workshop.Open(view); Vector<String> lines; workshop.Describe(view, content, lines);
+    bool outputsShown = false, countsShown = false;
+    for (const auto& line : lines) {
+        outputsShown |= line.find("Solar output 33 | Fueled output 44") != String::npos;
+        countsShown |= line.find("Running solar 2 | Running fueled generators 3") != String::npos;
+    }
+    CHECK(outputsShown); CHECK(countsShown);
 }
 
 TEST_CASE("Meter eligibility follows carried ownership and view layer without debug cutoff", "[power][view]") {

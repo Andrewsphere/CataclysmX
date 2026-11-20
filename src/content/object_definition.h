@@ -9,7 +9,7 @@
 
 namespace cataclysmx {
 
-enum class ObjectBehaviorKind { None, CraftingMachine, Generator, GridBattery, Forge };
+enum class ObjectBehaviorKind { None, CraftingMachine, Generator, GridBattery, Forge, Solar };
 
 struct CraftingMachineDefinition {
     ItemTypeId input{};
@@ -29,6 +29,11 @@ struct GeneratorDefinition {
     std::uint32_t energyPerFuel = 0;
     std::uint32_t outputPerTick = 0;
     bool operator==(const GeneratorDefinition&) const = default;
+};
+
+struct SolarDefinition {
+    std::uint32_t peakOutputPerTick = 0;
+    bool operator==(const SolarDefinition&) const = default;
 };
 
 struct ForgeFuelDefinition {
@@ -63,6 +68,7 @@ struct ObjectDefinition {
     std::uint32_t craftingEnergyPerWork = 0; // ratioScale energy per base work; zero is passive.
     ItemTypeId packingItem{}; // Protected original equipment; zero denotes a fixed fixture.
     ForgeDefinition forge;
+    SolarDefinition solar;
     bool operator==(const ObjectDefinition&) const = default;
 };
 

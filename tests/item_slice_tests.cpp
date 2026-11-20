@@ -123,7 +123,7 @@ TEST_CASE("Town slice publishes sixty complete current definitions and retires t
     CHECK_FALSE(flag.domains.Contains(FlagDomain::Terrain));
     CHECK_FALSE(flag.domains.Contains(FlagDomain::Object));
     CHECK_FALSE(flag.description.empty());
-    CHECK(content.ItemCount() == 203); // Previous 181 plus eleven forging and eleven electrical items.
+    CHECK(content.ItemCount() == 212); // Workshop catalog plus nine renewable-power items.
     for (const char* name : {"wiring_kit", "portable_fuel_generator", "generator_fuel_packet"}) {
         CAPTURE(name);
         REQUIRE(content.FindItem(name).value);

@@ -1,5 +1,6 @@
 #include "network/wire.h"
 #include "power/power_system.h"
+#include "core/ratio.h"
 #include <catch2/catch_test_macros.hpp>
 #include <EASTL/utility.h>
 #include <initializer_list>
@@ -125,6 +126,7 @@ TEST_CASE("Power view codec preserves meter inspection and rejects unauthorized 
     p.grid = PowerGridId{1234567890123}; p.mainsAvailable = true;
     p.batteryEnergy = 11; p.batteryCapacity = 100; p.generatorOutputAvailable = 25;
     p.batteries = 2; p.runningGenerators = 1; p.runningMachines = 3; p.waitingMachines = 4; p.unloadedDevices = 5;
+    p.solarOutputAvailable = 33; p.runningSolar = 2;
     view.cells[0].powerGridId = p.grid->value;
     wire::Writer writer; REQUIRE(writer.View(view));
     WorldView decoded; wire::Reader reader{{writer.bytes.data(), writer.bytes.size()}};
@@ -132,9 +134,10 @@ TEST_CASE("Power view codec preserves meter inspection and rejects unauthorized 
     CHECK(decoded.currentPower->grid == p.grid); CHECK(decoded.currentPower->mainsAvailable);
     CHECK(decoded.currentPower->batteryEnergy == 11); CHECK(decoded.currentPower->batteryCapacity == 100);
     CHECK(decoded.currentPower->generatorOutputAvailable == 25); CHECK(decoded.currentPower->unloadedDevices == 5);
+    CHECK(decoded.currentPower->solarOutputAvailable == 33); CHECK(decoded.currentPower->runningSolar == 2);
     CHECK(decoded.cells == view.cells);
     auto bad = writer.bytes;
-    bad[bad.size() - 56] = 255; // Strict presence boolean, followed by meter data and the empty station count.
+    bad[bad.size() - 68] = 255; // Strict presence boolean, followed by meter data and the empty station count.
     wire::Reader invalidPresence{{bad.data(), bad.size()}};
     CHECK_FALSE(invalidPresence.View(decoded));
     wire::Reader truncated{{writer.bytes.data(), writer.bytes.size() - 1}};
@@ -143,6 +146,12 @@ TEST_CASE("Power view codec preserves meter inspection and rejects unauthorized 
     wire::Writer noGrid; CHECK_FALSE(noGrid.View(invalid));
     invalid = view; invalid.currentPower->batteryEnergy = 101;
     wire::Writer overCapacity; CHECK_FALSE(overCapacity.View(invalid));
+    for (const bool output : {false, true}) {
+        invalid = view; invalid.currentPower.emplace();
+        if (output) invalid.currentPower->solarOutputAvailable = 1;
+        else invalid.currentPower->runningSolar = 1;
+        wire::Writer orphanSolar; CHECK_FALSE(orphanSolar.View(invalid));
+    }
 }
 
 TEST_CASE("Power result wire validation distinguishes refusals from committed work", "[power][network]") {
@@ -242,5 +251,84 @@ TEST_CASE("Powered object inspection transports generator and funded operation s
     wire::Writer action; REQUIRE(action.CommandValue(refuel));
     Command command; wire::Reader actionReader{{action.bytes.data(), action.bytes.size()}};
     REQUIRE(actionReader.CommandValue(command)); CHECK(command.interaction.action == ObjectAction::Refuel);
+}
+
+TEST_CASE("Solar inspection transports bounded derived state and enforces content-dependent defaults", "[power][network][inspection][solar]") {
+    const auto& content = PowerNetworkContent();
+    const auto solar = content.FindObject("solar_generator_station"); REQUIRE(solar.value != 0);
+    const auto peak = content.GetObject(solar).solar.peakOutputPerTick;
+    Server server(content); PlayerInspection inspection;
+    inspection.requestId = 1; inspection.view = server.View(0); inspection.cursor = inspection.view.player_position;
+    inspection.view.stations.clear();
+    inspection.mapItems.resize(1);
+    auto& cell = inspection.view.cells[0];
+    // Preserve the player cell's actor/player identity while adding the inspected object.
+    cell.object = 123; cell.objectAppearance.kind = ObjectKind::Generic;
+    cell.objectAppearance.type = solar; cell.overlayVisibility = Visibility::Visible;
+    auto& d = inspection.details;
+    d.object = cell.object; d.objectType = cell.objectAppearance.type; d.objectKind = ObjectKind::Generic;
+    d.enabled = true; d.machine = true; d.runRequested = true; d.running = true;
+    d.solarDaylight = SolarDaylightRatio(inspection.view.tick); d.solarExposed = true;
+    d.generatorIntervalInitialized = true; d.generatorOutputRemaining = 25;
+    REQUIRE(d.generatorOutputRemaining <= SolarIntervalAllowance(inspection.view.tick, peak));
+    wire::Writer writer; REQUIRE(writer.Inspection(inspection));
+    PlayerInspection decoded; wire::Reader reader{{writer.bytes.data(), writer.bytes.size()}};
+    REQUIRE(reader.Inspection(decoded)); REQUIRE(reader.Done());
+    REQUIRE(wire::ValidInspectionDefinitions(decoded, content));
+    CHECK(decoded.details.solarDaylight == d.solarDaylight); CHECK(decoded.details.solarExposed);
+    CHECK(decoded.details.generatorOutputRemaining == 25); CHECK(decoded.details.running);
+    for (std::size_t size = 0; size < writer.bytes.size(); ++size) {
+        wire::Reader truncated{{writer.bytes.data(), size}}; CHECK_FALSE(truncated.Inspection(decoded));
+    }
+    auto malformed = writer.bytes;
+    malformed[malformed.size() - 12] = 2; // Exposure is followed by forge fuel/readiness and item count.
+    wire::Reader exposure{{malformed.data(), malformed.size()}}; CHECK_FALSE(exposure.Inspection(decoded));
+    malformed = writer.bytes;
+    for (unsigned i = 0; i < 4; ++i) malformed[malformed.size() - 16 + i] = 255;
+    wire::Reader daylight{{malformed.data(), malformed.size()}}; CHECK_FALSE(daylight.Inspection(decoded));
+    for (const unsigned field : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u}) {
+        auto invalid = inspection;
+        auto& state = invalid.details;
+        if (field == 0) state.energy = state.energyCapacity = 1;
+        if (field == 1) state.hasJob = true;
+        if (field == 2) state.fundedTicks = 1;
+        if (field == 3) state.running = false;
+        if (field == 4) state.generatorOutputRemaining = std::uint64_t{peak} * powerQuantumTicks + 1;
+        if (field == 5) state.gridPowered = true;
+        if (field == 6) state.objectType = content.FindObject("generator");
+        if (field == 7) state.solarDaylight += 1;
+        if (field == 8) state.generatorOutputRemaining = SolarIntervalAllowance(state.generatorIntervalStart, peak) + 1;
+        CAPTURE(field);
+        CHECK_FALSE(wire::ValidInspectionDefinitions(invalid, content));
+    }
+    d.solarDaylight = ratioScale + 1;
+    wire::Writer excessive; CHECK_FALSE(excessive.Inspection(inspection));
+    const Tick dawn = powerDayTicks * 22 / 24;
+    for (const Tick tick : {dawn, dawn + 1, dawn + 215, dawn + 216}) {
+        inspection.view.tick = tick;
+        d.solarDaylight = SolarDaylightRatio(tick);
+        d.generatorIntervalStart = PowerIntervalStart(tick);
+        d.generatorOutputRemaining = SolarIntervalAllowance(tick, peak);
+        d.running = true;
+        REQUIRE(IsSolarDaytime(tick));
+        if (tick < dawn + 216) CHECK(d.solarDaylight == 0);
+        wire::Writer dawnWriter; REQUIRE(dawnWriter.Inspection(inspection));
+        wire::Reader dawnReader{{dawnWriter.bytes.data(), dawnWriter.bytes.size()}};
+        REQUIRE(dawnReader.Inspection(decoded)); REQUIRE(dawnReader.Done());
+        CHECK(wire::ValidInspectionDefinitions(decoded, content));
+        CHECK(decoded.details.running);
+    }
+    inspection.view.tick = powerDayTicks * 10 / 24;
+    d.generatorIntervalStart = PowerIntervalStart(inspection.view.tick);
+    d.generatorOutputRemaining = 0;
+    d.solarDaylight = SolarDaylightRatio(inspection.view.tick); d.running = false;
+    CHECK(wire::ValidInspectionDefinitions(inspection, content));
+    d.solarExposed = false;
+    CHECK(wire::ValidInspectionDefinitions(inspection, content));
+    d.runRequested = false; d.generatorOutputRemaining = 0;
+    CHECK(wire::ValidInspectionDefinitions(inspection, content));
+    d.machine = false; d.gridPowered = false; d.generatorIntervalInitialized = false;
+    d.generatorIntervalStart = 0; d.solarDaylight = 1;
+    wire::Writer nonMachine; CHECK_FALSE(nonMachine.Inspection(inspection));
 }
 }

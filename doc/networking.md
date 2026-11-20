@@ -1,9 +1,15 @@
 # LAN networking API
 
-## Current protocol 26
+## Current protocol 27
 
-The current protocol constant is `0x43584e1a`. Peers need matching builds and
-content. Protocol 26 adds per-skill ceiling semantics without changing learning
+The current protocol constant is `0x43584e1b`. Peers need matching builds and
+content. Protocol 27 adds separate solar output/counts to meter snapshots and
+derived daylight/exposure to object inspection. Catalog-aware decoding checks
+solar's canonical empty fuel/job fields, interval allowance, clock-derived
+daylight and run state. Solar definitions and behavior semantics participate in
+content fingerprints. See [renewable power](renewable_power_design.md).
+
+Protocol 26 added per-skill ceiling semantics without changing learning
 view byte layout. Structural decoding permits zero required XP only with canonical
 cap accounting and learned level 1–10. Catalog-aware validation requires zero
 required XP exactly at `maxLevel`, the correct threshold below it, and rejects

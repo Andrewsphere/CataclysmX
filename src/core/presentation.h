@@ -44,6 +44,8 @@ struct TileInspection {
     Tick generatorIntervalStart = 0;
     bool generatorIntervalInitialized = false;
     ForgeState forge;
+    std::uint32_t solarDaylight = 0;
+    bool solarExposed = false;
     Vector<InspectionItem> items; // Preorder, stored roots at depth 1; ground roots at 0.
 };
 enum class InspectionStatus : std::uint8_t { Complete, TooLarge, Unavailable, Disconnected };

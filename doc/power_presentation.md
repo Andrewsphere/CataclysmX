@@ -1,5 +1,24 @@
 # Power commands and presentation
 
+## Solar and wood-gas extension
+
+The workshop's existing placement action accepts `solar_generator_kit` and
+`woodgas_generator_kit`. Both install fixed, blocking, sight-transparent equipment;
+grabbing is disabled. Start/Stop control solar; wood gas also offers Refuel using
+one whole `prepared_wood` portion. Both start stopped, with no initial stored energy.
+
+Meter views distinguish available solar output and started solar installations
+from fueled-generator output/counts. Tile inspection shows peak/current solar rate,
+the clock-derived daylight fraction and direct sky exposure, with stopped,
+disabled, broken, covered, nighttime or generating status. Daylight is a power
+rule independent of rendered sky brightness. Shared terminal/SDL and local/LAN
+headless paths consume the same snapshots.
+
+Protocol **27** adds `PowerInspection::solarOutputAvailable` and `runningSolar`,
+plus `solarDaylight`/`solarExposed` in tile inspection. Solar reuses the existing
+source-interval inspection fields. Fields are catalog-validated and do not expose
+future mains cutoff. See [the accepted contract and roster](renewable_power_design.md).
+
 `CommandKind::wire_grid` uses `Command::item` for the carried kit persistent ID
 and `powerBounds` for an inclusive single-layer rectangle. The protocol admits
 at most `maxPowerWiringExtent` (64) tiles along either axis; authority also applies

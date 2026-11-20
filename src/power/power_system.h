@@ -57,7 +57,7 @@ private:
         ItemCapabilityId store{};
         std::uint64_t available = 0;
         std::uint64_t spent = 0;
-        bool generator = false;
+        PowerDeviceKind kind = PowerDeviceKind::Battery;
         bool rechargeable = false;
     };
     SavedPowerGrid* Grid(PowerGridId id);
@@ -65,11 +65,13 @@ private:
     bool Mains(const SavedPowerGrid& grid) const;
     bool Battery(const SavedPowerDevice& device, Source& output) const;
     std::uint64_t GeneratorAvailable(ObjectHandle object) const;
+    std::uint64_t SolarAvailable(ObjectHandle object) const;
     void GatherSources() const;
     PowerOutcome Plan(eastl::span<const PowerDemand> demands) const;
     void CommitPlan();
     void ChargeSurplus();
     bool HasWork() const;
+    bool HasSolarHold() const;
 
     World& world_;
     SavedPowerState state_;

@@ -23,6 +23,8 @@ ContentResult<ContentCatalog> LoadPower(eastl::string_view fields,
 constexpr eastl::string_view batteryObject = "{id:'station',name:'Station',behavior:'grid_battery'}";
 constexpr eastl::string_view generatorObject = R"({id:'generator',name:'Generator',behavior:'generator',
     generator:{fuel_item:'part',fuel_capacity:6000,energy_per_fuel:2000,output_per_tick:4}})";
+constexpr eastl::string_view solarObject = R"({id:'solar',name:'Solar',behavior:'solar',
+    movable:false,solar:{peak_output_per_tick:1}})";
 constexpr eastl::string_view gridMachine = R"({id:'machine',name:'Machine',behavior:'crafting_machine',
     machine:{input:'part',input_count:1,output:'part',output_count:1,duration_ticks:100,
       energy_capacity:0,energy_per_tick:2,grid_powered:true}})";
@@ -77,6 +79,68 @@ TEST_CASE("Grid crafting and machine power are explicit without a local store", 
     CHECK(item.wiringTilesPerMaterial == 16);
     CHECK(LoadPower("wiring_tiles_per_material:16").has_value());
     CHECK(item.placedObject.value == 0);
+}
+
+TEST_CASE("Solar schema resolves fixed installations and rejects malformed configurations", "[content][power-content][solar]") {
+    const auto loaded = LoadPower("placed_object:'solar'", solarObject);
+    REQUIRE(loaded);
+    const auto& definition = loaded->GetObject(loaded->FindObject("solar"));
+    CHECK(definition.behavior == ObjectBehaviorKind::Solar);
+    CHECK(definition.solar.peakOutputPerTick == 1);
+    CHECK(definition.packingItem.value == 0);
+    CHECK(loaded->GetItem(loaded->FindItem("part")).placedObject == loaded->FindObject("solar"));
+    for (const auto config : {"null", "{}", "{peak_output_per_tick:0}", "{peak_output_per_tick:-1}",
+            "{peak_output_per_tick:1.5}", "{peak_output_per_tick:true}", "{peak_output_per_tick:4294967296}",
+            "{peak_output_per_tick:1,extra:1}", "{peak_output_per_tick:1,peak_output_per_tick:2}"}) {
+        INFO(config);
+        String object = "{id:'solar',name:'Solar',behavior:'solar',solar:";
+        object += config; object += '}';
+        Diagnostics diagnostics;
+        CHECK_FALSE(LoadPower({}, object, &diagnostics));
+        CHECK_FALSE(diagnostics.Empty());
+    }
+    for (const auto object : {
+        "{id:'solar',name:'Solar',behavior:'solar'}",
+        "{id:'solar',name:'Solar',behavior:'none',solar:{peak_output_per_tick:1}}",
+        "{id:'solar',name:'Solar',behavior:'generator',solar:{peak_output_per_tick:1}}",
+        "{id:'solar',name:'Solar',behavior:'solar',solar:{peak_output_per_tick:1},generator:{}}",
+        "{id:'solar',name:'Solar',behavior:'solar',solar:{peak_output_per_tick:1},machine:{}}",
+        "{id:'solar',name:'Solar',behavior:'solar',solar:{peak_output_per_tick:1},forge:{}}",
+        "{id:'solar',name:'Solar',behavior:'solar',solar:{peak_output_per_tick:1},packing_item:'part'}",
+        "{id:'solar',name:'Solar',behavior:'solar',solar:{peak_output_per_tick:1},capacity_volume_ml:1}",
+        "{id:'solar',name:'Solar',behavior:'solar',solar:{peak_output_per_tick:1},crafting_power:{store:'grid',energy_per_work:1}}"}) {
+        INFO(object);
+        CHECK_FALSE(LoadPower({}, object));
+    }
+}
+
+TEST_CASE("Solar export round trips its peak and fingerprints distinguish configuration", "[content][power-content][solar][fingerprint]") {
+    const auto loaded = LoadPower({}, solarObject);
+    REQUIRE(loaded);
+    const auto canonical = WriteCombatContent(*loaded);
+    const auto* objects = canonical.Find("objects"); REQUIRE(objects);
+    CHECK(objects->At(0).GetString("behavior") == eastl::string_view("solar"));
+    const auto* config = objects->At(0).Find("solar"); REQUIRE(config);
+    CHECK(config->GetUnsigned("peak_output_per_tick") == 1);
+    DataObject document; document.SetUnsigned("format_version", 1); document.Set("objects", *objects);
+    const auto encoded = EncodeDataObject(document);
+    const ContentSource source{"solar-export.json", {encoded.data(), encoded.size()}};
+    constexpr ContentSource definitions{"solar-definitions.json5", R"({format_version:1,definitions:[
+        {type:'item',id:'part',name:'Part',mass_g:1,volume_ml:1},
+        {type:'item',id:'copper_wire',name:'Copper wire',mass_g:200,volume_ml:200},
+        {type:'tool_trait',id:'soldering',name:'Soldering'}]})"};
+    const ContentSource sources[] = {source, definitions};
+    const auto restored = LoadContent({sources, 2}); REQUIRE(restored);
+    CHECK(restored->GetObject(restored->FindObject("solar")) == loaded->GetObject(loaded->FindObject("solar")));
+    CHECK(network::ContentFingerprint(*restored) == network::ContentFingerprint(*loaded));
+    // Compare the same item roster so only the behavior/configuration changes.
+    const auto changed = LoadPower({}, "{id:'solar',name:'Solar',behavior:'solar',movable:false,solar:{peak_output_per_tick:4294967295}}");
+    REQUIRE(changed);
+    CHECK(changed->GetObject(changed->FindObject("solar")).solar.peakOutputPerTick == UINT32_MAX);
+    CHECK(network::ContentFingerprint(*changed) != network::ContentFingerprint(*loaded));
+    const auto passive = LoadPower({}, "{id:'solar',name:'Solar',behavior:'none',movable:false}");
+    REQUIRE(passive);
+    CHECK(network::ContentFingerprint(*passive) != network::ContentFingerprint(*loaded));
 }
 
 TEST_CASE("Power item schema rejects invalid references rates and conflicting stores", "[content][power-content]") {

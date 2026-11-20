@@ -153,6 +153,7 @@ eastl::optional<PowerDeviceKind> PowerRole(const ObjectDefinition* definition) {
     if (!definition) { return eastl::nullopt; }
     switch (definition->behavior) {
     case ObjectBehaviorKind::Generator: return PowerDeviceKind::Generator;
+    case ObjectBehaviorKind::Solar: return PowerDeviceKind::Solar;
     case ObjectBehaviorKind::GridBattery: return PowerDeviceKind::Battery;
     case ObjectBehaviorKind::CraftingMachine:
         if (definition->machine.gridPowered) { return PowerDeviceKind::Machine; }
@@ -170,11 +171,13 @@ bool MatchesPowerObject(const PowerSystem& power, const ContentCatalog& content,
     if (kind.has_value() != device.has_value()) { return false; }
     if (!kind) { return true; }
     const bool hold = enabled && !broken && view.runRequested && *kind != PowerDeviceKind::Battery
-        && (*kind == PowerDeviceKind::Generator || view.hasJob);
+        && (*kind == PowerDeviceKind::Generator || *kind == PowerDeviceKind::Solar || view.hasJob);
     if (device->position != position || device->kind != *kind || device->workshopHold != hold) { return false; }
-    if (*kind == PowerDeviceKind::Generator
+    if ((*kind == PowerDeviceKind::Generator || *kind == PowerDeviceKind::Solar)
         && (view.generatorIntervalStart > now || (device->chargeProcessed
             && (!view.generatorIntervalInitialized || device->chargeInterval > view.generatorIntervalStart)))) { return false; }
+    if (*kind == PowerDeviceKind::Solar && view.generatorOutputRemaining
+        > SolarIntervalAllowance(view.generatorIntervalStart, content.GetObject(type).solar.peakOutputPerTick)) { return false; }
     return true;
 }
 
@@ -188,6 +191,12 @@ bool ValidPowerArchive(const PowerSystem& power, const ContentCatalog& content, 
         view.hasJob = object.state.GetBoolean("has_job").value_or(false);
         view.generatorIntervalStart = object.state.GetUnsigned("generator_interval_start").value_or(0);
         view.generatorIntervalInitialized = object.state.GetBoolean("generator_interval_initialized").value_or(false);
+        const auto* definition = content.TryGetObject(object.type);
+        if (definition && definition->behavior == ObjectBehaviorKind::Solar) {
+            view.generatorIntervalStart = object.state.GetUnsigned("interval_start").value_or(0);
+            view.generatorIntervalInitialized = object.state.GetBoolean("interval_initialized").value_or(false);
+            view.generatorOutputRemaining = object.state.GetUnsigned("output_remaining").value_or(0);
+        }
         if (!MatchesPowerObject(power, content, object.id, object.position, object.type,
                 object.enabled, object.broken, view, now)) { return false; }
         if (power.FindDevice(object.id)) { ++found; }
@@ -720,6 +729,9 @@ public:
     }
 
     void MarkGeometryDirty(ChunkCoord position) {
+        // Solar supply follows geometry, not lighting. All geometry mutations
+        // (including overhead objects and residency changes) wake one power pass.
+        powerSystem.Invalidate();
         ++geometryRevision;
         opticalChanges.insert(position);
         for (auto& observer : observers) {
@@ -2490,6 +2502,7 @@ PowerActionResult World::PlacePowerObject(ActorHandle actorHandle, ItemHandle eq
     const auto* placed = impl_->content.TryGetObject(definition.placedObject);
     if (!placed || (placed->behavior != ObjectBehaviorKind::GridBattery
         && placed->behavior != ObjectBehaviorKind::Generator
+        && placed->behavior != ObjectBehaviorKind::Solar
         && !(placed->behavior == ObjectBehaviorKind::CraftingMachine && placed->machine.gridPowered))) {
         return {PowerActionOutcome::InvalidEquipment};
     }
@@ -3828,6 +3841,18 @@ bool World::BlocksSight(TileCoord position) const {
     return definition && definition->blocksSight;
 }
 
+bool World::HasDirectSkyExposure(TileCoord position) const {
+    if (!ValidPosition(position) || !GetTile(position)) { return false; }
+    // The supporting tile is an incident top surface, not an obstruction.
+    // Every face above it must be open and every overhead cell transparent,
+    // matching direct-sky propagation without consulting the lighting cache.
+    for (TileCoord lower = position; lower.y < world_max_y; ++lower.y) {
+        const TileCoord upper{lower.x, lower.z, lower.y + 1};
+        if (!OpenVerticalFace(*this, lower, upper) || BlocksSight(upper)) { return false; }
+    }
+    return true;
+}
+
 std::uint64_t World::GetObjectUsedVolume(ObjectHandle handle) const {
     return GetObject(handle) ? impl_->ObjectVolume(handle) : 0;
 }
@@ -3955,9 +3980,14 @@ WorldResult<ObjectMoveResult> World::TryObjectStep(ActorHandle actor, ObjectHand
 eastl::optional<ObjectStateView> World::DescribeObjectState(ObjectHandle handle) const {
     const auto* object = GetObject(handle);
     if (!object || !object->type.value) { return eastl::nullopt; }
-    if (object->behavior_) { return object->behavior_->Describe(); }
     ObjectStateView view;
-    view.behavior = impl_->content.GetObject(object->type).behavior;
+    if (object->behavior_) { view = object->behavior_->Describe(); }
+    else { view.behavior = impl_->content.GetObject(object->type).behavior; }
+    if (view.behavior == ObjectBehaviorKind::Solar) {
+        view.solarDaylight = SolarDaylightRatio(GetTick());
+        view.solarExposed = HasDirectSkyExposure(object->position);
+        view.running = view.runRequested && view.solarExposed && IsSolarDaytime(GetTick());
+    }
     return view;
 }
 
@@ -3989,6 +4019,23 @@ WorldResult<void> World::SpendGeneratorEnergy(ObjectHandle handle, std::uint64_t
     auto* object = Live(impl_->objects, handle);
     if (!object || !object->behavior_) { return eastl::unexpected(WorldError::invalid_handle); }
     const auto result = object->behavior_->SpendGeneratorEnergy(energy);
+    if (result) { impl_->MarkDirty(ChunkOf(object->position), false); }
+    return result;
+}
+WorldResult<void> World::PrepareSolarInterval(ObjectHandle handle, Tick now) {
+    auto* object = Live(impl_->objects, handle);
+    if (!object || !object->behavior_) { return eastl::unexpected(WorldError::invalid_handle); }
+    const auto& definition = impl_->content.GetObject(object->type);
+    const auto allowance = HasDirectSkyExposure(object->position)
+        ? SolarIntervalAllowance(now, definition.solar.peakOutputPerTick) : 0;
+    const auto result = object->behavior_->PrepareSolarInterval(now, allowance);
+    if (result) { impl_->MarkDirty(ChunkOf(object->position), false); }
+    return result;
+}
+WorldResult<void> World::SpendSolarEnergy(ObjectHandle handle, std::uint64_t energy) {
+    auto* object = Live(impl_->objects, handle);
+    if (!object || !object->behavior_) { return eastl::unexpected(WorldError::invalid_handle); }
+    const auto result = object->behavior_->SpendSolarEnergy(energy);
     if (result) { impl_->MarkDirty(ChunkOf(object->position), false); }
     return result;
 }

@@ -61,6 +61,8 @@ struct ObjectStateView {
     Tick generatorIntervalStart = 0;
     bool generatorIntervalInitialized = false;
     ForgeState forge;
+    std::uint32_t solarDaylight = 0; // ratioScale; derived by World, never saved.
+    bool solarExposed = false; // Direct sky geometry, independent of rendered light.
 };
 
 // Callback-scoped mutation services. World implements the atomic transactions
@@ -97,6 +99,8 @@ public:
     virtual WorldResult<void> SetEnergy(std::uint64_t energy) = 0;
     virtual WorldResult<void> PrepareGeneratorInterval(Tick now);
     virtual WorldResult<void> SpendGeneratorEnergy(std::uint64_t energy);
+    virtual WorldResult<void> PrepareSolarInterval(Tick now, std::uint64_t allowance);
+    virtual WorldResult<void> SpendSolarEnergy(std::uint64_t energy);
     virtual WorldResult<void> FundGridWork(Tick ticks);
     // Only forge behavior accepts this state. World preflights complete transactions.
     virtual WorldResult<void> SetForgeState(ForgeState state);

@@ -44,7 +44,8 @@ bool ValidPowerView(const WorldView& v) {
         const auto& p = *v.currentPower;
         if ((p.grid && !p.grid->value) || p.batteryEnergy > p.batteryCapacity) return false;
         if (!p.grid && (p.mainsAvailable || p.batteryEnergy || p.batteryCapacity || p.generatorOutputAvailable
-            || p.batteries || p.runningGenerators || p.runningMachines || p.waitingMachines || p.unloadedDevices)) return false;
+            || p.batteries || p.runningGenerators || p.runningMachines || p.waitingMachines || p.unloadedDevices
+            || p.solarOutputAvailable || p.runningSolar)) return false;
     } else {
         for (const auto& cell : v.cells) if (cell.powerGridId) return false;
     }
@@ -58,6 +59,7 @@ void WritePower(Writer& w, const WorldView& v) {
     w.U64(p.grid ? p.grid->value : 0); w.U8(p.mainsAvailable);
     w.U64(p.batteryEnergy); w.U64(p.batteryCapacity); w.U64(p.generatorOutputAvailable);
     w.U32(p.batteries); w.U32(p.runningGenerators); w.U32(p.runningMachines); w.U32(p.waitingMachines); w.U32(p.unloadedDevices);
+    w.U64(p.solarOutputAvailable); w.U32(p.runningSolar);
 }
 bool ReadBool(Reader& r, bool& value) {
     std::uint8_t byte;
@@ -1259,7 +1261,8 @@ bool Reader::View(WorldView& v, bool inspection) {
         v.currentPower.emplace(); auto& p = *v.currentPower; std::uint64_t grid;
         if (!U64(grid) || !ReadBool(*this, p.mainsAvailable) || !U64(p.batteryEnergy) || !U64(p.batteryCapacity)
             || !U64(p.generatorOutputAvailable) || !U32(p.batteries) || !U32(p.runningGenerators)
-            || !U32(p.runningMachines) || !U32(p.waitingMachines) || !U32(p.unloadedDevices)) return false;
+            || !U32(p.runningMachines) || !U32(p.waitingMachines) || !U32(p.unloadedDevices)
+            || !U64(p.solarOutputAvailable) || !U32(p.runningSolar)) return false;
         if (grid) p.grid = PowerGridId{grid};
     }
     if (!U16(count) || count > 289) return false;
@@ -1335,8 +1338,10 @@ bool ValidDetails(const PlayerInspection& value) {
              || d.forge != ForgeState{})) ||
          (d.forge.ready && !d.forge.fuel) || (d.machine && d.forge != ForgeState{}) ||
         (!d.machine && (d.energy || d.energyCapacity || d.hasJob || d.running || d.remainingWork || d.gridPowered
-            || d.runRequested || d.fundedTicks || d.generatorOutputRemaining || d.generatorIntervalStart || d.generatorIntervalInitialized)) ||
-        d.energy > d.energyCapacity || (!d.hasJob && d.remainingWork)
+             || d.runRequested || d.fundedTicks || d.generatorOutputRemaining || d.generatorIntervalStart || d.generatorIntervalInitialized
+             || d.solarDaylight || d.solarExposed)) ||
+         d.energy > d.energyCapacity || (!d.hasJob && d.remainingWork)
+        || d.solarDaylight > ratioScale
         || (!d.generatorIntervalInitialized && (d.generatorIntervalStart || d.generatorOutputRemaining))
         || d.fundedTicks > powerQuantumTicks
         || (d.generatorIntervalInitialized && (d.generatorIntervalStart > value.view.tick
@@ -1397,6 +1402,7 @@ bool Writer::Inspection(const PlayerInspection& value) {
         if (d.machine) {
             U8(d.gridPowered); U8(d.runRequested); U64(d.fundedTicks); U64(d.generatorOutputRemaining);
             U64(d.generatorIntervalStart); U8(d.generatorIntervalInitialized);
+            U32(d.solarDaylight); U8(d.solarExposed);
         }
         U64(d.forge.fuel); U8(d.forge.ready);
     }
@@ -1424,7 +1430,8 @@ bool Reader::Inspection(PlayerInspection& value) {
             d.hasJob = job; d.running = running;
             if (!ReadBool(*this, d.gridPowered) || !ReadBool(*this, d.runRequested) || !U64(d.fundedTicks)
                 || !U64(d.generatorOutputRemaining) || !U64(d.generatorIntervalStart)
-                || !ReadBool(*this, d.generatorIntervalInitialized)) return false;
+                || !ReadBool(*this, d.generatorIntervalInitialized) || !U32(d.solarDaylight)
+                || !ReadBool(*this, d.solarExposed)) return false;
         }
         if (!U64(d.forge.fuel) || !ReadBool(*this, d.forge.ready)) return false;
     }
@@ -1452,6 +1459,14 @@ bool ValidInspectionDefinitions(const PlayerInspection& value, const ContentCata
     if (value.details.object) {
         const auto* definition = content.TryGetObject(value.details.objectType);
         if (!definition) return false;
+        const auto& d = value.details;
+        if (definition->behavior == ObjectBehaviorKind::Solar) {
+            if (!d.machine || d.gridPowered || d.energy || d.energyCapacity || d.hasJob || d.remainingWork || d.fundedTicks
+                || d.solarDaylight != SolarDaylightRatio(value.view.tick)
+                || d.running != (d.runRequested && d.solarExposed && IsSolarDaytime(value.view.tick))
+                || d.generatorOutputRemaining > SolarIntervalAllowance(d.generatorIntervalStart, definition->solar.peakOutputPerTick)
+                || (d.generatorOutputRemaining && (!d.runRequested || !d.generatorIntervalInitialized))) return false;
+        } else if (d.solarDaylight || d.solarExposed) return false;
         if (definition->behavior == ObjectBehaviorKind::Forge) {
             if (value.details.machine || value.details.forge.fuel > definition->forge.fuelCapacity) return false;
         } else if (value.details.forge != ForgeState{}) return false;

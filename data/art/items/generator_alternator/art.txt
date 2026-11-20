@@ -1,0 +1,21 @@
+@text-art 1
+@color metal #929D9E
+@color vent #617174
+@color light #B8C1BB
+@color pulley #5B6261
+@color base #68716C
+@default metal
+---
+<light>        ______________
+     .-'              `-.
+   /  <vent>/ / / / / / / /<metal>   \
+  /  <vent>/ / / / / / / /<metal>     \
+ |  |                 |   |
+ |  |  <vent>─────────────<metal>  |   |<pulley>==┐
+ |  |  <vent>─────────────<metal>  |   |<pulley> o│
+ |  |  <vent>─────────────<metal>  |   |<pulley>==┘
+  \  \ \ \ \ \ \ \ \     /
+   \_____________________/
+      │  │       │  │
+     _│__│_______│__│_
+<base>    └─────────────────┘

@@ -220,6 +220,8 @@ public:
     // not include actor occupancy, floor support or stair travel rules.
     bool BlocksMovement(TileCoord position) const;
     bool BlocksSight(TileCoord position) const;
+    // Direct vertical sky access through resident geometry; ignores light intensity.
+    bool HasDirectSkyExposure(TileCoord position) const;
     bool IsActive(TileCoord position) const;
     // Unspecified column order; each full-height column is contiguous, ascending Y.
     Vector<ChunkCoord> LoadedChunks() const;
@@ -426,6 +428,8 @@ private:
     SaveResult<void> ReconcileChunksPass(Diagnostics* diagnostics);
     WorldResult<void> PrepareGeneratorInterval(ObjectHandle object, Tick now);
     WorldResult<void> SpendGeneratorEnergy(ObjectHandle object, std::uint64_t energy);
+    WorldResult<void> PrepareSolarInterval(ObjectHandle object, Tick now);
+    WorldResult<void> SpendSolarEnergy(ObjectHandle object, std::uint64_t energy);
     WorldResult<void> FundGridMachine(ObjectHandle object, Tick ticks);
     void ElapseSegment(Tick elapsed);
     void AttachCrafting(ItemHandle item);

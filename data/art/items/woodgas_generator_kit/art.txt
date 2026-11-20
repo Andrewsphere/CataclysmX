@@ -1,0 +1,23 @@
+@text-art 1
+@color steel #89938E
+@color hopper #927960
+@color engine #A19C89
+@color filter #9C9C82
+@color pipe #5F706B
+@color base #58655F
+@default steel
+---
+<hopper>      ______
+<hopper>     /______\<engine>        _______
+<hopper>     |      |<engine>       /______/
+<hopper>     |      |<engine>       |______|
+     |      |___       │
+     \______/   \  ____│____
+      | <hopper>▒▒<steel> |<pipe>     \<engine>| ═══════ |__
+      | <hopper>▒▒<steel> |<engine>      | ═══════ |o |
+      |____|      |_________|__|
+       │ │    ┌───┐  │    │
+<pipe>       │ └────<filter>│░░░│<steel>  │    │
+       │      <filter>└───┘<steel>  │    │
+    ___│_____________│____│___
+<base>   └──────────────────────────┘

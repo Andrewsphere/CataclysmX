@@ -4,6 +4,10 @@
 workshop/printer progression remains in the [coordinating plan](urban_workshop_progression.md).
 Player controls and network values are described in [power presentation](power_presentation.md).
 
+The accepted [pass-2 renewable extension](renewable_power_design.md) adds
+clock-derived solar and an integrated prepared-wood generator. Source rates are
+accounted in absolute 100-tick batches, with solar-only nighttime wakeup at dawn.
+
 ## Ownership and APIs
 
 `World::Impl` owns `PowerSystem(world, seed)`. Construction uses the explicit seed;
@@ -99,15 +103,16 @@ with a different clock.
 
 `CanSupply(span<PowerDemand>)` and `TrySupply(...)` aggregate a batch against reusable
 source scratch. A failed preview or payment changes no authoritative state.
-Sources are mains, then generators, then batteries; finite sources use persistent
+Sources are mains, solar, fueled generators, then batteries; finite sources use persistent
 ID order. Successful commits run synchronously without callbacks that destroy,
 move, create or query/pay other equipment. Hooks may update an existing equipment
 record through `SyncObject`; they must not recursively call `ProcessEvents` or
 payment methods. This keeps the small batch transaction atomic without durable
 reservation handles. Counters/scratch may change during preview.
 
-Surplus goes to original battery items **after** the due machine batch. Each
-generator has a persisted once-per-interval surplus-pass marker. A late first
+Surplus goes to original battery items **after** the due machine batch, using the
+same source-class priority. Each solar/fueled source has a persisted
+once-per-interval surplus-pass marker. A late first
 start with available output can take its pass. Mains has an analogous grid marker.
 No surplus pass transfers battery energy into another battery. Charge uses the
 same generator fuel and allowance debit as direct supply. Repeated calls, source

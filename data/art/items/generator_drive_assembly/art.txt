@@ -1,0 +1,21 @@
+@text-art 1
+@color steel #929C98
+@color coupling #B4AD9A
+@color shaft #7B8784
+@color shadow #56625F
+@color bolt #B6B4A5
+@color base #6B7771
+@default steel
+---
+<coupling>          ___       ___
+         /   \_____/   \
+    <shaft>════<coupling>|  o  |<shaft>─┬─<coupling>|  o  |<shaft>════
+         \___/  │  \___/
+           │  ┌─┴─┐  │
+      _____│__│___│__│_____
+     /   ┌─────────────┐   \
+    /    │  <bolt>o       o<steel>  │    \
+   /_____└─────────────┘_____\
+   |  o                   o  |
+<base>   |_________________________|
+<shadow>      └──┘             └──┘

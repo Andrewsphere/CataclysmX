@@ -136,15 +136,21 @@ the old expansion loot source is now `worldgen/loot/retail.json5`.
 
 ### Catalog membership
 
-I1 preserves the existing per-pack catalogs, including dependency-only obsolete
+The I1 checkpoint preserved the existing per-pack catalogs, including dependency-only obsolete
 items and injected runtime items. Counts below describe loaded definitions, not
-new authoring or future content limits:
+new authoring or future content limits; they are the pre-renewable checkpoint:
 
 | Pack | Items | Crafting recipes | Recyclers | Tool traits | Objects | Loot pools | Buildings | Skills | Books |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | Demo | 17 | 1 | 1 | 0 | 1 | 0 | 3 | 18 | 0 |
 | FirstHouse | 197 | 33 | 67 | 13 | 23 | 40 | 4 | 18 | 4 |
 | Town | 203 | 38 | 69 | 13 | 41 | 63 | 37 | 18 | 4 |
+
+The subsequent [pass-2 renewable slice](renewable_power_design.md) adds nine items,
+six recipes, four recyclers and two objects to both FirstHouse and Town, using
+the existing semantic source owners and manifests. Demo is unaffected.
+Its `behavior:'solar'` schema requires `solar:{peak_output_per_tick:N}`; canonical
+export preserves this configuration and the shared fingerprint includes it.
 
 Source paths do not participate in the resolved network content fingerprint.
 I1 requires identical before/after fingerprints and effective definitions for

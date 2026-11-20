@@ -137,6 +137,12 @@ bool BindAbility(Command& command, const WorldView& view, const ContentCatalog& 
     return true;
 }
 void PrintCombat(const WorldView& view, const ContentCatalog& content, eastl::string_view inspection) {
+    if (inspection == "power") {
+        PowerWorkshop workshop; workshop.Open(view);
+        Vector<String> lines; workshop.Describe(view, content, lines);
+        for (const auto& line : lines) std::puts(line.c_str());
+        return;
+    }
     if (inspection == "stations") {
         for (const auto& station : view.stations) {
             const auto& definition = content.GetObject(station.type);
@@ -224,7 +230,9 @@ int RunLan(Server& server, const ContentCatalog& content, const LanOptions& opti
     struct PlannedCommand { Command command; String inspection; };
     Vector<PlannedCommand> commands;
     for (const auto& text : options.commands) {
-        if (text == "combat" || text == "styles" || text == "abilities" || text == "stations") { commands.push_back({{}, text.c_str()}); continue; }
+        if (text == "combat" || text == "styles" || text == "abilities" || text == "stations" || text == "power") {
+            commands.push_back({{}, text.c_str()}); continue;
+        }
         Command command;
         if (!ParseCommand(text, content, command)) { std::fprintf(stderr, "Invalid LAN command: %s\n", text.c_str()); return 2; }
         commands.push_back({command, {}});

@@ -84,6 +84,8 @@ bool CaptureTileInspection(const World& world, const WorldView& view, TileCoord 
             output.fundedTicks = state->fundedTicks; output.generatorOutputRemaining = state->generatorOutputRemaining;
             output.generatorIntervalStart = state->generatorIntervalStart;
             output.generatorIntervalInitialized = state->generatorIntervalInitialized;
+            output.solarDaylight = state->solarDaylight;
+            output.solarExposed = state->solarExposed;
         }
         if (world.GetActor(observer) && world.CanUseObject(observer, objectHandle))
             for (auto item : object->contents)

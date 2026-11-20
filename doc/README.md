@@ -57,6 +57,8 @@
   installed batteries, funded jobs, remote workshop residency and persistence.
 - [Power commands and views](power_presentation.md): wiring/placement, multimeter
   coverage and host-only grid/chunk diagnostics in terminal, SDL and LAN.
+- [Recovered solar and wood-gas power](renewable_power_design.md): batched daylight
+  supply, fixed installations, prepared wood, assembly routes and acquisition.
 - [Object gameplay](object_gameplay.md): interaction, collection and push/pull scheduling.
 - [Grabbing](grabbing.md): persistent eight-direction furniture movement, timing and feedback.
 - [Object callbacks](object_callbacks.md): explicit identity, atomic transactions,
@@ -124,7 +126,7 @@
   crossings, parcels/buildings, terrain materialization and debug inspection.
 - [Diagnostics](diagnostics.md): structured error causes and contextual frames.
 - [Terrain rendering](terrain_rendering.md): UTF-8 symbols, colors, and frontend behavior.
-- [Save format](save_format.md): SQLite persistence, snapshots, validation and checkpoints; current save format is v15 with global electrical state.
+- [Save format](save_format.md): SQLite persistence, snapshots, validation and checkpoints; current save format is v17 with solar source state.
 - [Furniture sprites](furniture_sprites.md): imported artwork, normalization, object mappings and remembered identity.
 - [LAN networking](networking.md): ENet hosting, joining, authoritative messages and discovery.
 - [Network presentation](network_presentation.md): owned map visuals, interaction

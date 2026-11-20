@@ -974,7 +974,7 @@ bool DecodePower(yyjson_val* root, SavedPowerState& power) {
         int kind = 0;
         if (!Fields(entry, {"object", "position", "kind", "workshop_hold", "charge_interval", "charge_processed"})
             || !Counter(Get(entry, "object"), device.object) || !Position(Get(entry, "position"), device.position)
-            || !Integer(Get(entry, "kind"), kind) || kind < 0 || kind > 2
+            || !Integer(Get(entry, "kind"), kind) || kind < 0 || kind > static_cast<int>(PowerDeviceKind::Solar)
             || !yyjson_is_bool(Get(entry, "workshop_hold"))
             || !Counter(Get(entry, "charge_interval"), device.chargeInterval)
             || !yyjson_is_bool(Get(entry, "charge_processed"))) { return false; }
@@ -1877,6 +1877,7 @@ SaveResult<void> ValidateDatabase(const ContentCatalog& content, sqlite3* db,
             if (definition) {
                 switch (definition->behavior) {
                 case ObjectBehaviorKind::Generator: kind = PowerDeviceKind::Generator; break;
+                case ObjectBehaviorKind::Solar: kind = PowerDeviceKind::Solar; break;
                 case ObjectBehaviorKind::GridBattery: kind = PowerDeviceKind::Battery; break;
                 case ObjectBehaviorKind::CraftingMachine:
                     if (definition->machine.gridPowered) { kind = PowerDeviceKind::Machine; }
@@ -1893,15 +1894,25 @@ SaveResult<void> ValidateDatabase(const ContentCatalog& content, sqlite3* db,
             // the typed facts needed to cross-check the global index, without
             // constructing runtime behavior or decoding the chunk a second time.
             const bool generator = *kind == PowerDeviceKind::Generator;
+            const bool solar = *kind == PowerDeviceKind::Solar;
             const bool battery = *kind == PowerDeviceKind::Battery;
             const bool requested = !battery && *object.state.GetBoolean("run_requested");
-            const bool hasWork = generator || (!battery && *object.state.GetBoolean("has_job"));
+            const bool hasWork = generator || solar || (!battery && *object.state.GetBoolean("has_job"));
             const bool hold = object.enabled && !object.broken && requested && hasWork;
             if (device->position != object.position || device->kind != *kind || device->workshopHold != hold) {
                 return Failure(SaveError::InvalidData, "Power equipment role, position or workshop hold differs from durable object", diagnostics);
             }
-            if (generator && *object.state.GetUnsigned("generator_interval_start") > snapshot.session.tick) {
-                return Failure(SaveError::InvalidData, "Generator interval is in the future", diagnostics);
+            if (generator || solar) {
+                const Tick interval = *object.state.GetUnsigned(solar ? "interval_start" : "generator_interval_start");
+                const bool initialized = *object.state.GetBoolean(solar ? "interval_initialized" : "generator_interval_initialized");
+                if (interval > snapshot.session.tick || (device->chargeProcessed
+                    && (!initialized || device->chargeInterval > interval))) {
+                    return Failure(SaveError::InvalidData, "Source interval or charging marker differs from durable object", diagnostics);
+                }
+                if (solar && *object.state.GetUnsigned("output_remaining")
+                    > SolarIntervalAllowance(interval, definition->solar.peakOutputPerTick)) {
+                    return Failure(SaveError::InvalidData, "Solar allowance exceeds daylight interval capacity", diagnostics);
+                }
             }
             ++powerDevicesFound;
         }
@@ -2012,7 +2023,7 @@ SaveResult<void> SaveDatabase::Create(const char* path, Diagnostics* diagnostics
         "BEGIN IMMEDIATE;"
         "CREATE TABLE metadata(singleton INTEGER PRIMARY KEY CHECK(singleton=1),"
         "format_version INTEGER NOT NULL,game_version TEXT NOT NULL);"
-        "INSERT INTO metadata VALUES(1,16,'0.1.0');"
+        "INSERT INTO metadata VALUES(1,17,'0.1.0');"
         "CREATE TABLE world_state(singleton INTEGER PRIMARY KEY CHECK(singleton=1),payload TEXT NOT NULL);"
         "CREATE TABLE chunks(x INTEGER NOT NULL,z INTEGER NOT NULL,y INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(x,z,y));"
         "CREATE TABLE player_memories(player_id TEXT NOT NULL,x INTEGER NOT NULL,z INTEGER NOT NULL,y INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(player_id,x,z,y));"
@@ -2177,6 +2188,7 @@ SaveResult<void> SaveDatabase::Begin(Diagnostics* diagnostics) {
         auto written = WriteChunk(**chunk, diagnostics);
         if (!written) { return written; }
     }
+    snapshot->power.version = 2;
     {
         Statement statement;
         int code = statement.Prepare(db, "UPDATE world_state SET payload=?1 WHERE singleton=1");
@@ -2185,7 +2197,7 @@ SaveResult<void> SaveDatabase::Begin(Diagnostics* diagnostics) {
         if (code == SQLITE_OK) { code = sqlite3_step(statement.value); }
         if (code != SQLITE_DONE) { return impl_->WriteFailure(code, diagnostics); }
     }
-    auto upgraded = Execute(db, "UPDATE metadata SET format_version=16 WHERE singleton=1", diagnostics);
+    auto upgraded = Execute(db, "UPDATE metadata SET format_version=17 WHERE singleton=1", diagnostics);
     if (!upgraded) { impl_->Rollback(); return upgraded; }
     impl_->effectiveVersion = save_format_version;
     return {};

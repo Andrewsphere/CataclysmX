@@ -1,6 +1,7 @@
 #include "client/tile_inspection.h"
 #include "client/localization.h"
 #include "client/combat_text.h"
+#include "core/ratio.h"
 
 namespace cataclysmx {
 namespace {
@@ -93,7 +94,21 @@ void DescribeTile(const ContentCatalog& content, const WorldView& view, TileCoor
             output.push_back(String(details.forge.ready ? "Ready" : "Cold") + " | Fuel "
                 + UnsignedText(details.forge.fuel) + "/" + UnsignedText(definition->forge.fuelCapacity));
         }
-        if (details.machine) {
+        if (definition && definition->behavior == ObjectBehaviorKind::Solar) {
+            const auto peak = definition->solar.peakOutputPerTick;
+            const auto current = details.enabled && !details.broken && details.running
+                ? std::uint64_t{peak} * details.solarDaylight : 0;
+            const char* status = details.broken ? "Broken" : !details.enabled ? "Disabled"
+                : !details.runRequested ? "Stopped" : !details.solarExposed ? "Covered"
+                : !IsSolarDaytime(view.tick) ? "Nighttime" : "Generating";
+            output.push_back(String("Solar: ") + status + " | Peak " + UnsignedText(peak) + " EU/tick");
+            output.push_back("Current " + UnsignedText(current) + "/" + UnsignedText(ratioScale)
+                + " EU/tick | Daylight " + UnsignedText(details.solarDaylight) + "/" + UnsignedText(ratioScale)
+                + (details.solarExposed ? " | Exposed" : " | Covered"));
+            if (details.generatorIntervalInitialized) {
+                output.push_back("Solar output remaining " + UnsignedText(details.generatorOutputRemaining));
+            }
+        } else if (details.machine) {
             String energy = "Energy "; energy += UnsignedText(details.energy); energy += "/"; energy += UnsignedText(details.energyCapacity);
             output.push_back(eastl::move(energy));
             String work = details.running ? "Running" : details.hasJob ? "Paused" : "Idle";

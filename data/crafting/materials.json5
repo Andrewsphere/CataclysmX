@@ -1,4 +1,10 @@
 {format_version:1, definitions:[
+  {type:'recipe',id:'prepare_wood_from_plank',name:'Prepare wood from a plank',
+   knowledge:{known_by_default:true},inputs:[{item:'timber_plank',count:1}],
+   tool_traits:[{id:'house_cutting',tier:1}],result:{item:'prepared_wood',count:2},work:400},
+  {type:'recipe',id:'prepare_wood_from_scrap',name:'Prepare wood from scraps',
+   knowledge:{known_by_default:true},inputs:[{item:'wood_scrap',count:5}],
+   tool_traits:[{id:'house_cutting',tier:1}],result:{item:'prepared_wood',count:1},work:250},
   {type:'recipe', id:'cut_timber_scrap', name:'Cut timber into wood scraps',
    inputs:[{item:'timber_plank',count:1}], tool_traits:[{id:'house_cutting',tier:1}],
    result:{item:'wood_scrap',count:10}, work:200, training:[{skill:'fabrication',level:0}]},

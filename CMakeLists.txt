@@ -330,6 +330,7 @@ if(CATACLYSMX_BUILD_TESTS)
         tests/forge_content_tests.cpp
         tests/power_frontend_tests.cpp tests/power_network_tests.cpp
         tests/power_world_tests.cpp
+        tests/solar_power_tests.cpp tests/renewable_content_tests.cpp
         tests/skill_progression_tests.cpp tests/skill_content_tests.cpp
         tests/skill_world_tests.cpp tests/skill_save_tests.cpp tests/skill_crafting_tests.cpp
         tests/skill_server_tests.cpp tests/skill_network_tests.cpp

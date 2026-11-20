@@ -26,6 +26,11 @@ ContentCatalog PowerWorldContent(bool buildings = false) {
     const ContentSource source{"power-world", R"({format_version:1,objects:[
       {id:'generator',name:'Generator',behavior:'generator',generator:{fuel_item:'fuel',fuel_capacity:10000,
         energy_per_fuel:1000,output_per_tick:1}},
+      {id:'solar',name:'Solar installation',behavior:'solar',blocks_movement:true,
+        solar:{peak_output_per_tick:1}},
+      {id:'woodgas',name:'Wood-gas installation',behavior:'generator',blocks_movement:true,
+        generator:{fuel_item:'fuel',fuel_capacity:24000,energy_per_fuel:4000,output_per_tick:4}},
+      {id:'shade',name:'Shade',behavior:'none',blocks_sight:true},
       {id:'battery_box',name:'Battery box',behavior:'grid_battery'},
       {id:'bench',name:'Bench',behavior:'none',tool_traits:[{id:'cut',tier:1}],
         crafting_power:{store:'grid',energy_per_work:10000}},
@@ -36,6 +41,8 @@ ContentCatalog PowerWorldContent(bool buildings = false) {
       {type:'terrain',id:'wall',name:'Wall',movement:{passable:false},blocks_sight:true,appearance:{symbol:'#',foreground:'white'}},
       {type:'terrain',id:'air',name:'Air',movement:{passable:true},open_space:true,blocks_sight:false,looks_like:'floor'},
       {type:'item',id:'fuel',name:'Fuel',mass_g:1,volume_ml:1},
+      {type:'item',id:'solar_kit',name:'Solar kit',mass_g:1,volume_ml:1,placed_object:'solar'},
+      {type:'item',id:'woodgas_kit',name:'Wood-gas kit',mass_g:1,volume_ml:1,placed_object:'woodgas'},
       {type:'item',id:'material',name:'Material',mass_g:1,volume_ml:1},
       {type:'item',id:'product',name:'Product',mass_g:1,volume_ml:1},
       {type:'tool_trait',id:'cut',name:'Cut'},
@@ -99,6 +106,14 @@ void ClearFloor(World& world, PowerBounds bounds) {
             if (const auto actor = world.ActorAt(position); actor.value) { REQUIRE(world.DestroyActor(actor)); }
             REQUIRE(world.SetTile(position, {world.GetContent().FindTerrain("floor")}));
         }
+    }
+}
+
+void ClearSky(World& world, TileCoord position) {
+    for (int y = position.y + 1; y <= world_max_y; ++y) {
+        const TileCoord above{position.x, position.z, y};
+        if (const auto object = world.ObjectAt(above); object.value) { REQUIRE(world.DestroyObject(object)); }
+        REQUIRE(world.SetTile(above, {world.GetContent().FindTerrain("air")}));
     }
 }
 
@@ -824,5 +839,144 @@ TEST_CASE("An arbitrary powered item inside furniture is not an installed grid b
     REQUIRE(rig.world.Power().TrySupply({&draw, 1}) == PowerOutcome::Supplied);
     CHECK(rig.world.GetItemEnergy(battery, rig.Store())->energy == 99);
     CHECK(rig.world.CheckInvariants());
+}
+
+TEST_CASE("Solar direct exposure follows resident vertical geometry rather than light", "[power][world][solar][geometry]") {
+    PowerWorldRig rig;
+    const TileCoord position{9, 8};
+    ClearSky(rig.world, position);
+    CHECK(rig.world.HasDirectSkyExposure(position));
+    CHECK_FALSE(rig.world.HasDirectSkyExposure({1000, 1000}));
+    CHECK_FALSE(rig.world.HasDirectSkyExposure({9, 8, world_max_y + 1}));
+    const auto source = Take(rig.world.CreateObject(rig.content.FindObject("solar"), position));
+    REQUIRE(rig.world.UseObject(rig.actor, source, ObjectAction::Start).outcome == ObjectUseOutcome::Succeeded);
+    rig.world.SetSkyLight(0);
+    REQUIRE(rig.world.SetObjectLight(source, {255, 8}));
+    CHECK(rig.world.DescribeObjectState(source)->solarExposed);
+    CHECK(rig.world.DescribeObjectState(source)->solarDaylight == SolarDaylightRatio(0));
+    CHECK(rig.world.DescribeObjectState(source)->running);
+    const TileCoord roof{9, 8, 1};
+    REQUIRE(rig.world.SetTile(roof, {rig.content.FindTerrain("floor")}));
+    CHECK_FALSE(rig.world.HasDirectSkyExposure(position));
+    CHECK_FALSE(rig.world.DescribeObjectState(source)->running);
+    rig.world.SetSkyLight(255);
+    CHECK_FALSE(rig.world.DescribeObjectState(source)->solarExposed);
+    REQUIRE(rig.world.SetTile(roof, {rig.content.FindTerrain("air")}));
+    CHECK(rig.world.HasDirectSkyExposure(position));
+    const auto shade = Take(rig.world.CreateObject(rig.content.FindObject("shade"), roof));
+    CHECK_FALSE(rig.world.HasDirectSkyExposure(position));
+    REQUIRE(rig.world.MoveObject(shade, {10, 8}));
+    CHECK(rig.world.HasDirectSkyExposure(position));
+    REQUIRE(rig.world.MoveObject(shade, roof) == eastl::unexpected(WorldError::blocked));
+    REQUIRE(rig.world.DestroyObject(shade));
+    REQUIRE(rig.world.SetTile({9, 8, world_max_y}, {rig.content.FindTerrain("wall")}));
+    CHECK_FALSE(rig.world.HasDirectSkyExposure(position));
+}
+
+TEST_CASE("Fixed solar and wood-gas kits place stopped and refuse player relocation", "[power][world][solar][placement]") {
+    PowerWorldRig rig;
+    const auto kit = rig.Carry("solar_kit");
+    CHECK(rig.world.PlacePowerObject(rig.actor, kit, {}, {15, 14}).outcome == PowerActionOutcome::OutOfReach);
+    CHECK(rig.world.GetItem(kit));
+    const auto blocker = Take(rig.world.CreateObject({9, 8}));
+    CHECK(rig.world.PlacePowerObject(rig.actor, kit, {}, {9, 8}).outcome == PowerActionOutcome::Occupied);
+    REQUIRE(rig.world.DestroyObject(blocker));
+    REQUIRE(rig.world.PlacePowerObject(rig.actor, kit, {}, {9, 8}).outcome == PowerActionOutcome::Succeeded);
+    CHECK_FALSE(rig.world.GetItem(kit));
+    const auto source = rig.world.ObjectAt({9, 8});
+    REQUIRE(source.value);
+    CHECK_FALSE(rig.world.DescribeObjectState(source)->runRequested);
+    CHECK(rig.world.DescribeObjectState(source)->generatorOutputRemaining == 0);
+    CHECK(rig.world.GetObject(source)->contents.empty());
+    CHECK_FALSE(rig.world.GetObject(source)->equipment.value);
+    CHECK(rig.world.QueryObjectMove(rig.actor, source, ObjectMoveKind::Push).outcome == ObjectMoveOutcome::Immovable);
+    CHECK(rig.world.QueryObjectStep(rig.actor, source, {0, 1}).outcome == ObjectMoveOutcome::Immovable);
+    CHECK(rig.world.QueryPackStation(rig.actor, source) != StationActionOutcome::Packed);
+    const auto woodKit = rig.Carry("woodgas_kit");
+    REQUIRE(rig.world.PlacePowerObject(rig.actor, woodKit, {}, {8, 9}).outcome == PowerActionOutcome::Succeeded);
+    CHECK_FALSE(rig.world.GetItem(woodKit));
+    const auto woodgas = rig.world.ObjectAt({8, 9});
+    REQUIRE(woodgas.value);
+    CHECK_FALSE(rig.world.DescribeObjectState(woodgas)->runRequested);
+    CHECK(rig.world.DescribeObjectState(woodgas)->energy == 0);
+    CHECK(rig.world.QueryObjectMove(rig.actor, woodgas, ObjectMoveKind::Pull).outcome == ObjectMoveOutcome::Immovable);
+    CHECK(rig.world.QueryPackStation(rig.actor, woodgas) != StationActionOutcome::Packed);
+    CHECK(rig.world.CheckInvariants());
+}
+
+TEST_CASE("Solar exposure changes wake power without replacing a claimed allowance", "[power][world][solar][geometry]") {
+    PowerWorldRig rig;
+    const TileCoord position{9, 8};
+    ClearSky(rig.world, position);
+    Take(rig.world.Power().ExtendBounds({position, position}));
+    const auto source = Take(rig.world.CreateObject(rig.content.FindObject("solar"), position));
+    REQUIRE(rig.world.UseObject(rig.actor, source, ObjectAction::Start).outcome == ObjectUseOutcome::Succeeded);
+    const PowerDemand draw{position, 1};
+    REQUIRE(rig.world.Power().TrySupply({&draw, 1}) == PowerOutcome::Supplied);
+    const auto remaining = rig.world.DescribeObjectState(source)->generatorOutputRemaining;
+    const TileCoord roof{9, 8, 1};
+    REQUIRE(rig.world.SetTile(roof, {rig.content.FindTerrain("floor")}));
+    CHECK(rig.world.Power().NextEventIn() == Tick{0});
+    CHECK(rig.world.Power().TrySupply({&draw, 1}) == PowerOutcome::InsufficientPower);
+    CHECK(rig.world.DescribeObjectState(source)->generatorOutputRemaining == remaining);
+    REQUIRE(rig.world.SetTile(roof, {rig.content.FindTerrain("air")}));
+    REQUIRE(rig.world.Power().TrySupply({&draw, 1}) == PowerOutcome::Supplied);
+    CHECK(rig.world.DescribeObjectState(source)->generatorOutputRemaining == remaining - 1);
+    rig.world.Power().ProcessEvents();
+    const auto shade = Take(rig.world.CreateObject(rig.content.FindObject("shade"), roof));
+    CHECK(rig.world.Power().NextEventIn() == Tick{0});
+    CHECK(rig.world.Power().CanSupply({&draw, 1}) == PowerOutcome::InsufficientPower);
+    rig.world.Power().ProcessEvents();
+    REQUIRE(rig.world.DestroyObject(shade));
+    CHECK(rig.world.Power().NextEventIn() == Tick{0});
+    CHECK(rig.world.Power().CanSupply({&draw, 1}) == PowerOutcome::Supplied);
+}
+
+TEST_CASE("Started solar retains offscreen columns overnight and restores its paid ledger", "[power][world][solar][save][residency]") {
+    SaveDirectory files;
+    auto content = PowerWorldContent();
+    PersistentId sourceId = 0;
+    DataObject state;
+    SavedPowerState power;
+    {
+        World world(content);
+        LoadColumn(world, 0, LoadMode::active, LoadReason::Player);
+        const auto remote = LoadColumn(world, 2);
+        ClearFloor(world, {{8, 8}, {9, 8}});
+        ClearFloor(world, {{40, 8}, {41, 8}});
+        ClearSky(world, {40, 8});
+        const auto player = Take(world.CreateActor({41, 8}, true));
+        Take(world.Power().ExtendBounds({{40, 8}, {41, 8}}));
+        const auto source = Take(world.CreateObject(content.FindObject("solar"), {40, 8}));
+        sourceId = world.GetObject(source)->id;
+        REQUIRE(world.UseObject(player, source, ObjectAction::Start).outcome == ObjectUseOutcome::Succeeded);
+        const PowerDemand draw{{40, 8}, 7};
+        REQUIRE(world.Power().TrySupply({&draw, 1}) == PowerOutcome::Supplied);
+        REQUIRE(world.MoveActor(player, {8, 8}));
+        REQUIRE(world.ReleaseRequest(remote));
+        REQUIRE(world.ReconcileChunks());
+        CHECK(ColumnDebug(world, {2, 0}).machineOwners == 1);
+        SessionState session;
+        session.player = world.GetActor(player)->id;
+        session.playerPosition = {8, 8};
+        REQUIRE(world.CreateSave(files.database.c_str(), session));
+        state = world.CaptureObjectState(source);
+        power = world.Power().Capture();
+    }
+    World restored(content);
+    const auto session = Take(restored.LoadSave(files.database.c_str()));
+    LoadColumn(restored, 0, LoadMode::active, LoadReason::Player);
+    const auto source = restored.FindObject(sourceId);
+    REQUIRE(restored.GetObject(source));
+    CHECK(restored.CaptureObjectState(source) == state);
+    CHECK(restored.Power().Capture() == power);
+    restored.ElapseTicks(Tick{ticks_per_turn} * 60 * 60 * 12);
+    CHECK(restored.DescribeObjectState(source)->solarDaylight == 0);
+    CHECK(restored.DescribeObjectState(source)->runRequested);
+    CHECK_FALSE(restored.DescribeObjectState(source)->running);
+    REQUIRE(restored.ReconcileChunks());
+    CHECK(ColumnDebug(restored, {2, 0}).machineOwners == 1);
+    REQUIRE(restored.Save(session));
+    CHECK(restored.CheckInvariants());
 }
 }

@@ -412,6 +412,13 @@ Manufacturing a complete reliable diesel/gasoline engine is outside this basic s
 
 #### Renewable power in the implementation/playtest package
 
+**Pass 2 / C-Energy: Implemented and functionally verified.**
+The [accepted renewable contract and roster](renewable_power_design.md)
+owns exact budgets and evidence: nine items, six recipes, four recyclers, two
+fixed installations with grabbing disabled, and shared primer benefits.
+Solar production uses 100-tick integrated daylight allowances; visual day/night
+lighting remains a separate future change.
+
 **Solar:** assemble recovered working panels, compatible control components,
 wiring and mounting. Retain the Electronics-2/Mechanics-1 basic assembly anchor.
 Generation depends on daylight and is zero at night; batteries time-shift supply
@@ -427,9 +434,9 @@ assembly/conversion task rather than engine manufacture or a separate gas-cylind
 economy. It provides controllable supply at night or for demanding jobs, at the
 cost of wood preparation, fuel and operating effort.
 
-Both routes integrate with D1 supply/storage and resource conservation. Content
-implementation selects concrete equipment, fuel units and operating budgets
-consistent with these roles. Standalone coal/retort processes and broader gas
+Both routes integrate with D1 supply/storage and resource conservation. Solar
+peaks at 1 EU/tick with direct sky; wood gas supplies 4 EU/tick from 1 kg prepared
+wood portions worth 4,000 EU each, with 24,000 EU capacity. Standalone coal/retort processes and broader gas
 handling remain separate later work.
 
 #### Alternatives instead of guaranteed progression loot

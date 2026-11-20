@@ -311,6 +311,13 @@ DataObject WriteCombatContent(const ContentCatalog& catalog) {
         case ObjectBehaviorKind::GridBattery:
             entry.SetString("behavior", "grid_battery");
             break;
+        case ObjectBehaviorKind::Solar: {
+            entry.SetString("behavior", "solar");
+            DataObject solar;
+            solar.SetUnsigned("peak_output_per_tick", object.solar.peakOutputPerTick);
+            entry.Set("solar", eastl::move(solar));
+            break;
+        }
         case ObjectBehaviorKind::Generator: {
             entry.SetString("behavior", "generator");
             DataObject generator;

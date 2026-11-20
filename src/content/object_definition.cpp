@@ -14,6 +14,14 @@ bool ValidObjectDefinition(const ObjectDefinition& definition) {
         && definition.behavior != ObjectBehaviorKind::Forge) { return false; }
     if (definition.craftingEnergyPerWork
         && (definition.behavior != ObjectBehaviorKind::None || definition.toolTraits.Empty())) { return false; }
+    if (definition.behavior == ObjectBehaviorKind::Solar) {
+        return definition.solar.peakOutputPerTick > 0
+            && definition.generator == GeneratorDefinition{}
+            && definition.machine == CraftingMachineDefinition{}
+            && definition.forge == ForgeDefinition{}
+            && !definition.capacityVolumeMl;
+    }
+    if (definition.solar != SolarDefinition{}) { return false; }
     std::uint8_t previous = 0;
     for (const auto& trait : definition.toolTraits) {
         if (trait.trait.value <= previous || !trait.tier) { return false; }

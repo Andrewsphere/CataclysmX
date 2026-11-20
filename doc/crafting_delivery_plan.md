@@ -1,6 +1,6 @@
 # Crafting progression: dependencies and delivery
 
-**Status: Delivery direction accepted; W3A/W3B and I1 catalog organization functionally verified.**
+**Status: Delivery direction accepted; W3A/W3B, I1 catalog organization and pass-2 renewable power functionally verified.**
 The [framework](crafting_progression.md) records skill bands, capability families
 and acquisition roles. This document consolidates their dependencies and proposes
 bounded mechanics/content passes. The user accepted ordinary accessible/shared
@@ -13,6 +13,10 @@ The [W3A/W3B implementation](workshop_rosters.md) records the accepted item/oper
 coverage, learning links, acquisition contexts and concrete authored budgets.
 The [I1 source map and verification](content_pack.md#source-organization) establish
 semantic catalog ownership with identical per-pack content fingerprints.
+The [pass-2 renewable contract](renewable_power_design.md) now owns C-Energy's
+recovered-solar/wood-gas budgets, nine-item roster and fixed installation policy.
+Implementation and focused Debug/SDL verification are complete; seeded balance
+playtesting remains part of the integrated package.
 
 The accepted [D5 integration direction](urban_workshop_progression.md#d5--integration-contract-and-content-roster)
 adds craftable basic-tool fallbacks, recovered-panel solar and an integrated
@@ -250,7 +254,7 @@ Resolve decisions with the first pass that consumes them:
 | Combined-skill migration and capped learning/content validation | M-Skills design |
 | File/package representation, compatibility, import actions and job-capture integration | D3-A/B and W4 implementation; [library/capture behavior](digital_fabrication_design.md) and [first printing slice](home_printing_design.md) accepted |
 | Source access, schematic extraction, protection, recovery and hacking laptop modifications | Later separate D3-C/hacking design; outside the current D3-A/B effort |
-| Basic solar/wood-gas source budgets and assembly content | D5 implementation; accepted daylight solar and internal-gas generator roles |
+| Basic solar/wood-gas source budgets and assembly content | [Pass 2 / C-Energy](renewable_power_design.md); implemented and functionally verified |
 | Standalone gas products/heat/byproducts/repeat behavior; medical/field/vehicle action semantics | Respective later feature design |
 
 Accepted delivery direction:

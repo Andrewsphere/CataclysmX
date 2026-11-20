@@ -1,0 +1,22 @@
+@text-art 1
+@color metal #88928D
+@color tank #8A6F59
+@color fin #ABB1A6
+@color shaft #B3A88E
+@color base #626A60
+@default metal
+---
+<tank>       ______________
+      /_____________/|
+<tank>     |              | |
+<tank>     |______________|/
+        │     │
+    ____┴_____┴___     ___
+   /  <fin>═══════════<metal> \___/   \
+  |   <fin>═══════════<metal>  |  | o |
+  |   <fin>═══════════<metal>  |  |___|<shaft>══
+  |  ┌──────────┐  |  /
+  |  │  o    o  │  |_/
+  |__└──────────┘__|
+    /_│________│_\
+<base>   └──────────────┘

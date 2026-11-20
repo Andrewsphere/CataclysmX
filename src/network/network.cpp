@@ -285,6 +285,10 @@ std::uint64_t ContentFingerprint(const ContentCatalog& content) {
                 HashNumber(hash, object.machine.energyPerTick);
                 HashNumber(hash, object.machine.gridPowered);
                 break;
+            case ObjectBehaviorKind::Solar:
+                HashNumber(hash, 1); // Solar implementation/state version.
+                HashNumber(hash, object.solar.peakOutputPerTick);
+                break;
             case ObjectBehaviorKind::Generator:
                 HashNumber(hash, 1); // Generator implementation/state version.
                 HashString(hash, content.GetItem(object.generator.fuelItem).id);

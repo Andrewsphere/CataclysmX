@@ -868,7 +868,7 @@ bool ParseAiProfile(yyjson_val* object, PendingAiProfile& pending) {
 bool ParseObject(yyjson_val* object, PendingObject& pending) {
     const auto& context = pending.context;
     auto& definition = pending.definition;
-    if (!CheckObject(object, {"id", "name", "behavior", "machine", "generator", "forge", "capacity_volume_ml", "kind",
+    if (!CheckObject(object, {"id", "name", "behavior", "machine", "generator", "solar", "forge", "capacity_volume_ml", "kind",
                               "blocks_movement", "blocks_sight", "movable", "move_cost", "light", "tool_traits", "packing_item", "crafting_power"}, context)
         || !ReadId(yyjson_obj_get(object, "id"), definition.id, context.Child("id"))
         || !ReadString(yyjson_obj_get(object, "name"), definition.name, context.Child("name"))
@@ -927,6 +927,9 @@ bool ParseObject(yyjson_val* object, PendingObject& pending) {
     if (behaviorName != "generator" && yyjson_obj_get(object, "generator")) {
         return context.Child("generator").Fail("generator config requires generator behavior");
     }
+    if (behaviorName != "solar" && yyjson_obj_get(object, "solar")) {
+        return context.Child("solar").Fail("solar config requires solar behavior");
+    }
     if (behaviorName != "crafting_machine" && yyjson_obj_get(object, "machine")) {
         return context.Child("machine").Fail("machine config requires crafting_machine behavior");
     }
@@ -979,6 +982,17 @@ bool ParseObject(yyjson_val* object, PendingObject& pending) {
             pending.forgeFuels.push_back(eastl::move(fuel));
         }
         return true;
+    }
+    if (behaviorName == "solar") {
+        definition.behavior = ObjectBehaviorKind::Solar;
+        const auto child = context.Child("solar");
+        auto* solar = yyjson_obj_get(object, "solar");
+        if (!pending.packingItem.empty()) {
+            return context.Child("packing_item").Fail("solar installations cannot be packed");
+        }
+        return CheckObject(solar, {"peak_output_per_tick"}, child)
+            && ReadBoundedInteger(yyjson_obj_get(solar, "peak_output_per_tick"), 1, UINT32_MAX,
+                                  definition.solar.peakOutputPerTick, child.Child("peak_output_per_tick"));
     }
     if (behaviorName == "grid_battery") {
         definition.behavior = ObjectBehaviorKind::GridBattery;

@@ -1,4 +1,8 @@
 {format_version:1, objects:[
+  {id:'solar_generator_station',name:'solar generator',behavior:'solar',blocks_movement:true,movable:false,
+   solar:{peak_output_per_tick:1}},
+  {id:'woodgas_generator_station',name:'wood-gas generator',behavior:'generator',blocks_movement:true,movable:false,
+   generator:{fuel_item:'prepared_wood',fuel_capacity:24000,energy_per_fuel:4000,output_per_tick:4}},
   {id:'generator',name:'portable fuel generator',behavior:'generator',blocks_movement:true,
    generator:{fuel_item:'generator_fuel_packet',fuel_capacity:24000,energy_per_fuel:6000,output_per_tick:4}},
   {id:'grid_battery_station',name:'installed grid battery',behavior:'grid_battery'},

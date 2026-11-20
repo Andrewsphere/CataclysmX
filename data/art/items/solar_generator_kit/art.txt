@@ -1,0 +1,22 @@
+@text-art 1
+@color frame #8D9A9F
+@color edge #59676C
+@color glass #486D80
+@color case #82938C
+@color light #AFBCBC
+@default frame
+---
+<light>       __________________
+     /_________________/|
+    / <glass>┌───┬───┬───┐<frame>  / |
+   /  │   │   │   │ /  |
+  /___<glass>├───┼───┼───┤<frame>/   |
+  |   │   │   │   │   /
+  |___└───┴───┴───┘__/
+      \     │      \
+       \  <case>┌─────┐<frame>   \
+        \ <case>│ o o │<frame>    \
+         \<case>└─────┘<frame>     \
+        / \           /\
+       /___\_________/__\
+<edge>      └──────────────────┘

@@ -1,5 +1,6 @@
 #include "objects/object_behavior.h"
 #include "core/state_reader.h"
+#include "power/power_types.h"
 
 #include <EASTL/algorithm.h>
 #include <EASTL/utility.h>
@@ -442,6 +443,119 @@ private:
     MachineState state_;
 };
 
+struct SolarState {
+    Tick intervalStart = 0;
+    std::uint64_t outputRemaining = 0;
+    bool runRequested = false;
+    bool intervalInitialized = false;
+};
+
+StateResult<SolarState> ReadSolarState(const ObjectDefinition& definition, const DataObject& input,
+    Diagnostics* diagnostics) {
+    StateReader reader(input, diagnostics);
+    if (!ValidObjectDefinition(definition)) { return reader.Invalid("definition", "invalid solar definition"); }
+    const auto version = reader.GetUnsignedOrError("version");
+    SolarState state;
+    state.runRequested = reader.GetBooleanOrError("run_requested");
+    state.intervalInitialized = reader.GetBooleanOrError("interval_initialized");
+    state.intervalStart = reader.GetUnsignedOrError("interval_start");
+    state.outputRemaining = reader.GetUnsignedOrError("output_remaining");
+    if (const auto result = reader.Result(); !result) { return eastl::unexpected(result.error()); }
+    if (version != 1) {
+        return reader.Invalid("version", "unsupported solar state version", StateError::UnsupportedVersion);
+    }
+    for (std::size_t i = 0; i < input.Size(); ++i) {
+        const auto& name = input.Name(i);
+        if (name != "version" && name != "run_requested" && name != "interval_initialized"
+            && name != "interval_start" && name != "output_remaining") {
+            return reader.Invalid({name.data(), name.size()}, "unknown solar state field");
+        }
+    }
+    if (state.intervalStart % powerQuantumTicks != 0
+        || (!state.intervalInitialized && state.intervalStart != 0)) {
+        return reader.Invalid("interval_start", "invalid solar interval anchor");
+    }
+    if (state.outputRemaining > SolarIntervalAllowance(state.intervalStart, definition.solar.peakOutputPerTick)
+        || (state.outputRemaining != 0 && (!state.runRequested || !state.intervalInitialized))) {
+        return reader.Invalid("output_remaining", "invalid solar interval allowance");
+    }
+    return state;
+}
+
+class SolarBehavior final : public ObjectBehavior {
+public:
+    SolarBehavior(const ObjectDefinition& definition, SolarState state)
+        : definition_(definition), state_(state) {}
+    eastl::optional<Tick> NextEventIn() const override { return eastl::nullopt; }
+    void Elapse(Tick) override {}
+    void ProcessEvent(ObjectMutationContext&) override {}
+    ObjectUseReason Check(ObjectAction action) const {
+        if (action == ObjectAction::Start) {
+            return state_.runRequested ? ObjectUseReason::Busy : ObjectUseReason::None;
+        }
+        return state_.runRequested ? ObjectUseReason::None : ObjectUseReason::NoJob;
+    }
+    void QueryActions(const ObjectReadContext&, ActorHandle, Vector<ObjectActionInfo>& output) const override {
+        for (auto action : {ObjectAction::Start, ObjectAction::Stop}) {
+            output.push_back({action, Check(action)});
+        }
+    }
+    ObjectUseResult Use(ObjectMutationContext&, ActorHandle, ObjectAction action) override {
+        if (action != ObjectAction::Start && action != ObjectAction::Stop) { return {}; }
+        const auto reason = Check(action);
+        if (reason != ObjectUseReason::None) { return Refused(reason); }
+        state_.runRequested = action == ObjectAction::Start;
+        if (!state_.runRequested) { state_.outputRemaining = 0; }
+        return {ObjectUseOutcome::Succeeded, 100, ObjectUseReason::None};
+    }
+    DataObject SaveState() const override {
+        DataObject result;
+        result.SetUnsigned("version", 1);
+        result.SetBoolean("run_requested", state_.runRequested);
+        result.SetBoolean("interval_initialized", state_.intervalInitialized);
+        result.SetUnsigned("interval_start", state_.intervalStart);
+        result.SetUnsigned("output_remaining", state_.outputRemaining);
+        return result;
+    }
+    ObjectStateView Describe() const override {
+        ObjectStateView result;
+        result.behavior = ObjectBehaviorKind::Solar;
+        result.energyPerTick = definition_.solar.peakOutputPerTick;
+        result.runRequested = state_.runRequested;
+        result.running = state_.runRequested && state_.outputRemaining > 0;
+        result.generatorIntervalInitialized = state_.intervalInitialized;
+        result.generatorIntervalStart = state_.intervalStart;
+        result.generatorOutputRemaining = state_.outputRemaining;
+        return result;
+    }
+    WorldResult<void> SetEnergy(std::uint64_t) override {
+        return eastl::unexpected(WorldError::invalid_request);
+    }
+    WorldResult<void> PrepareSolarInterval(Tick now, std::uint64_t allowance) override {
+        const auto start = PowerIntervalStart(now);
+        if (allowance > SolarIntervalAllowance(now, definition_.solar.peakOutputPerTick)
+            || (state_.intervalInitialized && start < state_.intervalStart)) {
+            return eastl::unexpected(WorldError::invalid_request);
+        }
+        if (state_.intervalInitialized && start == state_.intervalStart) { return {}; }
+        if (!state_.runRequested) { state_.outputRemaining = 0; return {}; }
+        state_.intervalStart = start;
+        state_.intervalInitialized = true;
+        state_.outputRemaining = allowance;
+        return {};
+    }
+    WorldResult<void> SpendSolarEnergy(std::uint64_t energy) override {
+        if (!state_.runRequested || !state_.intervalInitialized || energy > state_.outputRemaining) {
+            return eastl::unexpected(WorldError::invalid_request);
+        }
+        state_.outputRemaining -= energy;
+        return {};
+    }
+private:
+    const ObjectDefinition& definition_;
+    SolarState state_;
+};
+
 }
 
 ObjectBehavior::~ObjectBehavior() = default;
@@ -456,12 +570,23 @@ WorldResult<void> ObjectBehavior::PrepareGeneratorInterval(Tick) {
 WorldResult<void> ObjectBehavior::SpendGeneratorEnergy(std::uint64_t) {
     return eastl::unexpected(WorldError::invalid_request);
 }
+WorldResult<void> ObjectBehavior::PrepareSolarInterval(Tick, std::uint64_t) {
+    return eastl::unexpected(WorldError::invalid_request);
+}
+WorldResult<void> ObjectBehavior::SpendSolarEnergy(std::uint64_t) {
+    return eastl::unexpected(WorldError::invalid_request);
+}
 WorldResult<void> ObjectBehavior::FundGridWork(Tick) {
     return eastl::unexpected(WorldError::invalid_request);
 }
 
 StateResult<void> ValidateObjectBehaviorState(const ObjectDefinition& definition, const DataObject& state,
     Diagnostics* diagnostics) {
+    if (definition.behavior == ObjectBehaviorKind::Solar) {
+        const auto parsed = ReadSolarState(definition, state, diagnostics);
+        if (!parsed) { return eastl::unexpected(parsed.error()); }
+        return {};
+    }
     if (definition.behavior == ObjectBehaviorKind::Forge) {
         const auto parsed = ReadForgeState(definition, state, diagnostics);
         if (!parsed) { return eastl::unexpected(parsed.error()); }
@@ -474,6 +599,18 @@ StateResult<void> ValidateObjectBehaviorState(const ObjectDefinition& definition
 
 StateResult<eastl::unique_ptr<ObjectBehavior>> MakeObjectBehavior(const ObjectDefinition& definition,
     const DataObject* state, Diagnostics* diagnostics) {
+    if (definition.behavior == ObjectBehaviorKind::Solar) {
+        if (!ValidObjectDefinition(definition)) {
+            return cataclysmx::InvalidState(diagnostics, {}, "definition", "invalid solar definition");
+        }
+        SolarState parsed;
+        if (state) {
+            const auto saved = ReadSolarState(definition, *state, diagnostics);
+            if (!saved) { return eastl::unexpected(saved.error()); }
+            parsed = *saved;
+        }
+        return eastl::unique_ptr<ObjectBehavior>(new SolarBehavior(definition, parsed));
+    }
     if (definition.behavior == ObjectBehaviorKind::Forge) {
         if (!ValidObjectDefinition(definition)) {
             return cataclysmx::InvalidState(diagnostics, {}, "definition", "invalid object definition");

@@ -1,10 +1,10 @@
 # Save format
 
-CataclysmX saves are SQLite database files. The strict v15 format is governed by
-one authoritative `metadata.format_version = 15` for both SQL and JSON. The
+CataclysmX saves are SQLite database files. The strict v17 format is governed by
+one authoritative `metadata.format_version = 17` for both SQL and JSON. The
 `metadata` columns are `singleton INTEGER PRIMARY KEY CHECK(singleton=1)`,
 `format_version INTEGER NOT NULL`, and `game_version TEXT NOT NULL`; its single
-row is `(1, 15, "0.1.0")`. The other tables are
+row is `(1, 17, "0.1.0")`. The other tables are
 `world_state(singleton INTEGER PRIMARY KEY CHECK(singleton=1), payload TEXT NOT
 NULL)` and `chunks(x INTEGER NOT NULL, z INTEGER NOT NULL, y INTEGER NOT NULL,
 payload TEXT NOT NULL, PRIMARY KEY(x,z,y))`, and
@@ -13,6 +13,38 @@ y INTEGER NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(player_id,x,z,y))`.
 Extra application tables/schema objects are rejected.
 
 ## JSON payloads
+
+### Format 17: solar and integrated wood-gas sources
+
+The SQL tables and exact object field set remain unchanged from format 16.
+The `power` envelope writes version **2**, appending device kind **Solar=3**;
+Battery=0, Generator=1 and Machine=2 retain their meanings. Wood gas uses the
+existing generator state and fuel accounting without a new role or second store.
+Power version 1 remains readable only without solar devices. Restore and the
+first legacy checkpoint normalize the envelope to version 2, preserving grid IDs,
+holds, fairness/charging markers, paid work, fuel and source allowances.
+
+Solar behavior state version **1** has exactly `version`, `run_requested`,
+`interval_initialized`, `interval_start`, and `output_remaining`. Its unsigned
+state values use the existing behavior-state integer encoding, not global
+power-counter decimal strings. Initialized intervals are quantum-aligned and no
+later than the session tick; remaining output cannot exceed the integrated
+daylight allowance for that interval and immutable peak output. Stopped sources
+have zero output remaining. Direct exposure and current daylight/running status
+are derived from resident geometry and the world clock, never saved.
+
+Solar sources must match the global index's identity, position, role and
+`enabled && !broken && runRequested` hold, even overnight or offscreen. For both
+finite source kinds a processed charging marker requires an initialized source
+interval at least as recent as that marker. Archive/index validation happens
+before synchronization, so reload cannot repair corrupt ledgers or reissue output.
+Fixed solar/wood-gas installations have no backing equipment item; placement
+consumes their kit and creates neither fuel nor stored electricity.
+
+Formats 7–16 remain readable under their existing migration rules, including
+legacy skill-state conversion. The first checkpoint upgrades all payloads and
+metadata transactionally to 17; opening alone does not rewrite the database.
+Generation remains version 7; existing saved grids are not retrofitted.
 
 ### Format 15: global electricity
 
@@ -52,7 +84,7 @@ Formats 7–14 retain their exact original root fields and decode missing electr
 as a fresh empty `SavedPowerState`, with `nextGridId = 1`, default settings, no
 grids/devices/bindings and `SeededMainsCutoff(seed)`. Migration never creates charge
 or fuel. Opening remains read-only; the first checkpoint rewrites all old chunks
-and the snapshot and advances metadata to 15 atomically. Rollback restores the
+and the snapshot and advances metadata to the current format atomically. Rollback restores the
 original metadata and payloads. Generation-version acceptance follows
 `world_generation_version` independently; migration preserves the saved version.
 
@@ -348,7 +380,7 @@ version 4 introduced authored layers and population. Regeneration depends on the
 supplied immutable content: changed patterns or palettes can change ungenerated
 chunks even when the saved generation version is unchanged. Region plans are
 regenerated, not serialized; global electrical state is serialized independently.
-The SQL/JSON save schema is version 16; strict formats 7 through 15 are also
+The SQL/JSON save schema is version 17; strict formats 7 through 16 are also
 accepted and migrated as described below. Save formats v1 through v6 and all other schema
 versions are rejected. In particular, v2 command-count ticks are not silently reinterpreted as
 simulation ticks. Content's own format version is independent of both versions.

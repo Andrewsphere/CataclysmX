@@ -1,0 +1,23 @@
+@text-art 1
+@color steel #89918A
+@color hopper #8D7964
+@color pipe #63716D
+@color cooler #A0A9A1
+@color filter #9A977D
+@color base #5A655E
+@default steel
+---
+<hopper>       _______
+      /_______\       ____
+      |       |      /____\
+<hopper>      |       |<cooler>     | ──── |
+<hopper>      |       |<cooler>     | ──── |
+<hopper>      |       |<cooler>     | ──── |
+      \_______/     |______|
+       |     |___     │  │
+       | <hopper>▒▒▒<steel> |<pipe>   \____│  │
+       | <hopper>▒▒▒<steel> |<pipe>         __│__
+       |_____|<filter>        | ░░░ |
+        │   │<filter>         | ░░░ |
+     ___│___│_________|_____|
+<base>    └────────────────────────┘

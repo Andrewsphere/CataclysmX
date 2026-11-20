@@ -1,4 +1,7 @@
 {format_version:1, definitions:[
+  {type:'item',id:'prepared_wood',name:'prepared wood',mass_g:1000,volume_ml:1500,
+   description:'One kilogram of sized, untreated wood for use as fuel.',
+   flags:['combustible','water_absorbent','opaque','rigid'],art:'/art/items/prepared_wood/art.txt'},
   {type:'item', id:'sewing_thread', name:'sewing thread', mass_g:50, volume_ml:100,
    description:'A spool of cotton sewing thread.', art:'/art/items/sewing_thread/art.txt', flags:['salvage','combustible','flexible','water_absorbent','porous','opaque','electrically_insulating']},
   {type:'item', id:'epoxy_adhesive', name:'epoxy adhesive', mass_g:100, volume_ml:130,

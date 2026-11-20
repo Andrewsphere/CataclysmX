@@ -10,8 +10,8 @@
     {item:'electrical_lead_set',weight:4},
   ]},
   {type:'loot_pool',id:'loot_workshop_electrical_ground',entries:[
-    {item:'electrical_lead_set',weight:5},{item:'aa_rechargeable_battery',weight:5,count:{min:1,max:4}},
-    {item:'workshop_battery_pack',weight:2},
+     {item:'electrical_lead_set',weight:5},{item:'aa_rechargeable_battery',weight:5,count:{min:1,max:4}},
+     {item:'workshop_battery_pack',weight:2},{item:'solar_charge_controller',weight:4},
   ]},
   {type:'loot_pool',id:'loot_sunglasses_ground',entries:[
     {item:'sunglasses',weight:1},
