@@ -59,12 +59,13 @@ and accepts `optional: true` for absent content types while still validating
 artwork references. See [furniture sprites](furniture_sprites.md) for observation
 identity and compatibility details.
 
-Terrain/item keys are existing content IDs. Item mappings may set `optional: true`
-so the same artwork pack can serve scenarios that omit those items. An absent
-optional item produces no mapping; its visual and activation references are still
-validated. Without this flag, an unknown item ID is an error. The flag must be a
-boolean and is not accepted for terrain or generic mappings. This matches the
-existing object/monster policy and keeps scenario differences out of rendering.
+Terrain and item keys are content IDs. Terrain, item, object and monster
+mappings may set `optional: true` so one artwork pack can serve scenarios that
+omit a type or reserve artwork for future content. An absent optional ID produces
+no mapping, but its visual, activation and any terrain underlay references are
+still validated. When content adds that ID, the mapping takes effect at load
+time without a tileset edit. Without the flag, an unknown ID is an error. The
+flag must be a boolean and is not accepted for generic mappings.
 
 The optional `monsters` object maps
 existing monster content IDs to visuals with the same syntax as `items`.
@@ -134,8 +135,9 @@ frames are selected explicitly by animations; generated frame IDs are internal.
 ]}
 ```
 
-Gen1 uses only horizontal grass mirroring to preserve upright tufts. Its road
-mapping selects the full-cell static PNG `tile.world.road.asphalt`; no connected
+Gen1's grass group adds ten authored tiles to its original meadow and horizontal
+mirror. Its road mapping selects the full-cell static PNG
+`tile.world.road.asphalt`; no connected
 road artwork or definitions are shipped. Custom packs may still use connection
 sets with their own six shape PNGs, for example:
 
@@ -223,16 +225,11 @@ source cell and upright overhang across fog.
 
 ## Gen1 assets and preparation
 
-Gen1 contains separate PNGs for its terrain, actor/object overlays and bulb frames,
-mirrors grass horizontally, uses plain full-cell asphalt, and maps trees to a
-transparent 32x64 upright image. No preassembled tileset atlases are retained.
+Gen1 contains separate PNGs for its terrain, actor/object overlays and bulb frames.
+It varies grass by map coordinate, uses plain full-cell asphalt, and places eight
+transparent 32×64 tree variants over the meadow underlay. The individual PNGs
+are the production sources; no preassembled tileset atlases are retained. See [tileset artwork](tileset_artwork.md)
+for world tile coverage and rules for reserved artwork.
 
-The individual PNGs are the production sources. Use the generic Python
-[resize commands](graphics_tool.md#individual-gen1-sprites-asphalt-and-tree)
-to prepare asphalt/tree artwork under `out/graphics/individual`. Existing output
-files require `--force`, and source images cannot be overwritten.
-Asphalt/tree references and prompts are retained under
-`assets/tiles/references/modular_gen1`, outside source discovery. Preparation
-center-samples the generated references and preserves tree alpha.
-The optional tool needs only Python 3.10+ and its standard library. Runtime loading
-does not depend on Python. Tooling tests are not retained after initial validation.
+The [optional graphics tool](graphics_tool.md) can prepare other sprites without
+changing the tileset loader. Runtime loading does not depend on Python.

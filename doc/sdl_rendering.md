@@ -112,9 +112,10 @@ are supported, but complex-script shaping is limited.
   Shared-phase loops and activation-relative one-shots use explicit time; session
   or asset generation changes reset them. See [sprite playback](sprite_animation.md)
   for the API, pack syntax, capture path, and lifetime decisions.
-- `MapIdentity` tags session, view revision, asset generation, and viewport
-  generation. The app rejects obsolete completions, retains a matching prior
-  packet while awaiting a newer revision, and invalidates packets on layout changes.
+- `MapIdentity` tags session, view revision, asset generation, viewport
+  generation, map source, and floor. The app rejects obsolete completions,
+  retains a matching prior packet while awaiting a newer revision, and
+  invalidates packets on layout changes.
   Storage retirement and preparation happen outside channel locks.
 - `DrawFrame` samples the supplied packet with explicit elapsed milliseconds.
   It draws backgrounds and ground, masks hidden ground, then draws upright

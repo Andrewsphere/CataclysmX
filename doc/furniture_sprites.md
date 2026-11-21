@@ -6,6 +6,9 @@ Gen1 includes 33 furniture and machine images from the supplied ComfyUI batch
 The source-to-content mapping, original nontransparent bounds and resized
 dimensions are recorded in [the import manifest](furniture_sprites.json).
 `_pitch_corrected`, `_v2` and `_v3` are source revision suffixes, not content IDs.
+The [world tile batch](tileset_artwork.md#world-tiles) adds 16 more mappings for
+existing objects and reserves artwork for additional ones, without applying the
+normalization below.
 
 ## Artwork normalization
 

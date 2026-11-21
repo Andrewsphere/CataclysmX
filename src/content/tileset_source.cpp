@@ -386,20 +386,21 @@ ContentResult<TilesetDefinition> ParseSourceTileset(eastl::string_view manifest,
         yyjson_obj_foreach(mappings, i, n, key, value) {
             TilesetMapping unused;
             TilesetMapping* mapping = nullptr;
-            if (category == 0) { const auto id = content.FindTerrain(View(key)); if (id.value) { mapping = &d.terrain[id.value]; } }
+            TerrainId terrainId;
+            if (category == 0) { terrainId = content.FindTerrain(View(key)); if (terrainId.value) { mapping = &d.terrain[terrainId.value]; } }
             else if (category == 1) { const auto id = content.FindItem(View(key)); if (id.value) { mapping = &d.items[id.value]; } }
             else if (category == 3 || category == 4) {
                 const auto id = category == 3 ? content.FindMonster(View(key)).value : content.FindObject(View(key)).value;
                 if (id) { mapping = category == 3 ? &d.monsters[id] : &d.objects[id]; }
             }
             else { for (unsigned j = 0; j < 6; ++j) { if (View(key) == generic[j]) { mapping = &d.generic[j]; } } }
-            if (category == 1 || category >= 3) {
+            if (category != 2) {
                 auto* optional = yyjson_obj_get(value, "optional");
                 if (optional && !yyjson_is_bool(optional)) { return invalid(); }
                 if (!mapping && optional && yyjson_get_bool(optional)) { mapping = &unused; }
             }
-            if (!mapping || !Object(value, category == 0 ? std::initializer_list<eastl::string_view>{"visual", "activation", "ground"}
-                : category == 1 || category >= 3 ? std::initializer_list<eastl::string_view>{"visual", "activation", "optional"}
+            if (!mapping || !Object(value, category == 0 ? std::initializer_list<eastl::string_view>{"visual", "activation", "ground", "optional"}
+                : category != 2 ? std::initializer_list<eastl::string_view>{"visual", "activation", "optional"}
                 : std::initializer_list<eastl::string_view>{"visual", "activation"})) { return invalid(); }
             auto* visual = yyjson_obj_get(value, "visual");
             if (!Reference(visual, d, *mapping, true)) {
@@ -409,9 +410,10 @@ ContentResult<TilesetDefinition> ParseSourceTileset(eastl::string_view manifest,
             }
             if (category != 0 && mapping->kind == TilesetMappingKind::Visual && d.visuals[mapping->index].kind == VisualGroupKind::Connections) { return invalid(); }
             if (auto* ground = yyjson_obj_get(value, "ground")) {
-                auto& underlay = d.terrainGround[content.FindTerrain(View(key)).value];
+                TilesetMapping underlay;
                 if (!Reference(ground, d, underlay, false) || underlay.kind != TilesetMappingKind::Sprite
                     || d.sprites[underlay.index].layer != SpriteLayer::Ground) { return invalid(); }
+                if (terrainId.value) { d.terrainGround[terrainId.value] = underlay; }
             }
             if (auto* activation = yyjson_obj_get(value, "activation")) {
                 if (!Object(activation, {"animation", "mode"})) { return invalid(); }

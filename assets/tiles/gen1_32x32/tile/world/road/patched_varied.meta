@@ -1,0 +1,10 @@
+{kind: 'variants', description: 'Mostly worn asphalt with sparse patches; odd total weight avoids coordinate parity.', alternatives: [
+  {visual: 'tile.world.road.road_patched_asphalt'},
+  {visual: 'tile.world.road.road_patched_asphalt', rotation: 90},
+  {visual: 'tile.world.road.road_patched_asphalt', rotation: 180},
+  {visual: 'tile.world.road.road_patched_asphalt', rotation: 270},
+  {visual: 'tile.world.road.road_worn_asphalt', weight: 5},
+  {visual: 'tile.world.road.road_worn_asphalt', rotation: 90, weight: 5},
+  {visual: 'tile.world.road.road_worn_asphalt', rotation: 180, weight: 5},
+  {visual: 'tile.world.road.road_worn_asphalt', rotation: 270, weight: 4},
+]}

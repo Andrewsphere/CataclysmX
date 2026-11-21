@@ -41,9 +41,12 @@ of atlas descriptors makes generated pages independent of authored files.
 
 Terrain and item vectors are indexed by the corresponding catalog ID's `value`,
 including the unused zero entry. Missing entries use `TilesetMappingKind::Missing`,
-allowing the frontend's built-in glyph fallback. Generic mappings are indexed by
-`GenericSprite`. Graphics references resolve during loading, keeping name lookup
-out of drawing and preserving catalog ownership boundaries.
+allowing the frontend's built-in glyph fallback. An optional terrain ID absent
+from the catalog still validates its artwork and underlay, but creates no
+indexed mapping. This lets one pack work across scenarios and reserve artwork
+without modifying gameplay data. Generic mappings are indexed by `GenericSprite`.
+Graphics references resolve during loading, keeping name lookup out of drawing
+and preserving catalog ownership boundaries.
 
 `ResolveVisual` accepts explicit world coordinates, entity identity and a neighbor
 mask. It resolves weighted variants and connections into a sprite or clip mapping.

@@ -84,7 +84,7 @@ AssetState Finish(SdlAssets& assets, WakeState& wake, SDL_Renderer* renderer) {
 }
 }
 
-TEST_CASE("SDL renders bundled furniture on terrain with clear tile borders", "[sdl][assets][render][object-sprites]") {
+TEST_CASE("SDL renders bundled objects on terrain with clear tile borders", "[sdl][assets][render][object-sprites]") {
     auto content = LoadContentPack(CATACLYSMX_CONTENT_PACK);
     REQUIRE(content);
     RenderFixture render;
@@ -94,7 +94,8 @@ TEST_CASE("SDL renders bundled furniture on terrain with clear tile borders", "[
     SdlText text(render.renderer);
     REQUIRE(text.Ready());
     WorldView view;
-    view.width = 13; view.height = 11; view.playerId = 1;
+    view.width = 15; view.height = 13; view.playerId = 1;
+    const unsigned objectColumns = (view.width + 1) / 2;
     view.cells.resize(view.width * view.height);
     for (auto& cell : view.cells) {
         cell.terrainVisibility = Visibility::Visible;
@@ -116,17 +117,18 @@ TEST_CASE("SDL renders bundled furniture on terrain with clear tile borders", "[
     unsigned count = 0;
     for (std::size_t type = 1; type < assets.Definition().objects.size(); ++type) {
         if (assets.Definition().objects[type].kind == TilesetMappingKind::Missing) { continue; }
-        const int column = static_cast<int>(count % 7) * 2, row = static_cast<int>(count / 7) * 2;
+        const int column = static_cast<int>(count % objectColumns) * 2, row = static_cast<int>(count / objectColumns) * 2;
+        REQUIRE(row < view.height);
         auto& cell = view.cells[row * view.width + column];
         cell.overlayVisibility = Visibility::Visible; cell.overlayLight = LightBand::Ordinary;
         cell.object = ++count;
         cell.objectAppearance = {ObjectKind::Generic, ObjectFacing::North, true, false,
             ObjectTypeId{static_cast<std::uint32_t>(type)}};
     }
-    REQUIRE(count == 33);
+    REQUIRE(count == content->ObjectCount());
     REQUIRE(DrawFrame(render.renderer, text, assets, &view, *content, "", ""));
     for (unsigned object = 0; object < count; ++object) {
-        const int left = static_cast<int>(object % 7) * 64, top = static_cast<int>(object / 7) * 64;
+        const int left = static_cast<int>(object % objectColumns) * 64, top = static_cast<int>(object / objectColumns) * 64;
         int changed = 0;
         for (int y = 0; y < 32; ++y) {
             for (int x = 0; x < 32; ++x) {

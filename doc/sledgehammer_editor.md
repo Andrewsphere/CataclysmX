@@ -18,6 +18,16 @@ python3 tools/sledgehammer_editor/serve.py \
 ```
 
 From the checkout root, `sh sledgehammer_editor.sh` launches the Linux debug build.
+
+On Windows, run these commands from the checkout root in an x64 Visual Studio
+developer prompt to build the worker, then launch the editor.
+
+```bat
+cmake --preset win-msvc-debug -DCATACLYSMX_BUILD_SLEDGEHAMMER_EDITOR=ON
+cmake --build --preset win-msvc-debug --target sledgehammer_editor
+sledgehammer_editor.bat
+```
+
 The launcher prints a loopback URL and opens it in the default browser.
 Use the full URL, including its fragment, when opening it manually. Pass
 `--no-browser` to skip launching a browser. `--checkout` selects a different

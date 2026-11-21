@@ -42,6 +42,9 @@ a renderer.
 Popups render only when their body contains nonempty text. Examine shows a
 loading row until a description for the current cursor arrives. Live refreshes
 at the same cursor keep the last description visible while a new reply is pending.
+On the player's floor, Examine keeps the gameplay map visible during loading,
+inspection errors, and closing. Other floors use the map returned by inspection
+and wait for a packet for the selected floor.
 Popups prefer a 320-pixel width and a height of 60% of the map viewport, with
 space for at least one body line plus a title and footer. Large text can borrow
 the full content area below the top bar when the compact map is too short. Content

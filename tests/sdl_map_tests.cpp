@@ -334,9 +334,11 @@ TEST_CASE("map worker publishes owned packet and identity", "[sdl][map]") {
     view.cells[0].tile.terrain = content.FindTerrain("floor");
     view.cells[0].ground_items = 1;
     Vector<MapItemVisual> items{{42, TestItem("toggle_lightbulb")}};
-    worker.Submit(eastl::move(view),{7,8,9,10}, eastl::move(items));
+    view.origin.y = -1;
+    const MapIdentity identity{7, 8, 9, 10, MapSource::Inspection, view.origin.y};
+    worker.Submit(eastl::move(view), identity, eastl::move(items));
     { std::unique_lock lock(state.mutex); REQUIRE(state.condition.wait_for(lock,std::chrono::seconds(5),[&] { return state.woken; })); }
-    MapPacket packet; REQUIRE(worker.Take(packet)); CHECK(packet.identity == MapIdentity{7,8,9,10});
+    MapPacket packet; REQUIRE(worker.Take(packet)); CHECK(packet.identity == identity);
     CHECK(packet.cells.size() == 1); CHECK(packet.cells[0].visible); CHECK_FALSE(worker.Take(packet));
     CHECK(packet.cells[0].itemVisual.item == 42);
     CHECK(packet.cells[0].itemVisual.type == TestItem("toggle_lightbulb"));

@@ -10,8 +10,11 @@
 #include <thread>
 
 namespace cataclysmx::sdl {
+enum class MapSource { Gameplay, Inspection };
 struct MapIdentity {
     std::uint64_t session = 0, viewRevision = 0, assetGeneration = 0, viewportGeneration = 0;
+    MapSource source = MapSource::Gameplay;
+    int layerY = 0;
     bool operator==(const MapIdentity&) const = default;
 };
 struct PreparedMapCell {

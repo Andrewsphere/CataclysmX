@@ -140,7 +140,6 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
     MapPacket mapPacket;
     SpritePlaybackController playback;
     MapIdentity mapIdentity{1, 0, 1, 1};
-    bool mapValid = false;
     SessionOptions sessionOptions = options.session;
     sessionOptions.settings = settings;
     sessionOptions.scenario = options.scenario;
@@ -347,21 +346,41 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
         selectedAction = std::min(selectedAction, actions.size() - 1);
         if (const auto single = SoleAvailableAction(actions)) { selectedAction = *single; executeAction(); }
     };
-    const auto displayView = [&]() -> const WorldView& {
-        return modal.Active() == Screen::Examine && inspectionValid ? inspectionView : snapshot.view;
+    const auto usesInspectionMap = [&] {
+        // Same-floor Examine uses the gameplay map while tile details arrive independently.
+        return modal.Active() == Screen::Examine && !initializeScreen && cursor.y != snapshot.view.origin.y;
     };
-    const auto displayItems = [&]() -> const Vector<MapItemVisual>& {
-        return modal.Active() == Screen::Examine && inspectionValid ? inspectionItems : snapshot.mapItems;
-    };
+    const auto displayView = [&]() -> const WorldView& { return usesInspectionMap() ? inspectionView : snapshot.view; };
     const auto displayLayerReady = [&] {
-        return modal.Active() != Screen::Examine
-            || (inspectionValid && inspectionView.origin.y == cursor.y);
+        return displayView().playerId && (!usesInspectionMap() || (inspectionValid && inspectionView.origin.y == cursor.y));
+    };
+    const auto displayIdentity = [&] {
+        auto identity = mapIdentity;
+        identity.source = usesInspectionMap() ? MapSource::Inspection : MapSource::Gameplay;
+        identity.layerY = usesInspectionMap() ? cursor.y : snapshot.view.origin.y;
+        return identity;
+    };
+    const auto matchesDisplay = [&](MapIdentity identity) {
+        // A compatible packet can stay on screen while a newer revision is prepared.
+        identity.viewRevision = mapIdentity.viewRevision;
+        return displayLayerReady() && identity == displayIdentity();
+    };
+    const auto mapValid = [&] { return mapPacket.identity.viewRevision != 0 && matchesDisplay(mapPacket.identity); };
+    const auto invalidateInspectionMap = [&] {
+        inspectionValid = false;
+        if (mapPacket.identity.source == MapSource::Inspection) { mapPacket.identity = {}; }
     };
     const auto prepareMap = [&] {
         ++mapIdentity.viewRevision;
-        if (mapWorker && displayLayerReady() && displayView().playerId) {
-            mapWorker->Submit(displayView(), mapIdentity, displayItems());
+        if (mapWorker && displayLayerReady()) {
+            mapWorker->Submit(displayView(), displayIdentity(), usesInspectionMap() ? inspectionItems : snapshot.mapItems);
         }
+    };
+    const auto returnToGameplay = [&] {
+        modal.Closed();
+        initializeScreen = false;
+        invalidateInspectionMap();
+        if (!mapValid()) { prepareMap(); }
     };
     const auto refreshDiscovery = [&] {
         SessionRequest request; request.kind = RequestKind::RefreshDiscovery;
@@ -375,7 +394,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
         frame.scroll = 0; frame.detailScroll = 0;
         heldKey.Reset(); choosingGrab = false;
         if (modal.Active() == Screen::Examine) {
-            inspectionId.reset(); inspectionNeeded = false; inspectionValid = false; mapValid = false;
+            inspectionId.reset(); inspectionNeeded = false; invalidateInspectionMap();
         }
         ++aiRevision; aiNeeded = false; aiValid = false;
         if (snapshot.menuOpen || !started || (snapshot.mode == SessionMode::Guest
@@ -485,7 +504,6 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
         if (event.type >= SDL_EVENT_WINDOW_FIRST && event.type <= SDL_EVENT_WINDOW_LAST) { dirty = true; }
         if (event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED || event.type == SDL_EVENT_WINDOW_RESIZED) {
             ++mapIdentity.viewportGeneration;
-            mapValid = false;
             prepareMap();
             dirty = true;
         }
@@ -778,12 +796,12 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 next.x = std::clamp(next.x,snapshot.view.origin.x,snapshot.view.origin.x+snapshot.view.width-1);
                 next.z = std::clamp(next.z,snapshot.view.origin.z,snapshot.view.origin.z+snapshot.view.height-1);
             }
-            if (modal.Active() == Screen::Examine && next.y != cursor.y) {
-                inspectionValid = false; mapValid = false; ++mapIdentity.viewRevision;
-            }
+            const bool changedLayer = next.y != cursor.y;
+            if (changedLayer) { invalidateInspectionMap(); }
             if (next != cursor) { inspectedCursor.reset(); }
             cursor = next;
             if (modal.Active() == Screen::Targets) { openActions(); return; }
+            if (changedLayer && !usesInspectionMap() && !mapValid()) { prepareMap(); }
             inspectionNeeded = true; frame.scroll = 0;
             return;
         }
@@ -809,7 +827,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             if (submit(RequestKind::Pause)) { modal.BeginOpen(screen); }
             heldKey.Reset(); return;
         }
-        if (!started || assetState != AssetState::Ready || !mapValid
+        if (!started || assetState != AssetState::Ready || !mapValid()
             || (snapshot.mode == SessionMode::Guest && snapshot.connectionState != network::ConnectionState::Active)) { return; }
         if (*action == InputAction::Save) {
             if (snapshot.mode == SessionMode::Guest) { SetMessage("Only the host can save this world."); }
@@ -882,7 +900,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
         debugPower = false; powerDebugRequest.reset(); powerDebugLines.clear();
         debugAi = false; debugPreview.Reset();
         mapIdentity.session = generation; ++mapIdentity.viewRevision;
-        mapPacket = {}; mapValid = false; playback = {}; animationDeadline.reset();
+        mapPacket = {}; playback = {}; animationDeadline.reset();
         multiplayerRendered = false;
         if (wasBrowsing) { submit(RequestKind::StopDiscovery); }
         dirty = true;
@@ -914,6 +932,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             inspectionId.reset(); inspectionNeeded = false; inspectionValid = false;
             inspection.clear(); inspectionView = {}; inspectionItems.clear(); inspectedCursor.reset(); actions.clear();
             examinedEnemy.reset();
+            mapPacket.identity = {};
             SDL_StopTextInput(platform.window);
             heldKey.Reset(); reconcileMenu = true;
         }
@@ -939,10 +958,11 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
         if (modal.Active() == Screen::Examine) {
             // Coalesce live updates behind the in-flight query without invalidating it.
             inspectionNeeded |= viewChanged;
-        } else {
-            if (mapValid && snapshot.view.origin.y != previousY) { mapValid = false; }
-            prepareMap();
         }
+        if (snapshot.view.origin.y != previousY && mapPacket.identity.source == MapSource::Gameplay) {
+            mapPacket.identity = {};
+        }
+        if (!usesInspectionMap()) { prepareMap(); }
         if (modal.Active() == Screen::Debug && debugAi && viewChanged) { aiNeeded = true; }
         if (modal.Active() == Screen::Actions) {
             eastl::optional<InteractionRequest> selected;
@@ -1031,7 +1051,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                         examinedEnemy.reset();
                         if (reply.networkError) { inspection.push_back(network::NetworkErrorMessage(*reply.networkError)); }
                         if (inspection.empty()) { inspection.push_back("Inspection unavailable"); }
-                        inspectedCursor = cursor; inspectionValid = false; mapValid = false; ++mapIdentity.viewRevision;
+                        inspectedCursor = cursor; invalidateInspectionMap();
                         message = inspection.front();
                     }
                     inspectionId.reset();
@@ -1147,7 +1167,11 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             case ReplyKind::Resumed:
                 if (!modalRequest || reply.id != *modalRequest) { break; }
                 modalRequest.reset();
-                modal.Closed(); frame.visible = false; inspectionValid = false; mapValid = false; prepareMap();
+                returnToGameplay(); frame.visible = false;
+                if (localSmoke && smokeStep == 23 && !mapValid()) {
+                    std::fputs("SDL smoke lost the gameplay map on same-floor Examine close.\n", stderr);
+                    smokeFailed = true;
+                }
                 message = snapshot.mode == SessionMode::Local ? "Local session resumed." : "Menu closed.";
                 smokeWaiting = false; break;
             case ReplyKind::Inspected:
@@ -1158,18 +1182,22 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                         inspectedCursor = cursor;
                         if (!reply.networkError && reply.inspectionView.playerId && reply.inspectionView.origin.y == cursor.y) {
                             examinedEnemy = eastl::move(reply.examinedEnemy);
-                            if (!displayLayerReady() || displayView().origin.y != cursor.y) { mapValid = false; }
                             inspectionView = eastl::move(reply.inspectionView);
                             inspectionItems = eastl::move(reply.inspectionItems);
-                            inspectionValid = true; prepareMap();
+                            inspectionValid = true;
+                            if (usesInspectionMap()) { prepareMap(); }
                         } else {
                             if (reply.inspectionView.playerId && reply.inspectionView.origin.y != cursor.y) {
                                 inspection.clear(); inspection.push_back("Inspection unavailable for selected layer");
                             }
                             if (reply.networkError) { inspection.push_back(network::NetworkErrorMessage(*reply.networkError)); }
                             if (inspection.empty()) { inspection.push_back("Inspection unavailable"); }
-                            inspectionValid = false; mapValid = false; ++mapIdentity.viewRevision;
+                            invalidateInspectionMap();
                             message = inspection.front();
+                        }
+                        if (localSmoke && smokeStep == 22 && !mapValid()) {
+                            std::fputs("SDL smoke lost the gameplay map on same-floor Examine reply.\n", stderr);
+                            smokeFailed = true;
                         }
                     }
                     inspectionId.reset();
@@ -1181,7 +1209,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             case ReplyKind::SettingsApplied:
             case ReplyKind::SettingsFailed: break; // Handled by the identified save above.
             case ReplyKind::Stale:
-                if (modalRequest && reply.id == *modalRequest) { modalRequest.reset(); modal.Closed(); }
+                if (modalRequest && reply.id == *modalRequest) { modalRequest.reset(); returnToGameplay(); }
                 if (commandRequest && reply.id == *commandRequest) { commandPending = false; commandRequest.reset(); }
                 if (itemRequest && reply.id == *itemRequest) { itemRequest.reset(); itemUi.CommandRejected(); heldKey.Reset(); }
                 SetMessage("Input expired; use the current opportunity.");
@@ -1191,7 +1219,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 }
                 smokeFailed |= localSmoke; smokeWaiting = false; break;
             case ReplyKind::Cancelled:
-                if (modalRequest && reply.id == *modalRequest) { modalRequest.reset(); modal.Closed(); }
+                if (modalRequest && reply.id == *modalRequest) { modalRequest.reset(); returnToGameplay(); }
                 if (commandRequest && reply.id == *commandRequest) { commandPending = false; commandRequest.reset(); }
                 if (itemRequest && reply.id == *itemRequest) { itemRequest.reset(); itemUi.CommandRejected(); heldKey.Reset(); }
                 SetMessage("Input cancelled.");
@@ -1220,7 +1248,13 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             if (modal.Active() == Screen::Options) {
                 optionsUi.Open(store, snapshot.runtimeSettings, snapshot.mode == SessionMode::Guest);
             }
-            if (modal.Active() == Screen::Examine) { inspectionNeeded = true; }
+            if (modal.Active() == Screen::Examine) {
+                inspectionNeeded = true;
+                if (localSmoke && smokeStep == 22 && !mapValid()) {
+                    std::fputs("SDL smoke lost the gameplay map while same-floor Examine was loading.\n", stderr);
+                    smokeFailed = true;
+                }
+            }
             if (modal.Active() == Screen::Debug) {
                 itemBrowser.Close();
                 debugPower = false; powerDebugLines.clear();
@@ -1286,12 +1320,10 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
         }
         MapPacket completedMap;
         if (mapWorker && mapWorker->Take(completedMap)
-            && displayLayerReady()
-            && completedMap.identity.session == mapIdentity.session
-            && completedMap.identity.assetGeneration == mapIdentity.assetGeneration
-            && completedMap.identity.viewportGeneration == mapIdentity.viewportGeneration
-            && (!mapValid ? completedMap.identity.viewRevision == mapIdentity.viewRevision : completedMap.identity.viewRevision >= mapPacket.identity.viewRevision)) {
-            eastl::swap(mapPacket, completedMap); mapValid = true; dirty = true;
+            && matchesDisplay(completedMap.identity)
+            && (mapValid() ? completedMap.identity.viewRevision >= mapPacket.identity.viewRevision
+                           : completedMap.identity.viewRevision == mapIdentity.viewRevision)) {
+            eastl::swap(mapPacket, completedMap); dirty = true;
         }
         if (sessionOptions.discover && !startupBrowserOpened && started && snapshotGeneration
             && assetState == AssetState::Ready && !modal.Pending()) {
@@ -1320,10 +1352,10 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
         if (localSmoke && snapshot.paused && (modal.Active() == Screen::Examine || modal.Active() == Screen::Targets || modal.Active() == Screen::Actions)
             && snapshot.view.tick != smokeModalTick) { std::fputs("SDL modal advanced simulation.\n", stderr); return 1; }
         if (localSmoke && options.scenario != NewGameScenario::Demo
-            && started && snapshot.view.playerId && assetState == AssetState::Ready && mapValid && smokeHealthDrawn) {
+            && started && snapshot.view.playerId && assetState == AssetState::Ready && mapValid() && smokeHealthDrawn) {
             running = false;
         }
-        if (localSmoke && options.scenario == NewGameScenario::Demo && started && snapshot.view.playerId && assetState == AssetState::Ready && mapValid && !smokeWaiting && !settingsSave
+        if (localSmoke && options.scenario == NewGameScenario::Demo && started && snapshot.view.playerId && assetState == AssetState::Ready && mapValid() && !smokeWaiting && !settingsSave
             && (smokeStep > 3 || snapshot.view.opportunity > smokeOpportunity)) {
             const auto press = [&](SDL_Keycode key, SDL_Keymod modifiers = SDL_KMOD_NONE) {
                 SDL_Event event{}; event.type = SDL_EVENT_KEY_DOWN; event.key.key = key; event.key.mod = modifiers;
@@ -1370,6 +1402,10 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                         if (nextId != requestBefore || commandPending || modal.Active() != Screen::Examine) { smokeFailed = true; }
                         press(SDLK_Z); press(SDLK_RIGHT,SDL_KMOD_SHIFT); press(SDLK_UP,SDL_KMOD_ALT);
                         if (!inspectionNeeded || inspection != previousInspection) { smokeFailed = true; }
+                        if (displayLayerReady() || mapValid()) {
+                            std::fputs("SDL smoke retained the gameplay map while another floor was loading.\n", stderr);
+                            smokeFailed = true;
+                        }
                         smokeExamined = true;
                         if (zoom != 1 || cursor != TileCoord{before.x+1,before.z-1,before.y+1}) { smokeFailed = true; }
                     } else {
@@ -1629,7 +1665,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             switch (multiplayerSmokeStep) {
             case NetworkSmokeStep::AwaitSession:
                 if (modal.Active() == Screen::Lan && !modal.Pending()) { smokePress(InputContext::Menu, InputAction::Cancel); break; }
-                if (modal.Active() == Screen::None && !modal.Pending() && mapValid && multiplayerRendered
+                if (modal.Active() == Screen::None && !modal.Pending() && mapValid() && multiplayerRendered
                     && !commandPending && (!sessionOptions.host || hostPeerSeen)) {
                     smokePress(InputContext::Gameplay, InputAction::Players);
                     multiplayerSmokeStep = NetworkSmokeStep::Players;
@@ -1641,32 +1677,32 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 }
                 break;
             case NetworkSmokeStep::PlayersClosed:
-                if (!modal.Pending() && modal.Active() == Screen::None && mapValid) {
+                if (!modal.Pending() && modal.Active() == Screen::None && mapValid()) {
                     smokePress(InputContext::Gameplay, InputAction::Examine); multiplayerSmokeStep = NetworkSmokeStep::ExamineCurrent;
                 }
                 break;
             case NetworkSmokeStep::ExamineCurrent:
-                if (multiplayerCurrentDrawn && mapValid && inspectionValid && !modal.Pending()) {
+                if (multiplayerCurrentDrawn && mapValid() && inspectionValid && !modal.Pending()) {
                     multiplayerInitialY = cursor.y;
                     const auto direction = cursor.y < world_max_y ? InputAction::MoveUp : InputAction::MoveDown;
                     multiplayerOtherY = cursor.y + (direction == InputAction::MoveUp ? 1 : -1);
                     smokePress(InputContext::Gameplay, direction);
                     // Exercise resize while the new layer is pending: no old-layer map may be submitted or accepted.
                     SDL_Event resized{}; resized.type = SDL_EVENT_WINDOW_RESIZED; handleEvent(resized);
-                    if (cursor.y != multiplayerOtherY || displayLayerReady() || mapValid) {
+                    if (cursor.y != multiplayerOtherY || displayLayerReady() || mapValid()) {
                         SetMessage("Smoke layer switch reused an obsolete inspection map."); smokeFailed = true;
                     }
                     multiplayerSmokeStep = NetworkSmokeStep::ExamineOther;
                 }
                 break;
             case NetworkSmokeStep::ExamineOther:
-                if (multiplayerOtherDrawn && mapValid && inspectionValid && inspectionView.origin.y == multiplayerOtherY
+                if (multiplayerOtherDrawn && mapValid() && inspectionValid && inspectionView.origin.y == multiplayerOtherY
                     && cursor.y == multiplayerOtherY && !modal.Pending()) {
                     smokePress(InputContext::Menu, InputAction::Cancel); multiplayerSmokeStep = NetworkSmokeStep::ExamineClosed;
                 }
                 break;
             case NetworkSmokeStep::ExamineClosed:
-                if (!modal.Pending() && modal.Active() == Screen::None && mapValid) {
+                if (!modal.Pending() && modal.Active() == Screen::None && mapValid()) {
                     smokePress(InputContext::Gameplay, InputAction::Inventory); multiplayerSmokeStep = NetworkSmokeStep::Inventory;
                 }
                 break;
@@ -1676,7 +1712,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 }
                 break;
             case NetworkSmokeStep::InventoryClosed:
-                if (!modal.Pending() && modal.Active() == Screen::None && !snapshot.menuOpen && mapValid) {
+                if (!modal.Pending() && modal.Active() == Screen::None && !snapshot.menuOpen && mapValid()) {
                     SDL_Event event{}; event.type = SDL_EVENT_KEY_DOWN; event.key.key = SDLK_F9;
                     handleEvent(event);
                     multiplayerSmokeStep = NetworkSmokeStep::Multiplayer;
@@ -1721,7 +1757,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 }
                 break;
             case NetworkSmokeStep::MultiplayerClosed:
-                if (!modal.Pending() && modal.Active() == Screen::None && !snapshot.menuOpen && mapValid && input.opportunity) {
+                if (!modal.Pending() && modal.Active() == Screen::None && !snapshot.menuOpen && mapValid() && input.opportunity) {
                     smokePress(InputContext::Gameplay, InputAction::Wait);
                     multiplayerCommandId = commandRequest;
                     if (!multiplayerCommandId) { SetMessage("Smoke wait was not submitted."); smokeFailed = true; }
@@ -1752,6 +1788,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
         if (assetState == AssetState::Ready) { playback.RetireCompleted(assets.Definition(), elapsedMilliseconds); }
         if (animationDeadline && elapsedMilliseconds >= *animationDeadline) { dirty = true; }
         if (dirty && !minimized) {
+            const bool drawMap = mapValid();
             messageHistory.SetCapacity(store.Effective().messageHistorySize);
             String display = snapshot.mode == SessionMode::Host ? "Host :" + UnsignedText(snapshot.hostPort)
                 : snapshot.mode == SessionMode::Guest ? String(ConnectionText(snapshot.connectionState)) : String("Local");
@@ -1767,7 +1804,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 display += localization.Text("grab.direction", "Grab where? Choose one of eight directions; Escape cancels.");
                 display += '\n';
             }
-            if (mapValid) {
+            if (drawMap) {
                 const auto combat = CombatSummaryText(snapshot.view.combat);
                 const auto feedback = CombatFeedbackText(snapshot.view.combat);
                 if (!combat.empty()) { display += combat; }
@@ -1940,8 +1977,8 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             }
             const String sessionLabel = snapshot.mode == SessionMode::Host ? "Host :" + UnsignedText(snapshot.hostPort)
                 : snapshot.mode == SessionMode::Guest ? String(ConnectionText(snapshot.connectionState)) : String("Local");
-            if (!DrawFrame(platform.renderer, *text, assets, mapValid ? &displayView() : nullptr,
-                content, display.c_str(), "", elapsedMilliseconds, mapValid ? &mapPacket : nullptr,
+            if (!DrawFrame(platform.renderer, *text, assets, drawMap ? &displayView() : nullptr,
+                content, display.c_str(), "", elapsedMilliseconds, drawMap ? &mapPacket : nullptr,
                 zoom, options.uiScale, {}, &playback, &shader, &frame,
                 {&messageHistory, &store.Keys(), &localization, sessionLabel},
                 modal.Active() == Screen::ItemInventory ? &itemUi.Frame()
@@ -1950,13 +1987,13 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             if (modal.Active() == Screen::Options) { optionsUi.RememberScroll(frame); }
             if (modal.Active() == Screen::Debug && itemBrowser.IsOpen()
                 && itemBrowser.Frame().screen != ItemBrowserScreen::Examine) { itemBrowser.Frame().scroll = frame.scroll; }
-            if (multiplayerSmoke && mapValid) { multiplayerRendered = true; }
+            if (multiplayerSmoke && drawMap) { multiplayerRendered = true; }
             if (multiplayerSmoke && !modal.Pending() && !initializeScreen) {
                 multiplayerPlayersDrawn |= modal.Active() == Screen::Players && frame.visible;
                 multiplayerSettingsDrawn |= modal.Active() == Screen::Lan && frame.visible;
                 multiplayerInventoryDrawn |= modal.Active() == Screen::ItemInventory && itemUi.Frame().screen == ItemUiScreen::Inventory;
-                const bool inspectedMapDrawn = modal.Active() == Screen::Examine && mapValid && displayLayerReady()
-                    && inspectedCursor && *inspectedCursor == cursor && inspectionView.origin.y == cursor.y;
+                const bool inspectedMapDrawn = modal.Active() == Screen::Examine && drawMap
+                    && inspectedCursor && *inspectedCursor == cursor && mapPacket.identity.layerY == cursor.y;
                 multiplayerCurrentDrawn |= multiplayerSmokeStep == NetworkSmokeStep::ExamineCurrent && inspectedMapDrawn;
                 multiplayerOtherDrawn |= multiplayerSmokeStep == NetworkSmokeStep::ExamineOther && inspectedMapDrawn
                     && cursor.y == multiplayerOtherY && cursor.y != multiplayerInitialY;
@@ -1966,7 +2003,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             }
             if (options.smoke) {
                 smokeHelpDrawn |= modal.Active() == Screen::Help && frame.visible && !modal.Pending();
-                smokeHealthDrawn |= mapValid && text->Width(62) > 0;
+                smokeHealthDrawn |= drawMap && text->Width(62) > 0;
                 smokeExamineDrawn |= modal.Active() == Screen::Examine && frame.presentation == ScreenPresentation::Anchored && frame.cursor.has_value();
                 smokeActionsDrawn |= modal.Active() == Screen::Actions && frame.presentation == ScreenPresentation::Anchored && frame.selected >= 0;
                 smokeInventoryDrawn |= modal.Active() == Screen::ItemInventory && itemUi.Frame().screen == ItemUiScreen::Inventory;
@@ -1980,7 +2017,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             }
             dirty = false;
             animationDeadline.reset();
-            if (mapValid) {
+            if (drawMap) {
                 int outputWidth = 0, outputHeight = 0;
                 if (!SDL_GetCurrentRenderOutputSize(platform.renderer, &outputWidth, &outputHeight)) { return SdlFailure(); }
                 const auto delay = VisibleAnimationDelay(mapPacket, assets.Definition(), elapsedMilliseconds,

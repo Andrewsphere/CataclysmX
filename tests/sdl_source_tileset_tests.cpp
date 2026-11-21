@@ -113,6 +113,224 @@ TEST_CASE("source packs sort package IDs and deterministically pack frames with 
     CHECK_FALSE(Parse(excessive)); // Padded CPU atlas pages exceed 64 MiB.
 }
 
+TEST_CASE("optional terrain mappings still validate visuals and underlays", "[sdl][tileset][source][world-tiles]") {
+    const Vector<SpriteSourceFile> files{{"tile/ground.png", {}, 2, 2}, {"sprite/tree.png", {}, 2, 4}};
+    const auto parse = [&](const char* mappings) { return Parse(files, mappings); };
+    CHECK_FALSE(parse("terrain:{future:{visual:'sprite.tree'}}"));
+    CHECK_FALSE(parse("terrain:{future:{visual:'sprite.tree',optional:false}}"));
+    CHECK_FALSE(parse("terrain:{grass:{visual:'sprite.tree',optional:1}}"));
+    CHECK_FALSE(parse("terrain:{future:{visual:'sprite.missing',optional:true}}"));
+    CHECK_FALSE(parse("terrain:{future:{visual:'sprite.tree',ground:'tile.missing',optional:true}}"));
+    CHECK_FALSE(parse("terrain:{future:{visual:'sprite.tree',ground:'sprite.tree',optional:true}}"));
+    CHECK_FALSE(parse("generic:{object_enabled:{visual:'sprite.tree',optional:true}}"));
+
+    auto absent = parse("terrain:{future:{visual:'sprite.tree',ground:'tile.ground',optional:true}}");
+    REQUIRE(absent);
+    CHECK(absent->terrain[0].kind == TilesetMappingKind::Missing);
+    CHECK(absent->terrainGround[0].kind == TilesetMappingKind::Missing);
+
+    auto present = parse("terrain:{grass:{visual:'sprite.tree',ground:'tile.ground',optional:true}}");
+    REQUIRE(present);
+    const auto grass = TestTerrain("grass").value;
+    REQUIRE(present->terrain[grass].kind == TilesetMappingKind::Sprite);
+    REQUIRE(present->terrainGround[grass].kind == TilesetMappingKind::Sprite);
+    CHECK(present->sprites[present->terrain[grass].index].id == "sprite.tree");
+    CHECK(present->sprites[present->terrainGround[grass].index].id == "tile.ground");
+}
+
+TEST_CASE("Gen1 maps world tiles and uses eight upright variants for existing trees", "[sdl][tileset][source][world-tiles]") {
+    Diagnostics diagnostics;
+    auto content = LoadContentPack(CATACLYSMX_CONTENT_PACK, &diagnostics);
+    REQUIRE(content);
+    const auto path = fs::path(CATACLYSMX_CONTENT_PACK).parent_path().parent_path()
+        / "assets/tiles/gen1_32x32/tileset.json5";
+    auto tileset = LoadTilesetFile(path.string().c_str(), *content, &diagnostics);
+    INFO(FormatDiagnostics(diagnostics).c_str());
+    REQUIRE(tileset);
+    for (std::uint32_t type = 1; type <= content->TerrainCount(); ++type) {
+        const auto& id = content->GetTerrain(TerrainId{type}).id;
+        CAPTURE(id.c_str());
+        CHECK(tileset->terrain[type].kind != TilesetMappingKind::Missing);
+    }
+    const auto pavement = tileset->terrain[content->FindTerrain("pavement").value];
+    REQUIRE(pavement.kind == TilesetMappingKind::Sprite);
+    CHECK(tileset->sprites[pavement.index].id == "tile.world.pavement");
+    const auto brickPaving = tileset->terrain[content->FindTerrain("pavement_brick").value];
+    REQUIRE(brickPaving.kind == TilesetMappingKind::Sprite);
+    CHECK(tileset->sprites[brickPaving.index].id == "tile.world.paving.pavement_brick");
+    const auto tree = content->FindTerrain("tree");
+    const auto mapping = tileset->terrain[tree.value];
+    const auto ground = tileset->terrainGround[tree.value];
+    REQUIRE(ground.kind == TilesetMappingKind::Sprite);
+    CHECK(tileset->sprites[ground.index].id == "tile.world.grass.meadow");
+    REQUIRE(mapping.kind == TilesetMappingKind::Visual);
+    const auto& variants = tileset->visuals[mapping.index];
+    REQUIRE(variants.kind == VisualGroupKind::Variants);
+    REQUIRE(variants.alternatives.size() == 8);
+    Vector<bool> seen(tileset->sprites.size(), false);
+    for (const auto& alternative : variants.alternatives) {
+        REQUIRE(alternative.mapping.kind == TilesetMappingKind::Sprite);
+        const auto index = alternative.mapping.index;
+        CHECK_FALSE(seen[index]);
+        seen[index] = true;
+        const auto& sprite = tileset->sprites[index];
+        CHECK(eastl::string_view(sprite.id).starts_with("sprite.world.tree.tree_"));
+        CHECK(sprite.width == 32);
+        CHECK(sprite.height == 64);
+        CHECK(sprite.layer == SpriteLayer::Upright);
+    }
+    const auto resolved = ResolveVisual(*tileset, mapping, -25, 36, 1);
+    REQUIRE(resolved.kind == TilesetMappingKind::Sprite);
+    CHECK(seen[resolved.index]);
+    for (const auto* id : {"sprite.effect.flash", "sprite.effect.splatter"}) {
+        const auto sprite = std::find_if(tileset->sprites.begin(), tileset->sprites.end(),
+            [&](const TilesetSprite& candidate) { return candidate.id == id; });
+        REQUIRE(sprite != tileset->sprites.end());
+        CHECK(sprite->width == 32);
+        CHECK(sprite->height == 32);
+        CHECK(sprite->layer == SpriteLayer::Upright);
+    }
+}
+
+TEST_CASE("Gen1 patched asphalt uses sparse rotated patches on both coordinate parities", "[sdl][tileset][source][world-tiles]") {
+    auto content = LoadContentPack(CATACLYSMX_CONTENT_PACK);
+    REQUIRE(content);
+    const auto path = fs::path(CATACLYSMX_CONTENT_PACK).parent_path().parent_path()
+        / "assets/tiles/gen1_32x32/tileset.json5";
+    auto tileset = LoadTilesetFile(path.string().c_str(), *content);
+    REQUIRE(tileset);
+    const auto patched = tileset->terrain[content->FindTerrain("road_patched_asphalt").value];
+    REQUIRE(patched.kind == TilesetMappingKind::Visual);
+    const auto& group = tileset->visuals[patched.index];
+    REQUIRE(group.kind == VisualGroupKind::Variants);
+    REQUIRE(group.alternatives.size() == 8);
+    CHECK(group.totalWeight == 23);
+    const auto patch = group.alternatives[0].mapping;
+    const auto worn = group.alternatives[4].mapping;
+    CHECK(tileset->terrain[content->FindTerrain("road_worn_asphalt").value] == worn);
+    for (unsigned i = 0; i < group.alternatives.size(); ++i) {
+        const auto& alt = group.alternatives[i];
+        REQUIRE(alt.mapping.kind == TilesetMappingKind::Sprite);
+        const auto& sprite = tileset->sprites[alt.mapping.index];
+        CHECK(sprite.id == (i < 4 ? "tile.world.road.road_patched_asphalt" : "tile.world.road.road_worn_asphalt"));
+        CHECK(alt.mapping.transform.quarterTurns == i % 4);
+        CHECK(sprite.anchorX == 16); CHECK(sprite.anchorY == 16);
+        CHECK(sprite.cellAnchorX == 16); CHECK(sprite.cellAnchorY == 16);
+    }
+    unsigned patchCount[2]{};
+    bool patchRotations[4]{};
+    for (int x = 0; x < 32; ++x) {
+        for (int z = 0; z < 32; ++z) {
+            const auto resolved = ResolveVisual(*tileset, patched, x, z, 0);
+            if (resolved.index == patch.index) {
+                ++patchCount[(x + z) % 2];
+                patchRotations[resolved.transform.quarterTurns] = true;
+            }
+        }
+    }
+    for (const auto count : patchCount) {
+        CHECK(count > 50);
+        CHECK(count < 135);
+    }
+    for (const bool seen : patchRotations) { CHECK(seen); }
+}
+
+TEST_CASE("Gen1 grass selects the supplied plain and detailed tiles by map position", "[sdl][tileset][source][world-tiles]") {
+    auto content = LoadContentPack(CATACLYSMX_CONTENT_PACK);
+    REQUIRE(content);
+    const auto path = fs::path(CATACLYSMX_CONTENT_PACK).parent_path().parent_path()
+        / "assets/tiles/gen1_32x32/tileset.json5";
+    auto tileset = LoadTilesetFile(path.string().c_str(), *content);
+    REQUIRE(tileset);
+    const auto grass = content->FindTerrain("grass");
+    REQUIRE(grass.value != 0);
+    const auto mapping = tileset->terrain[grass.value];
+    REQUIRE(mapping.kind == TilesetMappingKind::Visual);
+    const auto& variants = tileset->visuals[mapping.index];
+    REQUIRE(variants.kind == VisualGroupKind::Variants);
+    REQUIRE(variants.alternatives.size() == 12);
+    Vector<bool> selected(tileset->sprites.size(), false);
+    for (int x = -16; x < 16; ++x) {
+        for (int z = -16; z < 16; ++z) {
+            const auto resolved = ResolveVisual(*tileset, mapping, x, z, 0);
+            REQUIRE(resolved.kind == TilesetMappingKind::Sprite);
+            selected[resolved.index] = true;
+        }
+    }
+    for (const char* style : {"clover", "dry_tips", "matted", "short", "tufted"}) {
+        for (const char* suffix : {"", "_plain"}) {
+            const String id = String("tile.world.grass.grass_") + style + suffix;
+            CAPTURE(id.c_str());
+            const auto alternative = std::find_if(variants.alternatives.begin(), variants.alternatives.end(),
+                [&](const auto& entry) {
+                    return entry.mapping.kind == TilesetMappingKind::Sprite
+                        && tileset->sprites[entry.mapping.index].id == id;
+                });
+            REQUIRE(alternative != variants.alternatives.end());
+            CHECK(alternative->weight == (*suffix ? 3U : 1U));
+            CHECK(selected[alternative->mapping.index]);
+            const auto& sprite = tileset->sprites[alternative->mapping.index];
+            CHECK(sprite.width == 32);
+            CHECK(sprite.height == 32);
+            CHECK(sprite.layer == SpriteLayer::Ground);
+        }
+    }
+}
+
+TEST_CASE("Gen1 reserved art resolves when matching gameplay definitions are added", "[sdl][tileset][source][world-tiles]") {
+    const auto data = fs::path(CATACLYSMX_CONTENT_PACK).parent_path();
+    Fixture fixture;
+    fixture.Write("future.json5", R"JSON({format_version:1, definitions:[
+        {type:'terrain', id:'broken_window', name:'broken window', movement:{passable:false}, blocks_sight:false, looks_like:'window'},
+        {type:'terrain', id:'sand_shore_straight', name:'shore', movement:{passable:true}, blocks_sight:false, looks_like:'floor'},
+        {type:'terrain', id:'tree_birch_alt', name:'birch', movement:{passable:false}, blocks_sight:true, looks_like:'tree'},
+        {type:'terrain', id:'wall_poster_transit', name:'wall with transit poster', movement:{passable:false}, blocks_sight:true, looks_like:'wall'},
+        {type:'item', id:'blinking_lightbulb', name:'blinking lightbulb', mass_g:50, volume_ml:100},
+        {type:'item', id:'toggle_lightbulb', name:'toggle lightbulb', mass_g:50, volume_ml:100},
+        {type:'item', id:'single_blink_lightbulb', name:'single-blink lightbulb', mass_g:50, volume_ml:100},
+    ], objects:[
+        {id:'street_lamp_modern', name:'street lamp', behavior:'none'},
+        {id:'wall_poster_gig', name:'gig poster', behavior:'none'},
+    ]})JSON");
+    const auto base = (data / "terrain/base.json5").string();
+    const auto future = (fixture.root / "future.json5").string();
+    const eastl::string_view files[]{base.c_str(), future.c_str()};
+    Diagnostics diagnostics;
+    auto content = LoadContentFiles(files, &diagnostics);
+    INFO(FormatDiagnostics(diagnostics).c_str());
+    REQUIRE(content);
+    const auto path = data.parent_path() / "assets/tiles/gen1_32x32/tileset.json5";
+    auto tileset = LoadTilesetFile(path.string().c_str(), *content, &diagnostics);
+    INFO(FormatDiagnostics(diagnostics).c_str());
+    REQUIRE(tileset);
+    const auto checkSprite = [&](const TilesetMapping& mapping, const char* id, SpriteLayer layer, std::uint32_t height) {
+        REQUIRE(mapping.kind == TilesetMappingKind::Sprite);
+        const auto& sprite = tileset->sprites[mapping.index];
+        CHECK(sprite.id == id);
+        CHECK(sprite.layer == layer);
+        CHECK(sprite.width == 32);
+        CHECK(sprite.height == height);
+    };
+    const auto window = content->FindTerrain("broken_window").value;
+    const auto shore = content->FindTerrain("sand_shore_straight").value;
+    const auto birch = content->FindTerrain("tree_birch_alt").value;
+    REQUIRE(window != 0); REQUIRE(shore != 0); REQUIRE(birch != 0);
+    checkSprite(tileset->terrain[window], "tile.world.architecture.broken_window", SpriteLayer::Ground, 32);
+    checkSprite(tileset->terrain[shore], "tile.world.shore.sand_shore_straight", SpriteLayer::Ground, 32);
+    checkSprite(tileset->terrainGround[shore], "tile.world.shore.water_shallow", SpriteLayer::Ground, 32);
+    checkSprite(tileset->terrain[birch], "sprite.world.tree.tree_birch_alt", SpriteLayer::Upright, 64);
+    checkSprite(tileset->terrainGround[birch], "tile.world.grass.meadow", SpriteLayer::Ground, 32);
+    const auto lamp = content->FindObject("street_lamp_modern").value;
+    const auto poster = content->FindObject("wall_poster_gig").value;
+    const auto posterWall = content->FindTerrain("wall_poster_transit").value;
+    REQUIRE(lamp != 0); REQUIRE(poster != 0);
+    REQUIRE(posterWall != 0);
+    checkSprite(tileset->objects[lamp], "sprite.object.street_lamp_modern", SpriteLayer::Upright, 64);
+    checkSprite(tileset->objects[poster], "sprite.object.wall_poster_gig", SpriteLayer::Upright, 32);
+    checkSprite(tileset->terrain[posterWall], "sprite.object.wall_poster_transit", SpriteLayer::Upright, 32);
+    checkSprite(tileset->terrainGround[posterWall], "tile.world.wall", SpriteLayer::Ground, 32);
+}
+
 TEST_CASE("Gen1 zombie batch loads and resolves every authored monster appearance", "[sdl][tileset][source][monster-sprites]") {
     Diagnostics diagnostics;
     auto content = LoadContentPack(CATACLYSMX_CONTENT_PACK, &diagnostics);
@@ -268,20 +486,18 @@ TEST_CASE("Gen1 maps every supplied furniture sprite in supported content packs"
         auto tileset = LoadTilesetFile(path.string().c_str(), *content, &diagnostics);
         INFO(FormatDiagnostics(diagnostics).c_str());
         REQUIRE(tileset);
-        unsigned mapped = 0;
         for (std::size_t type = 1; type < tileset->objects.size(); ++type) {
             const auto& mapping = tileset->objects[type];
-            if (mapping.kind == TilesetMappingKind::Missing) { continue; }
-            ++mapped;
+            const auto& id = content->GetObject(ObjectTypeId{static_cast<std::uint32_t>(type)}).id;
+            CAPTURE(pack, id.c_str());
             REQUIRE(mapping.kind == TilesetMappingKind::Sprite);
             const auto& sprite = tileset->sprites[mapping.index];
             String expected = "sprite.object.";
-            expected += content->GetObject(ObjectTypeId{static_cast<std::uint32_t>(type)}).id;
+            expected += id;
             CHECK(sprite.id == expected);
             CHECK(sprite.width == 32); CHECK(sprite.height == 32);
             CHECK(sprite.layer == SpriteLayer::Upright);
         }
-        CHECK(mapped == (String(pack) == CATACLYSMX_TERRAIN_FILE ? 1U : String(pack) == CATACLYSMX_FIRST_HOUSE_PACK ? 15U : 33U));
         Vector<SDL_Surface*> pages;
         const auto built = BuildSourceAtlases(path.parent_path().string().c_str(), *tileset, pages, {});
         for (auto* page : pages) { SDL_DestroySurface(page); }

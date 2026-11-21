@@ -1,0 +1,13 @@
+{
+  kind: 'variants',
+  alternatives: [
+    {visual: 'sprite.world.tree.tree_bare'},
+    {visual: 'sprite.world.tree.tree_bare_alt'},
+    {visual: 'sprite.world.tree.tree_birch'},
+    {visual: 'sprite.world.tree.tree_birch_alt'},
+    {visual: 'sprite.world.tree.tree_broadleaf'},
+    {visual: 'sprite.world.tree.tree_broadleaf_alt'},
+    {visual: 'sprite.world.tree.tree_conifer'},
+    {visual: 'sprite.world.tree.tree_conifer_alt'},
+  ],
+}

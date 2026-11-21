@@ -108,16 +108,16 @@ Quoted glob patterns work in PowerShell and POSIX shells because Python expands
 them. Commands print their output filenames. For an intentional installation,
 change only the final destination and supply `--force` for existing files.
 
-### Individual Gen1 sprites, asphalt, and tree
+### Archived Gen1 asphalt and tree
 
 ```sh
 python3 tools/graphics.py resize assets/tiles/references/modular_gen1/asphalt.png --size 32 32 --output out/graphics/individual/tile/world/road/asphalt.png
 python3 tools/graphics.py resize assets/tiles/references/modular_gen1/tree.png --size 32 64 --output out/graphics/individual/sprite/world/tree/tall.png
 ```
 
-The individual production PNGs are the editable sources; runtime atlas pages are
-assembled at launch. Asphalt is opaque 32x32; the 32x64 tree preserves source alpha.
-Metadata remains artist-authored in the existing pack; these commands generate only PNGs.
+These commands reproduce the previous Gen1 artwork for reference, not the current
+[world tile artwork](tileset_artwork.md#world-tiles). Asphalt is opaque 32×32;
+the 32×64 tree preserves source alpha.
 
 ## Design and maintenance
 

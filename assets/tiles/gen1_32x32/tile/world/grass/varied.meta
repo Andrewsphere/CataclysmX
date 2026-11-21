@@ -1,4 +1,14 @@
-{kind: 'variants', description: 'Upright meadow tufts, mirrored horizontally only.', alternatives: [
+{kind: 'variants', description: 'Meadow and five grass styles, favoring plain tiles over detailed ones.', alternatives: [
   {visual: 'tile.world.grass.meadow', weight: 4},
   {visual: 'tile.world.grass.meadow', flip_x: true},
+  {visual: 'tile.world.grass.grass_clover_plain', weight: 3},
+  {visual: 'tile.world.grass.grass_clover'},
+  {visual: 'tile.world.grass.grass_dry_tips_plain', weight: 3},
+  {visual: 'tile.world.grass.grass_dry_tips'},
+  {visual: 'tile.world.grass.grass_matted_plain', weight: 3},
+  {visual: 'tile.world.grass.grass_matted'},
+  {visual: 'tile.world.grass.grass_short_plain', weight: 3},
+  {visual: 'tile.world.grass.grass_short'},
+  {visual: 'tile.world.grass.grass_tufted_plain', weight: 3},
+  {visual: 'tile.world.grass.grass_tufted'},
 ]}
