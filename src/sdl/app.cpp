@@ -1,3 +1,4 @@
+#include "client/controls_help.h"
 #include "sdl/app.h"
 #include "client/power_view.h"
 #include "client/combat_text.h"
@@ -60,28 +61,6 @@ String InteractionReason(const Localization& localization, ObjectUseReason reaso
     default: return ObjectReasonText(reason);
     }
     return localization.Text(key,ObjectReasonText(reason));
-}
-String Hints(const Keymap& keys) {
-    String text;
-    for (auto action : {InputAction::West, InputAction::East, InputAction::North, InputAction::South,
-        InputAction::Northwest, InputAction::Northeast, InputAction::Southwest, InputAction::Southeast,
-        InputAction::MoveDown, InputAction::MoveUp, InputAction::Examine, InputAction::Settings, InputAction::Debug, InputAction::Wait, InputAction::PickUp,
-        InputAction::Drop, InputAction::Interact, InputAction::Grab, InputAction::Attack, InputAction::StyleBalanced,
-        InputAction::StyleAggressive, InputAction::StyleDefensive, InputAction::CombatMenu, InputAction::CombatInfo,
-        InputAction::FocusAbility, InputAction::LeapAbility, InputAction::SweepAbility,
-        InputAction::Crafting, InputAction::Help, InputAction::Quit}) {
-        text += BindingHint(keys, InputContext::Gameplay, action);
-        text += " ";
-        const auto name = ActionName(action);
-        text.append(name.data(), name.size()); text += "\n";
-    }
-    text += "z zoom in (also Examine/Interact)\nZ zoom out (also Examine/Interact)\nInteract: directions open actions; . selects current tile\nExamine: directions move cursor; layer bindings change viewed Y\nExamine: PgUp/PgDn or Ctrl+Up/Down scroll details\n";
-    text += "F9 Multiplayer settings: host / join / discover / game speed\n";
-    for (auto action : {InputAction::Inventory, InputAction::Use, InputAction::AdvancedInventory, InputAction::Players, InputAction::Save}) {
-        text += BindingHint(keys, InputContext::Gameplay, action); text += " ";
-        const auto name = ActionName(action); text.append(name.data(), name.size()); text += '\n';
-    }
-    return text;
 }
 int SdlFailure() {
     std::fprintf(stderr, "SDL frontend: %s\n", SDL_GetError());
@@ -214,21 +193,16 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
     eastl::optional<std::uint64_t> craftingRequest;
     String craftingFeedback;
     auto& selectedAction = modal.ActionSelection();
-    eastl::optional<SettingsStore> candidateSettings;
-    eastl::unique_ptr<SdlText> candidateText;
-    const auto prepareText = [&](Diagnostics* diagnostics) {
-        candidateText.reset();
-        if (candidateSettings->Effective().textSize == appliedTextSize) { return true; }
-        candidateText.reset(new SdlText(platform.renderer, options.fontPath.empty() ? nullptr : options.fontPath.c_str(),
-            static_cast<float>(candidateSettings->Effective().textSize)));
-        if (candidateText->Ready()) { return true; }
-        if (diagnostics) { diagnostics->Add(SDL_GetError()); }
-        candidateText.reset();
-        return false;
+    struct PendingSettingsSave {
+        std::uint64_t id;
+        std::uint64_t generation;
+        SettingsScope scope;
+        Screen screen;
+        SettingsStore candidate;
+        eastl::optional<Localization> localization;
+        eastl::unique_ptr<SdlText> text;
     };
-    Localization candidateLocalization;
-    eastl::optional<std::uint64_t> settingsId;
-    bool saveSettings = false, reloadSettings = false, multiplayerSettings = false;
+    eastl::optional<PendingSettingsSave> settingsSave;
     WorldgenDebugPreview debugPreview;
     WorldgenDebugLayer debugLayer = WorldgenDebugLayer::Roads;
     int debugScale = 8;
@@ -242,6 +216,10 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
     TileCoord requestedAiCursor{};
     std::uint64_t nextId = 1;
     unsigned int smokeStep = 0;
+    unsigned int smokeHelpStep = 0;
+    bool smokeHelpDrawn = false;
+    int smokeHistoryLimit = 0;
+    int smokeHistoryCount = 0;
     bool smokeWaiting = false;
     bool smokeFailed = false;
     bool smokeExamined = false;
@@ -284,7 +262,6 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
         SetMessage("World storage failed (error=" + NumberText(static_cast<int>(error)) + ").");
     };
     message = sessionOptions.join ? "Connecting to LAN session..." : "Starting session...";
-    String hints = Hints(keys);
     auto assetState = AssetState::Loading;
     bool minimized = false;
     bool commandPending = false;
@@ -298,7 +275,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
     eastl::optional<std::uint64_t> animationDeadline;
     const auto smokeDeadline = Clock::now() + std::chrono::seconds(multiplayerSmoke ? 20 : 10);
     eastl::optional<Clock::time_point> multiplayerLingerUntil;
-    const auto enqueue = [&](SessionRequest request) {
+    const auto enqueue = [&](SessionRequest request, bool reportBusy = true) {
         const bool isCommand = request.kind == RequestKind::Command || request.kind == RequestKind::ResumeAndCommand
             || request.kind == RequestKind::ItemCommand;
         if (isCommand && commandPending) { return false; }
@@ -308,7 +285,8 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
         request.generation = snapshot.generation; request.id = nextId;
         request.player = snapshot.view.playerId; request.opportunity = input.opportunity;
         if (session.TrySubmit(eastl::move(request)) != EnqueueResult::Accepted) {
-            SetMessage("Session busy; try again."); dirty = true; return false;
+            if (reportBusy) { SetMessage("Session busy; try again."); }
+            dirty = true; return false;
         }
         if (isCommand) {
             commandPending = true;
@@ -407,11 +385,57 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
         prepareMap();
         refreshDiscovery(); dirty = true;
     };
+    const auto settingsFeedback = [&](Screen screen, String feedback, SettingsTone tone) {
+        if (screen == Screen::Lan) { multiplayerUi.Feedback(eastl::move(feedback)); }
+        else { optionsUi.Feedback(eastl::move(feedback), tone); }
+    };
+    const auto persistSettings = [&](Screen screen, SettingsScope scope) {
+        Diagnostics diagnostics;
+        if (scope == SettingsScope::World && store.WorldDirectory().empty()) {
+            settingsFeedback(screen, localization.Text("settings.ui.session_only"), SettingsTone::Success);
+        } else if (store.Dirty(scope) && !store.Save(scope, &diagnostics)) {
+            settingsFeedback(screen, localization.Text("settings.ui.unsaved") + ": " + FormatDiagnostics(diagnostics), SettingsTone::Error);
+        } else { settingsFeedback(screen, localization.Text("settings.ui.saved"), SettingsTone::Success); }
+    };
+    const auto startSettingsSave = [&](SettingsStore candidate, SettingsScope scope, Screen screen) {
+        if (candidate.Overrides(scope) == store.Overrides(scope) && candidate.KeyOverrides(scope) == store.KeyOverrides(scope)) {
+            if (screen == Screen::Lan) { multiplayerUi.Applied(snapshot.runtimeSettings.pacing); }
+            persistSettings(screen, scope);
+            return;
+        }
+        PendingSettingsSave pending{nextId, snapshot.generation, scope, screen, eastl::move(candidate), {}, {}};
+        Diagnostics diagnostics;
+        const auto& effective = pending.candidate.Effective();
+        if (effective.language != store.Effective().language) {
+            pending.localization.emplace();
+            if (!pending.localization->Load(localizationDirectory, effective.language, &diagnostics)) {
+                settingsFeedback(screen, FormatDiagnostics(diagnostics), SettingsTone::Error);
+                return;
+            }
+        }
+        if (effective.textSize != appliedTextSize) {
+            pending.text.reset(new SdlText(platform.renderer, options.fontPath.empty() ? nullptr : options.fontPath.c_str(),
+                static_cast<float>(effective.textSize)));
+            if (!pending.text->Ready()) {
+                settingsFeedback(screen, SDL_GetError(), SettingsTone::Error);
+                return;
+            }
+        }
+        SessionRequest request; request.kind = RequestKind::ApplySettings;
+        request.globalSettings = pending.candidate.Overrides(SettingsScope::Global);
+        request.worldSettings = pending.candidate.Overrides(SettingsScope::World);
+        if (!enqueue(eastl::move(request), false)) {
+            settingsFeedback(screen, localization.Text("settings.ui.busy"), SettingsTone::Error);
+            return;
+        }
+        settingsSave.emplace(eastl::move(pending));
+        settingsFeedback(screen, localization.Text("settings.ui.saving"), SettingsTone::Pending);
+    };
     const auto multiplayerEvent = [&](MultiplayerEvent event) {
         if (event == MultiplayerEvent::None) { return; }
         if (event == MultiplayerEvent::Close) { close(); return; }
         if (event == MultiplayerEvent::Refresh) { refreshDiscovery(); return; }
-        if (lanRequest || settingsId) { return; }
+        if (lanRequest || settingsSave) { return; }
         if (event == MultiplayerEvent::ApplyPacing) {
             if (snapshot.mode == SessionMode::Guest) { multiplayerUi.Feedback("Only the host can change pacing."); return; }
             const auto pacing = multiplayerUi.Pacing();
@@ -419,19 +443,12 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             overrides.ticksPerSecond = pacing.ticksPerSecond;
             overrides.rateLimited = pacing.rateLimited;
             overrides.pauseWhenIdle = pacing.pauseWhenIdle;
-            candidateSettings = store;
+            auto candidate = store;
             Diagnostics diagnostics;
-            if (!candidateSettings->SetOverrides(SettingsScope::World, eastl::move(overrides), store.KeyOverrides(SettingsScope::World), &diagnostics)) {
-                multiplayerUi.Feedback(FormatDiagnostics(diagnostics)); candidateSettings.reset(); return;
+            if (!candidate.SetOverrides(SettingsScope::World, eastl::move(overrides), store.KeyOverrides(SettingsScope::World), &diagnostics)) {
+                multiplayerUi.Feedback(FormatDiagnostics(diagnostics)); return;
             }
-            SessionRequest request; request.kind = RequestKind::ApplySettings;
-            request.globalSettings = candidateSettings->Overrides(SettingsScope::Global);
-            request.worldSettings = candidateSettings->Overrides(SettingsScope::World);
-            const auto id = nextId;
-            if (enqueue(eastl::move(request))) {
-                settingsId = id; multiplayerSettings = true; saveSettings = true; reloadSettings = false;
-                multiplayerUi.Feedback("Applying pacing...");
-            } else { candidateSettings.reset(); multiplayerUi.Feedback(message); }
+            startSettingsSave(eastl::move(candidate), SettingsScope::World, Screen::Lan);
             return;
         }
         SessionRequest request;
@@ -511,10 +528,10 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             }
             dirty = true; return; // Every browser chord is modal, including F9.
         }
-        if (event.type == SDL_EVENT_TEXT_INPUT && modal.Active() == Screen::Options && !settingsId && !modal.Pending()) {
+        if (event.type == SDL_EVENT_TEXT_INPUT && modal.Active() == Screen::Options && !settingsSave && !modal.Pending()) {
             optionsUi.Text(event.text.text); dirty = true; return;
         }
-        if (event.type == SDL_EVENT_TEXT_INPUT && modal.Active() == Screen::Lan && !settingsId && !lanRequest && !modal.Pending()) {
+        if (event.type == SDL_EVENT_TEXT_INPUT && modal.Active() == Screen::Lan && !settingsSave && !lanRequest && !modal.Pending()) {
             multiplayerUi.Text(event.text.text);
             dirty = true; return;
         }
@@ -525,15 +542,15 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             running = false;
             return;
         }
-        if (chord->key == "F9") {
+        if (*chord == KeyChord{"F9"} && modal.Active() != Screen::Options && modal.Active() != Screen::Help) {
             if (event.key.repeat) { return; }
             if (chord->ctrl || chord->alt) { return; }
             if (modal.Active() == Screen::Lan && !modal.Pending()) {
-                multiplayerEvent(multiplayerUi.Key(*chord, keys, snapshot, settingsId.has_value() || lanRequest.has_value()));
+                multiplayerEvent(multiplayerUi.Key(*chord, keys, snapshot, settingsSave.has_value() || lanRequest.has_value()));
                 if (!multiplayerUi.EditingText()) { SDL_StopTextInput(platform.window); }
                 heldKey.Reset(); dirty = true;
             }
-            else if (!modal.Pending() && !settingsId && !craftingRequest
+            else if (!modal.Pending() && !settingsSave && !craftingRequest
                 && (!commandPending || snapshot.mode != SessionMode::Local)) { openLan(); }
             return;
         }
@@ -541,7 +558,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             dirty = true;
             if (event.key.repeat) { return; }
             const bool editing = multiplayerUi.EditingText();
-            multiplayerEvent(multiplayerUi.Key(*chord, keys, snapshot, settingsId.has_value() || lanRequest.has_value()));
+            multiplayerEvent(multiplayerUi.Key(*chord, keys, snapshot, settingsSave.has_value() || lanRequest.has_value()));
             if (multiplayerUi.EditingText()) { SDL_StartTextInput(platform.window); }
             else { SDL_StopTextInput(platform.window); }
             const auto navigation = ResolveAction(keys, InputContext::Menu, *chord);
@@ -566,40 +583,34 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 || gameAction == InputAction::MoveUp || gameAction == InputAction::MoveDown) { action = gameAction; }
         }
         dirty = true;
-        if (modal.Pending() || settingsId || craftingRequest) { return; }
+        if (modal.Pending() || settingsSave || craftingRequest) { return; }
         if (modal.Active() == Screen::ItemInventory) {
             HandleInventoryKey(itemUi, heldKey, *chord, keys, snapshot.view, content, localization);
             return; // All contextual keys, including unbound keys, belong to ItemUi.
         }
         if (modal.Active() == Screen::Options) {
-            const bool capturing = optionsUi.Capturing();
-            const auto result = optionsUi.Key(*chord,store,localization,localizationDirectory);
-            if (result == OptionsEvent::Multiplayer) { openLan(); return; }
-            if (capturing) { heldKey.Reset(); }
+            const bool browsing = optionsUi.Browsing();
+            const auto result = optionsUi.Key(*chord, store, localization, localizationDirectory);
+            if (browsing != optionsUi.Browsing() || result != OptionsEvent::None
+                || (browsing && action == InputAction::SwitchSettingsScope)) { heldKey.Reset(); }
             if (result == OptionsEvent::Close) { close(); }
             if (optionsUi.EditingText()) { SDL_StartTextInput(platform.window); }
             else { SDL_StopTextInput(platform.window); }
             if (result == OptionsEvent::Save) {
-                candidateSettings = store;
                 Diagnostics diagnostics;
-                if (!optionsUi.Prepare(store,*candidateSettings,&diagnostics)
-                    || !candidateLocalization.Load(localizationDirectory,candidateSettings->Effective().language,&diagnostics)
-                    || !prepareText(&diagnostics)) {
-                    optionsUi.Feedback(FormatDiagnostics(diagnostics)); candidateSettings.reset(); return;
+                auto candidate = optionsUi.Prepare(store, &diagnostics);
+                if (!candidate) {
+                    optionsUi.Feedback(localization.Text("settings.ui.apply_failed") + ": " + FormatDiagnostics(diagnostics), SettingsTone::Error);
+                    return;
                 }
-                SessionRequest request; request.kind = RequestKind::ApplySettings;
-                request.globalSettings = candidateSettings->Overrides(SettingsScope::Global);
-                request.worldSettings = candidateSettings->Overrides(SettingsScope::World);
-                const auto id = nextId;
-                if (enqueue(eastl::move(request))) { settingsId = id; saveSettings = result == OptionsEvent::Save; reloadSettings = false; multiplayerSettings = false; }
-                else { candidateSettings.reset(); candidateText.reset(); optionsUi.Feedback(message); }
+                startSettingsSave(eastl::move(*candidate), optionsUi.Scope(), Screen::Options);
             }
             return;
         }
         if (modal.Active() == Screen::Targets && (chord->key == "." || chord->key == "Home")) {
             cursor = snapshot.view.player_position; openActions(); return;
         }
-        if ((modal.Active() == Screen::Examine || modal.Active() == Screen::Help || modal.Active() == Screen::Actions || modal.Active() == Screen::Players
+        if ((modal.Active() == Screen::Examine || modal.Active() == Screen::Actions || modal.Active() == Screen::Players
             || modal.Active() == Screen::Combat || modal.Active() == Screen::CombatInfo)
             && ((chord->ctrl && (chord->key == "Up" || chord->key == "Down"))
                 || chord->key == "PageUp" || chord->key == "PageDown")) {
@@ -643,13 +654,12 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 }
                 return;
             }
-            if (modal.Active() == Screen::Players || modal.Active() == Screen::CombatInfo) {
+            if (modal.Active() == Screen::Players || modal.Active() == Screen::CombatInfo || modal.Active() == Screen::Help) {
                 if (*action == InputAction::North || *action == InputAction::South) {
                     frame.scroll = std::max(0, frame.scroll + (*action == InputAction::South ? 1 : -1));
                 } else if (*action == InputAction::Accept) { close(); }
                 return;
             }
-            if (modal.Active() == Screen::Help) { if (*action == InputAction::Accept) { close(); } return; }
             if (modal.Active() == Screen::Crafting) {
                 const auto count = craftingRows.size() + learningLines.size();
                 if (count && (*action == InputAction::North || *action == InputAction::South)) {
@@ -866,7 +876,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
         actions.clear(); inspection.clear(); inspectionView = {}; inspectionItems.clear();
         examinedEnemy.reset();
         inspectionValid = false; inspectedCursor.reset(); inspectionId.reset(); inspectionNeeded = false;
-        candidateSettings.reset(); candidateText.reset(); settingsId.reset(); saveSettings = false; reloadSettings = false; multiplayerSettings = false;
+        settingsSave.reset();
         saveRequest.reset(); reconcileMenu = true;
         ++aiRevision; aiRequestId.reset(); aiNeeded = false; aiValid = false; aiView = {};
         debugPower = false; powerDebugRequest.reset(); powerDebugLines.clear();
@@ -978,6 +988,30 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             if (reply.generation < snapshot.generation) { continue; }
             if (reply.generation > snapshot.generation) { resetGeneration(reply.generation); }
             consumeInput(reply.generation, reply.input);
+            if (settingsSave && settingsSave->id == reply.id && settingsSave->generation == reply.generation) {
+                auto pending = eastl::move(*settingsSave);
+                settingsSave.reset();
+                dirty = true;
+                smokeWaiting = false;
+                if (reply.kind == ReplyKind::SettingsApplied) {
+                    store = eastl::move(pending.candidate);
+                    messageHistory.SetCapacity(store.Effective().messageHistorySize);
+                    if (pending.text) {
+                        text = eastl::move(pending.text);
+                        appliedTextSize = store.Effective().textSize;
+                    }
+                    if (pending.localization) { localization = eastl::move(*pending.localization); }
+                    if (pending.screen == Screen::Lan) { multiplayerUi.Applied(reply.runtimeSettings.pacing); }
+                    else { optionsUi.Applied(store, reply.runtimeSettings); }
+                    persistSettings(pending.screen, pending.scope);
+                } else {
+                    smokeFailed |= localSmoke || (pending.screen == Screen::Lan && options.smoke);
+                    const auto feedback = reply.details.empty() ? localization.Text("settings.ui.apply_failed") : reply.details.front();
+                    settingsFeedback(pending.screen, feedback, SettingsTone::Error);
+                }
+                heldKey.Reset();
+                continue;
+            }
             if (powerDebugRequest && reply.id == *powerDebugRequest) {
                 if (reply.kind == ReplyKind::PowerInspected && modal.Active() == Screen::Debug && debugPower) {
                     DescribePowerDebug(reply.powerDebug, snapshot.view.player_position, powerDebugLines);
@@ -1145,42 +1179,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             case ReplyKind::PowerInspected:
             case ReplyKind::ItemsGiven: break;
             case ReplyKind::SettingsApplied:
-                if (settingsId && *settingsId == reply.id && candidateSettings) {
-                    store = eastl::move(*candidateSettings);
-                    if (candidateText) {
-                        text = eastl::move(candidateText);
-                        appliedTextSize = store.Effective().textSize;
-                        frame.scroll = 0; frame.detailScroll = 0;
-                    }
-                    if (!multiplayerSettings) { localization = eastl::move(candidateLocalization); }
-                    candidateSettings.reset(); settingsId.reset(); hints = Hints(store.Keys());
-                    if (multiplayerSettings) { multiplayerUi.Applied(reply.runtimeSettings.pacing); }
-                    else { optionsUi.Applied(store,reply.runtimeSettings,reloadSettings); }
-                    smokeWaiting = false;
-                    Diagnostics diagnostics;
-                    const auto scope = multiplayerSettings ? SettingsScope::World : optionsUi.Scope();
-                    String feedback;
-                    if (saveSettings && scope == SettingsScope::World && store.WorldDirectory().empty()) {
-                        feedback = "Applied for this session; temporary world has no save directory.";
-                    } else if (saveSettings && !store.Save(scope,&diagnostics)) {
-                        feedback = "Applied, unsaved: " + FormatDiagnostics(diagnostics);
-                    }
-                    else { feedback = saveSettings ? "Applied and saved" : "Applied"; }
-                    if (multiplayerSettings) { multiplayerUi.Feedback(eastl::move(feedback)); }
-                    else { optionsUi.Feedback(eastl::move(feedback)); }
-                    multiplayerSettings = false;
-                }
-                break;
-            case ReplyKind::SettingsFailed:
-                if (settingsId && *settingsId == reply.id) {
-                    smokeFailed |= multiplayerSettings && options.smoke;
-                    settingsId.reset(); candidateSettings.reset(); candidateText.reset(); smokeFailed |= localSmoke;
-                    const auto feedback = reply.details.empty() ? String("Settings could not be applied") : reply.details.front();
-                    if (multiplayerSettings) { multiplayerUi.Feedback(feedback); }
-                    else { optionsUi.Feedback(feedback); }
-                    multiplayerSettings = false;
-                }
-                break;
+            case ReplyKind::SettingsFailed: break; // Handled by the identified save above.
             case ReplyKind::Stale:
                 if (modalRequest && reply.id == *modalRequest) { modalRequest.reset(); modal.Closed(); }
                 if (commandRequest && reply.id == *commandRequest) { commandPending = false; commandRequest.reset(); }
@@ -1219,24 +1218,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             }
             if (modal.Active() == Screen::ItemInventory) { itemUi.Open(itemAdvanced, itemUse); }
             if (modal.Active() == Screen::Options) {
-                optionsUi.Open(store,snapshot.runtimeSettings,snapshot.mode == SessionMode::Guest);
-                if (snapshot.mode != SessionMode::Guest && !store.Dirty(SettingsScope::Global) && !store.Dirty(SettingsScope::World)) {
-                    candidateSettings = store;
-                    Diagnostics diagnostics;
-                    auto loaded = candidateSettings->Load(&diagnostics);
-                    if (loaded && store.WorldDirectory().empty()) {
-                        loaded = candidateSettings->SetOverrides(SettingsScope::World,store.Overrides(SettingsScope::World),store.KeyOverrides(SettingsScope::World),&diagnostics);
-                    }
-                    if (loaded && candidateLocalization.Load(localizationDirectory,candidateSettings->Effective().language,&diagnostics)
-                        && prepareText(&diagnostics)) {
-                        SessionRequest request; request.kind = RequestKind::ApplySettings;
-                        request.globalSettings = candidateSettings->Overrides(SettingsScope::Global);
-                        request.worldSettings = candidateSettings->Overrides(SettingsScope::World);
-                        const auto id = nextId;
-                        if (enqueue(eastl::move(request))) { settingsId = id; saveSettings = false; reloadSettings = true; multiplayerSettings = false; }
-                        else { candidateSettings.reset(); candidateText.reset(); optionsUi.Feedback(message); }
-                    } else { candidateSettings.reset(); candidateText.reset(); optionsUi.Feedback(FormatDiagnostics(diagnostics)); }
-                }
+                optionsUi.Open(store, snapshot.runtimeSettings, snapshot.mode == SessionMode::Guest);
             }
             if (modal.Active() == Screen::Examine) { inspectionNeeded = true; }
             if (modal.Active() == Screen::Debug) {
@@ -1341,7 +1323,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             && started && snapshot.view.playerId && assetState == AssetState::Ready && mapValid && smokeHealthDrawn) {
             running = false;
         }
-        if (localSmoke && options.scenario == NewGameScenario::Demo && started && snapshot.view.playerId && assetState == AssetState::Ready && mapValid && !smokeWaiting && !settingsId
+        if (localSmoke && options.scenario == NewGameScenario::Demo && started && snapshot.view.playerId && assetState == AssetState::Ready && mapValid && !smokeWaiting && !settingsSave
             && (smokeStep > 3 || snapshot.view.opportunity > smokeOpportunity)) {
             const auto press = [&](SDL_Keycode key, SDL_Keymod modifiers = SDL_KMOD_NONE) {
                 SDL_Event event{}; event.type = SDL_EVENT_KEY_DOWN; event.key.key = key; event.key.mod = modifiers;
@@ -1511,18 +1493,68 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                     requireSmoke(false, "Smoke F11 reached an unexpected substep."); break;
                 }
             }
-            else if (smokeStep == 9) { press(SDLK_F2); smokeWaiting = modal.Pending(); }
+            else if (smokeStep == 9) {
+                if (smokeHelpStep == 0) {
+                    press(SDLK_F1);
+                    if (!modal.Pending()) { smokeFailed = true; }
+                    ++smokeHelpStep;
+                } else if (smokeHelpStep == 1 && smokeHelpDrawn) {
+                    const int scrollBefore = frame.scroll;
+                    press(SDLK_DOWN);
+                    if (frame.scroll != scrollBefore + 1) { smokeFailed = true; }
+                    press(SDLK_PAGEDOWN); press(SDLK_F9);
+                    if (frame.scroll != scrollBefore + 1 || modal.Active() != Screen::Help) { smokeFailed = true; }
+                    press(SDLK_UP);
+                    if (frame.scroll != scrollBefore) { smokeFailed = true; }
+                    press(SDLK_RETURN);
+                    if (!modal.Pending()) { smokeFailed = true; }
+                    ++smokeHelpStep;
+                } else if (smokeHelpStep == 2 && modal.Active() == Screen::None && !modal.Pending()) {
+                    press(SDLK_F2); smokeWaiting = modal.Pending();
+                }
+            }
             else if (smokeStep == 10) {
                 press(SDLK_DOWN); press(SDLK_RETURN);
                 SDL_Event entry{}; entry.type = SDL_EVENT_TEXT_INPUT; entry.text.text = "12"; handleEvent(entry);
                 press(SDLK_RETURN);
-                press(SDLK_DOWN); press(SDLK_DOWN); press(SDLK_DOWN); press(SDLK_RETURN);
+                const int initialLimit = store.Effective().messageHistorySize;
+                smokeHistoryLimit = initialLimit > 2 ? 2 : 3;
+                smokeHistoryCount = std::min({3, initialLimit, smokeHistoryLimit});
+                messageHistory = {};
+                messageHistory.SetCapacity(initialLimit);
+                messageHistory.Add("Smoke oldest"); messageHistory.Add("Smoke middle");
+                messageHistory.Add("Smoke newest"); messageHistory.Add("Smoke newest");
+                press(SDLK_DOWN); press(SDLK_DOWN); press(SDLK_RETURN);
+                const auto historyLimit = NumberText(smokeHistoryLimit);
+                entry.text.text = historyLimit.c_str(); handleEvent(entry); press(SDLK_RETURN);
+                press(SDLK_DOWN); press(SDLK_RETURN);
                 entry.text.text = "24"; handleEvent(entry); press(SDLK_RETURN);
-                press(SDLK_S); smokeWaiting = settingsId.has_value();
-                if (!smokeWaiting) { smokeFailed = true; }
+                if (messageHistory.Entries().size() != static_cast<std::size_t>(std::min(3, initialLimit))
+                    || store.Effective().messageHistorySize != initialLimit) {
+                    std::fputs("SDL smoke history changed before Save.\n", stderr);
+                    smokeFailed = true;
+                }
+                press(SDLK_S); smokeWaiting = settingsSave.has_value();
+                if (!smokeWaiting) {
+                    std::fputs("SDL smoke settings Save did not submit a request.\n", stderr);
+                    smokeFailed = true;
+                }
             }
             else if (smokeStep == 11) {
-                if (store.Effective().viewRadius != 12 || store.Effective().textSize != 24 || appliedTextSize != 24) { smokeFailed = true; }
+                if (store.Effective().viewRadius != 12 || store.Effective().textSize != 24 || appliedTextSize != 24) {
+                    std::fprintf(stderr, "SDL smoke settings: view radius %d, configured text size %d, applied text size %d\n",
+                        store.Effective().viewRadius, store.Effective().textSize, appliedTextSize);
+                    smokeFailed = true;
+                }
+                const auto entries = messageHistory.Entries();
+                constexpr const char* expectedMessages[] = {"Smoke oldest", "Smoke middle", "Smoke newest"};
+                if (store.Effective().messageHistorySize != smokeHistoryLimit || entries.size() != static_cast<std::size_t>(smokeHistoryCount)
+                    || entries.front().text != expectedMessages[3 - smokeHistoryCount]
+                    || entries.back().text != "Smoke newest" || entries.back().count != 2) {
+                    std::fprintf(stderr, "SDL smoke history: capacity %d (expected %d), %zu entries (expected %d)\n",
+                        store.Effective().messageHistorySize, smokeHistoryLimit, entries.size(), smokeHistoryCount);
+                    smokeFailed = true;
+                }
                 press(SDLK_ESCAPE); smokeWaiting = modal.Pending();
             }
             else if (smokeStep == 12) { press(SDLK_E); smokeWaiting = modal.Pending(); }
@@ -1645,7 +1677,9 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 break;
             case NetworkSmokeStep::InventoryClosed:
                 if (!modal.Pending() && modal.Active() == Screen::None && !snapshot.menuOpen && mapValid) {
-                    openLan(); multiplayerSmokeStep = NetworkSmokeStep::Multiplayer;
+                    SDL_Event event{}; event.type = SDL_EVENT_KEY_DOWN; event.key.key = SDLK_F9;
+                    handleEvent(event);
+                    multiplayerSmokeStep = NetworkSmokeStep::Multiplayer;
                 }
                 break;
             case NetworkSmokeStep::Multiplayer:
@@ -1674,13 +1708,14 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                         if (!multiplayerUi.Pacing().rateLimited && select("Limit simulation speed")) { press(SDLK_RETURN); }
                         if (!select("Apply pacing")) { break; }
                         press(SDLK_RETURN);
-                        if (!settingsId) { smokeFailed = true; }
+                        if (!settingsSave && (snapshot.runtimeSettings.pacing.ticksPerSecond != 200
+                            || !snapshot.runtimeSettings.pacing.rateLimited)) { smokeFailed = true; }
                         multiplayerSmokeStep = NetworkSmokeStep::PacingApplied;
                     }
                 }
                 break;
             case NetworkSmokeStep::PacingApplied:
-                if (!settingsId && snapshot.runtimeSettings.pacing.ticksPerSecond == 200 && snapshot.runtimeSettings.pacing.rateLimited) {
+                if (!settingsSave && snapshot.runtimeSettings.pacing.ticksPerSecond == 200 && snapshot.runtimeSettings.pacing.rateLimited) {
                     if (store.Effective().pacing != snapshot.runtimeSettings.pacing) { smokeFailed = true; }
                     close(); multiplayerSmokeStep = NetworkSmokeStep::MultiplayerClosed;
                 }
@@ -1744,13 +1779,14 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 ? ScreenPresentation::Anchored : ScreenPresentation::Large;
             frame.followCursor = modal.Active() == Screen::Examine;
             frame.scrollText = false;
+            frame.structuredRows = false; frame.status.clear(); frame.scopeTone = SettingsTone::Normal;
             frame.cursor.reset(); frame.highlights.clear(); frame.debugImage = nullptr; frame.worldgenPreview = nullptr;
-            frame.rows.clear(); frame.details.clear(); frame.selected = -1;
+            frame.rows.clear(); frame.details.clear(); frame.settingsDetails.clear(); frame.selected = -1;
             if (modal.Active() == Screen::Options) { optionsUi.Present(store,localization,frame); }
             if (modal.Active() == Screen::Combat) { combatUi.Refresh(content, snapshot.view); combatUi.Present(frame); }
             if (modal.Active() == Screen::CombatInfo) { PresentCombatInfo(content, snapshot.view, frame); }
             if (modal.Active() == Screen::Lan) {
-                multiplayerUi.Present(snapshot, lanRequest.has_value() || settingsId.has_value(), frame);
+                multiplayerUi.Present(snapshot, lanRequest.has_value() || settingsSave.has_value(), frame);
             }
             if (modal.Active() == Screen::Players) {
                 frame.title = snapshot.paused ? "Players | Local session paused" : "Players | World live";
@@ -1793,14 +1829,17 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                     + BindingHint(keys, InputContext::Menu, InputAction::Cancel) + " close";
             }
             if (modal.Active() == Screen::Help) {
-                frame.title = snapshot.paused ? "Controls | Local session paused" : "Controls | World live";
-                std::size_t start = 0;
-                for (std::size_t i = 0; i <= hints.size(); ++i) {
-                    if (i == hints.size() || hints[i] == '\n') {
-                        frame.rows.push_back({String(hints.data()+start,i-start)}); start = i+1;
-                    }
+                frame.title = localization.Text("game.ui.controls");
+                frame.structuredRows = true;
+                for (auto& row : CollectControlsHelp(store.Keys(), localization, true)) {
+                    frame.rows.push_back({eastl::move(row.label), false, {}, eastl::move(row.keys),
+                        SettingsTone::Normal, row.heading});
                 }
-                frame.footer = "PgUp/PgDn: scroll | Escape / Enter: close | F9: LAN";
+                const auto helpKey = [&](InputAction action) { return BindingHint(store.Keys(), InputContext::Menu, action); };
+                const auto arrows = helpKey(InputAction::North) + "/" + helpKey(InputAction::South);
+                frame.compactFooter = arrows + " | Esc";
+                frame.footer = arrows + " " + localization.Text("game.ui.scroll") + "  |  Escape / " + helpKey(InputAction::Accept)
+                    + " " + localization.Text("settings.ui.close");
             }
             if (modal.Active() == Screen::Examine) {
                 frame.title = localization.Text("sdl.ui.examine", "Examine") + " | " + NumberText(cursor.x) + "," + NumberText(cursor.z) + " Y " + NumberText(cursor.y);
@@ -1902,12 +1941,13 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             const String sessionLabel = snapshot.mode == SessionMode::Host ? "Host :" + UnsignedText(snapshot.hostPort)
                 : snapshot.mode == SessionMode::Guest ? String(ConnectionText(snapshot.connectionState)) : String("Local");
             if (!DrawFrame(platform.renderer, *text, assets, mapValid ? &displayView() : nullptr,
-                content, display.c_str(), hints.c_str(), elapsedMilliseconds, mapValid ? &mapPacket : nullptr,
+                content, display.c_str(), "", elapsedMilliseconds, mapValid ? &mapPacket : nullptr,
                 zoom, options.uiScale, {}, &playback, &shader, &frame,
                 {&messageHistory, &store.Keys(), &localization, sessionLabel},
                 modal.Active() == Screen::ItemInventory ? &itemUi.Frame()
                     : modal.Active() == Screen::Debug && itemBrowser.Frame().screen == ItemBrowserScreen::Examine
                         ? &itemBrowser.Frame().examination : nullptr)) { return SdlFailure(); }
+            if (modal.Active() == Screen::Options) { optionsUi.RememberScroll(frame); }
             if (modal.Active() == Screen::Debug && itemBrowser.IsOpen()
                 && itemBrowser.Frame().screen != ItemBrowserScreen::Examine) { itemBrowser.Frame().scroll = frame.scroll; }
             if (multiplayerSmoke && mapValid) { multiplayerRendered = true; }
@@ -1925,6 +1965,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 }
             }
             if (options.smoke) {
+                smokeHelpDrawn |= modal.Active() == Screen::Help && frame.visible && !modal.Pending();
                 smokeHealthDrawn |= mapValid && text->Width(62) > 0;
                 smokeExamineDrawn |= modal.Active() == Screen::Examine && frame.presentation == ScreenPresentation::Anchored && frame.cursor.has_value();
                 smokeActionsDrawn |= modal.Active() == Screen::Actions && frame.presentation == ScreenPresentation::Anchored && frame.selected >= 0;
@@ -1960,8 +2001,8 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             const String committed = heldKey.Text();
             handleEvent(held);
             if (!committed.empty() && !(repeated->mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI))
-                && ((modal.Active() == Screen::Options && optionsUi.EditingText() && !settingsId)
-                    || (modal.Active() == Screen::Lan && multiplayerUi.EditingText() && !settingsId && !lanRequest)
+                && ((modal.Active() == Screen::Options && optionsUi.EditingText() && !settingsSave)
+                    || (modal.Active() == Screen::Lan && multiplayerUi.EditingText() && !settingsSave && !lanRequest)
                     || (modal.Active() == Screen::Debug && itemBrowser.EditingText() && !modal.Pending()))) {
                 held.type = SDL_EVENT_TEXT_INPUT; held.text.text = committed.c_str(); handleEvent(held);
             }

@@ -260,27 +260,31 @@ SettingsResult<Keymap> ParseKeymap(eastl::string_view text, Diagnostics* diagnos
     if (!Object(root, {"format_version", "bindings"}, diagnostics)) { return eastl::unexpected(SettingsError::InvalidData); }
     const auto version = Version(root, diagnostics, 2);
     if (!version) { return eastl::unexpected(version.error()); }
+    const bool modern = yyjson_get_uint(yyjson_obj_get(root, "format_version")) == 2;
     auto* bindings = yyjson_obj_get(root, "bindings");
     if (!yyjson_is_arr(bindings)) { Report(diagnostics, "expected bindings array"); return eastl::unexpected(SettingsError::InvalidData); }
     Keymap map;
     std::size_t index, count;
     yyjson_val* binding;
     yyjson_arr_foreach(bindings, index, count, binding) {
-        if (!Object(binding, {"context", "action", "keys"}, diagnostics)) { return eastl::unexpected(SettingsError::InvalidData); }
+        if (!(modern ? Object(binding, {"context", "action", "keys", "inherit_shared"}, diagnostics)
+            : Object(binding, {"context", "action", "keys"}, diagnostics))) { return eastl::unexpected(SettingsError::InvalidData); }
         auto* contextName = yyjson_obj_get(binding, "context");
         auto* actionName = yyjson_obj_get(binding, "action");
         auto* keys = yyjson_obj_get(binding, "keys");
-        if (!StringValue(contextName) || !StringValue(actionName) || !yyjson_is_arr(keys)) {
-            Report(diagnostics, "expected context, action and keys"); return eastl::unexpected(SettingsError::InvalidData);
+        auto* inheritShared = yyjson_obj_get(binding, "inherit_shared");
+        if (!StringValue(contextName) || !StringValue(actionName) || !yyjson_is_arr(keys)
+            || (inheritShared && !yyjson_is_bool(inheritShared))) {
+            Report(diagnostics, "expected context, action, keys and optional inherit_shared boolean");
+            return eastl::unexpected(SettingsError::InvalidData);
         }
         const auto context = ParseContext(JsonText(contextName));
         const auto action = ParseAction(JsonText(actionName));
         if (!context || !action) { Report(diagnostics, "unknown binding context or action"); return eastl::unexpected(SettingsError::InvalidData); }
-        InputBinding entry{*context, *action, {}};
+        InputBinding entry{*context, *action, {}, inheritShared && yyjson_get_bool(inheritShared)};
         std::size_t keyIndex, keyCount;
         yyjson_val* key;
         yyjson_arr_foreach(keys, keyIndex, keyCount, key) {
-            const bool modern = yyjson_get_uint(yyjson_obj_get(root, "format_version")) == 2;
             if (!(modern ? Object(key, {"key", "ctrl", "alt", "shift"}, diagnostics) : Object(key, {"key", "ctrl"}, diagnostics))) { return eastl::unexpected(SettingsError::InvalidData); }
             auto* name = yyjson_obj_get(key, "key");
             auto* ctrl = yyjson_obj_get(key, "ctrl");
@@ -361,6 +365,7 @@ SettingsResult<void> SaveKeymapFile(const char* path, const Keymap& overrides, D
         auto* entry = yyjson_mut_arr_add_obj(document.value, bindings);
         AddString(document.value, entry, "context", ContextName(binding.context));
         AddString(document.value, entry, "action", ActionName(binding.action));
+        if (binding.inheritShared) { yyjson_mut_obj_add_bool(document.value, entry, "inherit_shared", true); }
         auto* keys = yyjson_mut_obj_add_arr(document.value, entry, "keys");
         for (const auto& key : binding.keys) {
             auto* chord = yyjson_mut_arr_add_obj(document.value, keys);

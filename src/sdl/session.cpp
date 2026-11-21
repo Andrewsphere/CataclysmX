@@ -690,6 +690,7 @@ void SessionOwner::Request(SessionRequest request) {
             options_.settings = ResolveSettingsForServer(*server_, request.globalSettings, request.worldSettings);
             options_.globalSettings = request.globalSettings; options_.worldSettings = request.worldSettings;
             reply.kind = ReplyKind::SettingsApplied; reply.runtimeSettings = options_.settings; forcePublish_ = true;
+            reply.runtimeSettings.seed = server_->GetWorld().GetSeed();
         } else { reply.details.push_back(FormatDiagnostics(diagnostics)); }
         break;
     }

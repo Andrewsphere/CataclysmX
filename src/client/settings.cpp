@@ -66,23 +66,30 @@ eastl::optional<SettingsField> ParseSettingName(eastl::string_view name) {
     return {};
 }
 Settings ResolveSettings(const SettingsOverrides& global, const SettingsOverrides& world) {
+    return ResolveSettingsWithResidency({}, global, world);
+}
+Settings ResolveSettingsWithResidency(const Settings& runtime,
+    const SettingsOverrides& global, const SettingsOverrides& world) {
     Settings settings;
-    Overlay(settings, global); Overlay(settings, world);
+    settings.activeRadius = runtime.activeRadius;
+    settings.residencyMode = runtime.residencyMode;
+    settings.residentRadius = runtime.residentRadius;
+    settings.residentRadiusTiles = runtime.residentRadiusTiles;
+    Overlay(settings, global);
+    Overlay(settings, world);
     if (global.textSize) { settings.textSize = *global.textSize; }
     return settings;
 }
 Settings ResolveSettingsForServer(const Server& server, const SettingsOverrides& global,
     const SettingsOverrides& world) {
-    Settings settings;
-    settings.activeRadius = server.GetActiveRadius();
+    Settings runtime;
+    runtime.activeRadius = server.GetActiveRadius();
     const auto circle = server.GetCircleResidency();
     if (circle) {
-        settings.residencyMode = ResidencyMode::Circle;
-        settings.residentRadiusTiles = circle->radiusTiles;
-    } else { settings.residentRadius = server.GetResidentRadius(); }
-    Overlay(settings, global); Overlay(settings, world);
-    if (global.textSize) { settings.textSize = *global.textSize; }
-    return settings;
+        runtime.residencyMode = ResidencyMode::Circle;
+        runtime.residentRadiusTiles = circle->radiusTiles;
+    } else { runtime.residentRadius = server.GetResidentRadius(); }
+    return ResolveSettingsWithResidency(runtime, global, world);
 }
 bool HasResidencyOverride(const SettingsOverrides& overrides) {
     return overrides.activeRadius || overrides.residentRadius || overrides.residencyMode || overrides.residentRadiusTiles;
@@ -130,15 +137,19 @@ SettingsResult<void> ValidateSettings(const Settings& settings, Diagnostics* dia
 SettingsResult<void> ApplySettings(Server& server, const Settings& settings, Diagnostics* diagnostics) {
     const auto valid = ValidateSettings(settings, diagnostics);
     if (!valid) { return valid; }
-    const bool applied = settings.residencyMode == ResidencyMode::Circle
-        ? static_cast<bool>(server.SetCircleResidency(settings.activeRadius, CircleResidency{settings.residentRadiusTiles}, diagnostics))
-        : static_cast<bool>(server.SetBubbleRadii(settings.activeRadius, settings.residentRadius, diagnostics));
-    if (!applied) {
+    const auto circle = server.GetCircleResidency();
+    if (settings.residencyMode == ResidencyMode::Circle) {
+        if ((!circle || circle->radiusTiles != settings.residentRadiusTiles || settings.activeRadius != server.GetActiveRadius())
+            && !server.SetCircleResidency(settings.activeRadius, CircleResidency{settings.residentRadiusTiles}, diagnostics)) {
+            return eastl::unexpected(SettingsError::ApplyFailed);
+        }
+    } else if ((circle || settings.residentRadius != server.GetResidentRadius() || settings.activeRadius != server.GetActiveRadius())
+        && !server.SetBubbleRadii(settings.activeRadius, settings.residentRadius, diagnostics)) {
         return eastl::unexpected(SettingsError::ApplyFailed);
     }
     // These cannot fail after ValidateSettings. No command or elapsed update occurs.
-    if (!server.SetPacing(settings.pacing)) { std::abort(); }
-    server.SetAutosaveInterval(settings.autosaveInterval);
+    if (settings.pacing != server.GetPacing() && !server.SetPacing(settings.pacing)) { std::abort(); }
+    if (settings.autosaveInterval != server.GetAutosaveInterval()) { server.SetAutosaveInterval(settings.autosaveInterval); }
     return {};
 }
 SettingsResult<void> ApplySettings(Server& server, const SettingsStore& store, Diagnostics* diagnostics) {
@@ -151,8 +162,8 @@ SettingsResult<void> ApplySettings(Server& server, const SettingsOverrides& glob
     if (HasResidencyOverride(global) || HasResidencyOverride(world)) { return ApplySettings(server, settings, diagnostics); }
     const auto valid = ValidateSettings(settings, diagnostics);
     if (!valid) { return valid; }
-    if (!server.SetPacing(settings.pacing)) { std::abort(); }
-    server.SetAutosaveInterval(settings.autosaveInterval);
+    if (settings.pacing != server.GetPacing() && !server.SetPacing(settings.pacing)) { std::abort(); }
+    if (settings.autosaveInterval != server.GetAutosaveInterval()) { server.SetAutosaveInterval(settings.autosaveInterval); }
     return {};
 }
 bool HasOverride(const SettingsOverrides& overrides, SettingsField field) {

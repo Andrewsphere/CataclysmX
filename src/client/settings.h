@@ -51,6 +51,8 @@ struct SettingsOverrides {
 eastl::string_view SettingName(SettingsField field);
 eastl::optional<SettingsField> ParseSettingName(eastl::string_view name);
 Settings ResolveSettings(const SettingsOverrides& global, const SettingsOverrides& world);
+Settings ResolveSettingsWithResidency(const Settings& runtime,
+    const SettingsOverrides& global, const SettingsOverrides& world);
 // Runtime baseline supplies residency only; all other defaults remain Settings defaults.
 Settings ResolveSettingsForServer(const Server& server, const SettingsOverrides& global,
     const SettingsOverrides& world);

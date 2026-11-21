@@ -76,11 +76,10 @@ the innermost mode first and preserves the value from before that edit. A second
 Escape can close the containing screen. A close event is consumed by that screen
 and must not also cancel or quit the screen underneath it.
 
-For Settings, accepting an edit changes a draft. Apply activates drafts; Save
-applies and persists the selected scope. Closing discards unapplied drafts while
-applied unsaved changes remain active. Other editors must state their commit
-boundary and what cancellation preserves. Invalid input keeps the editor open
-with an explanation and a working cancel path.
+For Settings, accepting an edit updates the active scope's draft. Save applies
+and persists that scope. Closing or switching scope discards uncommitted
+changes. A disk failure leaves applied changes active. Invalid input keeps
+the editor open with an explanation and a working cancel path.
 
 Physical Enter accepts numeric text, and physical Escape cancels numeric entry,
 binding capture, and key inspection. These fixed controls must be shown even
@@ -121,19 +120,12 @@ Shift and Alt are not general configurable modifiers.
   consume Escape without passing it to gameplay. Inventory's accept action
   drops the selected directly carried item. Quick actions uses up/down with
   wrapping and accept to activate the selected command; see [Gameplay UI](gameplay_ui.md).
-- Settings (F2) is the reference for focus traversal: Scope, Section, Category,
-  List, Details, then Scope again. It opens with List focused. Enter from any
-  non-list area currently returns focus to List. At 100 columns or wider,
-  categories form a sidebar and accept up/down as well as left/right. Below that
-  width they form a horizontal strip accepting left/right only. This orientation
-  comes from the last allocated layout, including the first frame and resizing;
-  directions always resolve through the active Menu bindings. Both layouts keep
-  the same focus order, selection, drafts, and independent scroll state.
-- Settings follows the terminal's default foreground/background, with semantic
-  colors only for pending/warning, success, and error states. Selected controls
-  remain bold and marked while unfocused; inverse video identifies the focused
-  selection or the fixed details heading. The footer stays outside scrolling
-  content and displays resolved shortcut keys in bold.
+- Settings (F2) uses Tab and Shift+Tab to switch its two top-level tabs while
+  Up/Down moves through rows. Left/Right adjusts the selected preference or
+  chooses a chord. Ctrl+Up/Down jumps to a section and PageUp/PageDown
+  scrolls details. The scope button is reachable through the list and has a
+  dedicated shortcut. See [in-game settings](settings_api.md#in-game-settings).
+- Help (F1) scrolls with Menu Up/Down and closes with Escape or Menu Accept.
 - The world-generation debug viewer (F11) uses the `debug` context. Tab and
   Shift+Tab cycle preview layers, PageUp/PageDown scroll details by one line,
   and Home recenters the cursor. F11, `q`, or Escape close it. These are existing

@@ -13,8 +13,8 @@ History is frontend session state. Consecutive messages with identical rendered
 text share an entry, shown with a count from the second occurrence onward, for
 example `The way is blocked. ×3`. Empty and filtered messages leave the latest
 group open. Another logged message starts a new group. The capacity counts
-groups. Reducing it drops the oldest entries immediately, and increasing it
-preserves the remaining entries. History has no effect on simulation timing or
+groups. Saving a smaller capacity drops the oldest entries immediately. Saving a larger
+capacity preserves the remaining entries. History has no effect on simulation timing or
 world saves.
 
 Both frontends record meaningful outcomes and actionable failures. Successful

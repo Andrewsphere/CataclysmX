@@ -677,6 +677,10 @@ TEST_CASE("Gameplay modal empty states cancellation and rebound menu controls is
         if (action == InputAction::Inventory) { CHECK(Find(screen, "You are carrying no items.")); }
         f.Event(ftxui::Event::Character("g"));
         f.Event(ftxui::Event::Character("v"));
+        if (action == InputAction::Help) {
+            CHECK_FALSE(f.ui.IsOpen());
+            REQUIRE(f.ui.Open(action));
+        }
         f.Event(ftxui::Event::ArrowRight);
         f.Event(ftxui::Event::Custom);
         CHECK(f.submissions == 0);
@@ -723,11 +727,14 @@ TEST_CASE("Players and Controls scroll independently and expose effective bindin
     const auto controls = Find(screen, "controls"); REQUIRE(controls);
     CHECK(Row(screen, inventory->y).find("I") != std::string::npos);
     CHECK(Row(screen, controls->y).find("?") != std::string::npos);
+    const auto workshop = Find(screen, "Power workshop"); REQUIRE(workshop);
+    CHECK(Row(screen, workshop->y).find("p") != std::string::npos);
     for (int i = 0; i < 100; ++i) { f.Event(ftxui::Event::ArrowDown); f.Draw(); }
     screen = f.Draw();
     CHECK(Find(screen, "Fixed LAN keys:"));
     CHECK(Find(screen, "Ctrl+c"));
-    f.ui.Close(); f.ui.Open(InputAction::Players);
+    f.Event(ftxui::Event::Return); CHECK_FALSE(f.ui.IsOpen());
+    f.ui.Open(InputAction::Players);
     CHECK(Find(f.Draw(), "Player39"));
 }
 

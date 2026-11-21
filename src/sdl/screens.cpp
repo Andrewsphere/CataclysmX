@@ -172,31 +172,6 @@ void CombatEventCursor::Drain(const ContentCatalog& content, const WorldView& vi
 }
 
 namespace {
-constexpr InputContext contexts[] = {InputContext::Gameplay, InputContext::Interaction, InputContext::Menu,
-    InputContext::Debug, InputContext::Items};
-constexpr SettingsField fields[] = {SettingsField::Language, SettingsField::ViewRadius,
-    SettingsField::KeyboardRepeatRate, SettingsField::MessageHistorySize, SettingsField::TextSize, SettingsField::Seed, SettingsField::ActiveRadius, SettingsField::ResidentRadius,
-    SettingsField::ResidencyMode, SettingsField::ResidentRadiusTiles, SettingsField::TicksPerSecond,
-    SettingsField::RateLimited, SettingsField::PauseWhenIdle, SettingsField::AutosaveInterval};
-constexpr unsigned categories[] = {0,0,0,0,0,1,1,1,1,1,2,2,2,3};
-static_assert(std::size(fields) == static_cast<std::size_t>(SettingsField::Count));
-static_assert(std::size(categories) == std::size(fields));
-constexpr const char* categoryNames[] = {"interface", "world", "timing", "saving"};
-bool HostField(SettingsField field) {
-    return field != SettingsField::Language && field != SettingsField::ViewRadius
-        && field != SettingsField::KeyboardRepeatRate && field != SettingsField::MessageHistorySize
-        && field != SettingsField::TextSize;
-}
-String Local(const Localization& loc, eastl::string_view prefix, eastl::string_view suffix) {
-    String key(prefix.data(), prefix.size()); key.append(suffix.data(), suffix.size());
-    return loc.Text({key.data(), key.size()}, suffix);
-}
-String Tab(const char* name, bool selected, bool focused) {
-    String result = focused ? "> " : "";
-    result += selected ? "[" : " "; result += name; result += selected ? "] " : "  ";
-    return result;
-}
-
 bool DrawHealthBar(SDL_Renderer* renderer, SDL_FRect track, const CombatPartView& state) {
     if (!SDL_SetRenderDrawColor(renderer, 70, 78, 82, 255) || !SDL_RenderFillRect(renderer, &track)) { return false; }
     if (!state.hp) { return true; }
@@ -206,6 +181,125 @@ bool DrawHealthBar(SDL_Renderer* renderer, SDL_FRect track, const CombatPartView
     track.w = static_cast<float>(filled);
     const auto color = HealthColor(state);
     return SDL_SetRenderDrawColor(renderer, color.red, color.green, color.blue, 255) && SDL_RenderFillRect(renderer, &track);
+}
+
+SDL_Color ToneColor(SettingsTone tone) {
+    switch (tone) {
+    case SettingsTone::Muted: return {153, 171, 177, 255};
+    case SettingsTone::Global: return {122, 218, 237, 255};
+    case SettingsTone::World: return {220, 169, 248, 255};
+    case SettingsTone::Pending: case SettingsTone::Warning: return {252, 197, 107, 255};
+    case SettingsTone::Success: return {145, 223, 163, 255};
+    case SettingsTone::Error: return {255, 147, 150, 255};
+    case SettingsTone::Normal: return {220, 234, 234, 255};
+    }
+    std::abort();
+}
+
+bool DrawStructuredRows(SDL_Renderer* renderer, SdlText& text, ScreenFrame& frame, SDL_Rect& clip, bool stackedDetails) {
+    const int count = static_cast<int>(frame.rows.size());
+    const bool hasSelection = frame.selected >= 0 && frame.selected < count;
+    const int minHeight = std::max(1, text.LineHeight()) + 6;
+    const int valueX = clip.x + clip.w * 53 / 100;
+    const int indent = 6;
+    const int labelX = clip.x + indent;
+    frame.rowHeights.assign(count, 0);
+    const auto label = [&](int index) {
+        const auto& row = frame.rows[index];
+        String result = index == frame.selected ? "> " : "";
+        if (row.tone == SettingsTone::Pending) { result += "* "; }
+        else if (!row.button && row.tone == SettingsTone::Global) { result += "G "; }
+        else if (!row.button && row.tone == SettingsTone::World) { result += "W "; }
+        else if (row.tone == SettingsTone::Warning) { result += "! "; }
+        if (row.button) { result += "[" + row.text + "]"; }
+        else { result += row.text; }
+        return result;
+    };
+    const auto rowText = [&](int index, int y) {
+        const auto& row = frame.rows[index];
+        const auto name = label(index);
+        const int labelWidth = std::max(1, (row.value.empty() ? clip.x + clip.w : valueX) - labelX - indent);
+        const int valueWidth = std::max(1, clip.x + clip.w - valueX - indent);
+        const auto labelColor = row.button ? ToneColor(row.tone) : row.divider
+            ? ToneColor(frame.scopeTone == SettingsTone::Normal ? SettingsTone::Global : frame.scopeTone)
+            : ToneColor(row.unavailable ? SettingsTone::Muted : SettingsTone::Normal);
+        const auto valueTone = row.tone == SettingsTone::Normal ? SettingsTone::Global : row.tone;
+        return text.Draw(10, name.c_str(), static_cast<float>(labelX), static_cast<float>(y), labelColor, labelWidth)
+            && (row.value.empty() || text.Draw(11, row.value.c_str(), static_cast<float>(valueX), static_cast<float>(y),
+                ToneColor(valueTone), valueWidth));
+    };
+    const auto height = [&](int index) {
+        int& cached = frame.rowHeights[index];
+        if (cached) { return cached; }
+        if (!rowText(index, -10000)) { return -1; }
+        cached = std::max(minHeight, std::max(text.Height(10),
+            frame.rows[index].value.empty() ? 0 : text.Height(11)) + 6);
+        return cached;
+    };
+    if (stackedDetails) {
+        const int selectedHeight = hasSelection ? height(frame.selected) : minHeight;
+        if (selectedHeight < 0) { return false; }
+        clip.h = std::min(clip.h, std::max(selectedHeight, clip.h * 3 / 5));
+    }
+    const auto topFor = [&](int last) {
+        int used = 0;
+        for (int i = last; i >= 0; --i) {
+            const int pixels = height(i);
+            if (pixels < 0) { return -1; }
+            if (used + pixels > clip.h) { return std::min(last, i + 1); }
+            used += pixels;
+        }
+        return 0;
+    };
+    const int maximum = count ? topFor(count - 1) : 0;
+    if (maximum < 0) { return false; }
+    frame.scroll = std::clamp(frame.scroll, 0, maximum);
+    if (hasSelection) {
+        const int selectionTop = topFor(frame.selected);
+        if (selectionTop < 0) { return false; }
+        frame.scroll = std::clamp(frame.scroll, selectionTop, frame.selected);
+    }
+    if (!SDL_SetRenderClipRect(renderer, &clip)) { return false; }
+    for (int i = frame.scroll, y = clip.y; i < count && y < clip.y + clip.h; ++i) {
+        const auto& row = frame.rows[i];
+        const int pixels = height(i);
+        if (pixels < 0) { return false; }
+        if (i == frame.selected || row.divider) {
+            const SDL_Color background = row.divider ? SDL_Color{27, 44, 51, 255} : SDL_Color{37, 57, 70, 255};
+            const SDL_FRect band{static_cast<float>(clip.x), static_cast<float>(y), static_cast<float>(clip.w), static_cast<float>(pixels - 1)};
+            if (!SDL_SetRenderDrawColor(renderer, background.r, background.g, background.b, background.a)
+                || !SDL_RenderFillRect(renderer, &band)) { return false; }
+        }
+        if (!rowText(i, y + 3)) { return false; }
+        y += pixels;
+    }
+    return true;
+}
+
+bool DrawSettingsDetails(SDL_Renderer* renderer, SdlText& text, ScreenFrame& frame, SDL_Rect clip) {
+    if (!SDL_SetRenderClipRect(renderer, &clip)) { return false; }
+    const int lineHeight = std::max(1, text.LineHeight());
+    int contentHeight = 0;
+    for (const auto& detail : frame.settingsDetails) {
+        if (!text.Draw(6, detail.text.c_str(), -10000, -10000, ToneColor(detail.tone), clip.w)) { return false; }
+        contentHeight += std::max(lineHeight, text.Height(6)) + (detail.divider ? 6 : 2);
+    }
+    const int maxScroll = std::max(0, (contentHeight - clip.h + lineHeight - 1) / lineHeight);
+    frame.detailScroll = std::clamp(frame.detailScroll, 0, maxScroll);
+    int y = clip.y - frame.detailScroll * lineHeight;
+    for (const auto& detail : frame.settingsDetails) {
+        if (y >= clip.y + clip.h) { break; }
+        if (detail.divider) { y += 4; }
+        if (!text.Draw(6, detail.text.c_str(), static_cast<float>(clip.x), static_cast<float>(y), ToneColor(detail.tone), clip.w)) { return false; }
+        if (detail.divider && text.Width(6) + 12 < clip.w) {
+            const float lineY = static_cast<float>(y + lineHeight / 2);
+            if (!SDL_SetRenderDrawColor(renderer, 66, 83, 94, 255)
+                || !SDL_RenderLine(renderer, static_cast<float>(clip.x + text.Width(6) + 8), lineY,
+                    static_cast<float>(clip.x + clip.w - 1), lineY)) { return false; }
+        }
+        y += std::max(lineHeight, text.Height(6)) + 2;
+    }
+    return true;
 }
 
 bool DrawAnchored(SDL_Renderer* renderer, SdlText& text, ScreenFrame& frame,
@@ -415,14 +509,21 @@ bool DrawScreen(SDL_Renderer* renderer, SdlText& text, ScreenFrame& frame,
     const SDL_Color normal{210,220,218,255}, dim{115,125,130,255}, selected{255,230,90,255};
     const SDL_Rect clip{left + 6, top + 4, std::max(1, w - left - 20), std::max(1, h - top - 16)};
     const int lineHeight = std::max(1, text.LineHeight());
-    if (!text.Draw(8, frame.title.c_str(), -10000, -10000, selected, clip.w)) { return false; }
+    const auto titleColor = frame.scopeTone == SettingsTone::Normal ? selected : ToneColor(frame.scopeTone);
+    if (!text.Draw(8, frame.title.c_str(), -10000, -10000, titleColor, clip.w)) { return false; }
     const bool compact = !frame.compactTitle.empty() && text.Height(8) > clip.h / 3;
     const char* title = compact ? frame.compactTitle.c_str() : frame.title.c_str();
-    if (!text.Draw(8, title, -10000, -10000, selected, clip.w)) { return false; }
+    if (!text.Draw(8, title, -10000, -10000, titleColor, clip.w)) { return false; }
     const int titleHeight = std::min(text.Height(8), std::max(lineHeight, clip.h / 3));
     const SDL_Rect titleClip{clip.x, top + 6, clip.w, titleHeight};
-    if (!SDL_SetRenderClipRect(renderer, &titleClip) || !text.Draw(8, title, left + 8, top + 6, selected, clip.w)) { return false; }
+    if (!SDL_SetRenderClipRect(renderer, &titleClip) || !text.Draw(8, title, left + 8, top + 6, titleColor, clip.w)) { return false; }
     int y = top + titleHeight + 16;
+    if (!frame.status.empty() && clip.h >= 5 * lineHeight) {
+        const SDL_Rect statusClip{clip.x, y - 4, clip.w, lineHeight};
+        if (!SDL_SetRenderClipRect(renderer, &statusClip)
+            || !text.Draw(12, frame.status.c_str(), left + 8, y - 4, ToneColor(frame.statusTone), clip.w)) { return false; }
+        y += lineHeight;
+    }
     if (!text.Draw(9,frame.footer.c_str(),-10000,-10000,dim,clip.w)) { return false; }
     const char* footer = frame.footer.c_str();
     if (!frame.compactFooter.empty() && text.Height(9) > clip.h / 3) {
@@ -433,8 +534,10 @@ bool DrawScreen(SDL_Renderer* renderer, SdlText& text, ScreenFrame& frame,
     const int footerY = std::max(y,h-footerHeight-16);
     const int bodyHeight = std::max(1, footerY - y - 8);
     int listWidth = clip.w;
-    const bool columns = w >= 850 && !frame.details.empty();
-    if (columns) { listWidth = clip.w / 2; }
+    const bool settingsDetails = !frame.settingsDetails.empty();
+    const bool hasDetails = settingsDetails || !frame.details.empty();
+    const bool columns = w >= 850 && hasDetails;
+    if (columns) { listWidth = settingsDetails ? clip.w * 2 / 3 : clip.w / 2; }
     if (frame.debugImage || frame.worldgenPreview) {
         const int mapHeight = !columns && !frame.details.empty() ? std::max(1,(bodyHeight-8)/2) : bodyHeight;
         const SDL_Rect mapClip{clip.x,y,listWidth,mapHeight};
@@ -512,6 +615,10 @@ bool DrawScreen(SDL_Renderer* renderer, SdlText& text, ScreenFrame& frame,
         const SDL_Rect bodyClip{clip.x, y, listWidth, bodyHeight};
         if (!SDL_SetRenderClipRect(renderer, &bodyClip)
             || !text.Draw(6, body.c_str(), left + 8, y - frame.scroll * lineHeight, normal, listWidth - 6)) { return false; }
+    } else if (frame.structuredRows) {
+        SDL_Rect listClip{clip.x, y, listWidth, bodyHeight};
+        if (!DrawStructuredRows(renderer, text, frame, listClip, !columns && hasDetails)) { return false; }
+        if (!columns) { y += listClip.h + 8; }
     } else {
         if (!text.Draw(7,"M",-100,-100,normal)) { return false; }
         const int rowHeight = std::max(24,text.Height(7) * 2 + 6);
@@ -534,13 +641,24 @@ bool DrawScreen(SDL_Renderer* renderer, SdlText& text, ScreenFrame& frame,
         }
         if (!columns) { y += listHeight + 8; }
     }
-    if (!frame.details.empty()) {
+    if (settingsDetails && footerY - y >= lineHeight) {
+        const int x = columns ? clip.x + listWidth + 12 : clip.x + 2;
+        const SDL_Rect detailClip{x, y, clip.x + clip.w - x, footerY - y};
+        if (!DrawSettingsDetails(renderer, text, frame, detailClip)) { return false; }
+    } else if (!frame.details.empty() && footerY - y >= (frame.structuredRows ? lineHeight : 1)) {
         String details;
-        const auto start = std::min<std::size_t>(std::max(0, frame.detailScroll), frame.details.size() - 1);
+        const auto start = frame.structuredRows ? 0 : std::min<std::size_t>(std::max(0, frame.detailScroll), frame.details.size() - 1);
         for (auto i = start; i < frame.details.size(); ++i) { details += frame.details[i]; details += "\n"; }
         const int x = columns ? left + 12 + listWidth : left + 8;
         const SDL_Rect detailClip{x,y,std::max(1,clip.w - (columns ? listWidth : 0)),std::max(1,footerY-y)};
-        if (!SDL_SetRenderClipRect(renderer,&detailClip) || !text.Draw(6,details.c_str(),x,y,normal,detailClip.w)) { return false; }
+        if (!SDL_SetRenderClipRect(renderer,&detailClip)) { return false; }
+        if (frame.structuredRows) {
+            if (!text.Draw(6, details.c_str(), -10000, -10000, normal, detailClip.w)) { return false; }
+            const int maxScroll = std::max(0, (text.Height(6) - detailClip.h + lineHeight - 1) / lineHeight);
+            frame.detailScroll = std::clamp(frame.detailScroll, 0, maxScroll);
+        }
+        if (!text.Draw(6, details.c_str(), x, frame.structuredRows ? y - frame.detailScroll * lineHeight : y,
+            normal, detailClip.w)) { return false; }
     }
     const SDL_Rect footerClip{clip.x, footerY, clip.w, footerHeight};
     if (!SDL_SetRenderClipRect(renderer,&footerClip) || !text.Draw(9,footer,left+8,footerY,dim,clip.w)) { return false; }
@@ -558,242 +676,47 @@ eastl::optional<std::size_t> SoleAvailableAction(const Vector<InteractionChoice>
 }
 
 void OptionsUi::Open(const SettingsStore& store, const Settings& runtime, bool remote) {
-    runtime_ = runtime;
-    remote_ = remote;
-    for (unsigned i = 0; i < 2; ++i) {
-        const auto scope = i == 0 ? SettingsScope::Global : SettingsScope::World;
-        drafts_[i] = store.Overrides(scope); keys_[i] = store.KeyOverrides(scope);
-    }
-    mode_ = Mode::Browse; feedback_.clear(); selected_ = 0; detailScroll_ = 0;
+    editor_.Open(store, runtime, true, remote);
 }
-void OptionsUi::Applied(const SettingsStore& store, const Settings& runtime, bool reloaded) {
-    runtime_ = runtime;
-    if (reloaded) {
-        for (unsigned i = 0; i < 2; ++i) {
-            const auto scope = i == 0 ? SettingsScope::Global : SettingsScope::World;
-            drafts_[i] = store.Overrides(scope); keys_[i] = store.KeyOverrides(scope);
-        }
-    } else {
-        drafts_[Index()] = store.Overrides(scope_); keys_[Index()] = store.KeyOverrides(scope_);
-    }
-    mode_ = Mode::Browse;
-}
-Settings OptionsUi::Preview(const SettingsStore& store) const {
-    auto global = scope_ == SettingsScope::Global ? drafts_[0] : store.Overrides(SettingsScope::Global);
-    const auto world = scope_ == SettingsScope::World ? drafts_[1] : SettingsOverrides{};
-    if (!HasResidencyOverride(global) && !HasResidencyOverride(world)) {
-        auto result = ResolveSettings(global,world);
-        result.activeRadius = runtime_.activeRadius; result.residencyMode = runtime_.residencyMode;
-        result.residentRadius = runtime_.residentRadius; result.residentRadiusTiles = runtime_.residentRadiusTiles;
-        return result;
-    }
-    return ResolveSettings(global, world);
-}
-Keymap OptionsUi::PreviewKeys(const SettingsStore& store) const {
-    return scope_ == SettingsScope::Global ? ResolveKeymap(keys_[0],{}) : ResolveKeymap(store.KeyOverrides(SettingsScope::Global),keys_[1]);
-}
-void OptionsUi::Fields(VisibleFieldList& output) const {
-    output = {};
-    for (std::size_t i = 0; i < std::size(fields); ++i) {
-        if (fields[i] == SettingsField::TextSize && scope_ == SettingsScope::World) { continue; }
-        if (categories[i] == category_ && !output.PushBack(fields[i])) { std::abort(); }
-    }
-}
-void OptionsUi::Bindings(const SettingsStore& store, Keymap& output) const {
-    output.clear();
-    for (const auto& binding : PreviewKeys(store)) { if (binding.context == contexts[category_]) { output.push_back(binding); } }
-}
-void OptionsUi::Begin(const SettingsStore& store, const char* directory, bool append) {
-    if (bindings_) { append_ = append; mode_ = Mode::Capture; return; }
-    VisibleFieldList visible; Fields(visible);
-    if (selected_ >= visible.Size()) { return; }
-    const auto field = visible[selected_];
-    if (remote_ && HostField(field)) { return; }
-    const auto preview = Preview(store);
-    if (field == SettingsField::Seed && scope_ == SettingsScope::World) { return; }
-    if (field == SettingsField::RateLimited || field == SettingsField::PauseWhenIdle) {
-        const auto result = SetOverride(drafts_[Index()],field,SettingValue(preview,field) == "true" ? "false" : "true");
-        if (!result) { feedback_ = "Invalid value"; }
-    } else if (field == SettingsField::ResidencyMode) {
-        auto& draft = drafts_[Index()];
-        draft.residencyMode = preview.residencyMode == ResidencyMode::Circle ? ResidencyMode::Square : ResidencyMode::Circle;
-        if (*draft.residencyMode == ResidencyMode::Square) { draft.residentRadiusTiles.reset(); }
-        else { draft.residentRadius.reset(); }
-    } else if (field == SettingsField::Language) {
-        languages_ = AvailableLanguages(directory); language_ = 0;
-        for (std::size_t i = 0; i < languages_.size(); ++i) { if (languages_[i] == preview.language) { language_ = i; } }
-        mode_ = Mode::Language;
-    } else { mode_ = Mode::Number; edit_ = SettingValue(preview,field); replace_ = true; }
-}
-void OptionsUi::Text(eastl::string_view text) {
-    if (mode_ != Mode::Number) { return; }
-    if (replace_) { edit_.clear(); replace_ = false; }
-    if (edit_.size() + text.size() <= 128) { edit_.append(text.data(),text.size()); }
+void OptionsUi::Applied(const SettingsStore& store, const Settings& runtime) {
+    editor_.Applied(store, runtime);
 }
 OptionsEvent OptionsUi::Key(const KeyChord& chord, const SettingsStore& store, const Localization& loc, const char* directory) {
-    const auto action = ResolveAction(store.Keys(),InputContext::Menu,chord);
-    if (chord.key == "Escape" && !chord.ctrl && !chord.alt && !chord.shift) {
-        if (mode_ != Mode::Browse) { mode_ = Mode::Browse; return OptionsEvent::None; }
-        return OptionsEvent::Close;
-    }
-    if (mode_ == Mode::Inspect) { feedback_ = ChordName(chord); return OptionsEvent::None; }
-    if (mode_ == Mode::Capture) {
-        Keymap visible; Bindings(store,visible);
-        if (selected_ >= visible.size()) { return OptionsEvent::None; }
-        auto binding = visible[selected_];
-        if (!append_) { binding.keys.clear(); }
-        binding.keys.push_back(chord);
-        auto candidate = keys_[Index()]; SetBinding(candidate,eastl::move(binding));
-        const auto resolved = scope_ == SettingsScope::Global ? ResolveKeymap(candidate,{}) : ResolveKeymap(store.KeyOverrides(SettingsScope::Global),candidate);
-        Diagnostics diagnostics;
-        if (ValidateKeymap(resolved,&diagnostics)) { keys_[Index()] = eastl::move(candidate); mode_ = Mode::Browse; feedback_.clear(); }
-        else { feedback_ = FormatDiagnostics(diagnostics); }
-        return OptionsEvent::None;
-    }
-    if (mode_ == Mode::Number) {
-        if (chord.key == "Backspace" && !chord.ctrl) {
-            if (!edit_.empty()) { edit_.pop_back(); } replace_ = false;
-        } else if (chord.key == "Enter" && !chord.ctrl) {
-            VisibleFieldList visible; Fields(visible);
-            auto candidate = drafts_[Index()];
-            const auto field = visible[selected_];
-            if (field == SettingsField::ResidentRadius) { candidate.residentRadiusTiles.reset(); candidate.residencyMode.reset(); }
-            if (field == SettingsField::ResidentRadiusTiles) { candidate.residentRadius.reset(); candidate.residencyMode.reset(); }
-            Diagnostics diagnostics;
-            if (SetOverride(candidate,field,{edit_.data(),edit_.size()},&diagnostics) && ValidateOverrides(candidate,&diagnostics)) {
-                drafts_[Index()] = eastl::move(candidate); mode_ = Mode::Browse; feedback_.clear();
-            } else { feedback_ = FormatDiagnostics(diagnostics); }
-        }
-        return OptionsEvent::None;
-    }
-    if (mode_ == Mode::Language) {
-        if (languages_.empty()) { mode_ = Mode::Browse; return OptionsEvent::None; }
-        if (action == InputAction::North) { language_ = (language_ + languages_.size() - 1) % languages_.size(); }
-        if (action == InputAction::South) { language_ = (language_ + 1) % languages_.size(); }
-        if (action == InputAction::Accept) { drafts_[Index()].language = languages_[language_]; mode_ = Mode::Browse; }
-        return OptionsEvent::None;
-    }
-    if (!action) { return OptionsEvent::None; }
-    switch (*action) {
-    case InputAction::Next: focus_ = (focus_ + 1) % 5; break;
-    case InputAction::Previous: focus_ = (focus_ + 4) % 5; break;
-    case InputAction::West: case InputAction::East: {
-        const int delta = *action == InputAction::West ? -1 : 1;
-        if (focus_ == 0) { scope_ = scope_ == SettingsScope::Global ? SettingsScope::World : SettingsScope::Global; }
-        if (focus_ == 1) { bindings_ = !bindings_; category_ = 0; }
-        if (focus_ == 2) { const unsigned count = bindings_ ? std::size(contexts) : std::size(categoryNames); category_ = (category_ + count + delta) % count; }
-        selected_ = 0; detailScroll_ = 0; break;
-    }
-    case InputAction::North: case InputAction::South: {
-        const bool down = *action == InputAction::South;
-        if (focus_ == 4) { detailScroll_ = std::max(0,detailScroll_ + (down ? 1 : -1)); break; }
-        if (focus_ == 2) { const unsigned count = bindings_ ? std::size(contexts) : std::size(categoryNames); category_ = (category_ + count + (down ? 1 : -1)) % count; selected_ = 0; break; }
-        VisibleFieldList visible; Keymap bindings;
-        Fields(visible); Bindings(store,bindings);
-        const auto count = bindings_ ? bindings.size() : visible.Size() + (category_ == 0 ? 1 : 0);
-        if (count) { selected_ = (selected_ + count + (down ? 1 : -1)) % count; }
-        detailScroll_ = 0; break;
-    }
-    case InputAction::Accept:
-        if (focus_ != 3) { focus_ = 3; }
-        else if (!bindings_ && category_ == 0) {
-            VisibleFieldList visible; Fields(visible);
-            if (selected_ == visible.Size()) { return OptionsEvent::Multiplayer; }
-            Begin(store,directory,false);
-        } else { Begin(store,directory,false); }
-        break;
-    case InputAction::AddBinding: if (bindings_) { Begin(store,directory,true); } break;
-    case InputAction::Unbind: {
-        if (bindings_) { Keymap visible; Bindings(store,visible); if (selected_ < visible.size()) { auto binding = visible[selected_]; binding.keys.clear(); SetBinding(keys_[Index()],eastl::move(binding)); } }
-        break;
-    }
-    case InputAction::Reset:
-        if (bindings_) { Keymap visible; Bindings(store,visible); if (selected_ < visible.size()) { ResetBinding(keys_[Index()],visible[selected_].context,visible[selected_].action); } }
-        else { VisibleFieldList visible; Fields(visible); if (selected_ < visible.Size() && (!remote_ || !HostField(visible[selected_])) && (visible[selected_] != SettingsField::Seed || scope_ != SettingsScope::World)) { ResetOverride(drafts_[Index()],visible[selected_]); } }
-        break;
-    case InputAction::Inspect: mode_ = Mode::Inspect; feedback_ = loc.Text("settings.inspecting","Press a key to inspect"); break;
-    case InputAction::Apply: return OptionsEvent::Save;
-    case InputAction::SaveSettings: return OptionsEvent::Save;
-    case InputAction::Reload: break;
-    default: break;
-    }
-    return OptionsEvent::None;
+    return editor_.Key(chord, store, loc, directory);
 }
-SettingsResult<void> OptionsUi::Prepare(const SettingsStore& store, SettingsStore& candidate, Diagnostics* diagnostics) const {
-    candidate = store;
-    return candidate.SetOverrides(scope_,drafts_[Index()],keys_[Index()],diagnostics);
+void OptionsUi::Text(eastl::string_view text) { editor_.Text(text); }
+SettingsResult<SettingsStore> OptionsUi::Prepare(const SettingsStore& store, Diagnostics* diagnostics) const {
+    return editor_.Prepare(store, diagnostics);
+}
+void OptionsUi::RememberScroll(const ScreenFrame& frame) {
+    editor_.ListScroll() = frame.scroll;
+    editor_.DetailScroll() = frame.detailScroll;
 }
 void OptionsUi::Present(const SettingsStore& store, const Localization& loc, ScreenFrame& frame) const {
-    frame.visible = true; frame.presentation = ScreenPresentation::Large; frame.title = loc.Text("settings.title","Options");
-    frame.title += "\n";
-    frame.title += Tab("Global",scope_ == SettingsScope::Global,focus_ == 0);
-    frame.title += Tab("World",scope_ == SettingsScope::World,focus_ == 0);
-    frame.title += " | "; frame.title += Tab("Preferences",!bindings_,focus_ == 1); frame.title += Tab("Keybindings",bindings_,focus_ == 1);
-    frame.title += "\n";
-    const unsigned count = bindings_ ? std::size(contexts) : std::size(categoryNames);
-    for (unsigned i = 0; i < count; ++i) {
-        const auto name = bindings_ ? Local(loc,"context.",ContextName(contexts[i])) : Local(loc,"settings.ui.category.",categoryNames[i]);
-        frame.title += Tab(name.c_str(),i == category_,focus_ == 2);
+    auto menu = editor_.Present(store, loc);
+    frame.visible = true;
+    frame.presentation = ScreenPresentation::Large;
+    frame.structuredRows = true;
+    const auto scope = loc.Text(Scope() == SettingsScope::Global ? "settings.global" : "settings.world");
+    frame.title = loc.Text("settings.title") + "  ·  " + scope + "   " + menu.tabs;
+    frame.compactTitle = menu.activeTab;
+    frame.status = eastl::move(menu.status);
+    frame.statusTone = menu.statusTone;
+    frame.scopeTone = menu.scopeTone;
+    frame.footer.clear();
+    for (const auto& hint : menu.hints) {
+        if (!frame.footer.empty()) { frame.footer += '\n'; }
+        frame.footer += hint;
     }
-    frame.compactTitle = scope_ == SettingsScope::Global ? "Global / " : "World / ";
-    frame.compactTitle += bindings_ ? Local(loc,"context.",ContextName(contexts[category_]))
-        : Local(loc,"settings.ui.category.",categoryNames[category_]);
-    frame.compactFooter = BindingHint(store.Keys(),InputContext::Menu,InputAction::SaveSettings) + " Save";
-    const bool pending = drafts_[Index()] != store.Overrides(scope_) || keys_[Index()] != store.KeyOverrides(scope_);
-    frame.title += pending ? "\nUnapplied edits" : store.Dirty(scope_) ? "\nApplied, unsaved" : "";
-    frame.rows.clear(); frame.details.clear(); frame.selected = static_cast<int>(selected_); frame.detailScroll = detailScroll_;
-    const auto preview = Preview(store);
-    if (bindings_) {
-        Keymap visible; Bindings(store,visible);
-        const auto all = PreviewKeys(store);
-        for (const auto& binding : visible) {
-            String row = Local(loc,"action.",ActionName(binding.action)); row += "   "; row += BindingHint(all,binding.context,binding.action);
-            frame.rows.push_back({eastl::move(row)});
-        }
-        if (selected_ < visible.size()) { frame.details.push_back(Local(loc,"settings.ui.action_help.",ActionName(visible[selected_].action))); }
-    } else {
-        VisibleFieldList visible; Fields(visible);
-        for (auto field : visible) {
-            const bool editing = mode_ == Mode::Number && selected_ < visible.Size() && field == visible[selected_];
-            String row = field == SettingsField::Seed && scope_ == SettingsScope::World
-                ? loc.Text("settings.ui.world_seed","World seed") : Local(loc,"settings.ui.label.",SettingName(field));
-            row += "   ";
-            const bool hostPacing = field == SettingsField::TicksPerSecond || field == SettingsField::RateLimited
-                || field == SettingsField::PauseWhenIdle;
-            row += editing ? edit_ : remote_ && HostField(field) ? (hostPacing ? SettingValue(runtime_,field) : String("Host-owned"))
-                : field == SettingsField::Seed && scope_ == SettingsScope::World ? UnsignedText(runtime_.seed) : SettingValue(preview,field);
-            row += editing ? " _" : HasOverride(drafts_[Index()],field) ? " [override]" : " [inherited]";
-            const auto residency = remote_ ? runtime_.residencyMode : preview.residencyMode;
-            if ((field == SettingsField::ResidentRadius && residency == ResidencyMode::Circle)
-                || (field == SettingsField::ResidentRadiusTiles && residency == ResidencyMode::Square)) { row += " [inactive]"; }
-            frame.rows.push_back({eastl::move(row),(remote_ && HostField(field)) || (field == SettingsField::Seed && scope_ == SettingsScope::World)});
-        }
-        if (category_ == 0) { frame.rows.push_back({"Multiplayer settings..."}); }
-        if (selected_ < visible.Size()) {
-            const auto name = SettingName(visible[selected_]);
-            frame.details.push_back(Local(loc,"settings.ui.description.",name));
-            frame.details.push_back(Local(loc,"settings.ui.constraint.",name));
-            frame.details.push_back(Local(loc,"settings.ui.effect.",name));
-            frame.details.push_back(remote_ && HostField(visible[selected_]) ? "Controlled by host"
-                : visible[selected_] == SettingsField::Seed ? "Seed applies when creating a world." : "Takes effect after Save and apply.");
-        } else if (category_ == 0 && selected_ == visible.Size()) {
-            frame.details.push_back("Open multiplayer settings to host or join a game and configure host speed. F9 also opens multiplayer settings.");
-        }
+    frame.compactFooter = eastl::move(menu.compactHint);
+    frame.rows.clear();
+    for (auto& row : menu.rows) {
+        frame.rows.push_back({eastl::move(row.label), row.readOnly, {}, eastl::move(row.value), row.tone, row.divider, row.button});
     }
-    if (focus_ == 4) { frame.details.insert(frame.details.begin(),String("> Details | Up/Down: scroll")); }
-    if (scope_ == SettingsScope::World && store.WorldDirectory().empty()) { frame.details.push_back("World overrides are memory-only in this temporary SDL world."); }
-    if (mode_ == Mode::Number) { frame.details.push_back("Value: " + edit_ + " | Enter confirms; Escape cancels"); }
-    if (mode_ == Mode::Capture) { frame.details.push_back("Press a key combination; Escape cancels"); }
-    if (mode_ == Mode::Language && !languages_.empty()) { frame.details.push_back("Language: " + languages_[language_] + " | Up/Down, Enter"); }
-    if (!feedback_.empty()) { frame.details.push_back(feedback_); }
-    frame.footer = "Tab/Shift+Tab: focus | Arrows: navigate | Enter: edit\n";
-    const InputAction footerActions[] = {InputAction::SaveSettings,InputAction::Reset,InputAction::AddBinding,InputAction::Unbind,InputAction::Inspect};
-    const char* footerLabels[] = {"Save and apply","Reset","Bind","Unbind","Inspect"};
-    for (std::size_t i = 0; i < std::size(footerActions); ++i) {
-        if (i == 2) { frame.footer += "\n"; }
-        frame.footer += BindingHint(store.Keys(),InputContext::Menu,footerActions[i]); frame.footer += " ";
-        frame.footer += footerLabels[i]; frame.footer += " | ";
-    }
-    frame.footer += "F9 Multiplayer | Esc Close";
+    frame.details.clear();
+    frame.settingsDetails = eastl::move(menu.details);
+    frame.selected = menu.selected;
+    frame.scroll = editor_.ListScroll();
+    frame.detailScroll = editor_.DetailScroll();
 }
 }

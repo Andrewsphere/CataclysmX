@@ -229,13 +229,13 @@ open. No local item state, charge, ownership or activity is predicted.
 
 Items bindings take precedence over Menu bindings while browsing inventory;
 Menu navigation and cancellation still apply. The separate `items` context
-keeps Settings' existing **u** unbind behavior. All bindings are editable in
+keeps **u** available for removing a chord in Settings. All bindings are editable in
 Settings, and the Controls window includes the item bindings.
 
 Players uses a bold name/ID heading and a separate connection/readiness line for
 each player. Controls groups label/key rows by windows, actions, movement,
-pacing, system, and direction-prompt bindings. Both are read-only: Menu up/down
-scrolls with clamping and retains independent offsets.
+pacing, system, and direction-prompt bindings. Menu Up/Down scrolls both lists
+with clamping. Controls starts at the top on open and closes with Enter or Escape.
 
 Quick actions uses Menu up/down with wrapping and Menu accept to activate.
 Its selection and scroll position survive resizing and reopening. Inventory,

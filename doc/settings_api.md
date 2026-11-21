@@ -157,8 +157,8 @@ residency overrides preserves the current runtime policy, rather than resetting
 to a new-server default. Sparse writes never materialize a saved/default circle
 as configuration merely because an unrelated field was saved.
 
-Configuration is re-resolved on startup, world changes, and explicit reload or
-Apply; files are not watched. Headless runs apply preference files only when
+The frontends read configuration files at startup and apply in-game edits through
+Settings. External file edits take effect on the next launch. Headless runs apply preference files only when
 `--user-dir` or `--world-dir` is explicitly provided. Scripted loads then
 stage the destination world's configuration before replacing the running server.
 Headless output and command tokens remain stable English machine interfaces.
@@ -208,6 +208,16 @@ inheritance. Conflicting chords within one context are rejected. Escape always
 cancels; `Ctrl+c` always exits. `Ctrl+C` remains a separate enhanced binding.
 Action names and defaults are explicit in `client/input.cpp`.
 
+The `shared` context stores directions and shortcuts whose default key and
+action repeat across contexts. `ResolveKeymap` applies each binding to the
+contexts where that shortcut is shared. The store checks for conflicts in
+each affected context. `shared_layer` stores the alternate vertical shortcuts
+that are shared outside Items. World values layer over Global values.
+Contextual alternate entries can use `inherit_shared: true` to retain the
+inherited shared chords without storing copies. Existing context-specific
+entries still load. Editing or resetting a cardinal direction replaces older
+entries for that direction in the edited scope.
+
 `use` defaults to **u** in Gameplay and Interaction (open item selection), and
 in Items (use the selected inventory item). Items `apply` defaults to **a** and
 opens battery/storage management. Items bindings take precedence over Menu
@@ -255,89 +265,71 @@ client translates them. `TerrainName` looks up `terrain.<id>.name`, falling back
 to the content-defined name. Persistence IDs and developer diagnostics remain
 unchanged. Default English text helpers are retained for existing headless APIs.
 
-F2 opens the editor with the setting list focused. Three cascading tab rows
-select Global/World scope, Preferences/Keybindings, and a category. Preferences
-are grouped into Interface, World, Timing, and Saving; keybindings are filtered
-by Gameplay, Interaction, Menu, and Debug context.
+## In-game settings
 
-Tab/BackTab moves focus through scope, section, category, list, and details.
-Left/right selects within a focused tab row; Enter returns to the list. Up/down
-selects a list row or scrolls the focused details pane. Each scope/section/category
-retains its selection and independent list/details scroll positions. Navigation
-preserves drafts. These controls follow the existing Menu bindings.
+F2 opens **Preferences** in **Global** scope. Tab and Shift+Tab switch between
+**Preferences** and **Keybindings**. Up/Down selects a row, Ctrl+Up/Down jumps
+between section dividers, and PageUp/PageDown scrolls details. Press `g` or
+select the scope button and press Enter to switch between Global and World.
+The controls follow the active Menu bindings. Switching tabs retains each
+selection and viewport. Switching scope or closing discards uncommitted edits.
 
-Enter edits a number, toggles a boolean or residency-mode draft, opens the language picker, or
-captures a replacement binding. The first typed character replaces a number;
-Backspace deletes, physical Enter accepts numeric text, and Escape cancels.
-Individual numeric bounds are checked on acceptance; relationships such as
-active/resident radii are checked on Apply so related drafts can be edited
-together. A language selection remains a draft until applied.
+Left/Right adjusts the selected value. Enter opens numeric or language entry
+and toggles two-choice preferences. Typing replaces a numeric value. Physical
+Enter accepts the number and physical Escape cancels the active editor.
+Numeric bounds are checked when entering the value. Cross-field validation
+runs at Save so related fields can be edited together.
 
-World preferences show Active radius (chunks), Resident radius (square chunks),
-Residency mode, and Circle radius (tiles), after Seed. The inactive mode's radius
-is marked Inactive. Without explicit residency settings the displayed policy is
-the server's current saved/default policy, with that source explained in details.
-Editing either radius selects its units and removes the scope's incompatible
-radius/mode overrides. Toggling mode removes an incompatible local radius.
-These edits remain drafts until Apply; world selectors can mask global changes.
+Keybindings start with Shared directions and Shared shortcuts. The same key
+can still perform different actions by context, and context-specific alternate
+keys remain under their own headings. Left/Right selects a chord or the
+**Add** slot. Enter captures a key, `+` appends, `u` removes the selected
+chord, and Backspace resets the action to its inherited bindings. Removing
+the last chord leaves an explicit unbound action. `i` inspects a key.
+New default shortcuts defer to existing explicit bindings. The scope button
+is reachable through ordinary row navigation if its shortcut is unbound.
 
-`+` adds a binding, `u` unbinds, and Backspace resets to inherited. `a` applies,
-`s` applies and saves the selected scope, `R` reloads saved configuration for both
-scopes, and `i` opens key inspection. The compact footer and contextual details
-show relevant bindings. Text entry, capture, and inspection retain fixed Escape
-cancellation; numeric text retains physical Enter acceptance. Unapplied drafts
-are discarded on close; applied unsaved changes remain active.
+Press `s` to validate, apply, and save the active scope. Runtime application
+precedes persistence. An application failure keeps the edits available for
+correction. A disk failure leaves the accepted values active and dirty. Save
+retries persistence without reapplying identical values. World settings with
+no world directory apply for the session. F9 opens Multiplayer separately.
 
-The details pane explains each field/action, effects, constraints, source, what
-Reset restores, and any applied value differing from the draft. World seed is
-read-only after creation; Global seed remains an editable creation default.
-Generation metadata and keyboard limitations appear only where relevant.
-At 100 columns or wider, an 18-column category sidebar sits beside the list and
-details. Thin rules separate the three panes, with the remaining content width
-split approximately 45%/55% between list and details. Narrower screens show
-categories as a horizontal strip above stacked list/details panes, keeping the
-controls and footer visible at 80×24. Actual allocated layout boxes determine
-this arrangement on the first frame and resizing; no physical terminal query is
-needed. Selection, focus, drafts, and independent viewport positions survive
-resizing. Up/down select categories while the wide sidebar is focused; left/right
-remain available at both widths. The narrow category strip uses left/right only.
-Tabs and footer hints are grouped at the left with fixed spacing, rather than
-distributed across the terminal width. Footer separators keep each key and its
-action together; status feedback stays beside the Settings title.
+Global values are cyan, World values are violet, and pending edits are yellow.
+The `G` and `W` markers identify value sources. Details group key lists, scope
+and reset information, and gameplay effects under dividers. In wide layouts
+the panel uses about one third of the body. Compact layouts stack it below the
+list. [SDL Settings layout](sdl_options_redesign.md)
 
-Text and backgrounds follow the terminal theme. Yellow marks drafts/unsaved
-states or unavailable bindings, green marks success, and red marks errors.
-Selected controls use brackets/bold; selected list rows use a separate `>` marker
-and bold. Only the focused selection uses inverse video. The details header stays
-visible and uses inverse video while that pane is focused, including during
-scrolling and key inspection. Status labels plus `*` (draft), `=` (override), and
-`!` (unavailable) markers keep the meaning readable without color. Full error
-diagnostics remain in scrollable details rather than expanding the footer.
+The local world pauses in Settings. A LAN host continues serving players.
+Terminal guests edit their retained local world configuration. SDL guests
+can edit display preferences and bindings, and the host controls runtime
+world settings. The live world seed is read-only.
 
-Pane headings, consistent padding, right-aligned list values, and rules between
-description, value/source information, and constraints provide hierarchy without
-a fixed color palette. List previews are limited to 12 columns to protect labels
-at the wide layout's minimum width; full values and bindings remain available in
-scrollable details. All new labels use the localization catalog. The design uses
-FTXUI's explicit DOM composition and menu focus styling while retaining the local
-scroll pane: replacing it with a focus-centering frame would change viewport
-restoration. These presentation choices require no public API or file changes.
+## Editor and application API
 
-Presentation metadata and viewport state stay private to the terminal module;
-settings resolution and sparse inheritance remain in the client layer. In local play,
-Settings and debug modals suspend elapsed updates and discard time spent open.
-An open LAN host keeps pumping authoritative rounds while either modal is open
-so guests remain connected and their inputs and deadlines continue to resolve.
-Guest world settings apply to the retained local world; the remote host controls its
-own pacing and saves. Interface settings, including view radius, apply to the
-guest terminal immediately. The debug viewer is available only in the local world.
-Save failures remain visibly unsaved.
+`client/settings_editor.h` provides `SettingsEditor` and `SettingsMenuFrame`
+for both frontends. The editor owns one sparse settings/keybinding draft and
+two tab viewports. `Key` returns a Save or Close event to the frontend.
+`Prepare` validates the draft against the other layer and fills a candidate
+`SettingsStore`. `Applied` takes the accepted store and runtime snapshot.
+Presentation carries owned labels, values, and style hints, so input and
+inheritance behavior is shared across SDL and FTXUI without sharing a renderer.
+
+`ResolveSettingsWithResidency` lets a frontend use the current residency
+snapshot as its fallback before overlaying explicit settings. SDL uses the
+snapshot because the live server belongs to another thread. The apply path
+uses the effective mode and active radius to skip reapplying unchanged
+residency, pacing, and autosave settings. Changes to either radius still
+select its corresponding mode and clear incompatible local selectors.
+
+The frontend installs settings only after a successful runtime apply. SDL
+stages changed language and font resources before sending an owner request.
+Its pending save records the request, session generation, scope, and screen
+so acknowledgement goes to the correct editor, including F9 host pacing.
 
 ## SDL held-key rate
 
-`keyboard_repeat_rate` is an integer in [1,60], default 10. It follows existing
-global/world override precedence and settings serialization. It controls only
-SDL frontend repeat dispatch, with a 250 ms initial delay; simulation tick rate
-and replay timing remain unchanged. SDL Save and apply combines runtime application
-and persistence. Reopening clean options reloads files; save failures retain applied
-unsaved settings. Terminal keeps its existing options workflow.
+`keyboard_repeat_rate` is an integer in [1,60] with default 10. Global and
+World settings resolve it through the usual inheritance rules. It controls
+SDL repeat dispatch after a 250 ms initial delay.

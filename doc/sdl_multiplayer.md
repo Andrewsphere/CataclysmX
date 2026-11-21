@@ -92,8 +92,7 @@ intent when the world/connection epoch changes.
 
 Keeping editing and presentation separate from session effects makes authority
 checks and validation testable without a window. No transport or world pointers
-are retained by the screen. F2's Interface entry returns `OptionsEvent::Multiplayer`,
-using the same modal/session transition as F9.
+are retained by the screen. F9 opens it through the existing modal/session transition.
 
 ## Saves and identities
 

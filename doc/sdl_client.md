@@ -1,8 +1,8 @@
 # SDL frontend architecture
 
 This describes the implemented local and LAN SDL frontend. [Controls and APIs](sdl_controls.md)
-cover gameplay screens; [options redesign](sdl_options_redesign.md) specifies the
-later visual rebuild and is not an implementation-status document.
+cover gameplay screens. [SDL Settings layout](sdl_options_redesign.md) describes
+the Settings screen and renderer.
 See [SDL multiplayer](sdl_multiplayer.md) for hosting, joining and persistence.
 
 ## Ownership and boundaries
@@ -144,8 +144,8 @@ redraws only for visible active animation. Minimized windows avoid rendering wor
 
 ScreenFrame contains owned presentation values; DrawScreen uses shared gameplay
 geometry for tile-anchored Interact/Examine windows and retains large layouts for
-Help, Options, and Debug. OptionsUi
-owns drafts, focus, numeric/language editors, and binding capture. No simulation
+Help, Options, and Debug. OptionsUi adapts the shared SettingsEditor, which owns
+the active scope's draft, tab selection, numeric/language editors, and binding capture. No simulation
 entity pointers or third-party UI framework cross this boundary.
 
 The gameplay view shows compact Help/Settings/Multiplayer labels, session status,
@@ -153,22 +153,18 @@ and a segmented health doll with limb values. ModalController owns modal input
 and lifecycle transitions. Full binding lists live in Help; windows show concise
 contextual instructions. See [SDL UI APIs and layout decisions](sdl_ui.md).
 
-Options has one Save and apply operation. It validates the selected scope's draft
-and stages language loading, requests authoritative application, then installs
-frontend state and persists that scope. Application failure leaves current state
-intact. Persistence failure retains applied settings and reports Applied, unsaved;
-retry remains available. Other-scope drafts survive saving. Temporary worlds have
-session-only world overrides and say so explicitly.
+Settings validates the active draft, stages language and font changes, then
+requests authoritative application. The acknowledged settings become active
+before persistence of the selected scope. A disk failure keeps them active
+and dirty for retry. Temporary worlds have session-only World overrides.
+Opening Settings reads the in-memory store and does not submit an apply
+request. External file changes take effect on the next launch.
 
-Reopening clean local/host options reloads persisted settings and applies them through the
-same owner handshake. Unsaved state is retained after a save failure. Seed remains
-a future-world default and cannot mutate the current world. Residency without an
-explicit override preserves the runtime policy. See [settings API](settings_api.md).
-Guests can edit presentation preferences and bindings; world and pacing settings
-remain host-owned. World-generation and AI debug are local/host-only.
-The F9 multiplayer editor is also available from F2's Interface page. It uses the
-same authoritative settings handshake for host pacing; see its
-[screen API and controls](sdl_multiplayer.md#screen-api).
+Seed remains a future-world default in Global scope. World scope shows the
+actual local or hosted seed. A guest can edit display preferences and
+bindings, while world and pacing settings remain host-owned. F9 opens the
+standalone Multiplayer editor and uses the same settings handshake for host
+pacing. [Multiplayer screen API](sdl_multiplayer.md#screen-api)
 
 ## Shutdown and validation
 

@@ -2,8 +2,8 @@
 
 #include "client/localization.h"
 #include "client/combat_menu.h"
+#include "client/settings_editor.h"
 #include "client/worldgen_debug.h"
-#include "core/static_list.h"
 #include "sdl/text.h"
 #include "sdl/layout.h"
 
@@ -16,6 +16,10 @@ struct ScreenRow {
     String text;
     bool unavailable = false;
     eastl::optional<ScreenHealthRow> health = {};
+    String value = {};
+    SettingsTone tone = SettingsTone::Normal;
+    bool divider = false;
+    bool button = false;
 };
 enum class ScreenPresentation { Large, Anchored };
 struct ScreenFrame {
@@ -23,13 +27,18 @@ struct ScreenFrame {
     ScreenPresentation presentation = ScreenPresentation::Large;
     bool followCursor = false;
     bool scrollText = false; // Continuous wrapped rows; scroll is measured in text lines.
+    bool structuredRows = false;
     String title;
     String footer;
     String compactTitle; // Optional chrome when large text leaves too little body space.
     String compactFooter;
+    String status;
+    SettingsTone statusTone = SettingsTone::Normal;
+    SettingsTone scopeTone = SettingsTone::Normal;
     Vector<ScreenRow> rows;
     Vector<int> rowHeights; // Reused popup measurement storage.
     Vector<String> details;
+    Vector<SettingsDetail> settingsDetails;
     int selected = -1;
     int scroll = 0;
     int detailScroll = 0;
@@ -78,46 +87,23 @@ private:
     std::uint64_t serial_ = 0;
 };
 
-enum class OptionsEvent { None, Close, Save, Multiplayer };
+using OptionsEvent = SettingsEditEvent;
 class OptionsUi {
 public:
     void Open(const SettingsStore& store, const Settings& runtime, bool remote = false);
-    void Applied(const SettingsStore& store, const Settings& runtime, bool reloaded);
+    void Applied(const SettingsStore& store, const Settings& runtime);
     OptionsEvent Key(const KeyChord& chord, const SettingsStore& store,
         const Localization& localization, const char* directory);
     void Text(eastl::string_view text);
     void Present(const SettingsStore& store, const Localization& localization, ScreenFrame& frame) const;
-    SettingsResult<void> Prepare(const SettingsStore& store, SettingsStore& candidate,
-        Diagnostics* diagnostics) const;
-    SettingsScope Scope() const { return scope_; }
-    bool Capturing() const { return mode_ == Mode::Capture; }
-    bool EditingText() const { return mode_ == Mode::Number; }
-    void Feedback(String message) { feedback_ = eastl::move(message); }
+    SettingsResult<SettingsStore> Prepare(const SettingsStore& store, Diagnostics* diagnostics) const;
+    SettingsScope Scope() const { return editor_.Scope(); }
+    bool Capturing() const { return editor_.Capturing(); }
+    bool EditingText() const { return editor_.EditingText(); }
+    bool Browsing() const { return editor_.Browsing(); }
+    void RememberScroll(const ScreenFrame& frame);
+    void Feedback(String message, SettingsTone tone) { editor_.Feedback(eastl::move(message), tone); }
 private:
-    enum class Mode { Browse, Number, Language, Capture, Inspect };
-    unsigned Index() const { return scope_ == SettingsScope::Global ? 0 : 1; }
-    Settings Preview(const SettingsStore& store) const;
-    Keymap PreviewKeys(const SettingsStore& store) const;
-    using VisibleFieldList = StaticList<SettingsField, static_cast<std::size_t>(SettingsField::Count)>;
-    void Fields(VisibleFieldList& output) const;
-    void Bindings(const SettingsStore& store, Keymap& output) const;
-    void Begin(const SettingsStore& store, const char* directory, bool append);
-    SettingsOverrides drafts_[2];
-    Keymap keys_[2];
-    Settings runtime_;
-    SettingsScope scope_ = SettingsScope::Global;
-    bool bindings_ = false;
-    bool remote_ = false;
-    unsigned category_ = 0;
-    unsigned focus_ = 3; // Scope, section, category, list, details.
-    std::size_t selected_ = 0;
-    int detailScroll_ = 0;
-    Mode mode_ = Mode::Browse;
-    bool append_ = false;
-    bool replace_ = false;
-    String edit_;
-    String feedback_;
-    Vector<String> languages_;
-    std::size_t language_ = 0;
+    SettingsEditor editor_;
 };
 }

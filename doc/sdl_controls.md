@@ -109,8 +109,7 @@ the SDL-enabled test target when integrating).
 
 ## Debug and options
 
-F9 opens [Multiplayer settings](sdl_multiplayer.md), also available from F2's
-Interface page. Arrows/Tab and Enter select hosting/joining actions and edit host
+F9 opens [Multiplayer settings](sdl_multiplayer.md) from gameplay. Arrows/Tab and Enter select hosting/joining actions and edit host
 tick rate, rate limiting and idle pause; Apply pacing changes applies the draft.
 P opens Players using the shared
 binding. The default gameplay save binding is **S** (Shift+s), when a local or
@@ -160,14 +159,16 @@ green candidates, red blocked, yellow chosen, blue origin, purple goal, and
 orange backtracking. Wide windows show map and details alongside each other;
 narrow windows stack the map above independently scrollable details.
 
-F2 opens the keyboard-only preferences and binding editor. Tab/Shift+Tab select
-scope, section, category, list, or details. Arrows navigate; Enter edits. The
-Save binding performs Save and apply. Reset, append binding, unbind, and key
-inspection remain available. Number editing uses SDL text input; binding capture
-uses translated key events. Wide layouts place details alongside the list;
-compact layouts stack them. World overrides remain memory-only for temporary
-SDL worlds. Seed is a future-world default, never a live-world mutation. Guests
-can edit presentation preferences and bindings; world fields are host-owned.
+F1 opens the shortcut reference. Menu Up/Down scrolls its grouped control
+list. Escape or Menu Accept closes it. It includes the Crafting and Debug
+routes to power features and the F9 Multiplayer shortcut.
+
+F2 opens **Preferences** and **Keybindings**. Tab and Shift+Tab switch tabs.
+Up/Down selects a row and Left/Right adjusts the value or selects a chord.
+Ctrl+Up/Down jumps a section and PageUp/PageDown scrolls details. Press `g`
+or activate the scope button to switch between Global and World. Changing
+scope or closing discards uncommitted edits. Save applies and persists
+the active scope. [Settings API and controls](settings_api.md#in-game-settings)
 
 These screens pause local simulation. Closing discards paused wall time. While
 hosting or joined, menus own local input but the shared world continues running.
@@ -195,12 +196,10 @@ text dependency. The session captures it; render code never borrows World.
 
 SDL control requests add Inspect, ApplySettings, and ResumeAndCommand. Queries
 carry request/session identity; the frontend coalesces cursor requests and
-ignores obsolete results. Settings are staged and language loading completes
-before requesting application. `ApplySettings(server, global, world, diagnostics)`
-preserves runtime residency when neither scope overrides it. Only a successful
-owner acknowledgement installs frontend preferences/bindings/localization;
-Save and apply reports filesystem failures as Applied, unsaved and retains the
-current settings for retry. Reopening clean options reloads persisted settings. ResumeAndCommand discards paused
+ignores obsolete results. Settings, language, and changed font resources are staged before application.
+A successful owner acknowledgement installs frontend preferences and bindings.
+Save failure keeps the applied values active and dirty so persistence can be
+retried. ResumeAndCommand discards paused
 wall time and submits the selected command in one owner operation.
 
 `InspectAi` returns `AiInspected` with an owned `AiDebugView` captured on the

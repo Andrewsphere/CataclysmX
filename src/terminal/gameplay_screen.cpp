@@ -1,3 +1,4 @@
+#include "client/controls_help.h"
 #include "terminal/gameplay_screen.h"
 
 #include "client/text.h"
@@ -503,7 +504,7 @@ bool GameplayUi::Open(InputAction action) {
         items_.Open(action == InputAction::AdvancedInventory, action == InputAction::Use);
         modal_ = Modal::Inventory; break;
     case InputAction::Players: modal_ = Modal::Players; break;
-    case InputAction::Help: modal_ = Modal::Controls; break;
+    case InputAction::Help: modal_ = Modal::Controls; controlsScroll_ = 0; break;
     case InputAction::QuickActions: modal_ = Modal::QuickActions; break;
     default: return false;
     }
@@ -927,37 +928,14 @@ ftxui::Element GameplayUi::Render(WorldView view, const ContentCatalog& content,
             rows.push_back(row);
         }
     } else {
-        title = t("game.ui.controls"); subtitle = t("game.ui.controls_hint"); scroll = &controlsScroll_;
-        const auto group = [&](eastl::string_view heading, std::initializer_list<InputAction> actions) {
-            if (!rows.empty()) { rows.push_back(ftxui::text("")); }
-            rows.push_back(Text(t(heading)) | ftxui::bold);
-            for (auto action : actions) {
-                rows.push_back(BindingRow(ActionLabel(localization, action),
-                    BindingLabel(keys, localization, InputContext::Gameplay, action)));
-            }
-        };
-        group("game.ui.windows", {InputAction::QuickActions, InputAction::Inventory, InputAction::AdvancedInventory, InputAction::Crafting, InputAction::CombatMenu, InputAction::CombatInfo, InputAction::Players,
-            InputAction::Settings, InputAction::Help});
-        group("game.ui.actions", {InputAction::Use, InputAction::PickUp, InputAction::Drop, InputAction::Interact, InputAction::Grab, InputAction::Wait,
-            InputAction::Attack, InputAction::StyleBalanced, InputAction::StyleAggressive, InputAction::StyleDefensive,
-            InputAction::FocusAbility, InputAction::LeapAbility, InputAction::SweepAbility});
-        group("game.ui.movement", {InputAction::West, InputAction::North, InputAction::South, InputAction::East, InputAction::MoveDown, InputAction::MoveUp});
-        group("game.ui.pacing", {InputAction::RateDown, InputAction::RateUp, InputAction::ToggleRate, InputAction::ToggleIdle});
-        group("game.ui.system", {InputAction::Save, InputAction::Debug, InputAction::Quit, InputAction::Cancel});
-        rows.push_back(ftxui::text("")); rows.push_back(Text(t("context.interaction")) | ftxui::bold);
-        for (const auto& binding : keys) {
-            if (binding.context != InputContext::Interaction) { continue; }
-            rows.push_back(BindingRow(ActionLabel(localization, binding.action),
-                BindingLabel(keys, localization, binding.context, binding.action)));
+        title = t("game.ui.controls"); scroll = &controlsScroll_;
+        for (const auto& row : CollectControlsHelp(keys, localization, false)) {
+            if (row.heading) {
+                rows.push_back(ftxui::hbox({Text(row.label) | ftxui::bold | ftxui::color(ftxui::Color::CyanLight),
+                    ftxui::text(" "), ftxui::separatorLight() | ftxui::flex}));
+            } else if (row.keys.empty()) { rows.push_back(Paragraph(row.label)); }
+            else { rows.push_back(BindingRow(row.label, row.keys)); }
         }
-        rows.push_back(Text(t("context.items")) | ftxui::bold);
-        for (const auto& binding : keys) {
-            if (binding.context == InputContext::Items) {
-                rows.push_back(BindingRow(ActionLabel(localization, binding.action), BindingLabel(keys, localization, binding.context, binding.action)));
-            }
-        }
-        rows.push_back(ftxui::text("")); rows.push_back(Paragraph(t("game.ui.lan_controls")));
-        rows.push_back(Paragraph(t("game.ui.fixed_controls")));
         bool unavailable = false;
         for (const auto& binding : keys) {
             for (const auto& key : binding.keys) { unavailable |= !LegacyKeyAvailable(key); }
@@ -971,10 +949,10 @@ ftxui::Element GameplayUi::Render(WorldView view, const ContentCatalog& content,
     directions += '/'; directions += BindingLabel(keys, localization, InputContext::Menu, InputAction::South);
     const bool selectable = modal_ == Modal::QuickActions || modal_ == Modal::Crafting || modal_ == Modal::Combat;
     ftxui::Elements hints{Hint(directions, t(selectable ? "game.ui.select" : "game.ui.scroll"))};
-    if (selectable) {
+    if (selectable || modal_ == Modal::Controls) {
         hints.push_back(ftxui::text("  |  "));
         hints.push_back(Hint(BindingLabel(keys, localization, InputContext::Menu, InputAction::Accept),
-            t("game.ui.activate")));
+            t(modal_ == Modal::Controls ? "settings.ui.close" : "game.ui.activate")));
     }
     hints.push_back(ftxui::filler());
     String cancel = "Escape";
@@ -1129,6 +1107,7 @@ bool GameplayUi::HandleEvent(const ftxui::Event& event, const WorldView& view, c
             else { feedback_ = localization.Text("game.ui.action_unavailable"); }
         }
     } else {
+        if (modal_ == Modal::Controls && action == InputAction::Accept) { Close(); return true; }
         int& scroll = modal_ == Modal::Players ? playersScroll_
             : modal_ == Modal::CombatInfo ? combatInfoScroll_ : controlsScroll_;
         if (action == InputAction::North) { scroll = std::max(0, scroll - 1); }

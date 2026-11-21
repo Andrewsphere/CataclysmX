@@ -13,7 +13,7 @@ display is unchanged.
 The SDL client implements startup native tileset selection, PNG atlases, looping
 and on-demand animations, worker-prepared map packets, and cached UTF-8 UI text. It keeps the
 existing session thread and deterministic engine contracts. [The architecture](sdl_client.md) documents implemented screen ownership and
-[the options redesign](sdl_options_redesign.md) specifies the later visual rebuild.
+[SDL Settings layout](sdl_options_redesign.md) describes the preferences screen.
 
 Run `cataclysmx_sdl_game` for the bundled `assets/tiles/gen1_32x32` pack, or pass
 `--tileset <directory>`. An explicit missing/invalid pack fails with diagnostics;
@@ -45,7 +45,7 @@ retain their playback metadata, but have no frontend activation control.
 DejaVu Sans Mono with its redistribution license under `assets/fonts`.
 `--font-size 8-48` and `--ui-scale 1-4` change the UI independently of tile size.
 Options → Global → Interface → Text size persists the font point size (default
-14). Save and apply changes it without restarting. `--font-size` supplies an
+14). Save changes it without restarting. `--font-size` supplies an
 in-memory Global override: the menu displays it, Global Save persists it, and
 later edits or Reset replace it. World preferences cannot override text size.
 
@@ -53,8 +53,7 @@ The application owns its active `SdlText` with `eastl::unique_ptr` and prepares
 a second instance before submitting a size change. Only a successful settings
 reply replaces the active text engine. Font preparation or settings failure
 discards the candidate, preserving current text and configuration; a disk-write
-failure retains the applied size and reports it as unsaved. Reload uses the
-same preparation path. This infrequent complete replacement keeps cached text
+failure retains the applied size and reports it as unsaved. This infrequent complete replacement keeps cached text
 and measurements consistent without a mutable font/cache invalidation API.
 
 `SdlText::LineHeight()` supplies font height in logical UI pixels without

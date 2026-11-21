@@ -55,6 +55,7 @@ TEST_CASE("SDL text sizes keep options controls accessible and tile dimensions u
     for (const auto size : {SDL_Point{480, 360}, SDL_Point{1120, 780}}) {
         Display display(size.x, size.y); REQUIRE(display.renderer);
         for (int points : {8, 14, 24, 48}) {
+            CAPTURE(size.x, size.y, points);
             REQUIRE(SDL_SetRenderDrawColor(display.renderer, 0, 0, 0, 255));
             REQUIRE(SDL_RenderClear(display.renderer));
             SdlText text(display.renderer, nullptr, static_cast<float>(points)); REQUIRE(text.Ready());
@@ -63,27 +64,32 @@ TEST_CASE("SDL text sizes keep options controls accessible and tile dimensions u
             CHECK(geometry.topBar.h >= text.LineHeight() + 8);
             CHECK(geometry.mapViewport.y >= geometry.topBar.h);
             OptionsUi options; options.Open(store, store.Effective());
-            for (int i = 0; i < 4; ++i) { options.Key({"Down"}, store, loc, CATACLYSMX_LOC_DIRECTORY); }
+            const bool world = size.x > 850;
+            if (world) { options.Key({"g"}, store, loc, CATACLYSMX_LOC_DIRECTORY); }
+            for (int i = 0; i < (world ? 3 : 4); ++i) { options.Key({"Down"}, store, loc, CATACLYSMX_LOC_DIRECTORY); }
             ScreenFrame frame; options.Present(store, loc, frame);
             REQUIRE(DrawScreen(display.renderer, text, frame, size.x, size.y, nullptr, 32, 32, 0, 1, &geometry));
             REQUIRE(SDL_RenderPresent(display.renderer));
             CHECK(frame.selected >= frame.scroll);
             CHECK(text.Width(9) > 0);
-            int yellowTop = 0, yellowBody = 0, footerPixels = 0;
+            int scopePixels = 0, selectionLines = 0, footerPixels = 0, dividerPixels = 0;
             const int bodyStart = geometry.topBar.h + text.Height(8) + 16;
             const int footerStart = size.y - text.Height(9) - 16;
             for (int y = geometry.topBar.h; y < size.y - 8; ++y) {
+                bool selectionBand = false;
                 for (int x = 8; x < size.x - 8; ++x) {
                     Uint8 r, g, b, a;
                     REQUIRE(SDL_ReadSurfacePixel(display.surface, x, y, &r, &g, &b, &a));
-                    if (r > 200 && g > 180 && b < 120) {
-                        if (y < bodyStart) { ++yellowTop; }
-                        else if (y < footerStart) { ++yellowBody; }
-                    }
+                    const bool scopeColor = world ? r == 220 && g == 169 && b == 248 : r == 122 && g == 218 && b == 237;
+                    if (y < bodyStart && scopeColor) { ++scopePixels; }
+                    if (x > size.x * 2 / 3 && r == 66 && g == 83 && b == 94) { ++dividerPixels; }
+                    selectionBand |= r == 37 && g == 57 && b == 70;
                     if (y >= footerStart && r > 60 && g > 70 && b > 70) { ++footerPixels; }
                 }
+                selectionLines += selectionBand;
             }
-            CHECK(yellowTop > 0); CHECK(yellowBody > 0); CHECK(footerPixels > 0);
+            CHECK(scopePixels > 0); CHECK(selectionLines == frame.rowHeights[frame.selected] - 1); CHECK(footerPixels > 0);
+            if (world && points <= 24) { CHECK(dividerPixels > 0); }
             if (const char* path = std::getenv("CATACLYSMX_TEXT_SIZE_PREVIEW")) {
                 const auto output = String(path) + "." + NumberText(size.x) + "." + NumberText(points) + ".png";
                 REQUIRE(SDL_SavePNG(display.surface, output.c_str()));

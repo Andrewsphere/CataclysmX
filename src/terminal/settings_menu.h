@@ -10,7 +10,7 @@
 namespace cataclysmx {
 
 // References outlive the modal. All edits, including capture/text entry, are
-// consumed here; Apply does not send commands or elapsed time to the server.
+// consumed here. Saving settings sends no gameplay commands or elapsed time.
 // Residency previews use the server policy when no scoped selector overrides it.
 ftxui::Component CreateSettingsMenu(SettingsStore& store, Localization& localization,
     Server& server, TerminalKeyboard& keyboard, const char* localizationDirectory,

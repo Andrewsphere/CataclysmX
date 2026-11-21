@@ -112,17 +112,17 @@ TEST_CASE("SDL options stage preferences and capture modifier bindings before ap
     key("Down"); key("Enter"); REQUIRE(editor.EditingText());
     editor.Text("12"); key("Enter"); CHECK_FALSE(editor.EditingText());
     CHECK(store.Effective().viewRadius == 64);
-    SettingsStore candidate = store; Diagnostics diagnostics;
-    REQUIRE(editor.Prepare(store,candidate,&diagnostics));
-    CHECK(candidate.Effective().viewRadius == 12);
+    Diagnostics diagnostics;
+    auto candidate = editor.Prepare(store, &diagnostics); REQUIRE(candidate);
+    CHECK(candidate->Effective().viewRadius == 12);
     ScreenFrame frame; editor.Present(store,localization,frame);
     CHECK(frame.visible); CHECK(frame.presentation == ScreenPresentation::Large); CHECK_FALSE(frame.rows.empty());
-    CHECK(frame.title.find("Unapplied") != String::npos);
-    // Move focus from List to Section, then select Keybindings.
-    key("BackTab"); key("BackTab"); key("Right"); key("Enter"); key("Enter");
+    CHECK(frame.status.find("Unapplied") != String::npos);
+    // Tab opens Keybindings; Enter replaces the selected chord.
+    key("Tab"); key("Enter");
     editor.Key({"Left",false,true},store,localization,CATACLYSMX_LOC_DIRECTORY);
-    REQUIRE(editor.Prepare(store,candidate,&diagnostics));
-    CHECK(ResolveAction(candidate.Keys(),InputContext::Gameplay,{"Left",false,true}) == InputAction::West);
+    candidate = editor.Prepare(store, &diagnostics); REQUIRE(candidate);
+    CHECK(ResolveAction(candidate->Keys(),InputContext::Gameplay,{"Left",false,true}) == InputAction::West);
     CHECK(ResolveAction(store.Keys(),InputContext::Gameplay,{"Left",false,true}) != InputAction::West);
 }
 
@@ -158,36 +158,39 @@ TEST_CASE("SDL automatically executes only the sole available interaction", "[sd
     CHECK_FALSE(sdl::SoleAvailableAction(choices));
 }
 
-TEST_CASE("SDL Save and apply retains drafts across scopes and failed persistence", "[sdl][settings]") {
+TEST_CASE("SDL settings discard edits at scope changes and retain applied changes after a disk failure", "[sdl][settings]") {
     using namespace cataclysmx; using namespace cataclysmx::sdl;
-    SettingsDirectory files; files.Write("blocked","not a directory");
+    SettingsDirectory files; files.Write("blocked", "not a directory");
     SettingsStore store(String(files.File("blocked").c_str()));
-    Localization loc; REQUIRE(loc.Load(CATACLYSMX_LOC_DIRECTORY,"en"));
-    OptionsUi editor; editor.Open(store,store.Effective());
-    const auto key = [&](const char* name) { return editor.Key({String(name)},store,loc,CATACLYSMX_LOC_DIRECTORY); };
+    Localization loc; REQUIRE(loc.Load(CATACLYSMX_LOC_DIRECTORY, "en"));
+    OptionsUi editor; editor.Open(store, store.Effective());
+    const auto key = [&](const char* name) { return editor.Key({String(name)}, store, loc, CATACLYSMX_LOC_DIRECTORY); };
     key("Down"); key("Enter"); editor.Text("12"); key("Enter");
-    // Keep the global draft while editing and applying a world draft.
-    key("BackTab"); key("BackTab"); key("BackTab"); key("Right"); key("Enter");
-    REQUIRE(editor.Scope() == SettingsScope::World);
-    key("Down"); key("Enter"); editor.Text("7"); key("Enter");
-    CHECK(key("s") == OptionsEvent::Save);
-    SettingsStore candidate = store; REQUIRE(editor.Prepare(store,candidate,nullptr));
-    store = eastl::move(candidate); editor.Applied(store,store.Effective(),false);
-    CHECK(store.Effective().viewRadius == 7);
-    key("BackTab"); key("BackTab"); key("BackTab"); key("Left"); key("Enter");
+    key("Tab"); key("BackTab");
+    auto candidate = editor.Prepare(store, nullptr); REQUIRE(candidate);
+    CHECK(candidate->Effective().viewRadius == 12);
+    key("g"); key("g");
     REQUIRE(editor.Scope() == SettingsScope::Global);
-    REQUIRE(editor.Prepare(store,candidate,nullptr));
-    REQUIRE(candidate.Overrides(SettingsScope::Global).viewRadius);
-    CHECK(*candidate.Overrides(SettingsScope::Global).viewRadius == 12);
-    store = eastl::move(candidate); editor.Applied(store,store.Effective(),false);
-    Diagnostics diagnostics; CHECK_FALSE(store.Save(SettingsScope::Global,&diagnostics));
-    CHECK_FALSE(diagnostics.Empty()); CHECK(store.Dirty(SettingsScope::Global));
-    // A retry prepares the same applied draft instead of discarding it.
-    REQUIRE(editor.Prepare(store,candidate,nullptr));
-    CHECK(candidate.Overrides(SettingsScope::Global) == store.Overrides(SettingsScope::Global));
-    CHECK(key("r") == OptionsEvent::None);
-    ScreenFrame frame; editor.Present(store,loc,frame);
-    CHECK(frame.title.find("Applied, unsaved") != String::npos);
-    CHECK(frame.footer.find("Save and apply") != String::npos);
+    candidate = editor.Prepare(store, nullptr); REQUIRE(candidate);
+    CHECK_FALSE(candidate->Overrides(SettingsScope::Global).viewRadius);
+
+    key("Down"); key("Left");
+    CHECK(key("s") == OptionsEvent::Save);
+    candidate = editor.Prepare(store, nullptr); REQUIRE(candidate);
+    CHECK(candidate->Effective().viewRadius == 63);
+    CHECK_FALSE(candidate->Overrides(SettingsScope::World).viewRadius);
+    store = eastl::move(*candidate);
+    editor.Applied(store, store.Effective());
+    Diagnostics diagnostics;
+    CHECK_FALSE(store.Save(SettingsScope::Global, &diagnostics));
+    CHECK_FALSE(diagnostics.Empty());
+    candidate = editor.Prepare(store, nullptr); REQUIRE(candidate);
+    CHECK(candidate->Overrides(SettingsScope::Global) == store.Overrides(SettingsScope::Global));
+    CHECK(candidate->Dirty(SettingsScope::Global));
+    CHECK(key("R") == OptionsEvent::None);
+    CHECK(key("a") == OptionsEvent::None);
+    ScreenFrame frame; editor.Present(store, loc, frame);
+    CHECK(frame.status == "Applied, unsaved");
+    CHECK(frame.footer.find("s Save") != String::npos);
     CHECK(frame.footer.find("Reload") == String::npos);
 }

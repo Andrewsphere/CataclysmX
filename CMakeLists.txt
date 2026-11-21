@@ -183,6 +183,8 @@ add_library(cataclysmx_client STATIC src/client/text.cpp src/client/text.h
     src/client/ai_debug.cpp src/client/ai_debug.h src/client/debug_map.h
     src/client/lan_profile.cpp src/client/lan_profile.h
     src/client/input.cpp src/client/input.h src/client/settings.cpp src/client/settings.h
+    src/client/settings_editor.cpp src/client/settings_editor.h
+    src/client/controls_help.cpp src/client/controls_help.h
     src/client/localization.cpp src/client/localization.h src/content/preferences.cpp)
 target_link_libraries(cataclysmx_client PUBLIC cataclysmx_engine PRIVATE yyjson::yyjson)
 cataclysmx_no_exceptions(cataclysmx_client)

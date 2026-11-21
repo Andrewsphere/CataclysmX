@@ -508,6 +508,104 @@ TEST_CASE("Keybindings retain overflow keys through persistence, copying and era
     CHECK_FALSE(ResolveAction(resolved, InputContext::Gameplay, {"b", false}));
 }
 
+TEST_CASE("Shared direction bindings preserve legacy files and resolve through both scopes", "[settings][input]") {
+    SettingsDirectory files;
+    SettingsStore store(String(files.File("user").c_str()), String(files.File("world").c_str()));
+    Keymap global{{InputContext::Menu, InputAction::West, {{"Home"}}}};
+    REQUIRE(store.SetOverrides(SettingsScope::Global, {}, global));
+    CHECK(ResolveAction(store.Keys(), InputContext::Menu, {"Home"}) == InputAction::West);
+    CHECK(ResolveAction(store.Keys(), InputContext::Gameplay, {"Left"}) == InputAction::West);
+
+    SetBinding(global, {InputContext::Shared, InputAction::West, {{"F8"}}});
+    REQUIRE(global.size() == 1);
+    REQUIRE(store.SetOverrides(SettingsScope::Global, {}, global));
+    REQUIRE(store.Save(SettingsScope::Global));
+    const Keymap world{{InputContext::Shared, InputAction::West, {{"F7"}}}};
+    REQUIRE(store.SetOverrides(SettingsScope::World, {}, world));
+    REQUIRE(store.Save(SettingsScope::World));
+    REQUIRE(store.Load());
+    CHECK(store.KeyOverrides(SettingsScope::Global) == global);
+    CHECK(store.KeyOverrides(SettingsScope::World) == world);
+    for (const auto context : {InputContext::Gameplay, InputContext::Interaction, InputContext::Menu,
+            InputContext::Debug, InputContext::Items}) {
+        CHECK(ResolveAction(store.Keys(), context, {"F7"}) == InputAction::West);
+        CHECK_FALSE(ResolveAction(store.Keys(), context, {"F8"}));
+    }
+    auto reset = world;
+    ResetBinding(reset, InputContext::Shared, InputAction::West);
+    REQUIRE(store.SetOverrides(SettingsScope::World, {}, reset));
+    CHECK(ResolveAction(store.Keys(), InputContext::Items, {"F8"}) == InputAction::West);
+
+    // `w` is used by Wield only in Items, outside the editor's Menu context.
+    REQUIRE_FALSE(store.SetOverrides(SettingsScope::World, {}, {{InputContext::Shared, InputAction::East, {{"w"}}}}));
+    CHECK(ResolveAction(store.Keys(), InputContext::Items, {"w"}) == InputAction::Wield);
+    CHECK_FALSE(ValidateKeymap({{InputContext::Shared, InputAction::Wait, {{"F7"}}}}));
+    CHECK_FALSE(ValidateKeymap({{InputContext::Shared, InputAction::West, {{"F9"}}}}));
+}
+
+TEST_CASE("Shared defaults cover every repeated action and chord without changing its contexts", "[settings][input]") {
+    const auto defaults = DefaultKeymap();
+    const auto shared = DefaultSharedKeymap();
+    REQUIRE(ValidateKeymap(shared));
+    for (const auto& binding : defaults) {
+        for (const auto& key : binding.keys) {
+            int matches = 0;
+            for (const auto& local : defaults) {
+                if (local.action != binding.action) { continue; }
+                for (const auto& other : local.keys) { matches += key == other; }
+            }
+            CAPTURE(ContextName(binding.context).data(), ActionName(binding.action).data(), ChordName(key).c_str());
+            CHECK(IsSharedInputKey(shared, binding, key) == (matches > 1));
+        }
+    }
+    for (const auto& binding : shared) {
+        for (const auto context : SharedInputContexts(binding.context, binding.action)) {
+            for (const auto& key : binding.keys) {
+                if (context == InputContext::Items && IsCardinalDirection(binding.action)) { continue; } // Menu fallback.
+                CHECK(ResolveAction(defaults, context, key) == binding.action);
+            }
+        }
+    }
+}
+
+TEST_CASE("Shared shortcuts preserve contextual alternates across edits and reload", "[settings][input]") {
+    SettingsDirectory files;
+    SettingsStore store(String(files.File("user").c_str()), String(files.File("world").c_str()));
+    const Keymap world{{InputContext::Debug, InputAction::Debug, {{"F7"}}, true}};
+    REQUIRE(store.SetOverrides(SettingsScope::World, {}, world));
+    REQUIRE(store.Save(SettingsScope::World));
+    CHECK(ResolveAction(store.Keys(), InputContext::Debug, {"F11"}) == InputAction::Debug);
+    CHECK_FALSE(ResolveAction(store.Keys(), InputContext::Debug, {"q"}));
+    const Keymap global{{InputContext::Shared, InputAction::Debug, {{"F8"}}},
+        {InputContext::Shared, InputAction::Use, {{"V"}}},
+        {InputContext::SharedLayer, InputAction::MoveDown, {{"F6"}}}};
+    REQUIRE(store.SetOverrides(SettingsScope::Global, {}, global));
+    REQUIRE(store.Save(SettingsScope::Global));
+    REQUIRE(store.Load());
+    CHECK(store.KeyOverrides(SettingsScope::Global) == global);
+    CHECK(store.KeyOverrides(SettingsScope::World) == world);
+    CHECK(ResolveAction(store.Keys(), InputContext::Debug, {"F7"}) == InputAction::Debug);
+    CHECK(BindingHint(store.Keys(), InputContext::Debug, InputAction::Debug) == "F8/F7");
+    for (auto context : {InputContext::Gameplay, InputContext::Interaction, InputContext::Debug}) {
+        CHECK(ResolveAction(store.Keys(), context, {"F8"}) == InputAction::Debug);
+        CHECK_FALSE(ResolveAction(store.Keys(), context, {"F11"}));
+        CHECK(ResolveAction(store.Keys(), context, {"F6"}) == InputAction::MoveDown);
+        CHECK_FALSE(ResolveAction(store.Keys(), context, {"Down", false, true}));
+    }
+    for (auto context : {InputContext::Gameplay, InputContext::Interaction, InputContext::Items}) {
+        CHECK(ResolveAction(store.Keys(), context, {"V"}) == InputAction::Use);
+        CHECK_FALSE(ResolveAction(store.Keys(), context, {"u"}));
+    }
+    CHECK(ResolveAction(store.Keys(), InputContext::Menu, {"u"}) == InputAction::Unbind);
+    CHECK(ResolveAction(store.Keys(), InputContext::Items, {"<"}) == InputAction::MoveDown);
+    CHECK_FALSE(ResolveAction(store.Keys(), InputContext::Items, {"F6"}));
+    REQUIRE(store.SetOverrides(SettingsScope::Global, {}, {}));
+    CHECK(ResolveAction(store.Keys(), InputContext::Debug, {"F11"}) == InputAction::Debug);
+    CHECK(ResolveAction(store.Keys(), InputContext::Debug, {"F7"}) == InputAction::Debug);
+    CHECK_FALSE(ResolveAction(store.Keys(), InputContext::Debug, {"F8"}));
+    CHECK(ResolveAction(ResolveKeymap(global, {}), InputContext::Debug, {"q"}) == InputAction::Debug);
+}
+
 TEST_CASE("Default navigation uses arrows and debug region jumps use Shift arrows", "[settings][input]") {
     const auto keys = DefaultKeymap();
     REQUIRE(ValidateKeymap(keys));
@@ -602,4 +700,30 @@ TEST_CASE("Keyboard repeat preference validates overlays and persists", "[settin
     CHECK(loaded.Effective().keyboardRepeatRate == 30);
     SettingsOverrides world; world.keyboardRepeatRate = 60;
     REQUIRE(loaded.SetOverrides(SettingsScope::World,world,{})); CHECK(loaded.Effective().keyboardRepeatRate == 60);
+}
+
+TEST_CASE("Presentation settings preserve unchanged live residency and pacing", "[settings][server]") {
+    Server server(TestContent(), 197);
+    SettingsStore store("");
+    SettingsOverrides world;
+    world.residentRadiusTiles = 13;
+    world.ticksPerSecond = 37;
+    world.autosaveInterval = 12;
+    REQUIRE(store.SetOverrides(SettingsScope::World, world, {}));
+    REQUIRE(ApplySettings(server, store));
+    const auto revision = server.GetRevision();
+
+    SettingsOverrides global;
+    global.messageHistorySize = 2;
+    REQUIRE(store.SetOverrides(SettingsScope::Global, global, {}));
+    REQUIRE(ApplySettings(server, store));
+
+    CHECK(server.GetRevision() == revision);
+    REQUIRE(server.GetCircleResidency());
+    CHECK(server.GetCircleResidency()->radiusTiles == 13);
+    CHECK(server.GetPacing().ticksPerSecond == 37);
+    CHECK(server.GetAutosaveInterval() == 12);
+    CHECK(server.GetTick() == 0);
+    CHECK(server.GetWorld().GetSeed() == 197);
+    CHECK(store.Effective().messageHistorySize == 2);
 }

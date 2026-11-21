@@ -495,7 +495,10 @@ int main(int argc, char** argv) {
         }
         if (settingsOpen || debugOpen) {
             if (event == ftxui::Event::Custom) { return true; }
-            return settingsOpen ? settingsMenu->OnEvent(event) : debugMenu->OnEvent(event);
+            if (debugOpen) { return debugMenu->OnEvent(event); }
+            const bool handled = settingsMenu->OnEvent(event);
+            messageHistory.SetCapacity(settings.Effective().messageHistorySize);
+            return handled;
         }
         if (!lanOpen && action && gameplayUi.Open(*action)) {
             if (action == InputAction::CombatMenu) { interacting = false; choosingGrab = false; }

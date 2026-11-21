@@ -4,6 +4,7 @@
 
 #include <EASTL/expected.h>
 #include <EASTL/optional.h>
+#include <EASTL/span.h>
 #include <EASTL/string_view.h>
 
 #include <chrono>
@@ -23,7 +24,7 @@ struct KeyChord {
     bool operator==(const KeyChord&) const = default;
 };
 
-enum class InputContext { Gameplay, Interaction, Menu, Debug, Items };
+enum class InputContext { Gameplay, Interaction, Menu, Debug, Items, Shared, SharedLayer };
 enum class InputAction {
     West, East, North, South, Wait, PickUp, Drop, Interact, Save, Quit,
     Settings, Debug, RateDown, RateUp, ToggleRate, ToggleIdle, Cancel,
@@ -34,12 +35,14 @@ enum class InputAction {
     StyleBalanced, StyleAggressive, StyleDefensive, Examine, Northwest, Northeast, Southwest, Southeast, Crafting, Grab,
     AdvancedInventory, Wield, TransferAmount, TransferStack, OpenContainer, ParentStorage, ToggleStorage,
     CombatMenu, CombatInfo, HoldLeft, HoldRight, TwoHanded, Regrip, Wear, RemoveWorn, ReleaseHand,
-    FocusAbility, LeapAbility, SweepAbility, AllNearby
+    FocusAbility, LeapAbility, SweepAbility, AllNearby,
+    SwitchSettingsScope, PreviousSettingsSection, NextSettingsSection
 };
 struct InputBinding {
     InputContext context = InputContext::Gameplay;
     InputAction action = InputAction::Wait;
     SmallVector<KeyChord, 2> keys;
+    bool inheritShared = false;
     bool operator==(const InputBinding&) const = default;
 };
 using Keymap = Vector<InputBinding>;
@@ -49,10 +52,16 @@ eastl::string_view ContextName(InputContext context);
 eastl::optional<InputContext> ParseContext(eastl::string_view name);
 eastl::string_view ActionName(InputAction action);
 eastl::optional<InputAction> ParseAction(eastl::string_view name);
+bool IsCardinalDirection(InputAction action);
+bool IsSharedInputContext(InputContext context);
+eastl::span<const InputContext> SharedInputContexts(InputContext context, InputAction action);
+bool HasSharedInput(InputContext context, InputAction action);
+bool IsSharedInputKey(const Keymap& shared, const InputBinding& local, const KeyChord& key);
 bool ValidKey(const KeyChord& chord);
 bool LegacyKeyAvailable(const KeyChord& chord);
 String ChordName(const KeyChord& chord);
 Keymap DefaultKeymap();
+Keymap DefaultSharedKeymap();
 Keymap ResolveKeymap(const Keymap& global, const Keymap& world);
 eastl::expected<void, InputError> ValidateKeymap(const Keymap& map,
     Diagnostics* diagnostics = nullptr);
