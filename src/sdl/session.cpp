@@ -111,6 +111,7 @@ private:
     SessionMode mode_ = SessionMode::Local;
     bool paused_ = false;
     bool menuOpen_ = false;
+    bool advancedInventoryOpen_ = false;
     bool savedLocalPause_ = false;
     bool savedLocalMenu_ = false;
     bool hasSave_ = false;
@@ -262,7 +263,7 @@ bool SessionOwner::Connect(network::ConnectionSettings settings, bool newCharact
     guest_->Disconnect();
     ++generation_;
     mode_ = SessionMode::Guest;
-    paused_ = false; menuOpen_ = false;
+    paused_ = false; menuOpen_ = false; advancedInventoryOpen_ = false;
     connection_ = settings;
     persistedToken_ = 0;
     networkError_.reset();
@@ -339,6 +340,7 @@ bool SessionOwner::ReturnLocal() {
     }
     paused_ = restored ? savedLocalPause_ : true;
     menuOpen_ = restored ? savedLocalMenu_ : true;
+    advancedInventoryOpen_ = false;
     baseline_ = Clock::now();
     forcePublish_ = true;
     return restored;
@@ -371,13 +373,14 @@ void SessionOwner::Publish() {
     else { building_.sessions.clear(); }
     building_.seed = 0; building_.generationVersion = 0;
     building_.interactions.clear(); building_.mapItems.clear();
+    const int viewRadius = std::max(options_.settings.viewRadius, advancedInventoryOpen_ ? 1 : 0);
     if (mode_ == SessionMode::Guest) {
         building_.view = guest_->HasView() ? guest_->View() : WorldView{};
         building_.runtimeSettings.pacing = building_.view.pacing;
         if (guest_->HasView()) {
             building_.interactions = guest_->Presentation().interactions;
             building_.mapItems = guest_->Presentation().mapItems;
-            CropView(building_.view, building_.mapItems, options_.settings.viewRadius);
+            CropView(building_.view, building_.mapItems, viewRadius);
         }
     } else if (server_) {
         building_.seed = server_->GetWorld().GetSeed();
@@ -389,7 +392,7 @@ void SessionOwner::Publish() {
         building_.runtimeSettings.residentRadiusTiles = runtime.residentRadiusTiles;
         building_.runtimeSettings.seed = building_.seed;
         building_.runtimeSettings.pacing = server_->GetPacing();
-        building_.view = server_->View(options_.settings.viewRadius);
+        building_.view = server_->View(viewRadius);
         if (CapturePlayerPresentation(server_->GetWorld(), building_.view, presentation_)) {
             building_.interactions = presentation_.interactions;
             building_.mapItems = presentation_.mapItems;
@@ -552,7 +555,7 @@ void SessionOwner::Gameplay(SessionRequest request) {
     }
     if (request.kind == RequestKind::ResumeAndCommand || request.kind == RequestKind::ItemCommand) {
         paused_ = false;
-        if (request.kind == RequestKind::ResumeAndCommand) { menuOpen_ = false; }
+        if (request.kind == RequestKind::ResumeAndCommand) { menuOpen_ = false; advancedInventoryOpen_ = false; }
         if (!lan) { baseline_ = Clock::now(); }
         forcePublish_ = true;
     }
@@ -695,8 +698,10 @@ void SessionOwner::Request(SessionRequest request) {
         break;
     }
     case RequestKind::PauseForItems:
+    case RequestKind::PauseForAdvancedInventory:
         if (!lan) {
             if (itemRecovery_ || pending_ || request.player != server_->GetHostPlayerId()) { reply.kind = ReplyKind::Cancelled; break; }
+            advancedInventoryOpen_ = request.kind == RequestKind::PauseForAdvancedInventory;
             itemPacing_ = server_->GetPacing(); auto pacing = itemPacing_; pacing.pauseWhenIdle = true;
             server_->SetPacing(pacing); itemRecovery_ = true; itemPauseId_ = request.id;
             paused_ = false; menuOpen_ = true; baseline_ = Clock::now(); FinishItemRecovery(); return;
@@ -709,6 +714,7 @@ void SessionOwner::Request(SessionRequest request) {
             reply.kind = ReplyKind::Cancelled; break;
         }
         menuOpen_ = request.kind != RequestKind::Resume;
+        advancedInventoryOpen_ = request.kind == RequestKind::PauseForAdvancedInventory;
         paused_ = !lan && menuOpen_;
         if (!lan) { baseline_ = Clock::now(); }
         forcePublish_ = true;

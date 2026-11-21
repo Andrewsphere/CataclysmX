@@ -17,7 +17,7 @@ struct InventoryUiFixture {
     void Refresh() { ui.Refresh(view, TestContent(), loc, keys); }
     void Open(bool advanced = false) { ui.Open(advanced); Refresh(); }
     void Key(const char* key) { ui.Handle({key}, keys, view, TestContent(), loc); }
-    void FloorDestination() { Key("Tab"); Key("5"); Key("Tab"); Refresh(); }
+    void FloorDestination() { Key("Right"); Key("5"); Key("Left"); Refresh(); }
     ItemStorage WorldStorage(ItemStorageKind kind, TileCoord position, PersistentId id = 0,
         const char* name = "", bool accessible = true) {
         ItemStorageView meta;
@@ -81,7 +81,58 @@ TEST_CASE("Advanced inventory swaps entire panes when a location is selected twi
     CHECK(f.ui.Frame().panes[0].storage == floor); CHECK(f.ui.Frame().panes[0].scroll == 7);
     CHECK(f.ui.Frame().panes[1].storage == ItemStorage{}); CHECK(f.ui.Frame().panes[1].scroll == 3);
     f.Refresh(); CHECK(f.ui.Frame().panes[0].rows[0].items[0] == 10);
+    f.Key("5");
+    CHECK(f.ui.Frame().activePane == 0);
+    CHECK(f.ui.Frame().panes[0].storage == ItemStorage{}); CHECK(f.ui.Frame().panes[0].scroll == 3);
+    CHECK(f.ui.Frame().panes[1].storage == floor); CHECK(f.ui.Frame().panes[1].scroll == 7);
+    CHECK(f.ui.Frame().panes[1].selectionValid);
     f.Key("I"); CHECK(f.ui.Frame().panes[0].storage == ItemStorage{});
+}
+
+TEST_CASE("Advanced inventory arrows focus a side and keypad digits point it at a tile", "[client][inventory]") {
+    InventoryUiFixture f;
+    f.view.player_position = {17, 23, 2};
+    const TileCoord northeast{18, 22, 2};
+    const auto cupboard = f.WorldStorage(ItemStorageKind::Object, northeast, 90, "cupboard");
+    f.view.inventory = {f.Rock(4)};
+    f.Open(true);
+    const auto& frame = f.ui.Frame();
+    CHECK(frame.advanced);
+    CHECK(frame.panes[0].anchor == f.view.player_position);
+    CHECK(frame.panes[1].anchor == f.view.player_position);
+    CHECK(frame.footer.find("Left left pane") != String::npos);
+
+    f.Key("Right"); f.Key("Right"); f.Key("9"); f.Refresh();
+    f.Key("Tab"); f.Key("BackTab");
+    CHECK(frame.activePane == 1);
+    CHECK(frame.panes[0].anchor == f.view.player_position);
+    CHECK(frame.panes[1].storage == cupboard);
+    CHECK(frame.panes[1].anchor == northeast);
+    f.Key("Left"); f.Key("Left"); f.Key("9"); f.Refresh();
+    CHECK(frame.activePane == 0);
+    CHECK(frame.panes[0].anchor == northeast);
+    CHECK(frame.panes[1].anchor == f.view.player_position);
+
+    f.view.itemStorages.clear(); f.Refresh();
+    CHECK_FALSE(frame.panes[0].anchor);
+    f.Key("1"); f.Refresh();
+    CHECK(frame.panes[0].anchor == TileCoord{16, 24, 2});
+
+    f.Key("Right"); f.ui.Frame().panes[1].scroll = 4;
+    f.Key("e"); f.Key("Left"); f.Key("6"); f.Refresh();
+    CHECK(frame.screen == ItemUiScreen::Examine);
+    CHECK(frame.advanced);
+    CHECK(frame.activePane == 1);
+    CHECK(frame.panes[1].anchor == f.view.player_position);
+    f.Key("Escape"); f.Refresh();
+    CHECK(frame.screen == ItemUiScreen::Advanced);
+    CHECK(frame.activePane == 1);
+    CHECK(frame.panes[1].scroll == 4);
+    REQUIRE(frame.panes[1].selectionValid);
+    CHECK(frame.panes[1].rows[frame.panes[1].selected].items.front() == 4);
+    SetBinding(f.keys, {InputContext::Menu, InputAction::West, {{"h"}}});
+    f.Key("h");
+    CHECK(frame.activePane == 0);
 }
 
 TEST_CASE("Examination localizes descriptions borrows colored art and preserves fractional HP", "[client][inventory]") {
@@ -115,7 +166,19 @@ TEST_CASE("Tile selection prefers accessible object storage and floor toggle is 
     f.view.itemStorages.push_back(object); f.Open(true); f.Key("5");
     CHECK(f.ui.Frame().panes[0].storage == object.storage);
     f.Key("f"); CHECK(f.ui.Frame().panes[0].storage.kind == ItemStorageKind::Ground);
+    f.Key("5");
+    CHECK(f.ui.Frame().panes[0].mode == ItemUiPaneMode::AllNearby);
+    CHECK(f.ui.Frame().panes[1].storage.kind == ItemStorageKind::Ground);
+    f.Key("Right"); f.Key("5"); f.Key("Left");
     f.Key("f"); CHECK(f.ui.Frame().panes[0].storage == object.storage);
+    f.Key("f");
+    f.Key("Right"); f.Key("5");
+    CHECK(f.ui.Frame().panes[0].storage.kind == ItemStorageKind::Ground);
+    CHECK(f.ui.Frame().panes[1].storage == object.storage);
+    f.Key("5");
+    CHECK(f.ui.Frame().activePane == 1);
+    CHECK(f.ui.Frame().panes[0].storage == object.storage);
+    CHECK(f.ui.Frame().panes[1].storage.kind == ItemStorageKind::Ground);
 }
 
 TEST_CASE("Quantity transfers validate cancel and capture ascending IDs with exact storage", "[client][inventory]") {
@@ -168,7 +231,7 @@ TEST_CASE("Ordinary inventory closes on final success and not on admission or fa
 TEST_CASE("Advanced inventory refuses self ancestry and never redirects a changed source", "[client][inventory]") {
     InventoryUiFixture f;
     auto pack = f.Rock(4); pack.type = TestItem("backpack"); pack.stackable = false; pack.capacityVolumeMl = 100;
-    f.view.inventory = {pack}; f.Open(true); f.Key("o"); f.Key("Tab"); f.Key("I"); f.Refresh();
+    f.view.inventory = {pack}; f.Open(true); f.Key("o"); f.Key("Right"); f.Key("I"); f.Refresh();
     REQUIRE(f.ui.Frame().panes[1].storage == ItemStorage{});
     REQUIRE(f.ui.Frame().panes[0].storage.kind == ItemStorageKind::Container);
     f.Key("Enter"); CHECK_FALSE(f.ui.TakeCommand(f.view));
@@ -269,7 +332,7 @@ TEST_CASE("All nearby defaults group by concrete source and sum source metadata 
     CHECK(pane.rows[1].items == Vector<PersistentId>{11});
     CHECK(pane.rows[2].items == Vector<PersistentId>{12});
     CHECK(pane.capacity == "74 g | 15 mL");
-    f.Key("Tab"); f.Key("M");
+    f.Key("Right"); f.Key("M");
     auto command = f.ui.TakeCommand(f.view); REQUIRE(command);
     CHECK(command->item == 4); CHECK(command->source == floor); CHECK(command->destination == ItemStorage{});
     f.Finished(Outcome::transferred, 0); command = f.ui.TakeCommand(f.view); REQUIRE(command);
@@ -287,15 +350,24 @@ TEST_CASE("All nearby excludes both sources on the opposite container root tile 
     f.view.nearbyItems = {pack, inner, f.Rock(6, object), f.Rock(7, east)};
     f.Open(true); f.Key("5"); f.Key("f"); f.Key("o"); f.Key("o"); f.Refresh();
     REQUIRE(f.ui.Frame().panes[0].storage == ItemStorage{ItemStorageKind::Container, {}, 5});
+    CHECK(f.ui.Frame().panes[0].anchor == floor.position);
     REQUIRE(f.ui.Frame().panes[1].rows.size() == 1);
     CHECK(f.ui.Frame().panes[1].rows[0].items.front() == 7);
     f.view.nearbyItems[0].storage = east; f.Refresh();
+    CHECK(f.ui.Frame().panes[0].anchor == east.position);
     REQUIRE(f.ui.Frame().panes[1].rows.size() == 1);
     CHECK(f.ui.Frame().panes[1].rows[0].storage == object);
+    f.Key("6"); f.Refresh();
+    CHECK(f.ui.Frame().panes[0].mode == ItemUiPaneMode::AllNearby);
+    CHECK(f.ui.Frame().panes[1].storage == ItemStorage{ItemStorageKind::Container, {}, 5});
+    f.Key("Right"); f.Key("6"); f.Key("Left");
     f.view.inventory = {f.view.nearbyItems[0], f.view.nearbyItems[1]};
     f.view.inventory[0].storage = {};
     f.view.nearbyItems.erase(f.view.nearbyItems.begin(), f.view.nearbyItems.begin() + 2);
     f.Refresh(); CHECK(f.ui.Frame().panes[1].rows.size() == 2);
+    CHECK(f.ui.Frame().panes[0].anchor == f.view.player_position);
+    f.view.inventory.clear(); f.Refresh();
+    CHECK_FALSE(f.ui.Frame().panes[0].anchor);
 }
 
 TEST_CASE("All nearby swaps complete panes retains stale identities and distinguishes inventory mode", "[client][inventory]") {
@@ -312,7 +384,7 @@ TEST_CASE("All nearby swaps complete panes retains stale identities and distingu
     f.Key("Down"); f.Refresh(); CHECK(f.ui.Frame().panes[0].selectionValid);
     f.ui.Close(); f.Open(true); CHECK(f.ui.Frame().panes[0].mode == ItemUiPaneMode::AllNearby);
     CHECK(f.ui.Frame().panes[0].rows[0].items.front() == 9);
-    f.Key("Tab"); f.Key("5"); f.Key("I"); f.Refresh();
+    f.Key("Right"); f.Key("5"); f.Key("I"); f.Refresh();
     CHECK(f.ui.Frame().panes[1].mode == ItemUiPaneMode::Storage);
     CHECK(f.ui.Frame().panes[1].storage == ItemStorage{});
     CHECK(f.ui.Frame().panes[0].mode == ItemUiPaneMode::AllNearby);
@@ -324,7 +396,7 @@ TEST_CASE("All nearby opens exact containers and floor toggle uses the selected 
     const auto object = f.WorldStorage(ItemStorageKind::Object, {1, 0, 0}, 90, "cupboard");
     auto pack = f.Rock(4, object); pack.capacityVolumeMl = 100; pack.stackable = false;
     auto child = f.Rock(5, {ItemStorageKind::Container, {}, 4}); child.parent = 4;
-    f.view.nearbyItems = {pack, child}; f.Open(true); f.Key("Tab"); f.Key("o"); f.Refresh();
+    f.view.nearbyItems = {pack, child}; f.Open(true); f.Key("Right"); f.Key("o"); f.Refresh();
     CHECK(f.ui.Frame().panes[1].storage == child.storage);
     REQUIRE(f.ui.Frame().panes[1].rows.size() == 1);
     CHECK(f.ui.Frame().panes[1].rows[0].items.front() == 5);
@@ -408,7 +480,7 @@ TEST_CASE("Destination and amount confirmation revalidate captured storage acces
         CHECK_FALSE(f.ui.TakeCommand(f.view));
     }
     InventoryUiFixture f; const auto floor = f.WorldStorage(ItemStorageKind::Ground, {});
-    f.view.nearbyItems = {f.Rock(4, floor)}; f.Open(true); f.Key("Tab"); f.Key("Enter");
+    f.view.nearbyItems = {f.Rock(4, floor)}; f.Open(true); f.Key("Right"); f.Key("Enter");
     f.view.itemStorages.clear(); CHECK_FALSE(f.ui.TakeCommand(f.view));
     CHECK_FALSE(f.ui.NeedsTime());
 }

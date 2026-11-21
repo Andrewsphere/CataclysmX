@@ -18,7 +18,8 @@ namespace cataclysmx::sdl {
 
 enum class SessionMode { Local, Host, Guest };
 enum class RequestKind {
-    Command, Pause, Resume, Inspect, ApplySettings, ResumeAndCommand, InspectAi, ItemCommand, PauseForItems,
+    Command, Pause, Resume, Inspect, ApplySettings, ResumeAndCommand, InspectAi, ItemCommand,
+    PauseForItems, PauseForAdvancedInventory,
     OpenLan, CloseLan, Connect, Disconnect, RefreshDiscovery, StopDiscovery, Save, DebugGiveItems, InspectPower
 };
 struct SessionRequest {

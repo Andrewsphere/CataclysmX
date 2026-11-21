@@ -353,6 +353,12 @@ TEST_CASE("SDL contextual panels scroll long text and keep the world visible", "
         frame.selected = 19; frame.scroll = 0; frame.details.push_back("Door is locked");
         REQUIRE(DrawScreen(display.renderer, text, frame, size.x, size.y, &view, 32, 64, 0, scale));
         CHECK(frame.scroll > 0);
+        const int expandedWidth = text.Width(9);
+        REQUIRE(DrawScreen(display.renderer, text, frame, size.x, size.y, &view, 32, 64, 0, scale, nullptr, "? Controls"));
+        CHECK(text.Width(9) > 0);
+        CHECK(text.Width(9) < expandedWidth);
+        CHECK(frame.selected == 19);
+        CHECK(frame.scroll > 0);
         frame.selected = 0;
         REQUIRE(DrawScreen(display.renderer, text, frame, size.x, size.y, &view, 32, 64, -8, scale));
         CHECK(frame.scroll == 0);

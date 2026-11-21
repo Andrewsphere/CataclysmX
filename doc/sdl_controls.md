@@ -2,6 +2,12 @@
 
 ## Controls and movement
 
+SDL modal controls start collapsed. Press `?` when a modal shows `? Controls`
+to expand its footer in place. Press `?` again to collapse it. The choice carries
+across modals and subviews for the life of the app. Plain `?` takes precedence
+over a custom modal binding while browsing. Text entry, keybinding capture, and
+key inspection receive the chord while they have focus.
+
 `x` opens a small Examine window beside its highlighted tile. The eight gameplay directions move its cursor; the camera follows within the
 filtered snapshot. Alt+Up/Down and the existing layer bindings change its viewed
 Y level within world bounds without moving the player. `z`/`Z` zoom also works. Ctrl+Up/Down or PageUp/PageDown scroll the description.
@@ -41,17 +47,21 @@ Enter in ordinary inventory) examines the item, **w** wields/unwields, **d** dro
 **u** uses and **a** manages contents. Examination includes optional descriptions
 and colored UTF-8 art, plus the item's relevant stats.
 
-Advanced inventory initially shows Inventory | All nearby and keeps both panes
-open through paid transfers. Uppercase **A** selects All nearby; lowercase **a**
+Advanced inventory initially shows Inventory | All nearby in two windows connected
+to their tiles. Item details and prompts appear in the focused window. Both windows
+stay open through paid transfers. Uppercase **A** selects All nearby. Lowercase **a**
 still manages contents. All nearby includes direct accessible floor/object items
 in the same-layer 3×3, excluding the opposite pane's entire world tile (including
 the root tile of nested containers). Carried containers exclude nothing. Source
 labels identify separate stacks. Transfers into All nearby choose a concrete
-destination, including empty storage, before a quantity prompt. **Tab** switches
-panes; **I** selects inventory; **1–9** selects the current/neighboring tile in
-keypad order. **f** toggles floor/object storage; **o** opens a portable container
-and **Backspace** returns to its parent. **Enter** transfers one, **m** prompts for
-an amount, **M** transfers the selected stack. Escape cancels future work or backs
+destination, including empty storage, before a quantity prompt. **Left/Right**
+focus a window and **I** selects inventory. **1–9** selects a tile's default storage
+in keypad order. The windows swap when the focused window already shows storage
+on that tile or the other window shows its default storage. Focus stays on the
+same side. **f** toggles floor/object storage.
+**o** opens a portable container and **Backspace** returns to its parent.
+**Enter** transfers one, **m** prompts for an amount, and **M** transfers the selected stack.
+Escape cancels future work or backs
 out. See [shared controls](inventory_ui.md) and [SDL rendering/timing](sdl_inventory.md).
 
 ## Expanded combat
@@ -124,7 +134,7 @@ guests. The surface preview excludes live entities
 and saved edits. Unsupported generation versions show an explicit warning.
 Zoom changes geographic coverage using 1, 2, 4, 8, or 16 tiles per displayed cell;
 symbols stay readable and the selected position remains centered. The title
-shows tiles/cell, and the footer shows the configured zoom bindings.
+shows tiles/cell, and the expanded footer shows the configured zoom bindings.
 
 Within F11, `a` toggles between world generation and the **AI inspector / live
 resident map**. Entering AI mode resets the cursor to the player's actual X, Z,

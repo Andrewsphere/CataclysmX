@@ -16,17 +16,23 @@ const ItemStorageView* Storage(const WorldView& v, ItemStorage s) {
     for (const auto& entry : v.itemStorages) { if (entry.storage == s) { return &entry; } }
     return nullptr;
 }
-eastl::optional<TileCoord> StoragePosition(const WorldView& view, ItemStorage storage) {
+eastl::optional<ItemStorage> RootStorage(const WorldView& view, ItemStorage storage) {
     for (std::size_t depth = 0; storage.kind == ItemStorageKind::Container; ++depth) {
         if (depth > view.inventory.size() + Nearby(view).size()) { return {}; }
         const auto* item = FindInventoryEntry(view, storage.id);
         if (!item) { return {}; }
         storage = item->storage;
     }
-    if (storage.kind == ItemStorageKind::Ground) { return storage.position; }
-    if (storage.kind == ItemStorageKind::Object) {
-        if (const auto* source = Storage(view, storage)) { return source->objectPosition; }
+    return storage;
+}
+eastl::optional<TileCoord> StoragePosition(const WorldView& view, ItemStorage storage, bool anchorCarried = false) {
+    const auto root = RootStorage(view, storage);
+    if (!root) { return {}; }
+    if (root->kind == ItemStorageKind::Ground) { return root->position; }
+    if (root->kind == ItemStorageKind::Object) {
+        if (const auto* source = Storage(view, *root)) { return source->objectPosition; }
     }
+    if (anchorCarried && root->kind == ItemStorageKind::Inventory) { return view.player_position; }
     return {};
 }
 bool NearbyStorage(const WorldView& view, ItemStorage storage, eastl::optional<TileCoord> excluded) {
@@ -233,9 +239,9 @@ void DescribeInventoryItem(const InventoryEntry& i, const ContentCatalog& conten
     }
 }
 void ItemUi::Open(bool advanced, bool use) {
-    if (advanced_ != advanced) { initialized_ = false; }
+    if (frame_.advanced != advanced) { initialized_ = false; }
     if (!outstanding_ && pending_.empty()) { moved_ = 0; requested_ = 0; }
-    advanced_ = advanced; useSelection_ = use; frame_.screen = advanced ? ItemUiScreen::Advanced : ItemUiScreen::Inventory;
+    frame_.advanced = advanced; useSelection_ = use; frame_.screen = advanced ? ItemUiScreen::Advanced : ItemUiScreen::Inventory;
     returnScreen_ = frame_.screen; frame_.feedback.clear(); opening_ = true;
 }
 void ItemUi::Close() {
@@ -244,14 +250,24 @@ void ItemUi::Close() {
     frame_.busy = NeedsTime();
 }
 bool ItemUi::IsOpen() const { return frame_.screen != ItemUiScreen::Closed; }
-bool ItemUi::IsAdvanced() const { return advanced_; }
+bool ItemUi::IsAdvanced() const { return frame_.advanced; }
 bool ItemUi::NeedsTime() const { return outstanding_ || waitingForReady_ || nextCommand_ < pending_.size(); }
 ItemUiFrame& ItemUi::Frame() { return frame_; }
 const ItemUiFrame& ItemUi::Frame() const { return frame_; }
+bool IsItemUiNumberKey(ItemUiScreen screen, const KeyChord& key) {
+    if (screen != ItemUiScreen::Amount && screen != ItemUiScreen::Advanced) { return false; }
+    return !key.ctrl && !key.alt && key.key.size() == 1
+        && key.key[0] >= (screen == ItemUiScreen::Amount ? '0' : '1') && key.key[0] <= '9';
+}
+void ItemUi::SwapPanes() {
+    eastl::swap(frame_.panes[0], frame_.panes[1]);
+    eastl::swap(selected_[0], selected_[1]);
+    eastl::swap(selectionLost_[0], selectionLost_[1]);
+}
 void ItemUi::SelectStorage(ItemStorage s) {
     const unsigned a = frame_.activePane, b = 1 - a;
     if (frame_.panes[b].mode == ItemUiPaneMode::Storage && frame_.panes[b].storage == s) {
-        eastl::swap(frame_.panes[a], frame_.panes[b]); eastl::swap(selected_[a], selected_[b]); eastl::swap(selectionLost_[a], selectionLost_[b]);
+        SwapPanes();
     } else if (frame_.panes[a].mode != ItemUiPaneMode::Storage || !(frame_.panes[a].storage == s)) {
         frame_.panes[a] = {}; frame_.panes[a].storage = s; selected_[a] = 0; selectionLost_[a] = false;
     }
@@ -259,7 +275,7 @@ void ItemUi::SelectStorage(ItemStorage s) {
 void ItemUi::SelectAllNearby() {
     const unsigned a = frame_.activePane, b = 1 - a;
     if (frame_.panes[b].mode == ItemUiPaneMode::AllNearby) {
-        eastl::swap(frame_.panes[a], frame_.panes[b]); eastl::swap(selected_[a], selected_[b]); eastl::swap(selectionLost_[a], selectionLost_[b]);
+        SwapPanes();
     } else if (frame_.panes[a].mode != ItemUiPaneMode::AllNearby) {
         frame_.panes[a] = {}; frame_.panes[a].mode = ItemUiPaneMode::AllNearby;
         selected_[a] = 0; selectionLost_[a] = false;
@@ -279,12 +295,15 @@ void ItemUi::Refresh(const WorldView& v, const ContentCatalog& content, const Lo
     if (!IsOpen()) { return; }
     if (!initialized_) {
         frame_.panes = {}; selected_ = {}; selectionLost_ = {}; frame_.activePane = 0;
-        if (advanced_) { frame_.panes[1].mode = ItemUiPaneMode::AllNearby; }
+        if (IsAdvanced()) { frame_.panes[1].mode = ItemUiPaneMode::AllNearby; }
         initialized_ = true;
     }
-    for (unsigned p = 0; p < (advanced_ ? 2u : 1u); ++p) {
+    for (unsigned p = 0; p < (IsAdvanced() ? 2u : 1u); ++p) {
         auto& pane = frame_.panes[p]; std::size_t rowCount = 0;
         const bool aggregate = pane.mode == ItemUiPaneMode::AllNearby;
+        if (IsAdvanced()) {
+            pane.anchor = aggregate ? eastl::optional<TileCoord>{v.player_position} : StoragePosition(v, pane.storage, true);
+        }
         if (aggregate) { CollectNearbyStorages(v, frame_.panes[1 - p].storage, nearbyStorages_); }
         const auto* meta = aggregate ? nullptr : Storage(v, pane.storage);
         pane.title = pane.storage.kind == ItemStorageKind::Inventory ? "Inventory" : pane.storage.kind == ItemStorageKind::Ground ? "Floor" : "Storage";
@@ -315,7 +334,7 @@ void ItemUi::Refresh(const WorldView& v, const ContentCatalog& content, const Lo
             }
             AddRow(pane, rowCount, i, depth, content, loc);
         };
-        if (advanced_ && aggregate) {
+        if (IsAdvanced() && aggregate) {
             std::uint64_t mass = 0, volume = 0;
             for (const auto source : nearbyStorages_) {
                 const auto* sourceMeta = Storage(v, source);
@@ -326,7 +345,7 @@ void ItemUi::Refresh(const WorldView& v, const ContentCatalog& content, const Lo
             }
             pane.capacity = ItemMassText(mass) + " | " + ItemVolumeText(volume);
         }
-        else if (advanced_) { Each(v, [&](const InventoryEntry& i) { if (i.storage == pane.storage) { add(i, 0); } }); }
+        else if (IsAdvanced()) { Each(v, [&](const InventoryEntry& i) { if (i.storage == pane.storage) { add(i, 0); } }); }
         else {
             // Emit parent before descendants, without assuming snapshot ID order is tree order.
             const auto tree = [&](auto&& self, const Vector<InventoryEntry>& list, PersistentId parent, unsigned depth) -> void {
@@ -349,7 +368,7 @@ void ItemUi::Refresh(const WorldView& v, const ContentCatalog& content, const Lo
         }
         if (selected_[p] && !foundSelection) { selectionLost_[p] = true; }
     }
-    frame_.title = advanced_ ? "Advanced inventory" : "Inventory";
+    frame_.title = IsAdvanced() ? "Advanced inventory" : "Inventory";
     if (frame_.screen == ItemUiScreen::Examine) {
         if (const auto* i = FindInventoryEntry(v, examined_)) { DescribeInventoryItem(*i, content, loc, frame_.examination); }
         else { frame_.feedback = "Selected item is no longer accessible."; }
@@ -386,11 +405,12 @@ void ItemUi::Refresh(const WorldView& v, const ContentCatalog& content, const Lo
         hint(InputContext::Menu, InputAction::Cancel, "back"); return;
     }
     hint(InputContext::Menu, InputAction::North, "previous"); hint(InputContext::Menu, InputAction::South, "next");
-    hint(InputContext::Menu, InputAction::Accept, advanced_ ? "move one" : useSelection_ ? "use" : "examine");
+    hint(InputContext::Menu, InputAction::Accept, IsAdvanced() ? "move one" : useSelection_ ? "use" : "examine");
     hint(InputContext::Items, InputAction::Examine, "examine");
-    if (advanced_) {
+    if (IsAdvanced()) {
         hint(InputContext::Items, InputAction::TransferAmount, "amount"); hint(InputContext::Items, InputAction::TransferStack, "stack");
-        hint(InputContext::Menu, InputAction::Next, "pane"); hint(InputContext::Items, InputAction::Inventory, "inventory");
+        hint(InputContext::Menu, InputAction::West, "left pane"); hint(InputContext::Menu, InputAction::East, "right pane");
+        hint(InputContext::Items, InputAction::Inventory, "inventory");
         hint(InputContext::Items, InputAction::AllNearby, "all nearby");
         frame_.footer += " | 1–9 tile"; hint(InputContext::Items, InputAction::ToggleStorage, "floor/object");
         hint(InputContext::Items, InputAction::OpenContainer, "open"); hint(InputContext::Items, InputAction::ParentStorage, "parent");
@@ -561,7 +581,7 @@ void ItemUi::CommandFinished(const CommandResult& result) {
         frame_.feedback += result.outcome == Outcome::combat_refused
             ? CombatRefusalText(result.combatReason) : CommandResultMessage(result);
     }
-    if (success && !advanced_) { Close(); }
+    if (success && !IsAdvanced()) { Close(); }
     if (nextCommand_ >= pending_.size()) { pending_.clear(); nextCommand_ = 0; }
     frame_.busy = NeedsTime();
 }
@@ -572,9 +592,11 @@ void ItemUi::CommandRejected() {
 }
 void ItemUi::Handle(const KeyChord& key, const Keymap& keys, const WorldView& v, const ContentCatalog& c, const Localization& l) {
     Refresh(v, c, l, keys); if (!IsOpen()) { return; }
+    const bool numberKey = IsItemUiNumberKey(frame_.screen, key);
     auto a = ResolveAction(keys, InputContext::Menu, key);
     const auto itemAction = ResolveAction(keys, InputContext::Items, key);
     if (itemAction) { a = itemAction; }
+    if (numberKey) { a.reset(); }
     if (key == KeyChord{"Escape"}) { a = InputAction::Cancel; }
     if (a == InputAction::Cancel) {
         if (NeedsTime()) {
@@ -597,7 +619,7 @@ void ItemUi::Handle(const KeyChord& key, const Keymap& keys, const WorldView& v,
     }
     if (frame_.screen == ItemUiScreen::Amount) {
         if (key.key == "Backspace") { if (!frame_.amount.empty()) { frame_.amount.pop_back(); } return; }
-        if (!key.ctrl && !key.alt && key.key.size() == 1 && key.key[0] >= '0' && key.key[0] <= '9') { if (frame_.amount.size() < 10) { frame_.amount += key.key; } return; }
+        if (numberKey) { if (frame_.amount.size() < 10) { frame_.amount += key.key; } return; }
         if (a == InputAction::Accept) {
             std::size_t n = 0; auto parsed = std::from_chars(frame_.amount.data(), frame_.amount.data() + frame_.amount.size(), n);
             if (parsed.ec != std::errc{} || !n || n > amountItems_.size()) { frame_.feedback = "Enter a quantity from 1 to " + UnsignedText(amountItems_.size()); return; }
@@ -650,14 +672,17 @@ void ItemUi::Handle(const KeyChord& key, const Keymap& keys, const WorldView& v,
         if (a == InputAction::South) { ++frame_.examination.scroll; return; }
         if (a != InputAction::Use && a != InputAction::Apply && a != InputAction::Wield && a != InputAction::Drop) { return; }
     } else {
-        if (advanced_ && (a == InputAction::Next || a == InputAction::Previous)) { frame_.activePane = 1 - frame_.activePane; return; }
-        if (advanced_ && a == InputAction::Inventory) { SelectStorage({}); return; }
-        if (advanced_ && a == InputAction::AllNearby) { SelectAllNearby(); return; }
-        if (advanced_ && key.key.size() == 1 && key.key[0] >= '1' && key.key[0] <= '9' && !key.ctrl && !key.alt) {
+        if (numberKey) {
             const int n = key.key[0] - '1'; auto pos = v.player_position; pos.x += n % 3 - 1; pos.z += 1 - n / 3;
-            SelectStorage(DefaultTileStorage(v, pos)); return;
+            if (pane.mode == ItemUiPaneMode::Storage && StoragePosition(v, pane.storage) == pos) { SwapPanes(); }
+            else { SelectStorage(DefaultTileStorage(v, pos)); }
+            return;
         }
-        if (advanced_ && a == InputAction::ToggleStorage) {
+        if (IsAdvanced() && (a == InputAction::West || a == InputAction::East)) { frame_.activePane = a == InputAction::East ? 1 : 0; return; }
+        if (IsAdvanced() && (a == InputAction::Next || a == InputAction::Previous)) { return; }
+        if (IsAdvanced() && a == InputAction::Inventory) { SelectStorage({}); return; }
+        if (IsAdvanced() && a == InputAction::AllNearby) { SelectAllNearby(); return; }
+        if (IsAdvanced() && a == InputAction::ToggleStorage) {
             const auto source = pane.mode == ItemUiPaneMode::AllNearby && pane.selectionValid
                 ? pane.rows[pane.selected].storage : pane.storage;
             if (source.kind != ItemStorageKind::Ground && source.kind != ItemStorageKind::Object) {
@@ -673,7 +698,7 @@ void ItemUi::Handle(const KeyChord& key, const Keymap& keys, const WorldView& v,
                 else { frame_.feedback = "No accessible object storage on that tile."; }
             } return;
         }
-        if (advanced_ && a == InputAction::ParentStorage && pane.mode == ItemUiPaneMode::Storage && pane.storage.kind == ItemStorageKind::Container) {
+        if (IsAdvanced() && a == InputAction::ParentStorage && pane.mode == ItemUiPaneMode::Storage && pane.storage.kind == ItemStorageKind::Container) {
             if (const auto* i = FindInventoryEntry(v, pane.storage.id)) { SelectStorage(i->storage); } else { frame_.feedback = "Storage is no longer accessible."; } return;
         }
         if ((a == InputAction::North || a == InputAction::South) && !pane.rows.empty()) {
@@ -684,10 +709,10 @@ void ItemUi::Handle(const KeyChord& key, const Keymap& keys, const WorldView& v,
     const auto id = frame_.screen == ItemUiScreen::Examine ? examined_ : selected_[frame_.activePane];
     const auto* i = FindInventoryEntry(v, id);
     if (!i || (frame_.screen != ItemUiScreen::Examine && !pane.selectionValid)) { frame_.feedback = "Selected item is no longer accessible."; return; }
-    if (a == InputAction::Use || (a == InputAction::Accept && useSelection_ && !advanced_)) { BeginActions(id, false, v, c, l); return; }
+    if (a == InputAction::Use || (a == InputAction::Accept && useSelection_ && !IsAdvanced())) { BeginActions(id, false, v, c, l); return; }
     if (a == InputAction::Apply) { BeginActions(id, true, v, c, l); return; }
-    if (a == InputAction::Examine || (a == InputAction::Accept && !advanced_)) { Examine(id, v, c, l); return; }
-    if (advanced_ && a == InputAction::OpenContainer) {
+    if (a == InputAction::Examine || (a == InputAction::Accept && !IsAdvanced())) { Examine(id, v, c, l); return; }
+    if (IsAdvanced() && a == InputAction::OpenContainer) {
         if (i->capacityVolumeMl) { SelectStorage({ItemStorageKind::Container, {}, id}); } else { frame_.feedback = "Item has no portable storage."; } return;
     }
     if (a == InputAction::Wield || a == InputAction::Drop) {
@@ -698,7 +723,7 @@ void ItemUi::Handle(const KeyChord& key, const Keymap& keys, const WorldView& v,
         Command cmd; cmd.kind = a == InputAction::Wield ? CommandKind::wield_item : CommandKind::drop; cmd.item = a == InputAction::Wield && i->wielded ? 0 : id;
         QueueCommand(cmd); return;
     }
-    if (advanced_ && (a == InputAction::Accept || a == InputAction::TransferAmount || a == InputAction::TransferStack)) {
+    if (IsAdvanced() && (a == InputAction::Accept || a == InputAction::TransferAmount || a == InputAction::TransferStack)) {
         amountSource_ = i->storage; amountDestination_ = frame_.panes[1 - frame_.activePane].storage;
         destinations_.clear();
         CaptureAncestry(v, amountSource_, sourceAncestry_);

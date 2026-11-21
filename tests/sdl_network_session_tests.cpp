@@ -597,11 +597,14 @@ TEST_CASE("SDL item transfers resolve while both LAN peers retain live menus", "
     client::LanProfile profile;
     REQUIRE(profile.Set({"127.0.0.1", hosted.hostPort, token, "Carrier"}));
     REQUIRE(profile.Save(guestFiles.profile.c_str()));
-    Session guest(TestContent(), 200, GuestOptions(guestFiles, hosted.hostPort));
+    auto guestOptions = GuestOptions(guestFiles, hosted.hostPort);
+    guestOptions.settings.viewRadius = 0;
+    Session guest(TestContent(), 200, guestOptions);
     REQUIRE(Next(guest).kind == ReplyKind::Started);
     const auto joined = Active(guest);
+    CHECK(joined.view.width == 1);
     REQUIRE(Control(host, Make(RequestKind::Pause, hosted.generation, 1)).kind == ReplyKind::MenuOpened);
-    REQUIRE(Control(guest, Make(RequestKind::PauseForItems, joined.generation, 1)).kind == ReplyKind::MenuOpened);
+    REQUIRE(Control(guest, Make(RequestKind::PauseForAdvancedInventory, joined.generation, 1)).kind == ReplyKind::MenuOpened);
     auto transfer = Make(RequestKind::ItemCommand, joined.generation, 2);
     transfer.player = joined.view.playerId; transfer.opportunity = joined.input.opportunity;
     transfer.command.kind = CommandKind::transfer_item;
@@ -625,12 +628,15 @@ TEST_CASE("SDL item transfers resolve while both LAN peers retain live menus", "
         return false;
     }));
     CHECK(delivered.menuOpen); CHECK_FALSE(delivered.paused);
+    CHECK(delivered.view.width == 3); CHECK(delivered.view.height == 3);
     CHECK(delivered.runtimeSettings.pacing.pauseWhenIdle); // Hosting policy stays authoritative.
     bool retained = false;
     for (const auto& entry : delivered.view.inventory) { if (entry.id == item) { retained = true; } }
     CHECK_FALSE(retained);
     hosted = Snapshot(host);
     CHECK(hosted.menuOpen); CHECK_FALSE(hosted.paused);
+    REQUIRE(Control(guest, Make(RequestKind::Resume, joined.generation, 3)).kind == ReplyKind::Resumed);
+    CHECK(Snapshot(guest).view.width == 1);
     CHECK_FALSE(guest.Stop()); CHECK_FALSE(host.Stop());
 }
 

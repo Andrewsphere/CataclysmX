@@ -157,6 +157,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
     using Screen = ModalScreen;
     HeldKey heldKey;
     ModalController modal(heldKey);
+    bool showModalControls = false;
     bool initializeScreen = false;
     ScreenFrame frame;
     OptionsUi optionsUi;
@@ -298,7 +299,8 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
         SessionRequest request; request.kind = kind; request.command = eastl::move(command);
         const auto id = nextId;
         const bool accepted = enqueue(eastl::move(request));
-        if (accepted && (kind == RequestKind::Pause || kind == RequestKind::Resume || kind == RequestKind::PauseForItems)) { modalRequest = id; }
+        if (accepted && (kind == RequestKind::Pause || kind == RequestKind::Resume
+            || kind == RequestKind::PauseForItems || kind == RequestKind::PauseForAdvancedInventory)) { modalRequest = id; }
         return accepted;
     };
     const auto close = [&] {
@@ -497,6 +499,14 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             }
         }
     };
+    const auto editorOwnsChord = [&] {
+        switch (modal.Active()) {
+        case Screen::Options: return optionsUi.EditingText() || optionsUi.Capturing() || optionsUi.Inspecting();
+        case Screen::Lan: return multiplayerUi.EditingText();
+        case Screen::Debug: return itemBrowser.EditingText();
+        default: return false;
+        }
+    };
     const auto handleEvent = [&](const SDL_Event& event) {
         if (event.type == SDL_EVENT_QUIT || event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) { running = false; return; }
         if (event.type == SDL_EVENT_WINDOW_MINIMIZED) { minimized = true; animationDeadline.reset(); }
@@ -507,6 +517,15 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             prepareMap();
             dirty = true;
         }
+        const auto chord = event.type == SDL_EVENT_KEY_DOWN ? TranslateKey(event.key) : eastl::nullopt;
+        if (modal.Active() != Screen::None && chord && *chord == KeyChord{"?"} && !editorOwnsChord()) {
+            if (!event.key.repeat && !modal.Pending()) {
+                showModalControls = !showModalControls;
+                heldKey.Reset();
+                dirty = true;
+            }
+            return;
+        }
         if (modal.Active() == Screen::Debug && itemBrowser.IsOpen()) {
             if (event.type == SDL_EVENT_TEXT_INPUT) {
                 if (!modal.Pending()) { itemBrowser.Text(event.text.text); dirty = true; }
@@ -514,23 +533,22 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             }
             if (event.type != SDL_EVENT_KEY_DOWN) { return; }
             if (event.key.repeat || modal.Pending()) { return; }
-            const auto key = TranslateKey(event.key);
-            if (!key) { return; }
+            if (!chord) { return; }
             // Default q remains text in editors; only an explicit Debug binding
             // (and the physical F11 shortcut) may leave the entire debug modal.
-            if (key->key == "F11" || (!itemBrowser.EditingText()
-                && ResolveAction(keys, InputContext::Debug, *key) == InputAction::Debug)) {
+            if (chord->key == "F11" || (!itemBrowser.EditingText()
+                && ResolveAction(keys, InputContext::Debug, *chord) == InputAction::Debug)) {
                 close(); dirty = true; return;
             }
             const auto previous = itemBrowser.Frame().screen;
             const bool editing = itemBrowser.EditingText();
-            itemBrowser.Handle(*key, keys, content, localization);
+            itemBrowser.Handle(*chord, keys, content, localization);
             if (editing != itemBrowser.EditingText()) {
                 if (itemBrowser.EditingText()) { SDL_StartTextInput(platform.window); }
                 else { SDL_StopTextInput(platform.window); }
             }
             if (previous != itemBrowser.Frame().screen
-                || ResolveAction(keys, InputContext::Menu, *key) == InputAction::Accept) { heldKey.Reset(); }
+                || ResolveAction(keys, InputContext::Menu, *chord) == InputAction::Accept) { heldKey.Reset(); }
             if (!itemBrowser.IsOpen()) {
                 debugAi = false; frame.scroll = 0; frame.detailScroll = 0;
                 refreshDebug(); heldKey.Reset();
@@ -553,8 +571,6 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             multiplayerUi.Text(event.text.text);
             dirty = true; return;
         }
-        if (event.type != SDL_EVENT_KEY_DOWN) { return; }
-        const auto chord = TranslateKey(event.key);
         if (!chord) { return; }
         if (chord->ctrl && chord->key == "c") {
             running = false;
@@ -840,8 +856,9 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
         }
         if (*action == InputAction::Inventory || *action == InputAction::Use || *action == InputAction::AdvancedInventory) {
             if (commandPending) { return; }
-            if (submit(RequestKind::PauseForItems)) {
-                itemAdvanced = *action == InputAction::AdvancedInventory;
+            const bool advanced = *action == InputAction::AdvancedInventory;
+            if (submit(advanced ? RequestKind::PauseForAdvancedInventory : RequestKind::PauseForItems)) {
+                itemAdvanced = advanced;
                 itemUse = *action == InputAction::Use;
                 modal.BeginOpen(Screen::ItemInventory);
                 message = snapshot.mode == SessionMode::Local ? "Pausing..." : "Opening inventory (world remains live)...";
@@ -1460,13 +1477,13 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                     if (!requireSmoke(itemBrowser.Frame().screen == ItemBrowserScreen::Search && itemBrowser.Frame().input.empty()
                         && SDL_TextInputActive(platform.window),
                         "Smoke search did not start with an empty text draft.")) { break; }
-                    press(SDLK_Q); // The key chord and committed text must take separate routes.
-                    if (!requireSmoke(itemBrowser.EditingText() && modal.Active() == Screen::Debug && !modal.Pending(),
-                        "Smoke q key closed browser search.")) { break; }
-                    textInput("q");
-                    if (!requireSmoke(itemBrowser.Frame().screen == ItemBrowserScreen::Search && itemBrowser.Frame().input == "q",
-                        "Smoke q text did not reach browser search exactly once.")) { break; }
-                    press(SDLK_BACKSPACE); textInput("rock"); press(SDLK_RETURN);
+                    const bool controlsBefore = showModalControls;
+                    press(SDLK_QUESTION); textInput("?");
+                    press(SDLK_Q); textInput("q");
+                    if (!requireSmoke(itemBrowser.Frame().screen == ItemBrowserScreen::Search
+                        && itemBrowser.Frame().input == "?q" && showModalControls == controlsBefore && !modal.Pending(),
+                        "Smoke browser search did not receive ? and q as text.")) { break; }
+                    press(SDLK_BACKSPACE); press(SDLK_BACKSPACE); textInput("rock"); press(SDLK_RETURN);
                     const auto& browser = itemBrowser.Frame();
                     if (!requireSmoke(browser.screen == ItemBrowserScreen::List && browser.query == "rock"
                         && browser.matches.size() == 1 && browser.matches.front() == rock && !browserRequest
@@ -1535,6 +1552,25 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                     if (!modal.Pending()) { smokeFailed = true; }
                     ++smokeHelpStep;
                 } else if (smokeHelpStep == 1 && smokeHelpDrawn) {
+                    if (showModalControls) { smokeFailed = true; }
+                    const auto requestBefore = nextId;
+                    const auto scrollBefore = frame.scroll;
+                    SDL_Event question{}; question.type = SDL_EVENT_KEY_DOWN; question.key.key = SDLK_QUESTION;
+                    physicalEvent(question);
+                    if (!showModalControls || heldKey.Poll(inputTime() + 1000, store.Effective().keyboardRepeatRate)) {
+                        smokeFailed = true;
+                    }
+                    question.key.repeat = true;
+                    physicalEvent(question);
+                    if (!showModalControls || frame.scroll != scrollBefore || nextId != requestBefore) { smokeFailed = true; }
+                    smokeHelpDrawn = false;
+                    ++smokeHelpStep;
+                } else if (smokeHelpStep == 2 && smokeHelpDrawn) {
+                    press(SDLK_QUESTION);
+                    if (showModalControls) { smokeFailed = true; }
+                    smokeHelpDrawn = false;
+                    ++smokeHelpStep;
+                } else if (smokeHelpStep == 3 && smokeHelpDrawn) {
                     const int scrollBefore = frame.scroll;
                     press(SDLK_DOWN);
                     if (frame.scroll != scrollBefore + 1) { smokeFailed = true; }
@@ -1542,14 +1578,16 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                     if (frame.scroll != scrollBefore + 1 || modal.Active() != Screen::Help) { smokeFailed = true; }
                     press(SDLK_UP);
                     if (frame.scroll != scrollBefore) { smokeFailed = true; }
+                    press(SDLK_QUESTION);
                     press(SDLK_RETURN);
                     if (!modal.Pending()) { smokeFailed = true; }
                     ++smokeHelpStep;
-                } else if (smokeHelpStep == 2 && modal.Active() == Screen::None && !modal.Pending()) {
+                } else if (smokeHelpStep == 4 && modal.Active() == Screen::None && !modal.Pending()) {
                     press(SDLK_F2); smokeWaiting = modal.Pending();
                 }
             }
             else if (smokeStep == 10) {
+                if (!showModalControls || modal.Active() != Screen::Options) { smokeFailed = true; }
                 press(SDLK_DOWN); press(SDLK_RETURN);
                 SDL_Event entry{}; entry.type = SDL_EVENT_TEXT_INPUT; entry.text.text = "12"; handleEvent(entry);
                 press(SDLK_RETURN);
@@ -1589,6 +1627,14 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                     || entries.back().text != "Smoke newest" || entries.back().count != 2) {
                     std::fprintf(stderr, "SDL smoke history: capacity %d (expected %d), %zu entries (expected %d)\n",
                         store.Effective().messageHistorySize, smokeHistoryLimit, entries.size(), smokeHistoryCount);
+                    smokeFailed = true;
+                }
+                press(SDLK_TAB); press(SDLK_RETURN);
+                if (!optionsUi.Capturing()) { smokeFailed = true; }
+                press(SDLK_QUESTION);
+                const auto candidate = optionsUi.Prepare(store, nullptr);
+                if (!showModalControls || optionsUi.Capturing() || !candidate
+                    || ResolveAction(candidate->Keys(), InputContext::Gameplay, {"?"}) != InputAction::West) {
                     smokeFailed = true;
                 }
                 press(SDLK_ESCAPE); smokeWaiting = modal.Pending();
@@ -1789,6 +1835,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
         if (animationDeadline && elapsedMilliseconds >= *animationDeadline) { dirty = true; }
         if (dirty && !minimized) {
             const bool drawMap = mapValid();
+            const bool usePreparedMap = drawMap && mapPacket.width == displayView().width && mapPacket.height == displayView().height;
             messageHistory.SetCapacity(store.Effective().messageHistorySize);
             String display = snapshot.mode == SessionMode::Host ? "Host :" + UnsignedText(snapshot.hostPort)
                 : snapshot.mode == SessionMode::Guest ? String(ConnectionText(snapshot.connectionState)) : String("Local");
@@ -1811,7 +1858,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                 if (!feedback.empty()) { if (!display.empty()) { display += '\n'; } display += feedback; }
             }
             frame.visible = modal.Active() != Screen::None && modal.Active() != Screen::ItemInventory;
-            frame.compactTitle.clear(); frame.compactFooter.clear();
+            frame.footer.clear(); frame.compactTitle.clear(); frame.compactFooter.clear();
             frame.presentation = modal.Active() == Screen::Examine || modal.Active() == Screen::Targets || modal.Active() == Screen::Actions
                 ? ScreenPresentation::Anchored : ScreenPresentation::Large;
             frame.followCursor = modal.Active() == Screen::Examine;
@@ -1924,6 +1971,7 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                         + BindingHint(keys, InputContext::Menu, InputAction::South) + " " + localization.Text("sdl.ui.choose", "choose");
                 }
             }
+            String debugLegend;
             if (modal.Active() == Screen::Debug) {
                 if (itemBrowser.IsOpen()) {
                     const auto& browser = itemBrowser.Frame();
@@ -1955,9 +2003,9 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                     frame.title += "\nLast-decision snapshots, not fresh scans";
                     if (aiValid) { frame.debugImage = &aiView.image; frame.cursor = cursor; frame.details = aiView.details; }
                     else { frame.rows.push_back({"Loading live resident AI capture..."}); }
-                    frame.footer = "p: power/chunks | i: item browser | a: worldgen | Escape/F11: close\nGreen: candidates | Red: blocked | Yellow: chosen";
-                    frame.footer += "\nBlue: origin | Purple: goal | Orange: backtracking";
-                    frame.footer += "\nArrows: tile | Alt+Up/Down, >/<: Y\nHome/c: player | PgUp/PgDn: details";
+                    debugLegend = "Green: candidates | Red: blocked | Yellow: chosen\nBlue: origin | Purple: goal | Orange: backtracking";
+                    frame.footer = "p: power/chunks | i: item browser | a: worldgen | Escape/F11: close\n"
+                        "Arrows: tile | Alt+Up/Down, >/<: Y\nHome/c: player | PgUp/PgDn: details";
                 } else {
                     frame.title = "World generation | Seed " + UnsignedText(snapshot.seed) + " | Version " + UnsignedText(snapshot.generationVersion);
                     if (snapshot.generationVersion != world_generation_version) { frame.rows.push_back({"Preview unavailable for this generation version"}); }
@@ -1968,22 +2016,35 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
                         frame.title += "\nSurface baseline: excludes saved edits and entities";
                         frame.worldgenPreview = &debugPreview; frame.cursor = cursor; frame.details = debugPreview.Details();
                     }
-                    frame.footer = "p: power/chunks | i: item browser | a: AI inspector | Escape/F11: close\n";
-                    frame.footer += WorldgenDebugLegend(debugLayer);
-                    frame.footer += "\nArrows: move | Shift+arrows: region | Home: recenter | 1-5/Tab: layers | ";
+                    debugLegend = WorldgenDebugLegend(debugLayer);
+                    frame.footer = "p: power/chunks | i: item browser | a: AI inspector | Escape/F11: close\n"
+                        "Arrows: move | Shift+arrows: region | Home: recenter | 1-5/Tab: layers | ";
                     frame.footer += BindingHint(keys,InputContext::Debug,InputAction::ZoomIn) + ": in | "
                         + BindingHint(keys,InputContext::Debug,InputAction::ZoomOut) + ": out | PgUp/PgDn: details";
                 }
             }
+            String footerOverride;
+            const bool editing = editorOwnsChord();
+            const bool useFooterOverride = modal.Active() != Screen::None && !showModalControls
+                && !(modal.Active() == Screen::Options && editing);
+            if (useFooterOverride && !editing) {
+                footerOverride = "? " + localization.Text("game.ui.controls", "Controls");
+            }
+            if (!debugLegend.empty()) {
+                auto& footer = useFooterOverride ? footerOverride : frame.footer;
+                footer = debugLegend + '\n' + footer;
+            }
             const String sessionLabel = snapshot.mode == SessionMode::Host ? "Host :" + UnsignedText(snapshot.hostPort)
                 : snapshot.mode == SessionMode::Guest ? String(ConnectionText(snapshot.connectionState)) : String("Local");
+            GameplayLayout drawnLayout;
             if (!DrawFrame(platform.renderer, *text, assets, drawMap ? &displayView() : nullptr,
-                content, display.c_str(), "", elapsedMilliseconds, drawMap ? &mapPacket : nullptr,
+                content, display.c_str(), "", elapsedMilliseconds, usePreparedMap ? &mapPacket : nullptr,
                 zoom, options.uiScale, {}, &playback, &shader, &frame,
                 {&messageHistory, &store.Keys(), &localization, sessionLabel},
                 modal.Active() == Screen::ItemInventory ? &itemUi.Frame()
                     : modal.Active() == Screen::Debug && itemBrowser.Frame().screen == ItemBrowserScreen::Examine
-                        ? &itemBrowser.Frame().examination : nullptr)) { return SdlFailure(); }
+                        ? &itemBrowser.Frame().examination : nullptr, &drawnLayout,
+                useFooterOverride ? footerOverride.c_str() : nullptr)) { return SdlFailure(); }
             if (modal.Active() == Screen::Options) { optionsUi.RememberScroll(frame); }
             if (modal.Active() == Screen::Debug && itemBrowser.IsOpen()
                 && itemBrowser.Frame().screen != ItemBrowserScreen::Examine) { itemBrowser.Frame().scroll = frame.scroll; }
@@ -2017,13 +2078,9 @@ int RunApp(const ContentCatalog& content, SettingsStore& store, Localization& lo
             }
             dirty = false;
             animationDeadline.reset();
-            if (drawMap) {
-                int outputWidth = 0, outputHeight = 0;
-                if (!SDL_GetCurrentRenderOutputSize(platform.renderer, &outputWidth, &outputHeight)) { return SdlFailure(); }
+            if (usePreparedMap) {
                 const auto delay = VisibleAnimationDelay(mapPacket, assets.Definition(), elapsedMilliseconds,
-                    outputWidth, outputHeight, zoom, options.uiScale, &playback,
-                    modal.Active() == Screen::Examine ? SDL_Point{cursor.x - displayView().player_position.x, cursor.z - displayView().player_position.z} : SDL_Point{},
-                    text->LineHeight());
+                    drawnLayout, &playback);
                 if (delay) { animationDeadline = elapsedMilliseconds + *delay; }
             }
         }

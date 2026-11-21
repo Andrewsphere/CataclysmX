@@ -127,6 +127,12 @@ eastl::optional<std::uint64_t> VisibleAnimationDelay(const MapPacket& packet,
     int outputWidth, int outputHeight, int zoom, float uiScale, const SpritePlaybackController* playback, SDL_Point focusOffset, int textLineHeight) {
     const auto gameplay = MakeGameplayLayout(outputWidth, outputHeight, packet.width, packet.height,
         tileset.cellWidth, tileset.cellHeight, zoom, uiScale, focusOffset, textLineHeight);
+    return VisibleAnimationDelay(packet, tileset, elapsedMilliseconds, gameplay, playback);
+}
+
+eastl::optional<std::uint64_t> VisibleAnimationDelay(const MapPacket& packet,
+    const TilesetDefinition& tileset, std::uint64_t elapsedMilliseconds,
+    const GameplayLayout& gameplay, const SpritePlaybackController* playback) {
     const auto& layout = gameplay.map;
     const auto clip = ViewClip(layout, gameplay.mapViewport);
     eastl::optional<std::uint64_t> delay;
@@ -166,7 +172,8 @@ TerminalAppearance MapAppearance(const ViewCell& cell, PersistentId playerId, co
 bool DrawFrame(SDL_Renderer* renderer, SdlText& text, const SdlAssets& assets, const WorldView* view,
     const ContentCatalog& content, const char* status, const char* /*hints*/,
     std::uint64_t elapsedMilliseconds, const MapPacket* packet, int zoom, float uiScale, UiPalette palette,
-    const SpritePlaybackController* playback, SpriteShader* shader, ScreenFrame* screen, GameplayHud hud, ItemUiFrame* inventory) {
+    const SpritePlaybackController* playback, SpriteShader* shader, ScreenFrame* screen, GameplayHud hud, ItemUiFrame* inventory,
+    GameplayLayout* drawnLayout, const char* modalFooterOverride) {
     if (!SDL_IsMainThread()) { std::abort(); }
     int width = 0, height = 0;
     if (!SDL_GetCurrentRenderOutputSize(renderer, &width, &height)
@@ -175,8 +182,14 @@ bool DrawFrame(SDL_Renderer* renderer, SdlText& text, const SdlAssets& assets, c
     const int uiWidth = static_cast<int>(width / uiScale);
     const auto focus = screen && screen->visible && screen->followCursor && screen->cursor && view
         ? SDL_Point{screen->cursor->x - view->player_position.x, screen->cursor->z - view->player_position.z} : SDL_Point{};
-    const auto gameplay = MakeGameplayLayout(width, height, view ? view->width : 1, view ? view->height : 1,
+    auto gameplay = MakeGameplayLayout(width, height, view ? view->width : 1, view ? view->height : 1,
         assets.Definition().cellWidth, assets.Definition().cellHeight, zoom, uiScale, focus, text.LineHeight());
+    SDL_Rect protectedArea{};
+    if (inventory && inventory->advanced && view) {
+        protectedArea = FitInventoryMap(gameplay, height, uiScale, view->width, view->height,
+            {view->player_position.x - view->origin.x, view->player_position.z - view->origin.z});
+    }
+    if (drawnLayout) { *drawnLayout = gameplay; }
     int panelX = gameplay.hud.x, panelY = gameplay.hud.y;
     int panelWidth = gameplay.hud.w;
     String infoText;
@@ -289,7 +302,7 @@ bool DrawFrame(SDL_Renderer* renderer, SdlText& text, const SdlAssets& assets, c
     if (!SDL_SetRenderClipRect(renderer, &barClip)
         || !text.Draw(61, sessionLabel.c_str(), float(std::max(12, uiWidth - text.Width(61) - 12)), 5, TextColor(palette.hints))) { return false; }
     int healthHeight = 0;
-    if (view) {
+    if (view && !SDL_RectEmpty(&gameplay.hud)) {
         SDL_Rect health = gameplay.hud;
         if (!gameplay.sideHud) { health.w = std::min(244, std::max(1, health.w / 2 - 16)); }
         if (!DrawHealth(renderer, text, view->combat, health, healthHeight, hud.localization)) { return false; }
@@ -335,8 +348,25 @@ bool DrawFrame(SDL_Renderer* renderer, SdlText& text, const SdlAssets& assets, c
         if (!text.Draw(4, messages.c_str(), float(panelX), float(y), TextColor(palette.text), wrap)) { return false; }
     }
     if (screen && !DrawScreen(renderer, text, *screen, width, height, view,
-        assets.Definition().cellWidth, assets.Definition().cellHeight, zoom, uiScale, &gameplay)) { return false; }
-    if (inventory && !DrawInventoryScreen(renderer, text, assets, content, *inventory, width, height, uiScale, true)) { return false; }
+        assets.Definition().cellWidth, assets.Definition().cellHeight, zoom, uiScale, &gameplay,
+        modalFooterOverride)) { return false; }
+    if (inventory) {
+        InventoryMapGeometry inventoryMap;
+        inventoryMap.viewport = gameplay.mapViewport;
+        inventoryMap.protectedArea = protectedArea;
+        inventoryMap.contentTop = ScaleRect(gameplay.topBar, uiScale).h;
+        if (inventory->advanced && view) {
+            const auto tileRect = [&](TileCoord tile) {
+                return MapCellRect(gameplay.map, tile.x - view->origin.x, tile.z - view->origin.z);
+            };
+            for (unsigned side = 0; side < inventory->panes.size(); ++side) {
+                const auto anchor = inventory->panes[side].anchor;
+                if (anchor && anchor->y == view->origin.y) { inventoryMap.tiles[side] = tileRect(*anchor); }
+            }
+        }
+        if (!DrawInventoryScreen(renderer, text, assets, content, *inventory, width, height, uiScale, true,
+            &inventoryMap, modalFooterOverride)) { return false; }
+    }
     return SDL_SetRenderClipRect(renderer, nullptr) && SDL_SetRenderScale(renderer, 1, 1) && SDL_RenderPresent(renderer);
 }
 

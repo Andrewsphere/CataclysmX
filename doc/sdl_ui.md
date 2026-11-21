@@ -32,6 +32,11 @@ F9 opens Multiplayer from gameplay.
 Options, and Debug retain large layouts. The cursor is the popup's tile anchor;
 targets are highlighted, and a short connector links the popup to the tile.
 
+`DrawFrame` forwards the optional modal footer override to `DrawScreen` and
+`DrawInventoryScreen`. A null override uses the active frame's controls text.
+The app supplies the collapsed cue at draw time, so the layout measures only
+the visible footer and presenters can keep generating the active bindings.
+
 `PlacePopup` accepts logical-pixel viewport, target, desired dimensions, and an
 optional rectangle to avoid (the player). It tries right, left, below, above,
 clamps to the viewport, and prefers keeping the target and player uncovered.

@@ -37,7 +37,7 @@ at narrow widths and never wraps into a different picture.
 ## Advanced inventory
 
 Initially the panes show **Inventory | All nearby**. Reopening retains their modes,
-selections and scroll. **Tab** changes the active pane; **I** selects direct inventory.
+selections and scroll. **Left/Right** focus the corresponding pane. **I** selects direct inventory.
 Configurable uppercase **A** selects All nearby (lowercase **a** still manages contents).
 Only one pane may show All nearby; selecting it on the other side swaps complete panes.
 Fixed **1–9** use keypad directions (`7 8 9` north,
@@ -45,7 +45,9 @@ Fixed **1–9** use keypad directions (`7 8 9` north,
 storage at that tile takes priority over floor storage. **f** explicitly toggles
 between object and floor. **o** opens portable container contents; **Backspace**
 selects its immediate parent storage. Choosing the other pane's storage swaps
-both panes, including their selected identities and scroll offsets.
+both panes, including their selected identities and scroll offsets. A number
+key also swaps panes when the focused pane shows floor storage, object storage,
+or a container rooted on that tile. The focused side stays the same.
 
 All nearby shows only direct children of accessible floors and object storages in
 the same-layer 3×3 neighborhood, never carried items or recursive container contents.
@@ -65,6 +67,12 @@ ambiguous engine destination. `ItemUiScreen::Destination` exposes its prompt and
 captured choices through the existing frame fields. Nearby-source collection
 reuses controller-owned scratch storage across refreshes.
 
+`ItemUiFrame::advanced` identifies the workflow through its prompts and details.
+In that workflow, `ItemUiPane::anchor` provides the tile for map presentation.
+Floor and object storage use their tile, and nested containers follow their root
+storage. Carried storage and All nearby point at the player. A missing root leaves
+the anchor empty. The anchor is display data and transfer commands use exact storage identities.
+
 **Enter** transfers one selected instance; **m** asks for a positive quantity
 bounded by the selected stack; **M** transfers the entire stack. Escape cancels
 quantity entry. Transfers into All nearby first show a Destination list of concrete,
@@ -83,7 +91,9 @@ remaining ascending identities. A full-stack request uses ascending identities.
 
 All action hints resolve the effective Items/Menu keymaps. The separate Items
 context isolates inventory actions from gameplay and Settings. Numeric tile
-selection and physical Escape are fixed controls.
+selection, quantity entry, and physical Escape are fixed controls.
+`IsItemUiNumberKey` lets frontends route tile and quantity digits to the shared
+controller ahead of equipment shortcuts.
 
 ## Command and time protocol
 

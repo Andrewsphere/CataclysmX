@@ -24,6 +24,7 @@ TEST_CASE("SDL input preserves case and Ctrl chords", "[sdl][input]") {
     CHECK(sdl::TranslateKey(Key(SDLK_T, SDL_SCANCODE_T, SDL_KMOD_CAPS)) == KeyChord{"T", false});
     CHECK(sdl::TranslateKey(Key(SDLK_T, SDL_SCANCODE_T, SDL_KMOD_CAPS | SDL_KMOD_SHIFT)) == KeyChord{"t", false});
     CHECK(sdl::TranslateKey(Key(SDLK_EQUALS, SDL_SCANCODE_EQUALS, SDL_KMOD_SHIFT)) == KeyChord{"+", false});
+    CHECK(sdl::TranslateKey(Key(SDLK_SLASH, SDL_SCANCODE_SLASH, SDL_KMOD_SHIFT)) == KeyChord{"?"});
     CHECK(sdl::TranslateKey(Key(0x754c)) == KeyChord{"界", false});
 }
 

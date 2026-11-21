@@ -33,6 +33,9 @@ eastl::optional<std::uint64_t> VisibleAnimationDelay(const MapPacket& packet,
     const TilesetDefinition& tileset, std::uint64_t elapsedMilliseconds,
     int outputWidth, int outputHeight, int zoom = 0, float uiScale = 1.0f,
     const SpritePlaybackController* playback = nullptr, SDL_Point focusOffset = {}, int textLineHeight = 0);
+eastl::optional<std::uint64_t> VisibleAnimationDelay(const MapPacket& packet,
+    const TilesetDefinition& tileset, std::uint64_t elapsedMilliseconds,
+    const GameplayLayout& gameplay, const SpritePlaybackController* playback);
 TerminalAppearance MapAppearance(const ViewCell& cell, PersistentId playerId, const ContentCatalog& content);
 // An injected presentation clock samples clips without rebuilding the supplied packet.
 // A null packet prepares the small map synchronously for isolated rendering tests.
@@ -43,6 +46,7 @@ bool DrawFrame(SDL_Renderer* renderer, SdlText& text, const SdlAssets& assets, c
     std::uint64_t elapsedMilliseconds = 0, const MapPacket* packet = nullptr,
     int zoom = 0, float uiScale = 1.0f, UiPalette palette = {},
     const SpritePlaybackController* playback = nullptr, SpriteShader* shader = nullptr, ScreenFrame* screen = nullptr,
-    GameplayHud hud = {}, ItemUiFrame* inventory = nullptr);
+    GameplayHud hud = {}, ItemUiFrame* inventory = nullptr, GameplayLayout* drawnLayout = nullptr,
+    const char* modalFooterOverride = nullptr);
 
 }

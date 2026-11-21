@@ -534,7 +534,7 @@ TEST_CASE("Session completion publishes the next opportunity before accepting an
 
 TEST_CASE("SDL item owner consumes transfer recovery then pauses with the window retained", "[sdl][session][inventory]") {
     WakeState wake; SessionOptions options;
-    options.settings.viewRadius = 4;
+    options.settings.viewRadius = 0;
     options.settings.pacing.rateLimited = true;
     options.settings.pacing.pauseWhenIdle = false; // Browsing must still pause.
     options.settings.pacing.ticksPerSecond = 1000;
@@ -544,14 +544,17 @@ TEST_CASE("SDL item owner consumes transfer recovery then pauses with the window
     REQUIRE(session.TrySubmit(request) == EnqueueResult::Accepted);
     REQUIRE(WaitForReply(session, wake, reply)); REQUIRE(reply.kind == ReplyKind::Paused);
     SessionSnapshot snapshot; REQUIRE(session.TakeSnapshot(snapshot));
-    request.kind = RequestKind::PauseForItems; request.id = 10; request.player = snapshot.view.playerId;
+    CHECK(snapshot.view.width == 1);
+    request.kind = RequestKind::PauseForAdvancedInventory; request.id = 10; request.player = snapshot.view.playerId;
     REQUIRE(session.TrySubmit(request) == EnqueueResult::Accepted);
     REQUIRE(WaitForReply(session, wake, reply)); REQUIRE(reply.kind == ReplyKind::Paused); REQUIRE(reply.id == 10);
     REQUIRE(session.TakeSnapshot(snapshot)); REQUIRE(snapshot.view.remainingTicks == 0);
+    CHECK(snapshot.view.width == 3); CHECK(snapshot.view.height == 3);
+    CHECK(snapshot.runtimeSettings.viewRadius == 0);
     Localization localization; REQUIRE(localization.Load(CATACLYSMX_LOC_DIRECTORY, "en"));
     const auto keys = DefaultKeymap();
     ItemUi ui; ui.Open(true); ui.Refresh(snapshot.view, TestContent(), localization, keys);
-    ui.Handle({"Tab"}, keys, snapshot.view, TestContent(), localization);
+    ui.Handle({"Right"}, keys, snapshot.view, TestContent(), localization);
     REQUIRE(ui.Frame().activePane == 1);
     REQUIRE_FALSE(ui.Frame().panes[1].rows.empty());
     ui.Handle({"Enter"}, keys, snapshot.view, TestContent(), localization);
@@ -573,6 +576,7 @@ TEST_CASE("SDL item owner consumes transfer recovery then pauses with the window
     CHECK(ui.IsOpen()); CHECK(ui.IsAdvanced()); CHECK(ui.NeedsTime());
     REQUIRE(WaitForItemPause(session, wake, snapshot));
     CHECK(snapshot.view.tick >= tick + cost);
+    CHECK(snapshot.view.width == 3); CHECK(snapshot.view.height == 3);
     CHECK(snapshot.runtimeSettings.pacing.pauseWhenIdle == false);
     CHECK(snapshot.view.remainingTicks == 0);
     ui.Refresh(snapshot.view, TestContent(), localization, keys);
@@ -609,6 +613,12 @@ TEST_CASE("SDL item owner consumes transfer recovery then pauses with the window
     request.id = 6; request.player = 0;
     REQUIRE(session.TrySubmit(request) == EnqueueResult::Accepted);
     REQUIRE(WaitForReply(session, wake, reply)); CHECK(reply.kind == ReplyKind::Cancelled); CHECK(reply.id == 6);
+
+    request.kind = RequestKind::Resume; request.id = 7;
+    REQUIRE(session.TrySubmit(request) == EnqueueResult::Accepted);
+    REQUIRE(WaitForReply(session, wake, reply)); REQUIRE(reply.kind == ReplyKind::Resumed);
+    REQUIRE(session.TakeSnapshot(snapshot));
+    CHECK(snapshot.view.width == 1); CHECK(snapshot.view.height == 1);
 }
 
 TEST_CASE("Opening an SDL item window waits for an already paid action before acknowledging pause", "[sdl][session][inventory]") {

@@ -1,6 +1,7 @@
 #include "sdl/inventory_screen.h"
 #include "sdl/input.h"
 #include "sdl/modal.h"
+#include "sdl/renderer.h"
 #include "client/item_browser.h"
 #include "content_fixture.h"
 
@@ -25,9 +26,10 @@ struct Display {
     }
     ~Display() { SDL_DestroyRenderer(renderer); SDL_DestroySurface(surface); SDL_Quit(); }
 };
-std::uint64_t SurfaceHash(SDL_Surface* surface) {
+std::uint64_t SurfaceHash(SDL_Surface* surface, int firstRow = 0, int rowCount = -1) {
     std::uint64_t hash = 14695981039346656037ULL;
-    for (int y = 0; y < surface->h; ++y) {
+    const int end = rowCount < 0 ? surface->h : firstRow + rowCount;
+    for (int y = firstRow; y < end; ++y) {
         for (int x = 0; x < surface->w; ++x) {
             Uint8 r = 0, g = 0, b = 0, a = 0;
             REQUIRE(SDL_ReadSurfacePixel(surface, x, y, &r, &g, &b, &a));
@@ -35,6 +37,20 @@ std::uint64_t SurfaceHash(SDL_Surface* surface) {
         }
     }
     return hash;
+}
+
+bool HasColor(SDL_Surface* surface, SDL_Rect area, SDL_Color color) {
+    const SDL_Rect bounds{0, 0, surface->w, surface->h};
+    SDL_Rect clip{};
+    if (!SDL_GetRectIntersection(&area, &bounds, &clip)) { return false; }
+    for (int y = clip.y; y < clip.y + clip.h; ++y) {
+        for (int x = clip.x; x < clip.x + clip.w; ++x) {
+            Uint8 r, g, b, a;
+            REQUIRE(SDL_ReadSurfacePixel(surface, x, y, &r, &g, &b, &a));
+            if (r == color.r && g == color.g && b == color.b) { return true; }
+        }
+    }
+    return false;
 }
 }
 
@@ -107,8 +123,8 @@ TEST_CASE("SDL inventory renders both capacities empty panes and compact selecte
         SdlAssets assets;
         for (int i = 0; i < 1000000 && assets.Poll(display.renderer) == AssetState::Loading; ++i) { std::this_thread::yield(); }
         REQUIRE(assets.State() == AssetState::Ready);
-        ItemUiFrame frame; frame.screen = ItemUiScreen::Advanced;
-        frame.title = "Advanced inventory"; frame.footer = "Tab pane | Enter transfer | Escape close";
+        ItemUiFrame frame; frame.screen = ItemUiScreen::Advanced; frame.advanced = true;
+        frame.title = "Advanced inventory";
         frame.panes[0].title = "Inventory"; frame.panes[0].capacity = "1 kg / 100 kg";
         frame.panes[1].title = "Floor"; frame.panes[1].capacity = "500 ml / unlimited";
         for (int i = 0; i < 40; ++i) {
@@ -132,7 +148,7 @@ TEST_CASE("SDL inventory renders both capacities empty panes and compact selecte
         frame.panes[0].selected = 0;
         REQUIRE(DrawInventoryScreen(display.renderer, text, assets, TestContent(), frame, size.x, size.y, 1));
         CHECK(frame.panes[0].scroll == 0);
-        frame.screen = ItemUiScreen::Inventory;
+        frame.screen = ItemUiScreen::Inventory; frame.advanced = false;
         REQUIRE(DrawInventoryScreen(display.renderer, text, assets, TestContent(), frame, size.x, size.y, 1));
         CHECK(text.Width(122) > 0); // Table labels; missing tileset mapping uses a glyph icon.
         CHECK(text.Width(127) > 0);
@@ -144,7 +160,7 @@ TEST_CASE("SDL aggregate row names retain source labels and render destination m
     SdlText text(display.renderer); REQUIRE(text.Ready()); SdlAssets assets;
     for (int i = 0; i < 1000000 && assets.Poll(display.renderer) == AssetState::Loading; ++i) { std::this_thread::yield(); }
     REQUIRE(assets.State() == AssetState::Ready);
-    ItemUiFrame frame; frame.screen = ItemUiScreen::Advanced; frame.title = "Advanced inventory";
+    ItemUiFrame frame; frame.screen = ItemUiScreen::Advanced; frame.advanced = true;
     frame.panes[0].title = "Inventory"; frame.panes[1].title = "All nearby";
     frame.panes[1].mode = ItemUiPaneMode::AllNearby;
     ItemUiRow row; row.type = TestItem("rock"); row.name = "rock [7 floor]"; row.items = {4};
@@ -158,6 +174,113 @@ TEST_CASE("SDL aggregate row names retain source labels and render destination m
     frame.choices = {"[7] Northwest — floor", "[6] East — cupboard"};
     REQUIRE(DrawInventoryScreen(display.renderer, text, assets, TestContent(), frame, 1120, 780, 1));
     CHECK(text.Width(68) > 0); CHECK(text.Width(72) > 0); CHECK(text.Width(73) > 0);
+    CHECK(text.Width(69) > 0); // The right pane still has its own title during the left prompt.
+}
+
+TEST_CASE("SDL advanced inventory fits a protected 3x3 and two tall windows", "[sdl][inventory]") {
+    for (const auto size : {SDL_Point{480, 360}, SDL_Point{1120, 780}, SDL_Point{1600, 1000}}) {
+        for (const int zoom : {-8, 0, 12}) {
+            const bool largeUi = size.x == 480 && zoom == 12;
+            const float uiScale = largeUi ? 4.0f : 1.0f;
+            const int grid = largeUi ? 1 : 17; // Radius zero still reserves nine positions.
+            auto layout = MakeGameplayLayout(size.x, size.y, grid, grid, 32, 48, zoom, uiScale, {}, largeUi ? 55 : 16);
+            const auto original = layout;
+            const auto protectedArea = FitInventoryMap(layout, size.y, uiScale, grid, grid, {grid / 2, grid / 2});
+            SDL_Rect clipped{};
+            REQUIRE(SDL_GetRectIntersection(&protectedArea, &layout.mapViewport, &clipped));
+            CHECK(SDL_RectsEqual(&protectedArea, &clipped));
+            CHECK(protectedArea.w == 3 * layout.map.cellSize);
+            CHECK(protectedArea.h == 3 * layout.map.cellHeight);
+            CHECK(layout.map.width == grid * layout.map.cellSize);
+            CHECK(layout.map.height == grid * layout.map.cellHeight);
+            CHECK(std::abs(layout.map.cellHeight * 2 - layout.map.cellSize * 3) <= 2);
+            if (zoom == -8 || (size.x == 1600 && zoom == 0)) {
+                CHECK(layout.map.cellSize == original.map.cellSize);
+                CHECK(layout.map.cellHeight == original.map.cellHeight);
+            } else { CHECK(layout.map.cellSize < original.map.cellSize); }
+            if (largeUi) { CHECK(SDL_RectEmpty(&layout.hud)); }
+            const int top = ScaleRect(layout.topBar, uiScale).h;
+            const SDL_Rect content{layout.mapViewport.x, top, layout.mapViewport.w, size.y - top};
+            const auto panels = PlaceInventoryPopups(content, protectedArea,
+                static_cast<int>(preferredInventoryPaneWidth * uiScale));
+            REQUIRE(panels[0].x + panels[0].w < panels[1].x);
+            CHECK(panels[0].y == panels[1].y);
+            for (const auto& panel : panels) {
+                CHECK(panel.h == (content.h - 8) * 3 / 4);
+                CHECK(panel.w > 0);
+                if (zoom == 0) {
+                    const int expectedWidth = size.x == 480 ? 192 : size.x == 1120 ? 312 : 400;
+                    CHECK(panel.w == expectedWidth);
+                }
+                REQUIRE(SDL_GetRectIntersection(&panel, &content, &clipped));
+                CHECK(SDL_RectsEqual(&panel, &clipped));
+                CHECK_FALSE(SDL_HasRectIntersection(&panel, &protectedArea));
+            }
+        }
+    }
+}
+
+TEST_CASE("SDL advanced inventory draws tile anchors and keeps the map visible in prompts and at high zoom", "[sdl][inventory][render]") {
+    Server server(TestContent());
+    REQUIRE(server.GetWorld().CreateItem(TestItem("rock"), ItemLocation::Carried(server.GetPlayer())));
+    const auto view = server.View(4);
+    Localization localization; REQUIRE(localization.Load(CATACLYSMX_LOC_DIRECTORY, "en"));
+    const auto keys = DefaultKeymap();
+    const SDL_Color active{255, 230, 90, 255}, inactive{110, 182, 174, 255};
+    for (const bool compact : {false, true}) {
+        CAPTURE(compact);
+        const int width = compact ? 480 : 1120, height = compact ? 360 : 780;
+        const int zoom = compact ? 12 : 0;
+        Display display(width, height); REQUIRE(display.renderer);
+        SdlText text(display.renderer, nullptr, compact ? 48.0f : 16.0f); REQUIRE(text.Ready());
+        SdlAssets assets;
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (assets.Poll(display.renderer) == AssetState::Loading && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::yield();
+        }
+        REQUIRE(assets.State() == AssetState::Ready);
+        auto geometry = MakeGameplayLayout(width, height, view.width, view.height,
+            assets.Definition().cellWidth, assets.Definition().cellHeight, zoom, 1, {}, text.LineHeight());
+        const auto protectedArea = FitInventoryMap(geometry, height, 1, view.width, view.height,
+            {view.player_position.x - view.origin.x, view.player_position.z - view.origin.z});
+        const auto player = MapCellRect(geometry.map, view.player_position.x - view.origin.x,
+            view.player_position.z - view.origin.z);
+        const auto north = MapCellRect(geometry.map, view.player_position.x - view.origin.x,
+            view.player_position.z - view.origin.z - 1);
+        const SDL_Rect playerTop{player.x + player.w / 2 - 2, player.y - 1, 5, 3};
+        const SDL_Rect northTop{north.x + north.w / 2 - 2, north.y - 1, 5, 3};
+        const auto draw = [&](ItemUiFrame* frame) {
+            GameplayLayout drawn;
+            REQUIRE(DrawFrame(display.renderer, text, assets, &view, TestContent(), "", "", 0,
+                nullptr, zoom, 1, {}, nullptr, nullptr, nullptr, {}, frame, &drawn));
+            CHECK(SDL_RectsEqual(&drawn.mapViewport, &geometry.mapViewport));
+            CHECK(drawn.map.cellSize == geometry.map.cellSize);
+        };
+        ItemUi ui; ui.Open(true); ui.Refresh(view, TestContent(), localization, keys);
+        draw(&ui.Frame());
+        CHECK(HasColor(display.surface, playerTop, active));
+        CHECK_FALSE(HasColor(display.surface, playerTop, inactive));
+        CHECK(HasColor(display.surface, {player.x + player.w / 2 + 2, player.y + player.h / 2, 10, 1}, inactive));
+        const int mapX = protectedArea.x + player.w / 2, mapY = protectedArea.y + protectedArea.h - player.h / 2;
+        Uint8 mapR, mapG, mapB, mapA;
+        REQUIRE(SDL_ReadSurfacePixel(display.surface, mapX, mapY, &mapR, &mapG, &mapB, &mapA));
+        ui.Handle({"Right"}, keys, view, TestContent(), localization);
+        ui.Handle({"8"}, keys, view, TestContent(), localization);
+        ui.Refresh(view, TestContent(), localization, keys);
+        draw(&ui.Frame());
+        CHECK(HasColor(display.surface, northTop, active));
+        CHECK(HasColor(display.surface, {player.x - 1, player.y + player.h / 2 - 2, 3, 5}, inactive));
+        CHECK(HasColor(display.surface, {mapX, mapY, 1, 1}, {mapR, mapG, mapB, mapA}));
+        ui.Handle({"Left"}, keys, view, TestContent(), localization);
+        ui.Handle({"m"}, keys, view, TestContent(), localization);
+        ui.Handle({"1"}, keys, view, TestContent(), localization);
+        ui.Refresh(view, TestContent(), localization, keys);
+        REQUIRE(ui.Frame().screen == ItemUiScreen::Amount);
+        CHECK(ui.Frame().amount == "1");
+        draw(&ui.Frame());
+        CHECK(HasColor(display.surface, {mapX, mapY, 1, 1}, {mapR, mapG, mapB, mapA}));
+        CHECK(text.Width(68) > 0); CHECK(text.Width(69) > 0);
+    }
 }
 
 TEST_CASE("SDL item examination preserves colored UTF8 cells clips wide art and scrolls stats", "[sdl][inventory][render]") {
@@ -221,8 +344,25 @@ TEST_CASE("SDL item submodal transitions stop held accept and quantity keys", "[
     HandleInventoryKey(ui, held, {"Enter"}, keys, view, TestContent(), localization);
     REQUIRE(ui.Frame().screen == ItemUiScreen::Amount);
     CHECK_FALSE(held.Poll(2000, 10));
-    HandleInventoryKey(ui, held, {"5"}, keys, view, TestContent(), localization);
+    auto customKeys = keys;
+    SetBinding(customKeys, {InputContext::Items, InputAction::HoldLeft, {{"5"}}});
+    SDL_Event five = enter; five.key.key = SDLK_KP_5;
+    REQUIRE(held.Observe(five, 2001));
+    HandleInventoryKey(ui, held, {"5"}, customKeys, view, TestContent(), localization);
     CHECK(ui.Frame().amount == "5");
+    CHECK(held.Poll(2500, 10));
+    CHECK_FALSE(ui.TakeCommand(view));
+    HandleInventoryKey(ui, held, {"Escape"}, customKeys, view, TestContent(), localization);
+    REQUIRE(held.Observe(five, 2501));
+    HandleInventoryKey(ui, held, {"5"}, customKeys, view, TestContent(), localization);
+    ui.Refresh(view, TestContent(), localization, customKeys);
+    CHECK(ui.Frame().panes[0].storage.kind == ItemStorageKind::Ground);
+    CHECK(ui.Frame().panes[0].anchor == view.player_position);
+    REQUIRE(held.Observe(five, 2600));
+    HandleInventoryKey(ui, held, {"5"}, customKeys, view, TestContent(), localization);
+    CHECK_FALSE(held.Poll(3000, 10));
+    CHECK(ui.Frame().panes[1].storage.kind == ItemStorageKind::Ground);
+    CHECK(ui.Frame().activePane == 0);
     CHECK_FALSE(ui.TakeCommand(view));
     CHECK(modal.Active() != ModalScreen::Examine); // World Examine identity is separate.
 }
@@ -252,25 +392,65 @@ TEST_CASE("SDL item command and cancellation keys cannot repeat across paid reco
     CHECK_FALSE(ui.NeedsTime()); CHECK(ui.IsOpen()); CHECK_FALSE(held.Poll(3000, 10));
 }
 
-TEST_CASE("SDL compact advanced inventory keeps the final supplied controls visible", "[sdl][inventory][render]") {
+TEST_CASE("SDL compact advanced inventory draws one line per item and toggles controls", "[sdl][inventory][render]") {
     Display display(480, 360); REQUIRE(display.renderer);
     SdlText text(display.renderer); REQUIRE(text.Ready());
     SdlAssets assets;
     for (int i = 0; i < 1000000 && assets.Poll(display.renderer) == AssetState::Loading; ++i) { std::this_thread::yield(); }
     REQUIRE(assets.State() == AssetState::Ready);
-    Server server(TestContent());
-    Localization localization; REQUIRE(localization.Load(CATACLYSMX_LOC_DIRECTORY, "en"));
-    ItemUi ui; ui.Open(true); ui.Refresh(server.View(), TestContent(), localization, DefaultKeymap());
-    // Equal-width final markers keep wrapping/layout identical; pixel changes
-    // therefore demonstrate that the end of the actual long footer is visible.
-    auto frame = ui.Frame(); frame.footer += " | ZZZZZZ";
-    REQUIRE(DrawInventoryScreen(display.renderer, text, assets, TestContent(), frame, 480, 360, 1));
-    REQUIRE(SDL_RenderPresent(display.renderer));
-    const auto first = SurfaceHash(display.surface);
-    frame.footer.replace(frame.footer.size() - 6, 6, "MMMMMM");
-    REQUIRE(DrawInventoryScreen(display.renderer, text, assets, TestContent(), frame, 480, 360, 1));
-    REQUIRE(SDL_RenderPresent(display.renderer));
-    CHECK(SurfaceHash(display.surface) != first);
+    ItemUiFrame frame; frame.advanced = true; frame.screen = ItemUiScreen::Advanced;
+    frame.panes[0].title = "Inventory"; frame.panes[1].title = "All nearby";
+    ItemUiRow row; row.type = TestItem("rock"); row.name = "MMMM"; row.items = {1}; row.massGrams = row.volumeMl = 1;
+    frame.panes[0].rows.push_back(row);
+    const auto draw = [&](const char* footerOverride = "? Controls") {
+        REQUIRE(SDL_SetRenderDrawColor(display.renderer, 12, 16, 20, 255));
+        REQUIRE(SDL_RenderClear(display.renderer));
+        REQUIRE(DrawInventoryScreen(display.renderer, text, assets, TestContent(), frame, 480, 360, 1,
+            false, nullptr, footerOverride));
+        REQUIRE(SDL_RenderPresent(display.renderer));
+    };
+    const auto checkFooter = [&] {
+        frame.footer.clear(); draw();
+        const auto first = SurfaceHash(display.surface);
+        frame.footer = "Up/Down: select | Enter: accept | Escape: back";
+        draw();
+        CHECK(SurfaceHash(display.surface) == first);
+        CHECK(text.Width(65) > 0);
+        draw(nullptr);
+        CHECK(SurfaceHash(display.surface) != first);
+        draw();
+        CHECK(SurfaceHash(display.surface) == first);
+    };
+    checkFooter();
+
+    Vector<std::uint64_t> baseline;
+    for (int y = 0; y < display.surface->h; ++y) { baseline.push_back(SurfaceHash(display.surface, y, 1)); }
+    const auto firstChangedRow = [&] {
+        for (int y = 0; y < display.surface->h; ++y) {
+            if (SurfaceHash(display.surface, y, 1) != baseline[y]) { return y; }
+        }
+        return -1;
+    };
+    frame.panes[0].rows[0].name = "HHHH"; draw();
+    const int nameRow = firstChangedRow(); REQUIRE(nameRow >= 0);
+    auto& renderedRow = frame.panes[0].rows[0];
+    const auto checkMetricRow = [&] {
+        draw();
+        const int metricRow = firstChangedRow(); REQUIRE(metricRow >= 0);
+        CHECK(std::abs(nameRow - metricRow) <= 4);
+        renderedRow = row;
+    };
+    renderedRow = row;
+    renderedRow.items.push_back(2); checkMetricRow();
+    renderedRow.volumeMl = UINT64_MAX; checkMetricRow();
+    renderedRow.massGrams = UINT64_MAX; checkMetricRow();
+
+    frame.screen = ItemUiScreen::Amount; frame.prompt = "Quantity (1–2)"; frame.amount = "1";
+    checkFooter();
+    frame.busy = true; frame.feedback = "Moved 1/2"; draw();
+    CHECK(text.Width(66) > 0);
+    draw(nullptr);
+    CHECK(text.Width(66) > 0);
 }
 
 TEST_CASE("SDL colored art runs retain full monospaced widths and leading spaces", "[sdl][inventory][render]") {
@@ -300,7 +480,7 @@ TEST_CASE("SDL real inventory screens render bundled sprites descriptions and ar
     REQUIRE(world.CreateItem(content.FindItem("metal_pipe"), ItemLocation::Carried(server.GetPlayer())));
     const auto bag = world.CreateItem(content.FindItem("backpack"), ItemLocation::Carried(server.GetPlayer())); REQUIRE(bag);
     REQUIRE(world.CreateItem(content.FindItem("bandage"), ItemLocation::Inside(*bag)));
-    const auto view = server.View(0);
+    const auto view = server.View(4);
     Localization localization; REQUIRE(localization.Load(CATACLYSMX_LOC_DIRECTORY, "en"));
     const auto keys = DefaultKeymap();
     for (const auto size : {SDL_Point{640, 480}, SDL_Point{1200, 800}}) {
@@ -314,11 +494,19 @@ TEST_CASE("SDL real inventory screens render bundled sprites descriptions and ar
         REQUIRE(assets.State() == AssetState::Ready);
         REQUIRE(content.FindItem("backpack").value < assets.Definition().items.size());
         CHECK(assets.Definition().items[content.FindItem("backpack").value].kind != TilesetMappingKind::Missing);
+        auto map = PrepareMapPacket(view, content, assets.Definition(), {});
+        // The software renderer exercises map geometry without the GPU shading pass.
+        for (auto& cell : map.cells) { cell.terrainShading = {}; cell.overlayShading = {}; }
         ItemUi ui;
         const auto draw = [&](const char* screen) {
             ui.Refresh(view, content, localization, keys);
-            REQUIRE(DrawInventoryScreen(display.renderer, text, assets, content, ui.Frame(), size.x, size.y, 1));
-            REQUIRE(SDL_RenderPresent(display.renderer));
+            if (ui.IsAdvanced()) {
+                REQUIRE(DrawFrame(display.renderer, text, assets, &view, content, "", "", 0,
+                    &map, 0, 1, {}, nullptr, nullptr, nullptr, {}, &ui.Frame()));
+            } else {
+                REQUIRE(DrawInventoryScreen(display.renderer, text, assets, content, ui.Frame(), size.x, size.y, 1));
+                REQUIRE(SDL_RenderPresent(display.renderer));
+            }
             if (const char* path = std::getenv("CATACLYSMX_SDL_INVENTORY_PREVIEW")) {
                 const auto output = String(path) + "." + screen + "." + NumberText(size.x) + ".png";
                 REQUIRE(SDL_SavePNG(display.surface, output.c_str()));

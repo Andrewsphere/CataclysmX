@@ -134,12 +134,20 @@ TEST_CASE("SDL overlay renders compact and wide layouts with scroll clamping", "
     SDL_Renderer* renderer = SDL_CreateSoftwareRenderer(surface); REQUIRE(renderer);
     {
         SdlText text(renderer); REQUIRE(text.Ready());
-        ScreenFrame frame; frame.visible = true; frame.presentation = ScreenPresentation::Large; frame.title = "Options"; frame.footer = "Escape closes";
+        ScreenFrame frame; frame.visible = true; frame.presentation = ScreenPresentation::Large; frame.title = "Options";
+        frame.footer = "Escape closes the window\nUp/Down select a setting";
+        frame.status = "Unapplied changes";
         for (int i = 0; i < 30; ++i) { frame.rows.push_back({"Setting value",i % 2 == 0}); }
         frame.details = {"Description", "Constraint", "Effect"}; frame.selected = 29; frame.scroll = 999;
         REQUIRE(DrawScreen(renderer,text,frame,1100,700,nullptr,32,32,0,1));
         CHECK(frame.scroll >= 0); CHECK(frame.scroll <= 29);
         REQUIRE(DrawScreen(renderer,text,frame,480,360,nullptr,32,32,0,1));
+        const int expandedHeight = text.Height(9);
+        REQUIRE(DrawScreen(renderer,text,frame,480,360,nullptr,32,32,0,1,nullptr,"? Controls"));
+        CHECK(text.Height(9) < expandedHeight);
+        CHECK(text.Width(12) > 0);
+        CHECK(frame.selected == 29);
+        CHECK(frame.scroll >= 0); CHECK(frame.scroll <= frame.selected);
         frame.selected = 0;
         REQUIRE(DrawScreen(renderer,text,frame,480,360,nullptr,32,32,0,1)); CHECK(frame.scroll == 0);
     }

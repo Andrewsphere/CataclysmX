@@ -52,7 +52,7 @@ struct ScreenFrame {
 // Screen coordinates are logical UI pixels. Never retains the supplied frame.
 bool DrawScreen(SDL_Renderer* renderer, SdlText& text, ScreenFrame& frame,
     int width, int height, const WorldView* view, int tileWidth, int tileHeight, int zoom, float uiScale,
-    const GameplayLayout* gameplay = nullptr);
+    const GameplayLayout* gameplay = nullptr, const char* footerOverride = nullptr);
 
 eastl::optional<std::size_t> SoleAvailableAction(const Vector<InteractionChoice>& actions);
 
@@ -99,6 +99,7 @@ public:
     SettingsResult<SettingsStore> Prepare(const SettingsStore& store, Diagnostics* diagnostics) const;
     SettingsScope Scope() const { return editor_.Scope(); }
     bool Capturing() const { return editor_.Capturing(); }
+    bool Inspecting() const { return editor_.Inspecting(); }
     bool EditingText() const { return editor_.EditingText(); }
     bool Browsing() const { return editor_.Browsing(); }
     void RememberScroll(const ScreenFrame& frame);

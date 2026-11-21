@@ -22,6 +22,8 @@ struct ItemUiPane {
     ItemUiPaneMode mode = ItemUiPaneMode::Storage;
     // Only meaningful in Storage mode; aggregates never become engine storages.
     ItemStorage storage;
+    // Tile for map presentation, independent of the exact transfer storage.
+    eastl::optional<TileCoord> anchor;
     String title;
     String capacity;
     Vector<ItemUiRow> rows;
@@ -39,6 +41,7 @@ struct ItemExamination {
     int scroll = 0;
 };
 enum class ItemUiScreen { Closed, Inventory, Advanced, Examine, Amount, Actions, Target, Direction, Destination };
+bool IsItemUiNumberKey(ItemUiScreen screen, const KeyChord& key);
 // Direct frontend button/key actions; legacy InputAction::Wield remains supported.
 enum class ItemUiAction { HoldLeft, HoldRight, TwoHanded, Regrip, Wear, Remove, Release };
 const char* ItemUiActionLabel(ItemUiAction action);
@@ -55,6 +58,7 @@ struct ItemUiFrame {
     String feedback;
     String footer;
     bool busy = false;
+    bool advanced = false;
 };
 
 // Shared keyboard workflow for both frontends. Owns only snapshot values and
@@ -84,7 +88,6 @@ public:
 
 private:
     ItemUiFrame frame_;
-    bool advanced_ = false;
     bool useSelection_ = false;
     bool outstanding_ = false;
     bool waitingForReady_ = false;
@@ -119,6 +122,7 @@ private:
     std::uint64_t finishedTick_ = 0;
     ItemUiScreen actionReturn_ = ItemUiScreen::Inventory;
     std::size_t actionChoice_ = 0;
+    void SwapPanes();
     void SelectStorage(ItemStorage storage);
     void SelectAllNearby();
     void ConfirmTransferDestination(const WorldView& view);

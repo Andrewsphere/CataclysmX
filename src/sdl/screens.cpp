@@ -303,7 +303,8 @@ bool DrawSettingsDetails(SDL_Renderer* renderer, SdlText& text, ScreenFrame& fra
 }
 
 bool DrawAnchored(SDL_Renderer* renderer, SdlText& text, ScreenFrame& frame,
-    const GameplayLayout& gameplay, const WorldView* view, float uiScale, int width, int height) {
+    const GameplayLayout& gameplay, const WorldView* view, float uiScale, int width, int height,
+    const char* footerText) {
     bool hasText = false, hasHealth = false;
     for (const auto& row : frame.rows) {
         hasText |= !row.text.empty();
@@ -334,7 +335,7 @@ bool DrawAnchored(SDL_Renderer* renderer, SdlText& text, ScreenFrame& frame,
     const int wrap = std::max(1, provisional.w - 16);
     if (!text.Draw(7, "M", -10000, -10000, normal)) { return false; }
     if (!text.Draw(8, frame.title.c_str(), -10000, -10000, selected, wrap)
-        || !text.Draw(9, frame.footer.c_str(), -10000, -10000, dim, wrap)) { return false; }
+        || !text.Draw(9, footerText, -10000, -10000, dim, wrap)) { return false; }
     const int titleHeight = std::min(text.Height(8), lineHeight * 2);
     const int footerHeight = std::min(text.Height(9), lineHeight * 2);
     constexpr int healthGap = 8;
@@ -469,7 +470,7 @@ bool DrawAnchored(SDL_Renderer* renderer, SdlText& text, ScreenFrame& frame,
     }
     const SDL_Rect footerClip{panel.x + 8, footerY, wrap, footer};
     return SDL_SetRenderClipRect(renderer, &footerClip)
-        && text.Draw(9, frame.footer.c_str(), float(panel.x + 8), float(footerY), dim, wrap)
+        && text.Draw(9, footerText, float(panel.x + 8), float(footerY), dim, wrap)
         && SDL_SetRenderClipRect(renderer, nullptr) && SDL_SetRenderScale(renderer, 1, 1);
 }
 
@@ -477,7 +478,7 @@ bool DrawAnchored(SDL_Renderer* renderer, SdlText& text, ScreenFrame& frame,
 
 bool DrawScreen(SDL_Renderer* renderer, SdlText& text, ScreenFrame& frame,
     int width, int height, const WorldView* view, int tileWidth, int tileHeight, int zoom, float uiScale,
-    const GameplayLayout* gameplay) {
+    const GameplayLayout* gameplay, const char* footerOverride) {
     if (!frame.visible) { return true; }
     if (!SDL_SetRenderScale(renderer, 1, 1) || !SDL_SetRenderClipRect(renderer, nullptr)) { return false; }
     const auto focus = frame.followCursor && frame.cursor && view
@@ -501,7 +502,10 @@ bool DrawScreen(SDL_Renderer* renderer, SdlText& text, ScreenFrame& frame,
     }
     if (!SDL_SetRenderClipRect(renderer, nullptr) || !SDL_SetRenderScale(renderer, uiScale, uiScale)) { return false; }
     const int w = static_cast<int>(width / uiScale), h = static_cast<int>(height / uiScale);
-    if (frame.presentation == ScreenPresentation::Anchored) { return DrawAnchored(renderer, text, frame, geometry, view, uiScale, w, h); }
+    const char* footer = footerOverride ? footerOverride : frame.footer.c_str();
+    if (frame.presentation == ScreenPresentation::Anchored) {
+        return DrawAnchored(renderer, text, frame, geometry, view, uiScale, w, h, footer);
+    }
     const int left = 8;
     const int top = geometry.topBar.h;
     SDL_FRect panel{static_cast<float>(left), static_cast<float>(top), static_cast<float>(w - left - 8), static_cast<float>(h - top - 8)};
@@ -524,9 +528,8 @@ bool DrawScreen(SDL_Renderer* renderer, SdlText& text, ScreenFrame& frame,
             || !text.Draw(12, frame.status.c_str(), left + 8, y - 4, ToneColor(frame.statusTone), clip.w)) { return false; }
         y += lineHeight;
     }
-    if (!text.Draw(9,frame.footer.c_str(),-10000,-10000,dim,clip.w)) { return false; }
-    const char* footer = frame.footer.c_str();
-    if (!frame.compactFooter.empty() && text.Height(9) > clip.h / 3) {
+    if (!text.Draw(9,footer,-10000,-10000,dim,clip.w)) { return false; }
+    if (!footerOverride && !frame.compactFooter.empty() && text.Height(9) > clip.h / 3) {
         footer = frame.compactFooter.c_str();
         if (!text.Draw(9,footer,-10000,-10000,dim,clip.w)) { return false; }
     }

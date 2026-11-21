@@ -1,6 +1,7 @@
 #pragma once
 
 #include <SDL3/SDL_rect.h>
+#include <EASTL/array.h>
 
 namespace cataclysmx::sdl {
 
@@ -34,6 +35,12 @@ SDL_Rect ScaleRect(SDL_Rect rect, float scale);
 SDL_Rect MapCellRect(const MapLayout& map, int column, int row);
 // All arguments and the result use logical UI pixels. Prefer not to cover avoid.
 SDL_Rect PlacePopup(SDL_Rect viewport, SDL_Rect target, int width, int height,
-    SDL_Rect avoid = {});
+    SDL_Rect avoid = {}, int minimumWidth = 180);
+inline constexpr int preferredInventoryPaneWidth = 400; // Logical UI pixels.
+// Fits the map around the player and returns the protected 3x3 in render pixels.
+SDL_Rect FitInventoryMap(GameplayLayout& gameplay, int outputHeight, float uiScale,
+    int columns, int rows, SDL_Point playerCell);
+// Content, the protected area, preferred width, and both windows use render pixels.
+eastl::array<SDL_Rect, 2> PlaceInventoryPopups(SDL_Rect content, SDL_Rect protectedArea, int preferredWidth);
 
 }

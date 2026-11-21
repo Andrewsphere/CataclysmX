@@ -983,6 +983,7 @@ bool GameplayUi::HandleEvent(const ftxui::Event& event, const WorldView& view, c
         const auto& catalog = *itemContent_;
         const auto chord = DecodeTerminalInput({event.input().data(), event.input().size()});
         if (chord) {
+            const auto screen = items_.Frame().screen;
             const auto action = ResolveAction(keys, InputContext::Items, *chord);
             eastl::optional<ItemUiAction> equipment;
             if (action == InputAction::HoldLeft) { equipment = ItemUiAction::HoldLeft; }
@@ -992,8 +993,8 @@ bool GameplayUi::HandleEvent(const ftxui::Event& event, const WorldView& view, c
             else if (action == InputAction::Wear) { equipment = ItemUiAction::Wear; }
             else if (action == InputAction::RemoveWorn) { equipment = ItemUiAction::Remove; }
             else if (action == InputAction::ReleaseHand) { equipment = ItemUiAction::Release; }
-            const auto screen = items_.Frame().screen;
-            if (equipment && (screen == ItemUiScreen::Inventory || screen == ItemUiScreen::Advanced)) {
+            if (equipment && !IsItemUiNumberKey(screen, *chord)
+                && (screen == ItemUiScreen::Inventory || screen == ItemUiScreen::Advanced)) {
                 items_.HandleAction(*equipment, view);
             } else { items_.Handle(*chord, keys, view, catalog, localization); }
         }

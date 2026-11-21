@@ -821,9 +821,9 @@ TEST_CASE("Advanced terminal transfers drain on refresh and pause only after fin
     f.ui.Open(InputAction::AdvancedInventory); f.Draw();
     Vector<Command> commands;
     const auto submit = [&](Command command) { commands.push_back(command); return true; };
-    REQUIRE(f.ui.HandleEvent(ftxui::Event::Tab, f.view, f.localization, f.keys, submit, {}, &TestContent()));
+    REQUIRE(f.ui.HandleEvent(ftxui::Event::ArrowRight, f.view, f.localization, f.keys, submit, {}, &TestContent()));
     REQUIRE(f.ui.HandleEvent(ftxui::Event::Character('5'), f.view, f.localization, f.keys, submit, {}, &TestContent()));
-    REQUIRE(f.ui.HandleEvent(ftxui::Event::Tab, f.view, f.localization, f.keys, submit, {}, &TestContent()));
+    REQUIRE(f.ui.HandleEvent(ftxui::Event::ArrowLeft, f.view, f.localization, f.keys, submit, {}, &TestContent()));
     REQUIRE(f.ui.HandleEvent(ftxui::Event::Character('M'), f.view, f.localization, f.keys, submit, {}, &TestContent()));
     REQUIRE(commands.size() == 1); CHECK(commands[0].item == 1); CHECK_FALSE(f.ui.PausesLocal({}));
     CommandResult result; result.outcome = Outcome::transferred; result.advanced = true; result.cost = 10;
